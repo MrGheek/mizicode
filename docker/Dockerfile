@@ -1,8 +1,7 @@
-ARG CUDA_VERSION=12.4.0
 ARG UBUNTU_VERSION=22.04
 
-# ── Stage 1: Build claw-code from source ──────────────────────────────────────
-# Plain Ubuntu — no CUDA compiler needed for Rust, builds on any platform.
+# ── Stage 1: Build claw-code from Rust source ─────────────────────────────────
+# Plain Ubuntu — no CUDA compiler needed for Rust. Builds on any platform.
 FROM ubuntu:${UBUNTU_VERSION} AS claw-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,8 +16,13 @@ RUN git clone --depth 1 https://github.com/instructkr/claw-code /opt/claw-code-s
     cargo build --release && \
     cp target/release/claw /usr/local/bin/claw
 
-# ── Runtime image ──────────────────────────────────────────────────────────────
-FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+# ── Runtime: extend the official llama.cpp CUDA server image ──────────────────
+# The llama-server binary is already compiled with full CUDA support.
+# No nvcc or GPU needed at build time — works on Mac, Windows, Linux CI.
+FROM ghcr.io/ggerganov/llama.cpp:server-cuda
+
+# llama-server lives at /llama/llama-server in the base image; expose it in PATH
+RUN ln -sf /llama/llama-server /usr/local/bin/llama-server
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -38,33 +42,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     unzip \
     && rm -rf /var/lib/apt/lists/*
-
-# Download pre-built llama.cpp server with CUDA support.
-# Building from source requires nvcc which is unavailable on Mac/non-GPU machines.
-# We discover the actual asset URL via the GitHub API so this works regardless
-# of how the release filenames are structured in any given version.
-RUN set -ex && \
-    RELEASE=$(curl -fsSL https://api.github.com/repos/ggerganov/llama.cpp/releases/latest) && \
-    TAG=$(echo "${RELEASE}" | jq -r '.tag_name') && \
-    echo "Latest llama.cpp release: ${TAG}" && \
-    ASSET_URL=$(echo "${RELEASE}" | jq -r '.assets[].browser_download_url' \
-        | grep -v '\.sha256$' \
-        | grep -iE 'cuda' \
-        | grep -iE 'linux|ubuntu' \
-        | grep -iE 'x64|amd64|x86_64' \
-        | head -1) && \
-    [ -n "${ASSET_URL}" ] || (echo "ERROR: No Linux x64 CUDA asset found in release ${TAG}" && exit 1) && \
-    echo "Downloading ${ASSET_URL}..." && \
-    curl -fsSL --max-time 600 "${ASSET_URL}" -o /tmp/llama-pkg && \
-    if echo "${ASSET_URL}" | grep -q '\.zip$'; then \
-        unzip -q /tmp/llama-pkg -d /tmp/llama; \
-    else \
-        mkdir -p /tmp/llama && tar -xf /tmp/llama-pkg -C /tmp/llama; \
-    fi && \
-    BIN=$(find /tmp/llama -name "llama-server" -type f | head -1) && \
-    [ -n "${BIN}" ] || (echo "ERROR: llama-server binary not found in archive" && exit 1) && \
-    install -m 755 "${BIN}" /usr/local/bin/llama-server && \
-    rm -rf /tmp/llama-pkg /tmp/llama
 
 COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw
 

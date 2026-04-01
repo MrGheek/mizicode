@@ -23,12 +23,10 @@ done
 
 build_image() {
     local tag="$1"
-    local cuda_version="$2"
     local full_image="${REGISTRY}/${IMAGE_NAME}:${tag}"
 
-    log "Building ${full_image} (CUDA ${cuda_version})..."
+    log "Building ${full_image}..."
     docker build \
-        --build-arg CUDA_VERSION="${cuda_version}" \
         -t "${full_image}" \
         -f docker/Dockerfile \
         docker/
@@ -43,13 +41,13 @@ build_image() {
 }
 
 case "$TARGET_TAG" in
-    cuda12.4) build_image "cuda12.4" "12.4.0" ;;
-    a100)     build_image "a100"     "12.4.0" ;;
-    h100)     build_image "h100"     "12.4.0" ;;
+    cuda12.4) build_image "cuda12.4" ;;
+    a100)     build_image "a100" ;;
+    h100)     build_image "h100" ;;
     all)
-        build_image "cuda12.4" "12.4.0"
-        build_image "a100"     "12.4.0"
-        build_image "h100"     "12.4.0"
+        build_image "cuda12.4"
+        build_image "a100"
+        build_image "h100"
         ;;
 esac
 
