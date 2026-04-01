@@ -119,7 +119,6 @@ log "Bolt.diy started"
 log "Configuring nginx with basic auth for exposed services..."
 NGINX_AUTH_USER="${NGINX_AUTH_USER:-omniql}"
 NGINX_AUTH_PASS="${NGINX_AUTH_PASS:-$CODE_SERVER_PASSWORD}"
-apt-get update -qq && apt-get install -y -qq apache2-utils >/dev/null 2>&1 || true
 htpasswd -cb /etc/nginx/.htpasswd "$NGINX_AUTH_USER" "$NGINX_AUTH_PASS" 2>/dev/null
 log "Nginx auth credentials - user: $NGINX_AUTH_USER, pass: stored in /workspace/.code-server-password"
 
@@ -187,13 +186,54 @@ for i in $(seq 1 120); do
     sleep 5
 done
 
+LITELLM_PORT="${LITELLM_PORT:-8082}"
+log "Starting LiteLLM Anthropic-to-OpenAI proxy on port $LITELLM_PORT..."
+litellm \
+    --model "openai/local-kimi" \
+    --api_base "http://localhost:${LLAMA_PORT}/v1" \
+    --api_key "not-needed" \
+    --port "$LITELLM_PORT" \
+    --drop_params \
+    > /var/log/litellm.log 2>&1 &
+LITELLM_PID=$!
+log "LiteLLM proxy started (PID: $LITELLM_PID)"
+
+for i in $(seq 1 30); do
+    if curl -s "http://localhost:${LITELLM_PORT}/health" >/dev/null 2>&1; then
+        log "LiteLLM proxy is ready"
+        break
+    fi
+    sleep 2
+done
+
+log "Configuring claw-code CLI..."
+mkdir -p /root/.config/claw
+cat > /root/.config/claw/settings.json << EOF
+{
+  "model": "local-kimi",
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:${LITELLM_PORT}",
+    "ANTHROPIC_API_KEY": "not-needed"
+  }
+}
+EOF
+export ANTHROPIC_BASE_URL="http://localhost:${LITELLM_PORT}"
+export ANTHROPIC_API_KEY="not-needed"
+echo "export ANTHROPIC_BASE_URL=http://localhost:${LITELLM_PORT}" >> /etc/environment
+echo "export ANTHROPIC_API_KEY=not-needed" >> /etc/environment
+echo "export ANTHROPIC_BASE_URL=http://localhost:${LITELLM_PORT}" >> /root/.bashrc
+echo "export ANTHROPIC_API_KEY=not-needed" >> /root/.bashrc
+log "claw-code configured: API -> LiteLLM (port $LITELLM_PORT) -> llama.cpp (port $LLAMA_PORT)"
+
 set_status "ready"
 touch /tmp/instance-ready
 
 log "=== OmniQL Coding Environment Ready ==="
+log "  claw (agent): run 'claw' in any terminal"
 log "  Bolt.diy:     http://localhost:$BOLT_PORT"
 log "  code-server:  http://localhost:$CODE_SERVER_PORT"
 log "  llama.cpp:    http://localhost:$LLAMA_PORT"
+log "  LiteLLM:      http://localhost:$LITELLM_PORT"
 log "  Preview:      http://localhost:$PREVIEW_PORT"
 log "  SSH:          port 22"
 
@@ -211,6 +251,17 @@ while true; do
             $LLAMA_EXTRA_ARGS \
             > /var/log/llama-server.log 2>&1 &
         LLAMA_PID=$!
+    fi
+    if ! kill -0 $LITELLM_PID 2>/dev/null; then
+        log "WARNING: LiteLLM proxy died, restarting..."
+        litellm \
+            --model "openai/local-kimi" \
+            --api_base "http://localhost:${LLAMA_PORT}/v1" \
+            --api_key "not-needed" \
+            --port "$LITELLM_PORT" \
+            --drop_params \
+            > /var/log/litellm.log 2>&1 &
+        LITELLM_PID=$!
     fi
     sleep 30
 done
