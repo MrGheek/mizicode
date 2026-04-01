@@ -1,0 +1,46 @@
+Critical Issues & Fixes Needed
+
+Kimi K2.5 IQ4_XS Download & Size (Biggest Red Flag)
+IQ4_XS is ~547 GB (12 shards according to Unsloth repo).
+Downloading 547 GB on every new Vast instance will take 30–90+ minutes (even with fast Iceland bandwidth) and cost extra in transfer time + potential interruptions.
+Recommendation:
+Pre-download the model to a Vast.ai volume (persistent storage) and mount it in the template. Much faster startup.
+Or switch to a lighter quant for the default template (e.g., UD-TQ1_0 or Q3_K_M ~240–490 GB range) and let users upgrade quant if needed.
+Use huggingface-cli with --resume and cache it properly.
+
+
+Template Creation & Vast.ai API Details
+Your spec for the default template is mostly correct, but Vast templates are not full Dockerfiles with long on-start scripts in the way you described.
+Templates mainly define: image, env (ports + variables), runtype (ssh), onstart command/script, disk requirements, etc.
+Long installation (building llama.cpp, cloning repos, installing Node/pnpm/nginx, downloading 500+ GB model) should be in a startup script referenced in onstart.
+First task ("Create and push default template") is correct — do this via the Vast console GUI first for testing, then via API (POST /api/v0/template/).
+Use template_hash_id when creating instances (PUT /api/v0/asks/{offer_id}/ with "template_hash_id": "...").
+
+Bolt.diy + Local LLM Integration
+Bolt.diy supports custom providers well.
+Set the environment variable or config to point to http://localhost:8081/v1 (no API key needed for llama.cpp).
+Test this early — some users report minor tweaks needed for fully local OpenAI-compatible servers (e.g., model name handling, tool calling format).
+
+Performance & Cost Expectations
+On 4x RTX 4090: Expect 8–18 tokens/s with IQ4_XS (depending on offloading). Good enough for Bolt’s agent mode, but not lightning fast.
+Startup time will be the biggest UX friction (model download + builds). Mitigate with volumes + pre-built images where possible.
+nginx on port 3000 for previews is good, but make sure it proxies dynamically to whatever port the user’s dev server runs on (common pattern: proxy /preview/* → app port).
+
+Other Minor Improvements
+Polling & Status: Add WebSocket or better long-polling for real-time "Downloading model…", "Starting services…", "Ready" updates.
+Security: Even for single-user, add basic auth or token protection on the exposed ports (especially code-server and Bolt.diy).
+Fallback: If Bolt.diy fails to start, having code-server on 8080 as backup is excellent.
+claw-code: Make sure it’s configured to use the same http://localhost:8081/v1 endpoint so Bolt’s agent and claw-code can cooperate if needed.
+Disk: 200 GB minimum is too low with a 547 GB model — bump to 800+ GB recommended.
+
+
+Suggested Prioritized Tasks (Refined)
+
+Validate the core loop manually first (do this before writing much code):
+Manually create a template on Vast console with a simpler on-start.
+Launch an instance and confirm: llama.cpp starts, Bolt.diy runs and sees the local model, previews work via nginx, code-server is accessible.
+
+Build the Vast API wrapper (search offers → create instance with template_hash → poll status → destroy).
+Implement the on-start script robustly (with retries, logging, and the /tmp/instance-ready flag).
+Dashboard + session management (this can start very simple — a button "Start Session" that calls your backend).
+Then polish: iframe embedding, template CRUD, offer browser, OpenAPI spec, etc.
