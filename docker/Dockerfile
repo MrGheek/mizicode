@@ -1,7 +1,27 @@
+ARG CUDA_VERSION=12.4.0
 ARG UBUNTU_VERSION=22.04
 
-# ── Stage 1: Build claw-code from Rust source ─────────────────────────────────
-# Plain Ubuntu — no CUDA compiler needed for Rust. Builds on any platform.
+# ── Stage 1: Build llama.cpp with CUDA ────────────────────────────────────────
+# Requires Linux x86_64 — build via GitHub Actions, not Docker Desktop on Mac.
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS llama-builder
+
+ARG LLAMA_CUDA_ARCH=all-major
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git curl wget pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp && \
+    cd /opt/llama.cpp && \
+    cmake -B build \
+        -DGGML_CUDA=ON \
+        -DGGML_NATIVE=OFF \
+        -DCMAKE_CUDA_ARCHITECTURES=${LLAMA_CUDA_ARCH} \
+        -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build build --config Release -j4 && \
+    cp build/bin/llama-server /usr/local/bin/llama-server
+
+# ── Stage 2: Build claw-code from Rust source ─────────────────────────────────
 FROM ubuntu:${UBUNTU_VERSION} AS claw-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,13 +36,8 @@ RUN git clone --depth 1 https://github.com/instructkr/claw-code /opt/claw-code-s
     cargo build --release && \
     cp target/release/claw /usr/local/bin/claw
 
-# ── Runtime: extend the official llama.cpp CUDA server image ──────────────────
-# The llama-server binary is already compiled with full CUDA support.
-# No nvcc or GPU needed at build time — works on Mac, Windows, Linux CI.
-FROM ghcr.io/ggerganov/llama.cpp:server-cuda
-
-# llama-server lives at /llama/llama-server in the base image; expose it in PATH
-RUN ln -sf /llama/llama-server /usr/local/bin/llama-server
+# ── Runtime image ──────────────────────────────────────────────────────────────
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -35,6 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     build-essential \
     ca-certificates \
+    libcublas-12-4 \
     vim \
     nano \
     htop \
@@ -43,6 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
+COPY --from=llama-builder /usr/local/bin/llama-server /usr/local/bin/llama-server
 COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw
 
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
