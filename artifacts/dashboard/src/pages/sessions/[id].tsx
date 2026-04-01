@@ -1,15 +1,14 @@
-import { useEffect } from "react";
 import { useLocation, useParams } from "wouter";
-import { 
-  useGetSession, 
-  useDeleteSession, 
+import {
+  useGetSession,
+  useDeleteSession,
   useRefreshSessionStatus,
   getGetSessionQueryKey
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { 
-  Terminal, Server, Code2, Globe, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, Network
+import {
+  Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,11 +23,14 @@ export default function SessionDetail() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: session, isLoading, refetch } = useGetSession(sessionId, {
-    query: { 
+  const { data: session, isLoading } = useGetSession(sessionId, {
+    query: {
       enabled: !!sessionId,
       queryKey: getGetSessionQueryKey(sessionId),
-      refetchInterval: 5000,
+      refetchInterval: (q) => {
+        const s = q.state.data?.status;
+        return s === "ready" || s === "stopped" || s === "error" ? false : 5000;
+      },
     }
   });
 
@@ -36,28 +38,20 @@ export default function SessionDetail() {
   const refreshStatus = useRefreshSessionStatus();
 
   const handleStop = () => {
-    if (!confirm("Are you sure you want to stop and destroy this session? All unsaved data outside the workspace volume will be lost.")) return;
-    
+    if (!confirm("Stop and destroy this session? All data outside /workspace/projects will be lost.")) return;
     deleteSession.mutate({ sessionId }, {
       onSuccess: () => {
-        toast({ title: "Session stopping", description: "The instance is being destroyed." });
+        toast({ title: "Session destroyed" });
         queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
       },
-      onError: () => {
-        toast({ title: "Error stopping session", description: "Failed to stop session.", variant: "destructive" });
-      }
+      onError: () => toast({ title: "Failed to stop session", variant: "destructive" }),
     });
   };
 
   const handleRefresh = () => {
     refreshStatus.mutate({ sessionId }, {
-      onSuccess: () => {
-        toast({ title: "Status refreshed" });
-        queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
-      },
-      onError: () => {
-        toast({ title: "Refresh failed", description: "Could not refresh status.", variant: "destructive" });
-      }
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) }),
+      onError: () => toast({ title: "Refresh failed", variant: "destructive" }),
     });
   };
 
@@ -73,147 +67,128 @@ export default function SessionDetail() {
   const isReady = session.status === "ready";
 
   return (
-    <div className="p-8 max-w-5xl mx-auto space-y-6">
+    <div className="p-8 max-w-3xl mx-auto space-y-6">
+
+      {/* Back */}
+      <Button variant="ghost" className="gap-2 text-muted-foreground -ml-2" onClick={() => setLocation("/sessions")}>
+        <ArrowLeft className="w-4 h-4" /> All Sessions
+      </Button>
+
       {/* Header */}
       <div className="flex justify-between items-start">
         <div>
-          <div className="flex items-center gap-3 mb-2">
-            <h1 className="text-3xl font-bold tracking-tight">Cockpit: {session.profileName}</h1>
+          <div className="flex items-center gap-3 mb-1">
+            <h1 className="text-2xl font-bold tracking-tight">Cockpit: {session.profileName}</h1>
             <SessionStatusBadge status={session.status} />
           </div>
-          <p className="text-muted-foreground font-mono">Session #{session.id} • Vast ID: {session.vastInstanceId || "Pending"}</p>
+          <p className="text-muted-foreground font-mono text-sm">
+            Session #{session.id} · {session.gpuName} x{session.numGpus}
+            {session.vastInstanceId ? ` · Vast #${session.vastInstanceId}` : ""}
+          </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleRefresh} disabled={refreshStatus.isPending || !isActive}>
-            <RefreshCw className={`w-4 h-4 mr-2 ${refreshStatus.isPending ? "animate-spin" : ""}`} />
-            Sync Status
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshStatus.isPending || !isActive}>
+            <RefreshCw className={`w-4 h-4 mr-1.5 ${refreshStatus.isPending ? "animate-spin" : ""}`} />
+            Sync
           </Button>
           {isActive && (
-            <Button variant="destructive" onClick={handleStop} disabled={deleteSession.isPending}>
-              <StopCircle className="w-4 h-4 mr-2" />
-              Destroy Session
+            <Button variant="destructive" size="sm" onClick={handleStop} disabled={deleteSession.isPending}>
+              <StopCircle className="w-4 h-4 mr-1.5" />
+              Destroy
             </Button>
           )}
         </div>
       </div>
 
+      {/* Status message */}
       {session.statusMessage && (
         <div className="bg-secondary/30 border border-secondary p-4 rounded-md font-mono text-sm text-muted-foreground">
           {'>'} {session.statusMessage}
         </div>
       )}
 
-      {/* Services Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className={`bg-card/50 border-border/50 ${isReady ? 'border-primary/50' : ''}`}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Terminal className="w-5 h-5 text-primary" /> Bolt.diy
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground mb-4">
-              AI-powered autonomous coding assistant.
-            </p>
-            <Button 
-              className="w-full" 
-              disabled={!isReady || !session.boltDiyUrl}
-              onClick={() => window.open(session.boltDiyUrl || '', '_blank')}
+      {/* Primary launch — shown when ready */}
+      {isReady && session.boltDiyUrl ? (
+        <Card className="border-primary/60 bg-primary/5">
+          <CardContent className="pt-6 pb-6 flex flex-col items-center gap-4 text-center">
+            <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center">
+              <Terminal className="w-6 h-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold mb-1">Your coding environment is ready</h2>
+              <p className="text-sm text-muted-foreground">
+                Bolt.diy with Kimi K2.5 AI — editor, terminal, and live preview all in one.
+              </p>
+            </div>
+            <Button
+              size="lg"
+              className="gap-2 px-8"
+              onClick={() => window.open(session.boltDiyUrl || "", "_blank")}
             >
-              Open Bolt
+              <ExternalLink className="w-4 h-4" />
+              Open Coding Environment
             </Button>
           </CardContent>
         </Card>
-
-        <Card className={`bg-card/50 border-border/50 ${isReady ? 'border-primary/50' : ''}`}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Code2 className="w-5 h-5 text-primary" /> Code Server
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground mb-4">
-              VS Code in your browser.
-            </p>
-            <Button 
-              className="w-full" 
-              variant="secondary"
-              disabled={!isReady || !session.codeServerUrl}
-              onClick={() => window.open(session.codeServerUrl || '', '_blank')}
-            >
-              Open VS Code
-            </Button>
+      ) : isActive ? (
+        <Card className="border-border/50 bg-card/50">
+          <CardContent className="pt-6 pb-6 flex flex-col items-center gap-3 text-center text-muted-foreground">
+            <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center">
+              <Terminal className="w-6 h-6 animate-pulse" />
+            </div>
+            <p className="text-sm">Waiting for environment to start — this takes ~25 minutes on first launch while the model downloads.</p>
           </CardContent>
         </Card>
+      ) : null}
 
-        <Card className={`bg-card/50 border-border/50 ${isReady ? 'border-primary/50' : ''}`}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Globe className="w-5 h-5 text-primary" /> Preview
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground mb-4">
-              Live app preview port (5173).
-            </p>
-            <Button 
-              className="w-full" 
-              variant="outline"
-              disabled={!isReady || !session.previewUrl}
-              onClick={() => window.open(session.previewUrl || '', '_blank')}
-            >
-              Open Preview
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Details Grid */}
+      {/* Details */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card className="bg-card/50 border-border/50">
-          <CardHeader>
-            <CardTitle className="text-md flex items-center gap-2">
-              <HardDrive className="w-4 h-4 text-muted-foreground" /> Hardware
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+              <HardDrive className="w-4 h-4" /> Hardware & Access
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex justify-between border-b border-border/50 pb-2">
-              <span className="text-muted-foreground text-sm">GPU</span>
-              <span className="font-mono text-sm">{session.gpuName || "Pending"} {session.numGpus ? `x${session.numGpus}` : ""}</span>
+          <CardContent className="space-y-3 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">GPU</span>
+              <span className="font-mono">{session.gpuName || "—"} x{session.numGpus || "—"}</span>
             </div>
-            <div className="flex justify-between border-b border-border/50 pb-2">
-              <span className="text-muted-foreground text-sm">Template</span>
-              <span className="font-mono text-sm break-all text-right max-w-[200px] truncate" title={session.templateHash || ""}>
-                {session.templateHash || "Default"}
-              </span>
+            <div className="flex justify-between border-t border-border/40 pt-3">
+              <span className="text-muted-foreground">Public IP</span>
+              <span className="font-mono">{session.publicIp || "Pending"}</span>
             </div>
-            <div className="flex justify-between pb-2">
-              <span className="text-muted-foreground text-sm">SSH Access</span>
-              <span className="font-mono text-sm text-primary">
-                {session.sshHost ? `ssh -p ${session.sshPort} root@${session.sshHost}` : "Pending"}
-              </span>
-            </div>
+            {session.sshHost && (
+              <div className="border-t border-border/40 pt-3">
+                <span className="text-muted-foreground block mb-1">SSH</span>
+                <code className="text-xs text-primary bg-secondary/50 px-2 py-1 rounded block break-all">
+                  ssh -p {session.sshPort} root@{session.sshHost}
+                </code>
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card className="bg-card/50 border-border/50">
-          <CardHeader>
-            <CardTitle className="text-md flex items-center gap-2">
-              <DollarSign className="w-4 h-4 text-muted-foreground" /> Lifecycle & Cost
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+              <DollarSign className="w-4 h-4" /> Cost & Timing
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex justify-between border-b border-border/50 pb-2">
-              <span className="text-muted-foreground text-sm">Created</span>
-              <span className="font-mono text-sm">{format(new Date(session.createdAt), "MMM d, HH:mm")}</span>
+          <CardContent className="space-y-3 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Started</span>
+              <span className="font-mono">
+                {session.startedAt ? format(new Date(session.startedAt), "MMM d, HH:mm") : "—"}
+              </span>
             </div>
-            <div className="flex justify-between border-b border-border/50 pb-2">
-              <span className="text-muted-foreground text-sm">Rate</span>
-              <span className="font-mono text-sm">${session.costPerHour?.toFixed(3) || "0.000"}/hr</span>
+            <div className="flex justify-between border-t border-border/40 pt-3">
+              <span className="text-muted-foreground">Rate</span>
+              <span className="font-mono">${session.costPerHour?.toFixed(3) || "0.000"}/hr</span>
             </div>
-            <div className="flex justify-between pb-2">
-              <span className="text-muted-foreground text-sm">Total Cost</span>
-              <span className="font-mono text-sm text-primary font-bold">
+            <div className="flex justify-between border-t border-border/40 pt-3">
+              <span className="text-muted-foreground">Total spend</span>
+              <span className="font-mono text-primary font-semibold">
                 ${session.totalCost?.toFixed(3) || "0.000"}
               </span>
             </div>
