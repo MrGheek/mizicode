@@ -116,14 +116,40 @@ log "Starting Bolt.diy on port $BOLT_PORT..."
 PORT=$BOLT_PORT pnpm run dev > /var/log/bolt-diy.log 2>&1 &
 log "Bolt.diy started"
 
-log "Configuring nginx preview proxy..."
+log "Configuring nginx with basic auth for exposed services..."
+NGINX_AUTH_USER="${NGINX_AUTH_USER:-omniql}"
+NGINX_AUTH_PASS="${NGINX_AUTH_PASS:-$CODE_SERVER_PASSWORD}"
+apt-get update -qq && apt-get install -y -qq apache2-utils >/dev/null 2>&1 || true
+htpasswd -cb /etc/nginx/.htpasswd "$NGINX_AUTH_USER" "$NGINX_AUTH_PASS" 2>/dev/null
+log "Nginx auth credentials - user: $NGINX_AUTH_USER, pass: stored in /workspace/.code-server-password"
+
 cat > /etc/nginx/sites-available/preview << 'NGINX'
 server {
     listen 3000;
     server_name _;
+    auth_basic "OmniQL Preview";
+    auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
         proxy_pass http://localhost:5174;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 86400;
+    }
+}
+
+server {
+    listen 5180;
+    server_name _;
+    auth_basic "OmniQL Bolt.diy";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    location / {
+        proxy_pass http://localhost:5173;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -137,13 +163,17 @@ NGINX
 ln -sf /etc/nginx/sites-available/preview /etc/nginx/sites-enabled/preview
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && nginx
-log "nginx preview proxy started on port $PREVIEW_PORT"
+log "nginx proxy started (preview: $PREVIEW_PORT, bolt-auth: 5180) with basic auth"
 
-log "Starting SSH server..."
+log "Starting SSH server with key-based auth only..."
 mkdir -p /root/.ssh
+chmod 700 /root/.ssh
 ssh-keygen -A
+sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+echo "PermitRootLogin prohibit-password" >> /etc/ssh/sshd_config
 /usr/sbin/sshd
-log "SSH server started"
+log "SSH server started (key-based auth only)"
 
 log "Waiting for llama.cpp to be ready..."
 for i in $(seq 1 120); do

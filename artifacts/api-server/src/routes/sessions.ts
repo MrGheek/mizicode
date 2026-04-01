@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, sessionsTable, gpuProfilesTable } from "@workspace/db";
+import { db, sessionsTable, gpuProfilesTable, templatesTable } from "@workspace/db";
 import { eq, desc, sql, and, not, inArray } from "drizzle-orm";
 import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
@@ -154,11 +154,20 @@ router.post("/sessions", async (req, res) => {
       selectedOfferId = offers[0].id;
     }
 
+    const [defaultTemplate] = await db
+      .select()
+      .from(templatesTable)
+      .where(eq(templatesTable.isDefault, true))
+      .limit(1);
+
+    const templateHash = defaultTemplate?.templateHash || undefined;
+
     const [session] = await db
       .insert(sessionsTable)
       .values({
         profileId: profile.id,
         vastOfferId: selectedOfferId,
+        templateHash: templateHash || null,
         status: "provisioning",
         statusMessage: "Finding GPU and provisioning instance...",
         gpuName: profile.gpuName,
@@ -179,6 +188,7 @@ router.post("/sessions", async (req, res) => {
       image: profile.dockerImageTag,
       onstart,
       disk: profile.diskSizeGb,
+      templateHashId: templateHash,
       env: {
         MODEL_REPO: "unsloth/Kimi-K2.5-GGUF",
         MODEL_QUANT: profile.defaultQuant,

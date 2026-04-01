@@ -211,7 +211,7 @@ export function buildInstanceUrls(instance: { public_ipaddr?: string; ports?: Re
     return mapping?.[0]?.HostPort;
   };
 
-  const boltPort = getPort("5173");
+  const boltPort = getPort("5180");
   const codeServerPort = getPort("8080");
   const previewPort = getPort("3000");
   const sshPort = getPort("22");

@@ -55,6 +55,6 @@ RUN mkdir -p /run/sshd /workspace/models /workspace/projects /var/log
 COPY onstart.sh /opt/onstart.sh
 RUN chmod +x /opt/onstart.sh
 
-EXPOSE 5173 8080 8081 3000 22
+EXPOSE 5180 8080 8081 3000 22
 
 CMD ["/opt/onstart.sh"]
