@@ -39,29 +39,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Download pre-built llama.cpp server with CUDA 12 support.
+# Download pre-built llama.cpp server with CUDA support.
 # Building from source requires nvcc which is unavailable on Mac/non-GPU machines.
-# The official release binary is compiled for Linux x86_64 with CUDA 12 — fully
-# compatible with the Vast.ai GPU instances this image runs on.
+# We discover the actual asset URL via the GitHub API so this works regardless
+# of how the release filenames are structured in any given version.
 RUN set -ex && \
-    TAG=$(curl -fsSL https://api.github.com/repos/ggerganov/llama.cpp/releases/latest \
-          | grep '"tag_name"' | head -1 \
-          | sed 's/.*"tag_name": "\([^"]*\)".*/\1/') && \
-    echo "Downloading llama.cpp ${TAG}..." && \
-    DOWNLOADED=0 && \
-    for CUVAR in cu12.4.1 cu12.4.0 cu12.2.0; do \
-        FILE="llama-${TAG}-bin-ubuntu-x64-cuda-${CUVAR}.zip" && \
-        URL="https://github.com/ggerganov/llama.cpp/releases/download/${TAG}/${FILE}" && \
-        if curl -fsSL --max-time 300 "${URL}" -o /tmp/llama.zip 2>/dev/null && \
-           [ -s /tmp/llama.zip ]; then \
-            echo "Downloaded ${FILE}" && DOWNLOADED=1 && break; \
-        fi; \
-    done && \
-    [ "${DOWNLOADED}" = "1" ] || (echo "ERROR: Could not download llama.cpp CUDA binary" && exit 1) && \
-    unzip -q /tmp/llama.zip -d /tmp/llama && \
+    RELEASE=$(curl -fsSL https://api.github.com/repos/ggerganov/llama.cpp/releases/latest) && \
+    TAG=$(echo "${RELEASE}" | jq -r '.tag_name') && \
+    echo "Latest llama.cpp release: ${TAG}" && \
+    ASSET_URL=$(echo "${RELEASE}" | jq -r '.assets[].browser_download_url' \
+        | grep -v '\.sha256$' \
+        | grep -iE 'cuda' \
+        | grep -iE 'linux|ubuntu' \
+        | grep -iE 'x64|amd64|x86_64' \
+        | head -1) && \
+    [ -n "${ASSET_URL}" ] || (echo "ERROR: No Linux x64 CUDA asset found in release ${TAG}" && exit 1) && \
+    echo "Downloading ${ASSET_URL}..." && \
+    curl -fsSL --max-time 600 "${ASSET_URL}" -o /tmp/llama-pkg && \
+    if echo "${ASSET_URL}" | grep -q '\.zip$'; then \
+        unzip -q /tmp/llama-pkg -d /tmp/llama; \
+    else \
+        mkdir -p /tmp/llama && tar -xf /tmp/llama-pkg -C /tmp/llama; \
+    fi && \
     BIN=$(find /tmp/llama -name "llama-server" -type f | head -1) && \
+    [ -n "${BIN}" ] || (echo "ERROR: llama-server binary not found in archive" && exit 1) && \
     install -m 755 "${BIN}" /usr/local/bin/llama-server && \
-    rm -rf /tmp/llama.zip /tmp/llama
+    rm -rf /tmp/llama-pkg /tmp/llama
 
 COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw
 
