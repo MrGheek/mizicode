@@ -2,13 +2,6 @@ name: Build & Push Docker Image
 
 on:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Image tag to build"
-        required: true
-        default: "all"
-        type: choice
-        options: [all, cuda12.4, a100, h100]
   push:
     branches: [main]
     paths:
@@ -17,22 +10,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # 80=A100  86=RTX3090/3080  89=RTX4090/4080  90=H100
-          # Numeric arches only — "all-major" / "-real" require cmake >= 3.23
-          # but nvidia/cuda:12.4.0-devel-ubuntu22.04 ships cmake 3.22.
-          - tag: cuda12.4
-            cuda_version: "12.4.0"
-            cuda_arch: "80;86;89;90"
-          - tag: a100
-            cuda_version: "12.4.0"
-            cuda_arch: "80"
-          - tag: h100
-            cuda_version: "12.4.0"
-            cuda_arch: "90"
 
     steps:
       - name: Checkout
@@ -47,15 +24,21 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push ${{ matrix.tag }}
+      - name: Build and push all tags
         uses: docker/build-push-action@v6
         with:
           context: docker/
           file: docker/Dockerfile
           push: true
-          tags: gheeklabs/coding-env:${{ matrix.tag }}
+          # All three tags are identical — same binary compiled for all modern GPU arches.
+          # Building once and pushing multiple tags avoids parallel OOM kills.
+          tags: |
+            gheeklabs/coding-env:cuda12.4
+            gheeklabs/coding-env:a100
+            gheeklabs/coding-env:h100
+            gheeklabs/coding-env:latest
           build-args: |
-            CUDA_VERSION=${{ matrix.cuda_version }}
-            LLAMA_CUDA_ARCH=${{ matrix.cuda_arch }}
-          cache-from: type=gha,scope=${{ matrix.tag }}
-          cache-to: type=gha,scope=${{ matrix.tag }},mode=max
+            CUDA_VERSION=12.4.0
+            LLAMA_CUDA_ARCH=80;86;89;90
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
