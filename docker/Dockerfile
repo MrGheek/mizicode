@@ -5,7 +5,10 @@ ARG UBUNTU_VERSION=22.04
 # Requires Linux x86_64 — build via GitHub Actions, not Docker Desktop on Mac.
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS llama-builder
 
-ARG LLAMA_CUDA_ARCH=all-major
+# Explicit numeric arches — cmake 3.22 (Ubuntu 22.04 default) doesn't support
+# the "all-major" keyword which requires cmake >= 3.23.
+# 80=A100  86=RTX3090/3080  89=RTX4090/4080  90=H100
+ARG LLAMA_CUDA_ARCH=80;86;89;90
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git curl wget pkg-config \
@@ -16,9 +19,9 @@ RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp && 
     cmake -B build \
         -DGGML_CUDA=ON \
         -DGGML_NATIVE=OFF \
-        -DCMAKE_CUDA_ARCHITECTURES=${LLAMA_CUDA_ARCH} \
+        -DCMAKE_CUDA_ARCHITECTURES="${LLAMA_CUDA_ARCH}" \
         -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build build --config Release -j4 && \
+    cmake --build build --config Release -j2 && \
     cp build/bin/llama-server /usr/local/bin/llama-server
 
 # ── Stage 2: Build claw-code from Rust source ─────────────────────────────────

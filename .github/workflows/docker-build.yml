@@ -21,19 +21,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 80=A100  86=RTX3090/3080  89=RTX4090/4080  90=H100
+          # Numeric arches only — "all-major" / "-real" require cmake >= 3.23
+          # but nvidia/cuda:12.4.0-devel-ubuntu22.04 ships cmake 3.22.
           - tag: cuda12.4
             cuda_version: "12.4.0"
-            cuda_arch: "all-major"
+            cuda_arch: "80;86;89;90"
           - tag: a100
             cuda_version: "12.4.0"
-            cuda_arch: "80-real"
+            cuda_arch: "80"
           - tag: h100
             cuda_version: "12.4.0"
-            cuda_arch: "90-real"
+            cuda_arch: "90"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Add swap space (CUDA compilation is memory-intensive)
+        run: |
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
