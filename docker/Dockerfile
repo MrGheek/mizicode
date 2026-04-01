@@ -50,7 +50,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     build-essential \
     ca-certificates \
-    libcublas-12-4 \
     vim \
     nano \
     htop \
