@@ -39,6 +39,6 @@ jobs:
             gheeklabs/coding-env:latest
           build-args: |
             CUDA_VERSION=12.4.0
-            LLAMA_CUDA_ARCH=80;86;89;90
+            LLAMA_CUDA_ARCH=80
           cache-from: type=gha
           cache-to: type=gha,mode=max

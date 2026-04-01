@@ -5,10 +5,10 @@ ARG UBUNTU_VERSION=22.04
 # Requires Linux x86_64 — build via GitHub Actions, not Docker Desktop on Mac.
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS llama-builder
 
-# Explicit numeric arches — cmake 3.22 (Ubuntu 22.04 default) doesn't support
-# the "all-major" keyword which requires cmake >= 3.23.
-# 80=A100  86=RTX3090/3080  89=RTX4090/4080  90=H100
-ARG LLAMA_CUDA_ARCH=80;86;89;90
+# Single arch (80 = A100/sm_80) with PTX included.
+# CUDA JIT-compiles PTX for any newer GPU (RTX 3090/4090, H100) at first run.
+# Compiling 4 arches OOMs GitHub Actions' 7GB RAM after ~90 min.
+ARG LLAMA_CUDA_ARCH=80
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git curl wget pkg-config \
