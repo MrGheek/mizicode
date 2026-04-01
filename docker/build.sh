@@ -6,11 +6,22 @@ set -e
 REGISTRY="gheeklabs"
 IMAGE_NAME="coding-env"
 PUSH=false
-TARGET_TAG="${1:-all}"
+TARGET_TAG="all"
 
 log() { echo "[build] $*"; }
 
-build_and_push() {
+for arg in "$@"; do
+    case "$arg" in
+        --push) PUSH=true ;;
+        cuda12.4|a100|h100|all) TARGET_TAG="$arg" ;;
+        *)
+            echo "Usage: $0 [--push] [cuda12.4|a100|h100|all]"
+            exit 1
+            ;;
+    esac
+done
+
+build_image() {
     local tag="$1"
     local cuda_version="$2"
     local cuda_arch="$3"
@@ -33,31 +44,15 @@ build_and_push() {
     fi
 }
 
-for arg in "$@"; do
-    case "$arg" in
-        --push) PUSH=true ;;
-    esac
-done
-
 case "$TARGET_TAG" in
-    cuda12.4|"--push")
-        build_and_push "cuda12.4" "12.4.0" "89"   # RTX 4090 (sm_89)
-        ;;
-    a100)
-        build_and_push "a100" "12.4.0" "80"        # A100 (sm_80)
-        ;;
-    h100)
-        build_and_push "h100" "12.4.0" "90"        # H100 (sm_90)
-        ;;
+    cuda12.4) build_image "cuda12.4" "12.4.0" "89" ;;   # RTX 4090 (sm_89)
+    a100)     build_image "a100"     "12.4.0" "80" ;;   # A100 (sm_80)
+    h100)     build_image "h100"     "12.4.0" "90" ;;   # H100 (sm_90)
     all)
-        build_and_push "cuda12.4" "12.4.0" "89"
-        build_and_push "a100" "12.4.0" "80"
-        build_and_push "h100" "12.4.0" "90"
-        ;;
-    *)
-        echo "Usage: $0 [--push] [cuda12.4|a100|h100|all]"
-        exit 1
+        build_image "cuda12.4" "12.4.0" "89"
+        build_image "a100"     "12.4.0" "80"
+        build_image "h100"     "12.4.0" "90"
         ;;
 esac
 
-log "Done. To push: ./docker/build.sh --push all"
+log "Done."

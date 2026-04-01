@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, templatesTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, ne } from "drizzle-orm";
 import * as vastai from "../services/vastai";
 import { logger } from "../lib/logger";
 
@@ -45,6 +45,10 @@ router.post("/templates", async (req, res) => {
     });
 
     const templateHash = vastTemplate.template_hash || vastTemplate.hash_id || "";
+
+    if (isDefault) {
+      await db.update(templatesTable).set({ isDefault: false });
+    }
 
     const [template] = await db
       .insert(templatesTable)
@@ -105,6 +109,10 @@ router.put("/templates/:templateId", async (req, res) => {
     } catch (err: unknown) {
       logger.error(err, "Failed to update template on Vast.ai — updating local DB only");
     }
+  }
+
+  if (isDefault === true) {
+    await db.update(templatesTable).set({ isDefault: false }).where(ne(templatesTable.id, id));
   }
 
   const updates: Record<string, unknown> = { updatedAt: new Date(), templateHash };

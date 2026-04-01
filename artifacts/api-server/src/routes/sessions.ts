@@ -164,6 +164,8 @@ router.post("/sessions", async (req, res) => {
     return;
   }
 
+  let insertedSessionId: number | undefined;
+
   try {
     let selectedOfferId = offerId;
 
@@ -204,6 +206,8 @@ router.post("/sessions", async (req, res) => {
         numGpus: profile.numGpus,
       })
       .returning();
+
+    insertedSessionId = session.id;
 
     const onstart = vastai.buildOnStartScript({
       modelRepo: "unsloth/Kimi-K2.5-GGUF",
@@ -249,6 +253,19 @@ router.post("/sessions", async (req, res) => {
   } catch (err: unknown) {
     logger.error(err, "Failed to create session");
     const message = err instanceof Error ? err.message : "Unknown error";
+
+    if (insertedSessionId !== undefined) {
+      await db
+        .update(sessionsTable)
+        .set({
+          status: "error",
+          statusMessage: `Provisioning failed: ${message}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(sessionsTable.id, insertedSessionId))
+        .catch((e) => logger.warn(e, "Failed to mark session as error after provisioning failure"));
+    }
+
     res.status(500).json({ error: `Failed to provision session: ${message}` });
   }
 });
