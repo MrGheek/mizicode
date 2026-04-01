@@ -25,7 +25,7 @@ export default function Dashboard() {
 
   const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary();
   const { data: activeSessionResp, isLoading: isLoadingSession } = useGetActiveSession({
-    query: { refetchInterval: 10000 }
+    query: { refetchInterval: 10000, queryKey: getGetActiveSessionQueryKey() }
   });
   const { data: profiles, isLoading: isLoadingProfiles } = useListProfiles();
 
@@ -43,10 +43,10 @@ export default function Dashboard() {
         queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
         setLocation(`/sessions/${session.id}`);
       },
-      onError: (err) => {
+      onError: () => {
         toast({
           title: "Launch Failed",
-          description: err.error || "Failed to start session",
+          description: "Failed to start session. Please try again.",
           variant: "destructive",
         });
         setLaunchingProfileId(null);

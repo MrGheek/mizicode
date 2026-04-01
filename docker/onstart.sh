@@ -41,7 +41,10 @@ CODE_SERVER_PORT="${CODE_SERVER_PORT:-8080}"
 BOLT_PORT="${BOLT_PORT:-5173}"
 PREVIEW_PORT="${PREVIEW_PORT:-3000}"
 VOLUME_MODEL_PATH="${VOLUME_MODEL_PATH:-/workspace/models}"
-CODE_SERVER_PASSWORD="${CODE_SERVER_PASSWORD:-omniql}"
+if [ -z "$CODE_SERVER_PASSWORD" ]; then
+    CODE_SERVER_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
+    echo "Generated code-server password: $CODE_SERVER_PASSWORD" | tee /workspace/.code-server-password
+fi
 
 log "=== OmniQL Coding Environment Starting ==="
 log "Model: $MODEL_REPO / $MODEL_QUANT"

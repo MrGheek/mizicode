@@ -16,7 +16,7 @@ function headers() {
   };
 }
 
-async function vastFetch(path: string, opts: RequestInit = {}) {
+async function vastFetch<T = Record<string, unknown>>(path: string, opts: RequestInit = {}): Promise<T> {
   const url = `${VASTAI_BASE}${path}`;
   logger.info({ url, method: opts.method || "GET" }, "Vast.ai API call");
   const res = await fetch(url, { ...opts, headers: { ...headers(), ...opts.headers } });
@@ -25,7 +25,32 @@ async function vastFetch(path: string, opts: RequestInit = {}) {
     logger.error({ status: res.status, body: text, url }, "Vast.ai API error");
     throw new Error(`Vast.ai API error ${res.status}: ${text}`);
   }
-  return res.json();
+  return res.json() as Promise<T>;
+}
+
+export interface VastSearchResponse {
+  offers?: Record<string, unknown>[];
+}
+
+export interface VastInstanceResponse {
+  new_contract?: number;
+  expected_price?: number;
+}
+
+export interface VastInstance {
+  public_ipaddr?: string;
+  ports?: Record<string, { HostPort?: string }[]>;
+  actual_status?: string;
+  status_msg?: string;
+}
+
+export interface VastInstanceListResponse {
+  instances?: VastInstance[];
+}
+
+export interface VastTemplateResponse {
+  template_hash?: string;
+  hash_id?: string;
 }
 
 export interface VastSearchParams {
@@ -65,12 +90,12 @@ export async function searchOffers(params: VastSearchParams) {
     Object.assign(query, params.extra);
   }
 
-  const data = await vastFetch("/bundles/", {
+  const data = await vastFetch<VastSearchResponse>("/bundles/", {
     method: "POST",
     body: JSON.stringify(query),
   });
 
-  return data.offers || data || [];
+  return data.offers || [];
 }
 
 export interface VastCreateInstanceParams {
@@ -99,7 +124,7 @@ export async function createInstance(params: VastCreateInstanceParams) {
     body.template_hash_id = params.templateHashId;
   }
 
-  return vastFetch(`/asks/${params.offerId}/`, {
+  return vastFetch<VastInstanceResponse>(`/asks/${params.offerId}/`, {
     method: "PUT",
     body: JSON.stringify(body),
   });
@@ -112,14 +137,14 @@ export async function destroyInstance(instanceId: number) {
 }
 
 export async function getInstance(instanceId: number) {
-  return vastFetch(`/instances/${instanceId}/`);
+  return vastFetch<VastInstance>(`/instances/${instanceId}/`);
 }
 
 export async function listInstances() {
-  const data = await vastFetch("/instances/", {
+  const data = await vastFetch<VastInstanceListResponse>("/instances/", {
     method: "GET",
   });
-  return data.instances || data || [];
+  return data.instances || [];
 }
 
 export interface VastTemplateParams {
@@ -143,7 +168,7 @@ export async function createTemplate(params: VastTemplateParams) {
     allow_ssh: true,
   };
 
-  return vastFetch("/template/", {
+  return vastFetch<VastTemplateResponse>("/template/", {
     method: "POST",
     body: JSON.stringify(body),
   });

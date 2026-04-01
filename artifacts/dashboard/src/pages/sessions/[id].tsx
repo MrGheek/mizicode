@@ -27,13 +27,8 @@ export default function SessionDetail() {
   const { data: session, isLoading, refetch } = useGetSession(sessionId, {
     query: { 
       enabled: !!sessionId,
-      refetchInterval: (data) => {
-        // Stop polling if session is stopped or error
-        if (data && (data.status === "stopped" || data.status === "error")) {
-          return false;
-        }
-        return 5000; // Poll every 5s otherwise
-      }
+      queryKey: getGetSessionQueryKey(sessionId),
+      refetchInterval: 5000,
     }
   });
 
@@ -48,8 +43,8 @@ export default function SessionDetail() {
         toast({ title: "Session stopping", description: "The instance is being destroyed." });
         queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
       },
-      onError: (err) => {
-        toast({ title: "Error stopping session", description: err.error, variant: "destructive" });
+      onError: () => {
+        toast({ title: "Error stopping session", description: "Failed to stop session.", variant: "destructive" });
       }
     });
   };
@@ -60,8 +55,8 @@ export default function SessionDetail() {
         toast({ title: "Status refreshed" });
         queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
       },
-      onError: (err) => {
-        toast({ title: "Refresh failed", description: err.error, variant: "destructive" });
+      onError: () => {
+        toast({ title: "Refresh failed", description: "Could not refresh status.", variant: "destructive" });
       }
     });
   };

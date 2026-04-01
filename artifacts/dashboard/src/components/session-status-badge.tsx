@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import { SessionStatus } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { SessionStatus } from "@workspace/api-client-react";
 
 export function SessionStatusBadge({ status }: { status: SessionStatus }) {
   let colorClass = "bg-muted text-muted-foreground";

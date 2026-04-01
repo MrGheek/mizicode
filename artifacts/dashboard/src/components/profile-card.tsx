@@ -1,7 +1,7 @@
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Cpu, HardDrive, Clock, Zap, Play } from "lucide-react";
-import { GpuProfile } from "@workspace/api-client-react/src/generated/api.schemas";
+import type { GpuProfile } from "@workspace/api-client-react";
 
 interface ProfileCardProps {
   profile: GpuProfile;

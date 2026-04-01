@@ -51,8 +51,8 @@ export default function Offers() {
         queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
         setLocation(`/sessions/${session.id}`);
       },
-      onError: (err) => {
-        toast({ title: "Rent Failed", description: err.error, variant: "destructive" });
+      onError: () => {
+        toast({ title: "Rent Failed", description: "Failed to provision instance.", variant: "destructive" });
       }
     });
   };

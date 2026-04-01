@@ -37,8 +37,8 @@ export default function Templates() {
         setFormData({ name: "", image: "", onStartScript: "", envVars: "" });
         queryClient.invalidateQueries({ queryKey: getListTemplatesQueryKey() });
       },
-      onError: (err) => {
-        toast({ title: "Failed to create", description: err.error, variant: "destructive" });
+      onError: () => {
+        toast({ title: "Failed to create", description: "Could not create template.", variant: "destructive" });
       }
     });
   };
@@ -50,8 +50,8 @@ export default function Templates() {
         toast({ title: "Template Deleted" });
         queryClient.invalidateQueries({ queryKey: getListTemplatesQueryKey() });
       },
-      onError: (err) => {
-        toast({ title: "Failed to delete", description: err.error, variant: "destructive" });
+      onError: () => {
+        toast({ title: "Failed to delete", description: "Could not delete template.", variant: "destructive" });
       }
     });
   };
