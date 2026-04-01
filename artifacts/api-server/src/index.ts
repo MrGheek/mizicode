@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { seedProfiles } from "./services/profiles";
+import { registerDefaultTemplate } from "./services/templates";
 
 const rawPort = process.env["PORT"];
 
@@ -29,5 +30,11 @@ app.listen(port, async (err) => {
     logger.info("GPU profiles seeded");
   } catch (e) {
     logger.error(e, "Failed to seed profiles");
+  }
+
+  try {
+    await registerDefaultTemplate();
+  } catch (e) {
+    logger.error(e, "Failed to register default template");
   }
 });

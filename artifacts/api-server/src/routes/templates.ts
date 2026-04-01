@@ -81,14 +81,40 @@ router.put("/templates/:templateId", async (req, res) => {
     return;
   }
 
-  const updates: Record<string, unknown> = { updatedAt: new Date() };
-  if (req.body.name !== undefined) updates.name = req.body.name;
-  if (req.body.image !== undefined) updates.image = req.body.image;
-  if (req.body.onStartScript !== undefined) updates.onStartScript = req.body.onStartScript;
-  if (req.body.envVars !== undefined) updates.envVars = req.body.envVars;
-  if (req.body.profileId !== undefined) updates.profileId = req.body.profileId;
-  if (req.body.diskSpace !== undefined) updates.diskSpace = req.body.diskSpace;
-  if (req.body.isDefault !== undefined) updates.isDefault = req.body.isDefault;
+  const { name, image, onStartScript, envVars, profileId, diskSpace, isDefault } = req.body;
+
+  const contentChanged =
+    (image !== undefined && image !== existing.image) ||
+    (onStartScript !== undefined && onStartScript !== existing.onStartScript) ||
+    (envVars !== undefined && envVars !== existing.envVars) ||
+    (diskSpace !== undefined && diskSpace !== existing.diskSpace);
+
+  let templateHash = existing.templateHash;
+
+  if (contentChanged && existing.templateHash) {
+    try {
+      const vastResult = await vastai.updateTemplate(existing.templateHash, {
+        name: name || existing.name,
+        image_tag: image || existing.image || "",
+        onstart: onStartScript || existing.onStartScript || "",
+        env: envVars || existing.envVars || "",
+        disk_space: diskSpace || existing.diskSpace || 400,
+      });
+      templateHash = vastResult.template_hash || vastResult.hash_id || templateHash;
+      logger.info({ templateHash }, "Template updated on Vast.ai (delete+recreate)");
+    } catch (err: unknown) {
+      logger.error(err, "Failed to update template on Vast.ai — updating local DB only");
+    }
+  }
+
+  const updates: Record<string, unknown> = { updatedAt: new Date(), templateHash };
+  if (name !== undefined) updates.name = name;
+  if (image !== undefined) updates.image = image;
+  if (onStartScript !== undefined) updates.onStartScript = onStartScript;
+  if (envVars !== undefined) updates.envVars = envVars;
+  if (profileId !== undefined) updates.profileId = profileId;
+  if (diskSpace !== undefined) updates.diskSpace = diskSpace;
+  if (isDefault !== undefined) updates.isDefault = isDefault;
 
   const [updated] = await db
     .update(templatesTable)

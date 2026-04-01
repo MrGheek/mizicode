@@ -184,6 +184,20 @@ export async function getTemplate(templateHash: string) {
   return vastFetch(`/template/${templateHash}/`);
 }
 
+export interface VastTemplateListResponse {
+  templates?: Record<string, unknown>[];
+}
+
+export async function listTemplates() {
+  const data = await vastFetch<VastTemplateListResponse>("/templates/");
+  return data.templates || [];
+}
+
+export async function updateTemplate(oldHash: string, params: VastTemplateParams): Promise<VastTemplateResponse> {
+  await deleteTemplate(oldHash).catch(() => {});
+  return createTemplate(params);
+}
+
 export function buildOnStartScript(profileConfig: {
   modelRepo: string;
   modelQuant: string;

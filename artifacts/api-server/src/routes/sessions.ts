@@ -1,11 +1,73 @@
 import { Router } from "express";
 import { db, sessionsTable, gpuProfilesTable, templatesTable } from "@workspace/db";
-import { eq, desc, sql, and, not, inArray } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import { logger } from "../lib/logger";
 
 const router = Router();
+
+const ACTIVE_STATUSES = ["pending", "provisioning", "downloading", "starting", "ready"];
+
+async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect): Promise<typeof sessionsTable.$inferSelect> {
+  if (!session.vastInstanceId || !ACTIVE_STATUSES.includes(session.status)) {
+    return session;
+  }
+
+  try {
+    const instance = await vastai.getInstance(session.vastInstanceId);
+    const urls = vastai.buildInstanceUrls(instance);
+
+    let status = session.status;
+    let statusMessage = session.statusMessage;
+
+    const vastStatus = instance.actual_status || "";
+    const statusMsg = (instance.status_msg || "").toLowerCase();
+
+    if (vastStatus === "running") {
+      if (statusMsg.includes("downloading") || statusMsg.includes("pulling")) {
+        status = "downloading";
+        statusMessage = "Downloading model and dependencies...";
+      } else {
+        status = "ready";
+        statusMessage = "Session is ready";
+      }
+    } else if (vastStatus === "loading" || vastStatus === "creating") {
+      status = "provisioning";
+      statusMessage = "Instance is starting up...";
+    } else if (vastStatus === "exited" || vastStatus === "error") {
+      status = "error";
+      statusMessage = `Instance error: ${instance.status_msg || vastStatus}`;
+    }
+
+    const hoursRunning = session.startedAt
+      ? (Date.now() - session.startedAt.getTime()) / (1000 * 60 * 60)
+      : 0;
+    const totalCost = session.costPerHour ? Math.round(session.costPerHour * hoursRunning * 100) / 100 : 0;
+
+    const [updated] = await db
+      .update(sessionsTable)
+      .set({
+        status,
+        statusMessage,
+        boltDiyUrl: urls.boltDiyUrl || session.boltDiyUrl,
+        codeServerUrl: urls.codeServerUrl || session.codeServerUrl,
+        previewUrl: urls.previewUrl || session.previewUrl,
+        sshHost: urls.sshHost || session.sshHost,
+        sshPort: urls.sshPort || session.sshPort,
+        publicIp: urls.publicIp || session.publicIp,
+        totalCost,
+        updatedAt: new Date(),
+      })
+      .where(eq(sessionsTable.id, session.id))
+      .returning();
+
+    return updated;
+  } catch (err) {
+    logger.warn({ err, sessionId: session.id }, "Failed to auto-sync session from Vast.ai");
+    return session;
+  }
+}
 
 router.get("/sessions", async (_req, res) => {
   const sessions = await db
@@ -41,39 +103,25 @@ router.get("/sessions", async (_req, res) => {
 });
 
 router.get("/sessions/active", async (_req, res) => {
-  const activeStatuses = ["pending", "provisioning", "downloading", "starting", "ready"];
-  const [session] = await db
-    .select({
-      id: sessionsTable.id,
-      profileId: sessionsTable.profileId,
-      profileName: gpuProfilesTable.displayName,
-      vastInstanceId: sessionsTable.vastInstanceId,
-      vastOfferId: sessionsTable.vastOfferId,
-      templateHash: sessionsTable.templateHash,
-      status: sessionsTable.status,
-      statusMessage: sessionsTable.statusMessage,
-      boltDiyUrl: sessionsTable.boltDiyUrl,
-      codeServerUrl: sessionsTable.codeServerUrl,
-      previewUrl: sessionsTable.previewUrl,
-      sshHost: sessionsTable.sshHost,
-      sshPort: sessionsTable.sshPort,
-      publicIp: sessionsTable.publicIp,
-      costPerHour: sessionsTable.costPerHour,
-      totalCost: sessionsTable.totalCost,
-      gpuName: sessionsTable.gpuName,
-      numGpus: sessionsTable.numGpus,
-      startedAt: sessionsTable.startedAt,
-      stoppedAt: sessionsTable.stoppedAt,
-      createdAt: sessionsTable.createdAt,
-      updatedAt: sessionsTable.updatedAt,
-    })
+  const [rawSession] = await db
+    .select()
     .from(sessionsTable)
-    .leftJoin(gpuProfilesTable, eq(sessionsTable.profileId, gpuProfilesTable.id))
-    .where(inArray(sessionsTable.status, activeStatuses))
+    .where(inArray(sessionsTable.status, ACTIVE_STATUSES))
     .orderBy(desc(sessionsTable.createdAt))
     .limit(1);
 
-  res.json({ session: session || null });
+  if (!rawSession) {
+    res.json({ session: null });
+    return;
+  }
+
+  const synced = await syncSessionFromVastai(rawSession);
+  const [profile] = await db
+    .select({ displayName: gpuProfilesTable.displayName })
+    .from(gpuProfilesTable)
+    .where(eq(gpuProfilesTable.id, synced.profileId));
+
+  res.json({ session: { ...synced, profileName: profile?.displayName || "" } });
 });
 
 router.get("/sessions/:sessionId", async (req, res) => {
@@ -83,41 +131,23 @@ router.get("/sessions/:sessionId", async (req, res) => {
     return;
   }
 
-  const [session] = await db
-    .select({
-      id: sessionsTable.id,
-      profileId: sessionsTable.profileId,
-      profileName: gpuProfilesTable.displayName,
-      vastInstanceId: sessionsTable.vastInstanceId,
-      vastOfferId: sessionsTable.vastOfferId,
-      templateHash: sessionsTable.templateHash,
-      status: sessionsTable.status,
-      statusMessage: sessionsTable.statusMessage,
-      boltDiyUrl: sessionsTable.boltDiyUrl,
-      codeServerUrl: sessionsTable.codeServerUrl,
-      previewUrl: sessionsTable.previewUrl,
-      sshHost: sessionsTable.sshHost,
-      sshPort: sessionsTable.sshPort,
-      publicIp: sessionsTable.publicIp,
-      costPerHour: sessionsTable.costPerHour,
-      totalCost: sessionsTable.totalCost,
-      gpuName: sessionsTable.gpuName,
-      numGpus: sessionsTable.numGpus,
-      startedAt: sessionsTable.startedAt,
-      stoppedAt: sessionsTable.stoppedAt,
-      createdAt: sessionsTable.createdAt,
-      updatedAt: sessionsTable.updatedAt,
-    })
+  const [rawSession] = await db
+    .select()
     .from(sessionsTable)
-    .leftJoin(gpuProfilesTable, eq(sessionsTable.profileId, gpuProfilesTable.id))
     .where(eq(sessionsTable.id, id));
 
-  if (!session) {
+  if (!rawSession) {
     res.status(404).json({ error: "Session not found" });
     return;
   }
 
-  res.json(session);
+  const synced = await syncSessionFromVastai(rawSession);
+  const [profile] = await db
+    .select({ displayName: gpuProfilesTable.displayName })
+    .from(gpuProfilesTable)
+    .where(eq(gpuProfilesTable.id, synced.profileId));
+
+  res.json({ ...synced, profileName: profile?.displayName || "" });
 });
 
 router.post("/sessions", async (req, res) => {
