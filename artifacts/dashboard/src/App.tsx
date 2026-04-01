@@ -7,7 +7,6 @@ import { AppLayout } from "@/components/layout/app-layout";
 import Dashboard from "@/pages/dashboard";
 import Sessions from "@/pages/sessions/index";
 import SessionDetail from "@/pages/sessions/[id]";
-import Offers from "@/pages/offers/index";
 import Templates from "@/pages/templates/index";
 
 const queryClient = new QueryClient({
@@ -26,7 +25,6 @@ function Router() {
         <Route path="/" component={Dashboard} />
         <Route path="/sessions" component={Sessions} />
         <Route path="/sessions/:id" component={SessionDetail} />
-        <Route path="/offers" component={Offers} />
         <Route path="/templates" component={Templates} />
         <Route component={NotFound} />
       </Switch>

@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Terminal, LayoutDashboard, Server, Database, Layers, CheckCircle2, AlertCircle } from "lucide-react";
+import { Terminal, LayoutDashboard, Database, Layers, CheckCircle2, AlertCircle } from "lucide-react";
 import { useHealthCheck } from "@workspace/api-client-react";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
@@ -10,7 +10,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const navigation = [
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
     { name: "Sessions", href: "/sessions", icon: Terminal },
-    { name: "GPU Offers", href: "/offers", icon: Server },
     { name: "Templates", href: "/templates", icon: Layers },
   ];
 

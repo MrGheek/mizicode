@@ -164,9 +164,6 @@ export default function Dashboard() {
             <h2 className="text-xl font-bold flex items-center gap-2">
               <Play className="w-5 h-5 text-primary" /> Quick Launch Profiles
             </h2>
-            <Button variant="link" onClick={() => setLocation('/offers')} className="text-primary pr-0">
-              Browse Custom Offers <ArrowRight className="w-4 h-4 ml-1" />
-            </Button>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

@@ -60,9 +60,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
 
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 
-RUN pip3 install --no-cache-dir \
-    huggingface-hub \
-    litellm[proxy]
+RUN pip3 install --no-cache-dir huggingface-hub
 
 RUN git clone --depth 1 https://github.com/stackblitz-labs/bolt.diy /opt/bolt-diy && \
     cd /opt/bolt-diy && \
@@ -80,6 +78,6 @@ RUN chmod +x /opt/onstart.sh
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -sf http://localhost:8081/health | grep -q "ok" || exit 1
 
-EXPOSE 5180 8080 8081 8082 3000 22
+EXPOSE 5180 8080 8081 3000 22
 
 CMD ["/opt/onstart.sh"]

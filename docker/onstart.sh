@@ -43,7 +43,9 @@ PREVIEW_PORT="${PREVIEW_PORT:-3000}"
 VOLUME_MODEL_PATH="${VOLUME_MODEL_PATH:-/workspace/models}"
 if [ -z "$CODE_SERVER_PASSWORD" ]; then
     CODE_SERVER_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
-    echo "Generated code-server password: $CODE_SERVER_PASSWORD" | tee /workspace/.code-server-password
+    echo "$CODE_SERVER_PASSWORD" > /workspace/.code-server-password
+    chmod 600 /workspace/.code-server-password
+    log "code-server password generated and stored at /workspace/.code-server-password (readable after SSH)"
 fi
 
 log "=== OmniQL Coding Environment Starting ==="
@@ -186,56 +188,35 @@ for i in $(seq 1 120); do
     sleep 5
 done
 
-LITELLM_PORT="${LITELLM_PORT:-8082}"
-log "Starting LiteLLM Anthropic-to-OpenAI proxy on port $LITELLM_PORT..."
-litellm \
-    --model "openai/local-kimi" \
-    --api_base "http://localhost:${LLAMA_PORT}/v1" \
-    --api_key "not-needed" \
-    --port "$LITELLM_PORT" \
-    --drop_params \
-    > /var/log/litellm.log 2>&1 &
-LITELLM_PID=$!
-log "LiteLLM proxy started (PID: $LITELLM_PID)"
-
-for i in $(seq 1 30); do
-    if curl -s "http://localhost:${LITELLM_PORT}/health" >/dev/null 2>&1; then
-        log "LiteLLM proxy is ready"
-        break
-    fi
-    sleep 2
-done
-
 log "Configuring claw-code CLI..."
 mkdir -p /root/.config/claw
 cat > /root/.config/claw/settings.json << EOF
 {
-  "model": "local-kimi",
+  "model": "kimi-k2",
   "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:${LITELLM_PORT}",
+    "ANTHROPIC_BASE_URL": "http://localhost:${LLAMA_PORT}",
     "ANTHROPIC_API_KEY": "not-needed"
   }
 }
 EOF
-export ANTHROPIC_BASE_URL="http://localhost:${LITELLM_PORT}"
+export ANTHROPIC_BASE_URL="http://localhost:${LLAMA_PORT}"
 export ANTHROPIC_API_KEY="not-needed"
-echo "export ANTHROPIC_BASE_URL=http://localhost:${LITELLM_PORT}" >> /etc/environment
-echo "export ANTHROPIC_API_KEY=not-needed" >> /etc/environment
-echo "export ANTHROPIC_BASE_URL=http://localhost:${LITELLM_PORT}" >> /root/.bashrc
+echo "ANTHROPIC_BASE_URL=http://localhost:${LLAMA_PORT}" >> /etc/environment
+echo "ANTHROPIC_API_KEY=not-needed" >> /etc/environment
+echo "export ANTHROPIC_BASE_URL=http://localhost:${LLAMA_PORT}" >> /root/.bashrc
 echo "export ANTHROPIC_API_KEY=not-needed" >> /root/.bashrc
-log "claw-code configured: API -> LiteLLM (port $LITELLM_PORT) -> llama.cpp (port $LLAMA_PORT)"
+log "claw-code configured: ANTHROPIC_BASE_URL -> llama.cpp (port $LLAMA_PORT)"
 
 set_status "ready"
 touch /tmp/instance-ready
 
 log "=== OmniQL Coding Environment Ready ==="
 log "  claw (agent): run 'claw' in any terminal"
-log "  Bolt.diy:     http://localhost:$BOLT_PORT"
+log "  Bolt.diy:     http://localhost:$BOLT_PORT (proxied with auth on 5180)"
 log "  code-server:  http://localhost:$CODE_SERVER_PORT"
-log "  llama.cpp:    http://localhost:$LLAMA_PORT"
-log "  LiteLLM:      http://localhost:$LITELLM_PORT"
+log "  llama.cpp:    http://localhost:$LLAMA_PORT (OpenAI + Anthropic API)"
 log "  Preview:      http://localhost:$PREVIEW_PORT"
-log "  SSH:          port 22"
+log "  SSH:          port 22 (key-based only)"
 
 while true; do
     if ! kill -0 $LLAMA_PID 2>/dev/null; then
@@ -251,17 +232,6 @@ while true; do
             $LLAMA_EXTRA_ARGS \
             > /var/log/llama-server.log 2>&1 &
         LLAMA_PID=$!
-    fi
-    if ! kill -0 $LITELLM_PID 2>/dev/null; then
-        log "WARNING: LiteLLM proxy died, restarting..."
-        litellm \
-            --model "openai/local-kimi" \
-            --api_base "http://localhost:${LLAMA_PORT}/v1" \
-            --api_key "not-needed" \
-            --port "$LITELLM_PORT" \
-            --drop_params \
-            > /var/log/litellm.log 2>&1 &
-        LITELLM_PID=$!
     fi
     sleep 30
 done
