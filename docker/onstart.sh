@@ -118,6 +118,10 @@ log "Starting Bolt.diy on port $BOLT_PORT..."
 PORT=$BOLT_PORT pnpm run dev > /var/log/bolt-diy.log 2>&1 &
 log "Bolt.diy started"
 
+log "Starting Claw Task Runner on port 5182..."
+node /opt/claw-runner.js > /var/log/claw-runner.log 2>&1 &
+log "Claw Task Runner started"
+
 log "Configuring nginx with basic auth for exposed services..."
 NGINX_AUTH_USER="${NGINX_AUTH_USER:-omniql}"
 NGINX_AUTH_PASS="${NGINX_AUTH_PASS:-$CODE_SERVER_PASSWORD}"
@@ -158,6 +162,21 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_read_timeout 86400;
+    }
+}
+
+server {
+    listen 5181;
+    server_name _;
+    auth_basic "OmniQL Claw Runner";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    location / {
+        proxy_pass http://localhost:5182;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 300;
     }
 }
 NGINX

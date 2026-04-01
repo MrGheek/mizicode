@@ -73,11 +73,12 @@ RUN mkdir -p /run/sshd /workspace/models /workspace/projects /var/log && \
     git config --global --add safe.directory '*'
 
 COPY onstart.sh /opt/onstart.sh
+COPY claw-runner.js /opt/claw-runner.js
 RUN chmod +x /opt/onstart.sh
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -sf http://localhost:8081/health | grep -q "ok" || exit 1
 
-EXPOSE 5180 8080 8081 3000 22
+EXPOSE 5180 5181 8080 8081 3000 22
 
 CMD ["/opt/onstart.sh"]
