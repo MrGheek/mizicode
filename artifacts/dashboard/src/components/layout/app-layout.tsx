@@ -1,0 +1,71 @@
+import React from "react";
+import { Link, useLocation } from "wouter";
+import { Terminal, LayoutDashboard, Server, Database, Layers, CheckCircle2, AlertCircle } from "lucide-react";
+import { useHealthCheck } from "@workspace/api-client-react";
+
+export function AppLayout({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
+  const { data: health } = useHealthCheck();
+
+  const navigation = [
+    { name: "Dashboard", href: "/", icon: LayoutDashboard },
+    { name: "Sessions", href: "/sessions", icon: Terminal },
+    { name: "GPU Offers", href: "/offers", icon: Server },
+    { name: "Templates", href: "/templates", icon: Layers },
+  ];
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-background">
+      {/* Sidebar */}
+      <div className="w-64 border-r border-border flex flex-col bg-card">
+        <div className="p-6 flex items-center gap-3 border-b border-border">
+          <div className="w-8 h-8 rounded bg-primary flex items-center justify-center text-primary-foreground">
+            <Database className="w-5 h-5" />
+          </div>
+          <div>
+            <h1 className="font-bold text-lg tracking-tight leading-none">OmniQL</h1>
+            <p className="text-[10px] uppercase tracking-widest text-primary font-mono font-bold">Cloud Coding</p>
+          </div>
+        </div>
+
+        <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
+          {navigation.map((item) => {
+            const isActive = location === item.href || (item.href !== "/" && location.startsWith(item.href));
+            return (
+              <Link
+                key={item.name}
+                href={item.href}
+                className={`flex items-center gap-3 px-3 py-2 rounded-md transition-colors text-sm font-medium ${
+                  isActive
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+                }`}
+              >
+                <item.icon className="w-4 h-4" />
+                {item.name}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="p-4 border-t border-border bg-card/50">
+          <div className="flex items-center gap-2 text-xs font-mono">
+            {health?.status === "ok" ? (
+              <CheckCircle2 className="w-3.5 h-3.5 text-primary" />
+            ) : (
+              <AlertCircle className="w-3.5 h-3.5 text-destructive" />
+            )}
+            <span className={health?.status === "ok" ? "text-muted-foreground" : "text-destructive"}>
+              API: {health?.status || "disconnected"}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto bg-background focus:outline-none">
+        {children}
+      </main>
+    </div>
+  );
+}

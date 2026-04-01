@@ -3,13 +3,22 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Cloud Coding Platform API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: profiles
+    description: GPU profile operations
+  - name: sessions
+    description: Coding session operations
+  - name: templates
+    description: Vast.ai template operations
+  - name: offers
+    description: GPU offer operations
+
 paths:
   /healthz:
     get:
@@ -24,6 +33,356 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /profiles:
+    get:
+      operationId: listProfiles
+      tags: [profiles]
+      summary: List GPU profiles
+      description: Returns all available GPU profiles with performance and cost estimates
+      responses:
+        "200":
+          description: List of GPU profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GpuProfile"
+
+  /profiles/{profileId}:
+    get:
+      operationId: getProfile
+      tags: [profiles]
+      summary: Get a GPU profile
+      parameters:
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: GPU profile details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GpuProfile"
+        "404":
+          description: Profile not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions:
+    get:
+      operationId: listSessions
+      tags: [sessions]
+      summary: List all sessions
+      description: Returns all coding sessions with status and service URLs
+      responses:
+        "200":
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Session"
+    post:
+      operationId: createSession
+      tags: [sessions]
+      summary: Start a new coding session
+      description: Provisions a Vast.ai instance with the selected GPU profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{sessionId}:
+    get:
+      operationId: getSession
+      tags: [sessions]
+      summary: Get session details
+      description: Returns session status, service URLs, and cost tracking
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteSession
+      tags: [sessions]
+      summary: Stop and destroy a session
+      description: Destroys the Vast.ai instance and updates session status
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Session destroyed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/active:
+    get:
+      operationId: getActiveSession
+      tags: [sessions]
+      summary: Get current active session
+      description: Returns the currently running session if any
+      responses:
+        "200":
+          description: Active session or null
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActiveSessionResponse"
+
+  /sessions/{sessionId}/refresh:
+    post:
+      operationId: refreshSessionStatus
+      tags: [sessions]
+      summary: Refresh session status from Vast.ai
+      description: Polls Vast.ai for the latest instance status and updates the session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Updated session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /templates:
+    get:
+      operationId: listTemplates
+      tags: [templates]
+      summary: List Vast.ai templates
+      description: Returns all registered templates including the default
+      responses:
+        "200":
+          description: List of templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Template"
+    post:
+      operationId: createTemplate
+      tags: [templates]
+      summary: Create a new template on Vast.ai
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTemplateRequest"
+      responses:
+        "201":
+          description: Template created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /templates/{templateId}:
+    get:
+      operationId: getTemplate
+      tags: [templates]
+      summary: Get template details
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Template details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+        "404":
+          description: Template not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateTemplate
+      tags: [templates]
+      summary: Update a template
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTemplateRequest"
+      responses:
+        "200":
+          description: Template updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Template"
+        "404":
+          description: Template not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteTemplate
+      tags: [templates]
+      summary: Delete a template
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Template deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Template not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /offers:
+    get:
+      operationId: searchOffers
+      tags: [offers]
+      summary: Search GPU offers on Vast.ai
+      description: Search available GPU machines with profile-aware filters
+      parameters:
+        - name: profileId
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Filter offers by GPU profile
+        - name: gpuName
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by GPU name (e.g., RTX 4090)
+        - name: numGpus
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Minimum number of GPUs
+        - name: maxPrice
+          in: query
+          required: false
+          schema:
+            type: number
+          description: Maximum price per hour
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+          description: Max number of results
+      responses:
+        "200":
+          description: List of GPU offers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GpuOffer"
+
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [sessions]
+      summary: Dashboard summary
+      description: Returns summary stats for the dashboard
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +393,340 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+      required:
+        - success
+
+    GpuProfile:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        displayName:
+          type: string
+        gpuName:
+          type: string
+        numGpus:
+          type: integer
+        totalVram:
+          type: integer
+        dockerImageTag:
+          type: string
+        defaultQuant:
+          type: string
+        quantSizeGb:
+          type: integer
+        diskSizeGb:
+          type: integer
+        estimatedSpeedMin:
+          type: number
+        estimatedSpeedMax:
+          type: number
+        estimatedCostMin:
+          type: number
+        estimatedCostMax:
+          type: number
+        llamaCtxSize:
+          type: integer
+        llamaBatchSize:
+          type: integer
+        llamaExtraArgs:
+          type: string
+        searchParams:
+          type: object
+        startupTimeMin:
+          type: integer
+          description: Estimated startup time in minutes (first launch)
+        startupTimeVolume:
+          type: integer
+          description: Estimated startup time in minutes (with volume)
+      required:
+        - id
+        - name
+        - displayName
+        - gpuName
+        - numGpus
+        - totalVram
+        - dockerImageTag
+        - defaultQuant
+        - quantSizeGb
+        - diskSizeGb
+        - estimatedSpeedMin
+        - estimatedSpeedMax
+        - estimatedCostMin
+        - estimatedCostMax
+        - llamaCtxSize
+        - llamaBatchSize
+        - searchParams
+        - startupTimeMin
+        - startupTimeVolume
+
+    Session:
+      type: object
+      properties:
+        id:
+          type: integer
+        profileId:
+          type: integer
+        profileName:
+          type: string
+        vastInstanceId:
+          type: integer
+          nullable: true
+        vastOfferId:
+          type: integer
+          nullable: true
+        templateHash:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, provisioning, downloading, starting, ready, stopping, stopped, error]
+        statusMessage:
+          type: string
+          nullable: true
+        boltDiyUrl:
+          type: string
+          nullable: true
+        codeServerUrl:
+          type: string
+          nullable: true
+        previewUrl:
+          type: string
+          nullable: true
+        sshHost:
+          type: string
+          nullable: true
+        sshPort:
+          type: integer
+          nullable: true
+        publicIp:
+          type: string
+          nullable: true
+        costPerHour:
+          type: number
+          nullable: true
+        totalCost:
+          type: number
+          nullable: true
+        gpuName:
+          type: string
+          nullable: true
+        numGpus:
+          type: integer
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        stoppedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - profileId
+        - profileName
+        - status
+        - createdAt
+        - updatedAt
+
+    ActiveSessionResponse:
+      type: object
+      properties:
+        session:
+          $ref: "#/components/schemas/Session"
+          nullable: true
+      required:
+        - session
+
+    CreateSessionRequest:
+      type: object
+      properties:
+        profileId:
+          type: integer
+        offerId:
+          type: integer
+          nullable: true
+          description: Specific Vast.ai offer ID to use (optional, auto-selects best if not provided)
+      required:
+        - profileId
+
+    Template:
+      type: object
+      properties:
+        id:
+          type: integer
+        templateHash:
+          type: string
+        name:
+          type: string
+        image:
+          type: string
+        onStartScript:
+          type: string
+          nullable: true
+        envVars:
+          type: string
+          nullable: true
+        isDefault:
+          type: boolean
+        profileId:
+          type: integer
+          nullable: true
+        diskSpace:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - templateHash
+        - name
+        - image
+        - isDefault
+        - createdAt
+        - updatedAt
+
+    CreateTemplateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        image:
+          type: string
+        onStartScript:
+          type: string
+          nullable: true
+        envVars:
+          type: string
+          nullable: true
+        profileId:
+          type: integer
+          nullable: true
+        diskSpace:
+          type: integer
+          nullable: true
+        isDefault:
+          type: boolean
+          default: false
+      required:
+        - name
+        - image
+
+    UpdateTemplateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        image:
+          type: string
+        onStartScript:
+          type: string
+          nullable: true
+        envVars:
+          type: string
+          nullable: true
+        profileId:
+          type: integer
+          nullable: true
+        diskSpace:
+          type: integer
+          nullable: true
+        isDefault:
+          type: boolean
+
+    GpuOffer:
+      type: object
+      properties:
+        id:
+          type: integer
+        gpuName:
+          type: string
+        numGpus:
+          type: integer
+        gpuRam:
+          type: integer
+        totalRam:
+          type: integer
+        cpuCores:
+          type: integer
+        cpuName:
+          type: string
+        diskSpace:
+          type: number
+        diskName:
+          type: string
+        inetDown:
+          type: number
+        inetUp:
+          type: number
+        dphTotal:
+          type: number
+          description: Price per hour
+        dlperf:
+          type: number
+        reliability:
+          type: number
+        geolocation:
+          type: string
+        rentable:
+          type: boolean
+        rented:
+          type: boolean
+        verification:
+          type: string
+      required:
+        - id
+        - gpuName
+        - numGpus
+        - gpuRam
+        - dphTotal
+        - geolocation
+        - rentable
+
+    DashboardSummary:
+      type: object
+      properties:
+        activeSessions:
+          type: integer
+        totalSessions:
+          type: integer
+        totalCost:
+          type: number
+        totalHours:
+          type: number
+        profileCounts:
+          type: object
+          additionalProperties:
+            type: integer
+      required:
+        - activeSessions
+        - totalSessions
+        - totalCost
+        - totalHours
+        - profileCounts
