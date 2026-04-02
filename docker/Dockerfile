@@ -25,21 +25,18 @@ RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp && 
     cp build/bin/llama-server /usr/local/bin/llama-server
 
 # ── Stage 2: Build claw-code from Rust source ─────────────────────────────────
+# Source is bundled in the repo under docker/claw-code-src — no git clone needed.
 FROM ubuntu:${UBUNTU_VERSION} AS claw-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git curl pkg-config libssl-dev ca-certificates \
-    && update-ca-certificates \
+    build-essential curl pkg-config libssl-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
-# Disable interactive credential prompts — required for non-TTY Docker builds
-ENV GIT_TERMINAL_PROMPT=0
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-RUN git clone --depth 1 https://github.com/ultraworkers/claw-code /opt/claw-code-src && \
-    cd /opt/claw-code-src/rust && \
+COPY claw-code-src/claw-code-main /opt/claw-code-src
+RUN cd /opt/claw-code-src/rust && \
     cargo build --release && \
     cp target/release/claw /usr/local/bin/claw
 
@@ -81,7 +78,7 @@ RUN git clone --depth 1 https://github.com/stackblitz-labs/bolt.diy /opt/bolt-di
     cd /opt/bolt-diy && \
     pnpm install --frozen-lockfile || pnpm install
 
-RUN git clone --depth 1 https://github.com/ultraworkers/claw-code /opt/claw-code
+COPY claw-code-src/claw-code-main /opt/claw-code
 
 RUN mkdir -p /run/sshd /workspace/models /workspace/projects /var/log && \
     git config --global --add safe.directory /workspace/projects && \
