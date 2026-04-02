@@ -1,0 +1,291 @@
+These are both promising, but they are not equal in urgency.
+
+My recommendation:
+
+#137 = yes, strong next task
+#138 = useful, but I would narrow or stage it
+
+And if you do both, I’d do them in this order:
+
+#137 first, then a staged version of #138
+
+Because the current spec already gives you:
+
+a static curated unified catalog used by bootstrap
+six archetypes with source-family preferences that clearly need richer social/domain coverage in some cases
+a Python sidecar pattern that already exists and is proven via OpenBB
+
+So the architectural seam for both tasks is real. But #137 is the cleaner, more spec-aligned immediate move.
+
+#137 — Catalog Curator Intelligence Program
+Verdict
+
+Yes. Strong task.
+
+Why it fits the current spec
+
+Right now the curated catalog is explicitly described as a static catalog of verified data source entries used by bootstrap.
+That means your diagnosis is correct: niche domains only enter the catalog when developers add them.
+
+The spec also already says bootstrap narrowing works on:
+
+CatalogEntry
+quality hints
+conservative caps
+source-family and archetype alignment
+
+So adding a DB-backed extension that merges with the static catalog is a very natural evolution.
+
+What I especially like
+static catalog remains baseline
+DB catalog is curator-approved extension
+approved DB entries merge into the same narrowing/scoring logic
+provenance is explicit (static_catalog vs db_catalog)
+curator gating via inbox keeps this aligned with Ujuzi’s broader advisory/approval doctrine
+discovery sources feeding social_listening / competitive_intelligence immediately is smart, assuming the source-family invariant already holds
+Main feedback
+1. Do not make catalog_curator a full new archetype too quickly
+
+This is my biggest caution.
+
+The spec’s archetype layer is currently a coherent six-archetype strategy model with defaults, KPIs, and source-family preferences.
+Adding catalog_curator as a seventh archetype is a bigger architectural move than the rest of this task.
+
+I would strongly consider one of these instead:
+
+implement Catalog Curator first as a specialized intelligence_service program template
+or a program role / mode
+or a run repertoire extension
+before promoting it to a formal archetype
+
+Reason:
+
+archetypes affect bootstrap defaults, KPI assumptions, and strategic identity
+“catalog curator” sounds more like an operational function than a first-class business archetype
+
+If you do keep it as an archetype, be very explicit why it belongs alongside venture_builder, market_seer, etc.
+
+2. Approval state should probably include archive later, but not necessarily now
+
+Your DB state machine is:
+
+draft → proposed → approved | rejected
+
+That is fine for v1.
+
+But because you also mention curator can “reject/archive,” I’d keep the task wording consistent:
+
+either keep archive out of v1
+or add it explicitly to the state model
+
+Right now it reads slightly mixed.
+
+3. The self-expanding loop should be quality-gated, not just discovery-gated
+
+Good that you say deterministic quality heuristics only.
+
+I’d make the promotion/proposal threshold explicit:
+
+distinct programs found it useful
+candidate has bounded noise level
+candidate has some activity/utility signal
+candidate is not near-duplicate of an existing static or DB-approved entry
+
+That keeps the DB catalog from becoming a junk drawer.
+
+4. Add duplicate / collision rules for catalog keys
+
+Since the static catalog already has unique key semantics, the DB extension needs explicit collision rules:
+
+DB entry cannot reuse static key unless intentionally overriding is supported
+likely forbid override in v1
+reject or auto-prefix duplicate keys
+5. Catalog Management UI is good, but keep it minimal
+
+Approved:
+
+pending candidates
+approved entries
+provenance
+proposal history
+
+Avoid turning it into a full editorial workbench yet.
+
+6. “Any program can use discovery tools” is okay, but keep curator approval centralized
+
+That is the right split:
+
+broad discovery
+narrow approval
+
+Good doctrine.
+
+#138 — twscrape Python Sidecar Integration
+Verdict
+
+Potentially high-value, but riskier. I would stage it.
+
+Why it fits the spec
+
+The sidecar pattern is already real and documented:
+
+FastAPI sidecar
+registry
+plugin discovery
+sidecar manager
+health route
+bounded plugin capabilities via OpenBB
+
+So architecturally, adding a new sidecar plugin is a good fit.
+
+The current source model also includes:
+
+x_search
+as a source type already
+
+And the curated catalog entry structure already supports:
+
+x_search
+X config
+social-oriented source families/tags
+
+So yes, richer X collection is directionally aligned.
+
+But here’s the key issue
+
+Your task is really two tasks at once:
+
+A. Add a new sidecar plugin integration pattern for X
+
+This is fine.
+
+B. Introduce a substantially richer X data-collection doctrine
+
+This is the riskier part:
+
+timelines
+trends
+replies
+account cookies
+new source types
+new platform tools
+new operational secret handling
+
+That is much larger.
+
+My main feedback
+1. Stage this into v1 and v2
+
+I would split conceptually:
+
+v1
+add twscrape plugin
+add platform tools only
+python.twscrape_search
+python.twscrape_timeline
+python.twscrape_trends
+no new scheduled source types yet
+use it to support curator/discovery workflows manually or semi-manually
+v2
+add x_timeline
+add x_trends
+add bootstrap/default integrations
+add recurring source-run support
+
+Why:
+
+this lets you validate plugin stability and cookie management first
+avoids prematurely expanding the source taxonomy
+2. Be careful adding x_timeline and x_trends directly to the source model
+
+The current spec’s source family preferences are still quite simple:
+
+social maps operationally to existing social types in bootstrap/defaults
+
+Adding two more X source types is fine eventually, but that is a meaningful extension of:
+
+sourceTypeEnum
+config schemas
+bootstrap defaults
+source runner dispatch
+signal semantics
+
+That’s why I’d stage it.
+
+3. Cookie-based account auth is the biggest operational risk
+
+You’ve scoped it sensibly, but this is the part most likely to cause brittleness.
+
+So:
+
+good to disable endpoints with 503 instead of crashing
+good to expose health
+good to log pool size
+but I would keep this very clearly non-autopilot-preferred and low-trust until proven stable
+
+The OpenBB sidecar is bounded and provider-like; twscrape is much closer to operational scraping fragility.
+
+4. The “zero additional wiring needed” claim should be proven, not assumed
+
+I like that you explicitly included a test/startup check for the social-family routing invariant.
+
+Keep that. It’s important.
+
+5. Avoid making timelines/trends first-class bootstrap defaults immediately
+
+You mention updating archetype defaults for venture_builder and catalog_curator.
+
+I would hold off on broad bootstrap default inclusion until you’ve proven:
+
+plugin stability
+signal quality
+account pool reliability
+rate/ban behavior
+
+The current spec is conservative about bootstrap source-family mappings and curated catalog narrowing.
+So immediate defaulting feels a bit aggressive.
+
+6. Keep x_search coexistence doctrine very explicit
+
+This is good in your plan:
+
+Grok = semantic/fuzzy
+twscrape = structured timelines/trends
+
+That distinction is important and should remain crisp.
+
+Recommended revised sequence
+Do now
+#137 — DB-backed catalog extension + curator approval loop
+
+This is the cleaner and more necessary move.
+
+Then do a narrowed #138
+#138a — twscrape sidecar plugin + platform tools
+plugin
+health
+cookie pool
+search/timeline/trends tools
+no new recurring source types yet
+Later
+#138b — x_timeline / x_trends as scheduled source types
+
+Only after proving the plugin works reliably.
+
+Bottom line
+#137
+
+Yes. Strong next task.
+My only major caution is:
+
+reconsider whether catalog_curator should really be a first-class archetype right now
+#138
+
+Good direction, but too broad as currently written.
+My main recommendation is:
+
+stage it
+do plugin/tools first
+add scheduled source types later
+
+That will keep the architecture cleaner and reduce operational risk while still unlocking the richer X surface you want.
