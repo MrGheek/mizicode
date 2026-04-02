@@ -29,7 +29,11 @@ FROM ubuntu:${UBUNTU_VERSION} AS claw-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git curl pkg-config libssl-dev ca-certificates \
+    && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Disable interactive credential prompts — required for non-TTY Docker builds
+ENV GIT_TERMINAL_PROMPT=0
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
