@@ -36,11 +36,15 @@ MODEL_QUANT="${MODEL_QUANT:-UD-TQ1_0}"
 LLAMA_CTX_SIZE="${LLAMA_CTX_SIZE:-32768}"
 LLAMA_BATCH_SIZE="${LLAMA_BATCH_SIZE:-512}"
 LLAMA_EXTRA_ARGS="${LLAMA_EXTRA_ARGS:-}"
+# LLAMA_PORT is the external port (litellm proxy — speaks OpenAI + Anthropic API)
 LLAMA_PORT="${LLAMA_PORT:-8081}"
+# Internal port for llama-cpp-python (OpenAI format only)
+LLAMA_INTERNAL_PORT=8082
 CODE_SERVER_PORT="${CODE_SERVER_PORT:-8080}"
 BOLT_PORT="${BOLT_PORT:-5173}"
 PREVIEW_PORT="${PREVIEW_PORT:-3000}"
 VOLUME_MODEL_PATH="${VOLUME_MODEL_PATH:-/workspace/models}"
+
 if [ -z "$CODE_SERVER_PASSWORD" ]; then
     CODE_SERVER_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
     echo "$CODE_SERVER_PASSWORD" > /workspace/.code-server-password
@@ -83,19 +87,28 @@ log "Using model file: $GGUF_FILES"
 
 set_status "starting"
 
-log "Starting llama.cpp server on port $LLAMA_PORT..."
-llama-server \
+log "Starting llama-cpp-python server on internal port $LLAMA_INTERNAL_PORT..."
+python3 -m llama_cpp.server \
     --model "$GGUF_FILES" \
-    --port "$LLAMA_PORT" \
     --host 0.0.0.0 \
-    --n-gpu-layers 999 \
-    --split-mode layer \
-    --ctx-size "$LLAMA_CTX_SIZE" \
-    --batch-size "$LLAMA_BATCH_SIZE" \
-    $LLAMA_EXTRA_ARGS \
+    --port $LLAMA_INTERNAL_PORT \
+    --n_gpu_layers -1 \
+    --n_ctx "$LLAMA_CTX_SIZE" \
+    --n_batch "$LLAMA_BATCH_SIZE" \
     > /var/log/llama-server.log 2>&1 &
 LLAMA_PID=$!
-log "llama.cpp server started (PID: $LLAMA_PID)"
+log "llama-cpp-python server started (PID: $LLAMA_PID)"
+
+log "Starting litellm proxy on port $LLAMA_PORT (OpenAI + Anthropic API)..."
+litellm \
+    --model openai/kimi-k2 \
+    --api_base "http://localhost:${LLAMA_INTERNAL_PORT}/v1" \
+    --api_key not-needed \
+    --host 0.0.0.0 \
+    --port "$LLAMA_PORT" \
+    > /var/log/litellm.log 2>&1 &
+LITELLM_PID=$!
+log "litellm proxy started (PID: $LITELLM_PID)"
 
 log "Starting code-server on port $CODE_SERVER_PORT..."
 PASSWORD="$CODE_SERVER_PASSWORD" code-server \
@@ -195,36 +208,26 @@ echo "PermitRootLogin prohibit-password" >> /etc/ssh/sshd_config
 /usr/sbin/sshd
 log "SSH server started (key-based auth only)"
 
-log "Waiting for llama.cpp to be ready..."
+log "Waiting for llama-cpp-python to be ready (model loading may take a few minutes)..."
 for i in $(seq 1 120); do
-    if curl -s http://localhost:$LLAMA_PORT/health | grep -q "ok"; then
-        log "llama.cpp is ready!"
+    if curl -sf "http://localhost:$LLAMA_INTERNAL_PORT/health" > /dev/null 2>&1; then
+        log "llama-cpp-python is ready!"
         break
     fi
     if [ $i -eq 120 ]; then
-        log "WARNING: llama.cpp did not respond within 120 seconds"
+        log "WARNING: llama-cpp-python did not respond within 600 seconds"
     fi
     sleep 5
 done
 
 log "Configuring claw-code CLI..."
-mkdir -p /root/.config/claw
-cat > /root/.config/claw/settings.json << EOF
-{
-  "model": "kimi-k2",
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:${LLAMA_PORT}",
-    "ANTHROPIC_API_KEY": "not-needed"
-  }
-}
-EOF
 export ANTHROPIC_BASE_URL="http://localhost:${LLAMA_PORT}"
 export ANTHROPIC_API_KEY="not-needed"
 echo "ANTHROPIC_BASE_URL=http://localhost:${LLAMA_PORT}" >> /etc/environment
 echo "ANTHROPIC_API_KEY=not-needed" >> /etc/environment
 echo "export ANTHROPIC_BASE_URL=http://localhost:${LLAMA_PORT}" >> /root/.bashrc
 echo "export ANTHROPIC_API_KEY=not-needed" >> /root/.bashrc
-log "claw-code configured: ANTHROPIC_BASE_URL -> llama.cpp (port $LLAMA_PORT)"
+log "claw-code configured: ANTHROPIC_BASE_URL -> litellm proxy (port $LLAMA_PORT)"
 
 set_status "ready"
 touch /tmp/instance-ready
@@ -233,22 +236,20 @@ log "=== OmniQL Coding Environment Ready ==="
 log "  claw (agent): run 'claw' in any terminal"
 log "  Bolt.diy:     http://localhost:$BOLT_PORT (proxied with auth on 5180)"
 log "  code-server:  http://localhost:$CODE_SERVER_PORT"
-log "  llama.cpp:    http://localhost:$LLAMA_PORT (OpenAI + Anthropic API)"
+log "  LLM API:      http://localhost:$LLAMA_PORT (OpenAI + Anthropic via litellm)"
 log "  Preview:      http://localhost:$PREVIEW_PORT"
 log "  SSH:          port 22 (key-based only)"
 
 while true; do
     if ! kill -0 $LLAMA_PID 2>/dev/null; then
-        log "WARNING: llama.cpp process died, restarting..."
-        llama-server \
+        log "WARNING: llama-cpp-python process died, restarting..."
+        python3 -m llama_cpp.server \
             --model "$GGUF_FILES" \
-            --port "$LLAMA_PORT" \
             --host 0.0.0.0 \
-            --n-gpu-layers 999 \
-            --split-mode layer \
-            --ctx-size "$LLAMA_CTX_SIZE" \
-            --batch-size "$LLAMA_BATCH_SIZE" \
-            $LLAMA_EXTRA_ARGS \
+            --port $LLAMA_INTERNAL_PORT \
+            --n_gpu_layers -1 \
+            --n_ctx "$LLAMA_CTX_SIZE" \
+            --n_batch "$LLAMA_BATCH_SIZE" \
             > /var/log/llama-server.log 2>&1 &
         LLAMA_PID=$!
     fi

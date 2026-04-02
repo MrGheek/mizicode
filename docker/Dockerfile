@@ -1,31 +1,8 @@
-ARG CUDA_VERSION=12.4.0
 ARG UBUNTU_VERSION=22.04
+ARG CUDA_VERSION=12.4.0
 
-# ── Stage 1: Build llama.cpp with CUDA ────────────────────────────────────────
-# Requires Linux x86_64 — build via GitHub Actions, not Docker Desktop on Mac.
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS llama-builder
-
-# Single arch (80 = A100/sm_80) with PTX included.
-# CUDA JIT-compiles PTX for any newer GPU (RTX 3090/4090, H100) at first run.
-# Compiling 4 arches OOMs GitHub Actions' 7GB RAM after ~90 min.
-ARG LLAMA_CUDA_ARCH=80
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git curl wget pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp && \
-    cd /opt/llama.cpp && \
-    cmake -B build \
-        -DGGML_CUDA=ON \
-        -DGGML_NATIVE=OFF \
-        -DCMAKE_CUDA_ARCHITECTURES="${LLAMA_CUDA_ARCH}" \
-        -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build build --config Release -j1 && \
-    cp build/bin/llama-server /usr/local/bin/llama-server
-
-# ── Stage 2: Build claw-code from Rust source ─────────────────────────────────
-# Source is bundled in the repo under docker/claw-code-src — no git clone needed.
+# ── Stage 1: Build claw-code from bundled Rust source ─────────────────────────
+# Source is in docker/claw-code-src — no git clone or auth required.
 FROM ubuntu:${UBUNTU_VERSION} AS claw-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -62,7 +39,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=llama-builder /usr/local/bin/llama-server /usr/local/bin/llama-server
+# llama-cpp-python with pre-built CUDA 12.4 wheels.
+# No nvcc, no cmake, no GPU required at build time — installs a pre-compiled binary.
+RUN pip3 install --no-cache-dir --prefer-binary \
+    "llama-cpp-python[server]" \
+    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+
+# litellm proxy: accepts both OpenAI /v1/chat/completions and Anthropic /v1/messages,
+# forwarding to llama-cpp-python. Lets claw-code use Anthropic format seamlessly.
+RUN pip3 install --no-cache-dir litellm
+
+RUN pip3 install --no-cache-dir huggingface-hub
+
 COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw
 
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
@@ -71,8 +59,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://code-server.dev/install.sh | sh
-
-RUN pip3 install --no-cache-dir huggingface-hub
 
 RUN git clone --depth 1 https://github.com/stackblitz-labs/bolt.diy /opt/bolt-diy && \
     cd /opt/bolt-diy && \
@@ -89,7 +75,7 @@ COPY claw-runner.js /opt/claw-runner.js
 RUN chmod +x /opt/onstart.sh
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD curl -sf http://localhost:8081/health | grep -q "ok" || exit 1
+    CMD curl -sf http://localhost:8081/health || exit 1
 
 EXPOSE 5180 5181 8080 8081 3000 22
 
