@@ -38,7 +38,7 @@ ENV GIT_TERMINAL_PROMPT=0
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-RUN git clone --depth 1 https://github.com/instructkr/claw-code /opt/claw-code-src && \
+RUN git clone --depth 1 https://github.com/ultraworkers/claw-code /opt/claw-code-src && \
     cd /opt/claw-code-src/rust && \
     cargo build --release && \
     cp target/release/claw /usr/local/bin/claw
@@ -81,7 +81,7 @@ RUN git clone --depth 1 https://github.com/stackblitz-labs/bolt.diy /opt/bolt-di
     cd /opt/bolt-diy && \
     pnpm install --frozen-lockfile || pnpm install
 
-RUN git clone --depth 1 https://github.com/instructkr/claw-code /opt/claw-code
+RUN git clone --depth 1 https://github.com/ultraworkers/claw-code /opt/claw-code
 
 RUN mkdir -p /run/sshd /workspace/models /workspace/projects /var/log && \
     git config --global --add safe.directory /workspace/projects && \
