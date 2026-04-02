@@ -21,7 +21,7 @@ RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp && 
         -DGGML_NATIVE=OFF \
         -DCMAKE_CUDA_ARCHITECTURES="${LLAMA_CUDA_ARCH}" \
         -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build build --config Release -j2 && \
+    cmake --build build --config Release -j1 && \
     cp build/bin/llama-server /usr/local/bin/llama-server
 
 # ── Stage 2: Build claw-code from Rust source ─────────────────────────────────
