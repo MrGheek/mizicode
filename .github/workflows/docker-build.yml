@@ -12,6 +12,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Free disk space
+        run: |
+          # GitHub Actions runners come pre-loaded with ~10 GB of tools we don't need.
+          # Removing them before the Docker build prevents "no space left on device".
+          echo "=== Disk before cleanup ==="
+          df -h
+
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/julia*
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/share/miniconda
+          sudo apt-get clean
+          docker image prune -a -f
+
+          echo "=== Disk after cleanup ==="
+          df -h
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -30,8 +53,7 @@ jobs:
           context: docker/
           file: docker/Dockerfile
           push: true
-          # All three tags are identical — same binary compiled for all modern GPU arches.
-          # Building once and pushing multiple tags avoids parallel OOM kills.
+          # All tags point to the same image — build once, push multiple tags.
           tags: |
             gheeklabs/coding-env:cuda12.4
             gheeklabs/coding-env:a100
@@ -39,6 +61,7 @@ jobs:
             gheeklabs/coding-env:latest
           build-args: |
             CUDA_VERSION=12.4.0
-            LLAMA_CUDA_ARCH=80
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Use registry cache instead of GHA cache to avoid the 10 GB GHA cache
+          # limit from causing secondary disk exhaustion.
+          cache-from: type=registry,ref=gheeklabs/coding-env:buildcache
+          cache-to: type=registry,ref=gheeklabs/coding-env:buildcache,mode=max
