@@ -1,11 +1,43 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
 import { Terminal, LayoutDashboard, Database, Layers, CheckCircle2, AlertCircle } from "lucide-react";
-import { useHealthCheck } from "@workspace/api-client-react";
+import {
+  useHealthCheck,
+  useGetActiveSession,
+  useDeleteSession,
+  useGetSchedulerConfig,
+  getGetActiveSessionQueryKey,
+} from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { StopCountdownModal } from "@/components/stop-countdown-modal";
+import { useToast } from "@/hooks/use-toast";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { data: health } = useHealthCheck();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: activeSessionResp } = useGetActiveSession({
+    query: { refetchInterval: 15000, queryKey: getGetActiveSessionQueryKey() }
+  });
+  const { data: schedulerConfig } = useGetSchedulerConfig();
+  const deleteSession = useDeleteSession();
+
+  const activeSession = activeSessionResp?.session ?? null;
+
+  const handleScheduledStop = () => {
+    if (!activeSession) return;
+    deleteSession.mutate({ sessionId: activeSession.id }, {
+      onSuccess: () => {
+        toast({ title: "Session auto-stopped", description: "Scheduled stop time reached." });
+        queryClient.invalidateQueries({ queryKey: getGetActiveSessionQueryKey() });
+      },
+      onError: () => {
+        toast({ title: "Failed to stop session", variant: "destructive" });
+      },
+    });
+  };
 
   const navigation = [
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -65,6 +97,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <main className="flex-1 overflow-y-auto bg-background focus:outline-none">
         {children}
       </main>
+
+      {/* Global stop countdown modal — appears anywhere in the app */}
+      <StopCountdownModal
+        schedulerConfig={schedulerConfig}
+        activeSession={activeSession}
+        onStop={handleScheduledStop}
+      />
     </div>
   );
 }

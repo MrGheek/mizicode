@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { db, sessionsTable, gpuProfilesTable, templatesTable, volumesTable } from "@workspace/db";
-import { eq, desc, inArray, and } from "drizzle-orm";
+import { db, sessionsTable, gpuProfilesTable, templatesTable } from "@workspace/db";
+import { eq, desc, inArray } from "drizzle-orm";
 import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
@@ -33,11 +33,9 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
         status = "starting";
         statusMessage = "Loading model into GPU memory...";
       } else if (statusMsg.includes("llm_ready")) {
-        // Only mark fully ready once vLLM is confirmed online
         status = "ready";
         statusMessage = "Session is ready — vLLM online";
       } else if (statusMsg.includes("services_ready")) {
-        // Phase 1 done: code-server/Bolt.diy/nginx up, but LLM still loading
         status = "starting";
         statusMessage = "Tools ready — LLM model loading in background...";
       } else {
@@ -179,58 +177,23 @@ router.post("/sessions", async (req, res) => {
   let insertedSessionId: number | undefined;
 
   try {
-    // Look up the most recent READY storage volume for this profile (do this first
-    // so we know whether to search machine-constrained offers)
-    const [volumeRecord] = await db
-      .select()
-      .from(volumesTable)
-      .where(and(eq(volumesTable.profileId, profileId), eq(volumesTable.status, "ready")))
-      .orderBy(desc(volumesTable.updatedAt))
-      .limit(1);
-
-    const hasReadyVolume = volumeRecord?.status === "ready" && !!volumeRecord?.vastVolumeId && !!volumeRecord?.machineId;
-    const vastVolumeId = hasReadyVolume ? volumeRecord.vastVolumeId! : undefined;
-    const volumeMachineId = hasReadyVolume ? volumeRecord.machineId! : undefined;
-
     let selectedOfferId = offerId;
-    let volumeMounted = false;
 
     if (!selectedOfferId) {
       const searchParams = (profile.searchParams as Record<string, unknown>) || {};
+      const offers = await vastai.searchOffers({
+        gpu_name: searchParams.gpu_name as string,
+        num_gpus: searchParams.num_gpus as number,
+        min_gpu_ram: searchParams.min_gpu_ram as number,
+        disk_space: profile.diskSizeGb,
+        limit: 1,
+      });
 
-      // If a ready volume exists, try to find an offer on the same machine first.
-      // Vast.ai volumes are machine-local — the session must run on the same host to mount them.
-      if (hasReadyVolume && volumeMachineId) {
-        logger.info({ profileId, volumeMachineId }, "Volume ready — searching for offer on volume's machine");
-        const machineOffers = await vastai.searchOffersOnMachine(volumeMachineId);
-        if (machineOffers.length > 0) {
-          selectedOfferId = (machineOffers[0] as VastOffer).id;
-          volumeMounted = true;
-          logger.info({ selectedOfferId, volumeMachineId }, "Found offer on volume's machine — session will mount volume");
-        } else {
-          logger.warn({ volumeMachineId }, "No offers available on volume's machine — falling back to any machine (no volume mount)");
-        }
+      if (!offers || offers.length === 0) {
+        res.status(400).json({ error: "No GPU offers available for this profile. Try again later or choose a different profile." });
+        return;
       }
-
-      // Fallback: search any machine (no volume mount)
-      if (!selectedOfferId) {
-        const offers = await vastai.searchOffers({
-          gpu_name: searchParams.gpu_name as string,
-          num_gpus: searchParams.num_gpus as number,
-          min_gpu_ram: searchParams.min_gpu_ram as number,
-          disk_space: profile.diskSizeGb,
-          limit: 1,
-        });
-
-        if (!offers || offers.length === 0) {
-          res.status(400).json({ error: "No GPU offers available for this profile. Try again later or choose a different profile." });
-          return;
-        }
-        selectedOfferId = (offers[0] as VastOffer).id;
-      }
-    } else {
-      // offerId was provided by caller — assume volume can be mounted if it's on the same machine
-      volumeMounted = hasReadyVolume;
+      selectedOfferId = (offers[0] as VastOffer).id;
     }
 
     const [defaultTemplate] = await db
@@ -241,13 +204,7 @@ router.post("/sessions", async (req, res) => {
 
     const templateHash = defaultTemplate?.templateHash || undefined;
 
-    if (volumeMounted) {
-      logger.info({ profileId, vastVolumeId }, "Session will mount storage volume — model download skipped");
-    } else if (hasReadyVolume) {
-      logger.warn({ profileId }, "Volume exists but machine unavailable — session will run without volume mount");
-    } else {
-      logger.info({ profileId }, "No ready volume — model will be downloaded on instance startup");
-    }
+    logger.info({ profileId, selectedOfferId }, "Launching session — model will download on instance startup");
 
     const [session] = await db
       .insert(sessionsTable)
@@ -274,7 +231,6 @@ router.post("/sessions", async (req, res) => {
       llamaBatchSize: profile.llamaBatchSize,
       llamaExtraArgs: profile.llamaExtraArgs || "",
       numGpus: profile.numGpus,
-      hasVolume: volumeMounted,
     });
 
     const result = await vastai.createInstance({
@@ -283,30 +239,23 @@ router.post("/sessions", async (req, res) => {
       onstart,
       disk: profile.diskSizeGb,
       templateHashId: templateHash,
-      volumeId: volumeMounted ? vastVolumeId : undefined,
-      volumeMountPath: "/workspace/models",
       env: {
         MODEL_REPO,
         MODEL_QUANT,
         VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
         VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
         NUM_GPUS: String(profile.numGpus),
-        VOLUME_MOUNTED: volumeMounted ? "1" : "0",
       },
     });
 
     const instanceId = result.new_contract;
-
-    const statusMessage = volumeMounted
-      ? "Instance created — loading model from volume (fast start)..."
-      : "Instance created — waiting for startup and model download...";
 
     const [updated] = await db
       .update(sessionsTable)
       .set({
         vastInstanceId: instanceId,
         status: "provisioning",
-        statusMessage,
+        statusMessage: "Instance created — waiting for startup and model download...",
         startedAt: new Date(),
         costPerHour: result.expected_price || null,
         updatedAt: new Date(),

@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { seedProfiles } from "./services/profiles";
 import { registerDefaultTemplate } from "./services/templates";
+import { startScheduler } from "./services/scheduler";
 
 const rawPort = process.env["PORT"];
 
@@ -37,4 +38,6 @@ app.listen(port, async (err) => {
   } catch (e) {
     logger.error(e, "Failed to register default template");
   }
+
+  startScheduler();
 });

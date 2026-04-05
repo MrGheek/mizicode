@@ -1,168 +1,72 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { 
   useGetDashboardSummary, 
   useGetActiveSession, 
   useListProfiles, 
   useCreateSession,
-  useListVolumes,
-  useCreateVolume,
-  useDeleteVolume,
+  useGetSchedulerConfig,
+  useUpdateSchedulerConfig,
   getGetDashboardSummaryQueryKey,
   getGetActiveSessionQueryKey,
-  getListVolumesQueryKey,
+  getGetSchedulerConfigQueryKey,
 } from "@workspace/api-client-react";
-import type { Volume } from "@workspace/api-client-react";
+import type { SchedulerConfig, UpdateSchedulerRequest } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight, HardDrive, CheckCircle2, AlertCircle, Loader2, Trash2 } from "lucide-react";
+import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight } from "lucide-react";
 import { ProfileCard } from "@/components/profile-card";
 import { SessionStatusBadge } from "@/components/session-status-badge";
+import { SchedulerConfigCard } from "@/components/scheduler-config-card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-
-function VolumeStatusBadge({ status }: { status: string }) {
-  if (status === "ready") {
-    return (
-      <Badge variant="default" className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 gap-1">
-        <CheckCircle2 className="w-3 h-3" /> Ready
-      </Badge>
-    );
-  }
-  if (status === "provisioning") {
-    return (
-      <Badge variant="outline" className="text-yellow-400 border-yellow-500/30 gap-1">
-        <Loader2 className="w-3 h-3 animate-spin" /> Downloading
-      </Badge>
-    );
-  }
-  if (status === "error") {
-    return (
-      <Badge variant="outline" className="text-red-400 border-red-500/30 gap-1">
-        <AlertCircle className="w-3 h-3" /> Error
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="outline" className="text-muted-foreground gap-1">
-      <Loader2 className="w-3 h-3 animate-spin" /> Pending
-    </Badge>
-  );
-}
-
-function VolumeCard({ profileId, profileName, volume, onSetUp, onDelete, isSettingUp }: {
-  profileId: number;
-  profileName: string;
-  volume: Volume | undefined;
-  onSetUp: (profileId: number) => void;
-  onDelete: (volumeId: number) => void;
-  isSettingUp: boolean;
-}) {
-  if (!volume) {
-    return (
-      <div className="flex items-center justify-between p-4 rounded-lg border border-dashed border-border/60 bg-card/30">
-        <div className="flex items-center gap-3">
-          <HardDrive className="w-5 h-5 text-muted-foreground/40" />
-          <div>
-            <p className="text-sm font-medium">{profileName}</p>
-            <p className="text-xs text-muted-foreground">No volume — model downloads on each launch (~15-30 min)</p>
-          </div>
-        </div>
-        <Button 
-          size="sm" 
-          variant="outline" 
-          onClick={() => onSetUp(profileId)}
-          disabled={isSettingUp}
-          className="gap-2 shrink-0"
-        >
-          {isSettingUp ? <Loader2 className="w-3 h-3 animate-spin" /> : <HardDrive className="w-3 h-3" />}
-          Set Up Volume
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-center justify-between p-4 rounded-lg border border-border/60 bg-card/50">
-      <div className="flex items-center gap-3">
-        <HardDrive className={`w-5 h-5 ${volume.status === "ready" ? "text-emerald-400" : "text-muted-foreground"}`} />
-        <div>
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-medium">{profileName}</p>
-            <VolumeStatusBadge status={volume.status} />
-          </div>
-          <p className="text-xs text-muted-foreground font-mono mt-0.5">
-            {volume.name} • {volume.sizeGb} GB
-            {volume.statusMessage && ` • ${volume.statusMessage}`}
-          </p>
-        </div>
-      </div>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={() => onDelete(volume.id)}
-        className="text-muted-foreground hover:text-destructive shrink-0"
-      >
-        <Trash2 className="w-3.5 h-3.5" />
-      </Button>
-    </div>
-  );
-}
+import { getLocalHHMM } from "@/lib/time-utils";
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [launchingProfileId, setLaunchingProfileId] = useState<number | null>(null);
-  const [settingUpVolumeProfileId, setSettingUpVolumeProfileId] = useState<number | null>(null);
+  const [isSavingScheduler, setIsSavingScheduler] = useState(false);
 
   const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary();
   const { data: activeSessionResp, isLoading: isLoadingSession } = useGetActiveSession({
     query: { refetchInterval: 10000, queryKey: getGetActiveSessionQueryKey() }
   });
   const { data: profiles, isLoading: isLoadingProfiles } = useListProfiles();
-  const { data: volumes, isLoading: isLoadingVolumes } = useListVolumes({
-    query: { 
-      queryKey: getListVolumesQueryKey(),
-      refetchInterval: (query) => {
-        const data = query.state.data as Volume[] | undefined;
-        const hasProvisioning = data?.some(v => v.status === "provisioning" || v.status === "pending");
-        return hasProvisioning ? 8000 : false;
-      }
-    }
+  const { data: schedulerConfig } = useGetSchedulerConfig({
+    query: { queryKey: getGetSchedulerConfigQueryKey() }
   });
 
   const createSession = useCreateSession();
-  const createVolume = useCreateVolume();
-  const deleteVolume = useDeleteVolume();
+  const updateScheduler = useUpdateSchedulerConfig();
 
-  const volumeByProfileId = (volumes || []).reduce<Record<number, Volume>>((acc, v) => {
-    if (v.profileId) acc[v.profileId] = v;
-    return acc;
-  }, {});
+  // Second reminder: show a toast at secondReminderTime
+  useEffect(() => {
+    if (!schedulerConfig?.enabled) return;
+
+    const interval = setInterval(() => {
+      const localTime = getLocalHHMM(schedulerConfig.timezone);
+      if (localTime === schedulerConfig.secondReminderTime) {
+        toast({
+          title: "Session Launching Tomorrow",
+          description: `Your coding session will auto-start at ${schedulerConfig.launchTime} (${schedulerConfig.timezone.replace(/_/g, " ")}).`,
+          duration: 10000,
+        });
+      }
+    }, 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, [schedulerConfig, toast]);
 
   const handleLaunch = (profileId: number) => {
-    const volume = volumeByProfileId[profileId];
-    const hasReadyVolume = volume?.status === "ready";
-
-    if (!hasReadyVolume && !window.confirm(
-      "No storage volume is set up for this profile.\n\n" +
-      "The first launch will download the model (~15-30 minutes).\n\n" +
-      "Continue anyway?"
-    )) {
-      return;
-    }
-
     setLaunchingProfileId(profileId);
     createSession.mutate({ data: { profileId } }, {
       onSuccess: (session) => {
         toast({
           title: "Session Launched",
-          description: hasReadyVolume
-            ? "Fast start — loading model from volume."
-            : "Provisioning — model download will begin.",
+          description: "Provisioning GPU — model download will begin shortly (~30 min to ready).",
         });
         queryClient.invalidateQueries({ queryKey: getGetActiveSessionQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
@@ -179,44 +83,26 @@ export default function Dashboard() {
     });
   };
 
-  const handleSetUpVolume = (profileId: number) => {
-    setSettingUpVolumeProfileId(profileId);
-    createVolume.mutate({ data: { profileId } }, {
-      onSuccess: () => {
-        toast({
-          title: "Volume Provisioning Started",
-          description: "A GPU instance is downloading the model weights. This takes 15-30 minutes.",
-        });
-        queryClient.invalidateQueries({ queryKey: getListVolumesQueryKey() });
-        setSettingUpVolumeProfileId(null);
-      },
-      onError: (err: Error) => {
-        toast({
-          title: "Volume Setup Failed",
-          description: err?.message || "Failed to set up volume.",
-          variant: "destructive",
-        });
-        setSettingUpVolumeProfileId(null);
-      }
-    });
-  };
-
-  const handleDeleteVolume = (volumeId: number) => {
-    if (!window.confirm("Delete this volume? This will destroy the cached model weights and cannot be undone.")) {
-      return;
-    }
-    deleteVolume.mutate({ volumeId }, {
-      onSuccess: () => {
-        toast({ title: "Volume deleted" });
-        queryClient.invalidateQueries({ queryKey: getListVolumesQueryKey() });
-      },
-      onError: (err: Error) => {
-        toast({
-          title: "Delete Failed",
-          description: err?.message || "Failed to delete volume.",
-          variant: "destructive",
-        });
-      }
+  const handleSaveScheduler = async (updates: Partial<SchedulerConfig>) => {
+    setIsSavingScheduler(true);
+    return new Promise<void>((resolve, reject) => {
+      updateScheduler.mutate({ data: updates as UpdateSchedulerRequest }, {
+        onSuccess: () => {
+          toast({ title: "Scheduler saved" });
+          queryClient.invalidateQueries({ queryKey: getGetSchedulerConfigQueryKey() });
+          setIsSavingScheduler(false);
+          resolve();
+        },
+        onError: (err: Error) => {
+          toast({
+            title: "Save Failed",
+            description: err?.message || "Failed to save scheduler config.",
+            variant: "destructive",
+          });
+          setIsSavingScheduler(false);
+          reject(err);
+        }
+      });
     });
   };
 
@@ -282,9 +168,9 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="space-y-8">
         {/* Active Session Panel */}
-        <div className="col-span-1 lg:col-span-3">
+        <div>
           <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
             <Terminal className="w-5 h-5 text-primary" /> Active Session
           </h2>
@@ -318,54 +204,28 @@ export default function Dashboard() {
               <CardContent className="p-8 text-center text-muted-foreground flex flex-col items-center">
                 <Terminal className="w-8 h-8 mb-3 opacity-20" />
                 <p>No active session currently running.</p>
-                <p className="text-sm">Launch a profile below to get started.</p>
+                <p className="text-sm">Launch a profile below or configure the scheduler.</p>
               </CardContent>
             </Card>
           )}
         </div>
 
-        {/* Storage Volumes */}
-        <div className="col-span-1 lg:col-span-3">
-          <div className="flex justify-between items-center mb-4">
-            <div>
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <HardDrive className="w-5 h-5 text-primary" /> Storage Volumes
-              </h2>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Pre-cache model weights so sessions start in ~3 min instead of 30 min
-              </p>
-            </div>
+        {/* Session Scheduler */}
+        {schedulerConfig ? (
+          <div>
+            <SchedulerConfigCard
+              config={schedulerConfig}
+              profiles={profiles || []}
+              onSave={handleSaveScheduler}
+              isSaving={isSavingScheduler}
+            />
           </div>
-          <Card className="bg-card/50">
-            <CardContent className="p-4 space-y-3">
-              {isLoadingProfiles || isLoadingVolumes ? (
-                <Skeleton className="h-16 w-full" />
-              ) : profiles?.length ? (
-                profiles.map(profile => (
-                  <VolumeCard
-                    key={profile.id}
-                    profileId={profile.id}
-                    profileName={profile.displayName}
-                    volume={volumeByProfileId[profile.id]}
-                    onSetUp={handleSetUpVolume}
-                    onDelete={handleDeleteVolume}
-                    isSettingUp={settingUpVolumeProfileId === profile.id}
-                  />
-                ))
-              ) : (
-                <p className="text-sm text-muted-foreground text-center py-4">No GPU profiles configured.</p>
-              )}
-            </CardContent>
-          </Card>
-          {volumes?.some(v => v.status === "provisioning") && (
-            <p className="text-xs text-muted-foreground mt-2 text-center animate-pulse">
-              Volume provisioning in progress — checking every 8 seconds...
-            </p>
-          )}
-        </div>
+        ) : (
+          <Skeleton className="h-48 w-full" />
+        )}
 
         {/* Quick Launch Profiles */}
-        <div className="col-span-1 lg:col-span-3">
+        <div>
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold flex items-center gap-2">
               <Play className="w-5 h-5 text-primary" /> Quick Launch Profiles
@@ -378,20 +238,14 @@ export default function Dashboard() {
                 <Skeleton key={i} className="h-64 w-full" />
               ))
             ) : profiles?.length ? (
-              profiles.map(profile => {
-                const volume = volumeByProfileId[profile.id];
-                const hasReadyVolume = volume?.status === "ready";
-                return (
-                  <ProfileCard 
-                    key={profile.id} 
-                    profile={profile} 
-                    onLaunch={handleLaunch}
-                    isLaunching={launchingProfileId === profile.id}
-                    volumeStatus={volume?.status}
-                    hasReadyVolume={hasReadyVolume}
-                  />
-                );
-              })
+              profiles.map(profile => (
+                <ProfileCard 
+                  key={profile.id} 
+                  profile={profile} 
+                  onLaunch={handleLaunch}
+                  isLaunching={launchingProfileId === profile.id}
+                />
+              ))
             ) : (
               <div className="col-span-3 p-8 text-center border border-dashed rounded-lg border-border/60 text-muted-foreground">
                 No GPU profiles configured.

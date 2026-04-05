@@ -37,7 +37,7 @@ VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-32768}"
 VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-256}"
 VLLM_EXTRA_ARGS="${VLLM_EXTRA_ARGS:-}"
 NUM_GPUS="${NUM_GPUS:-1}"
-VOLUME_MOUNTED="${VOLUME_MOUNTED:-0}"
+MODEL_BASE_PATH="${MODEL_BASE_PATH:-/workspace/models}"
 
 # VLLM_PORT is the external port (litellm proxy — speaks OpenAI + Anthropic API)
 VLLM_PORT="${VLLM_PORT:-8081}"
@@ -46,7 +46,6 @@ VLLM_INTERNAL_PORT=8082
 CODE_SERVER_PORT="${CODE_SERVER_PORT:-8080}"
 BOLT_PORT="${BOLT_PORT:-5173}"
 PREVIEW_PORT="${PREVIEW_PORT:-3000}"
-VOLUME_MODEL_PATH="${VOLUME_MODEL_PATH:-/workspace/models}"
 
 if [ -z "$CODE_SERVER_PASSWORD" ]; then
     CODE_SERVER_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
@@ -57,8 +56,7 @@ fi
 
 log "=== OmniQL Coding Environment Starting ==="
 log "Model: $MODEL_REPO (cached as $MODEL_QUANT)"
-log "Volume mounted: $VOLUME_MOUNTED | GPUs: $NUM_GPUS"
-log "vLLM max-model-len: $VLLM_MAX_MODEL_LEN | max-num-seqs: $VLLM_MAX_NUM_SEQS"
+log "GPUs: $NUM_GPUS | vLLM max-model-len: $VLLM_MAX_MODEL_LEN | max-num-seqs: $VLLM_MAX_NUM_SEQS"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 1: Start all services immediately (no model needed)
@@ -172,16 +170,14 @@ touch /tmp/instance-ready
 log "=== Phase 1 done — code-server and tools available (LLM loading in background) ==="
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE 2: Model download (if needed) + vLLM + litellm in background
+# PHASE 2: Model download + vLLM + litellm in background
 # ─────────────────────────────────────────────────────────────────────────────
 log "Starting LLM backend in background..."
 
 (
-    MODEL_DIR="$VOLUME_MODEL_PATH/$MODEL_QUANT"
+    MODEL_DIR="$MODEL_BASE_PATH/$MODEL_QUANT"
 
-    if [ "$VOLUME_MOUNTED" = "1" ] && [ -d "$MODEL_DIR" ] && ls "$MODEL_DIR"/*.safetensors > /dev/null 2>&1; then
-        log "Volume mounted with model at $MODEL_DIR — skipping download"
-    elif [ -d "$MODEL_DIR" ] && ls "$MODEL_DIR"/*.safetensors > /dev/null 2>&1; then
+    if [ -d "$MODEL_DIR" ] && ls "$MODEL_DIR"/*.safetensors > /dev/null 2>&1; then
         log "Model found at $MODEL_DIR — skipping download"
     else
         echo "downloading" > "$STATUS_FILE"

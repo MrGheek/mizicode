@@ -30,7 +30,6 @@ async function vastFetch<T = Record<string, unknown>>(path: string, opts: Reques
 
 export interface VastOffer {
   id: number;
-  machine_id?: number;
   gpu_name?: string;
   num_gpus?: number;
   gpu_ram?: number;
@@ -84,25 +83,6 @@ export interface VastTemplateResponse {
   };
 }
 
-export interface VastVolume {
-  id?: number;
-  name?: string;
-  size?: number;
-  status?: string;
-  region?: string;
-  created?: number;
-}
-
-export interface VastVolumeListResponse {
-  volumes?: VastVolume[];
-}
-
-export interface VastVolumeCreateResponse {
-  success?: boolean;
-  volume?: VastVolume;
-  id?: number;
-}
-
 export interface VastSearchParams {
   gpu_name?: string;
   num_gpus?: number;
@@ -148,23 +128,6 @@ export async function searchOffers(params: VastSearchParams) {
   return data.offers || [];
 }
 
-// Search for offers on a specific machine (for sessions that need to mount a volume)
-export async function searchOffersOnMachine(machineId: number): Promise<VastOffer[]> {
-  const query: Record<string, unknown> = {
-    rentable: { eq: true },
-    rented: { eq: false },
-    machine_id: { eq: machineId },
-    type: "ask",
-    order: [["dph_total", "asc"]],
-    limit: 5,
-  };
-  const data = await vastFetch<VastSearchResponse>("/bundles/", {
-    method: "POST",
-    body: JSON.stringify(query),
-  });
-  return data.offers || [];
-}
-
 export interface VastCreateInstanceParams {
   offerId: number;
   image: string;
@@ -172,15 +135,12 @@ export interface VastCreateInstanceParams {
   env?: Record<string, string>;
   disk?: number;
   templateHashId?: string;
-  volumeId?: number;
-  volumeMountPath?: string;
 }
 
 export async function createInstance(params: VastCreateInstanceParams) {
   // Vast.ai env dict uses Docker run-flag format:
   //   "-p HOST:CONTAINER"  → port mapping
   //   "-e KEY=VALUE"       → environment variable
-  //   "-v ID:/path:rw"     → volume mount
   const envDict: Record<string, string> = {
     "-p 22:22": "1",
     "-p 3000:3000": "1",
@@ -189,11 +149,6 @@ export async function createInstance(params: VastCreateInstanceParams) {
     "-p 8080:8080": "1",
     "-p 8081:8081": "1",
   };
-
-  if (params.volumeId) {
-    const mountPath = params.volumeMountPath || "/workspace/models";
-    envDict[`-v ${params.volumeId}:${mountPath}:rw`] = "1";
-  }
 
   if (params.env) {
     for (const [key, value] of Object.entries(params.env)) {
@@ -236,38 +191,6 @@ export async function listInstances() {
     method: "GET",
   });
   return data.instances || [];
-}
-
-// ─── Volume management ──────────────────────────────────────────────────────
-
-// Vast.ai volumes are machine-local: they must be created with the machine_id
-// of the physical host, and can only be mounted by instances on that same host.
-export async function createVolume(name: string, sizeGb: number, machineId: number): Promise<VastVolume> {
-  const data = await vastFetch<VastVolumeCreateResponse>("/volumes/", {
-    method: "POST",
-    body: JSON.stringify({ name, size: sizeGb, machine_id: machineId }),
-  });
-  return data.volume || ({ id: data.id, name, size: sizeGb, status: "pending" } as VastVolume);
-}
-
-export async function listVastVolumes(): Promise<VastVolume[]> {
-  const data = await vastFetch<VastVolumeListResponse>("/volumes/");
-  return data.volumes || [];
-}
-
-export async function getVastVolume(volumeId: number): Promise<VastVolume | null> {
-  try {
-    const data = await vastFetch<{ volume?: VastVolume }>(`/volumes/${volumeId}/`);
-    return data.volume || null;
-  } catch {
-    return null;
-  }
-}
-
-export async function destroyVolume(volumeId: number) {
-  return vastFetch(`/volumes/${volumeId}/`, {
-    method: "DELETE",
-  });
 }
 
 // ─── Template management ──────────────────────────────────────────────────────
@@ -332,7 +255,6 @@ export function buildOnStartScript(profileConfig: {
   llamaBatchSize: number;
   llamaExtraArgs: string;
   numGpus?: number;
-  hasVolume?: boolean;
 }): string {
   return `#!/bin/bash
 export MODEL_REPO="${profileConfig.modelRepo}"
@@ -341,7 +263,6 @@ export VLLM_MAX_MODEL_LEN="${profileConfig.llamaCtxSize}"
 export VLLM_MAX_NUM_SEQS="${profileConfig.llamaBatchSize}"
 export VLLM_EXTRA_ARGS="${profileConfig.llamaExtraArgs}"
 export NUM_GPUS="${profileConfig.numGpus || 1}"
-export VOLUME_MOUNTED="${profileConfig.hasVolume ? "1" : "0"}"
 /opt/onstart.sh
 `;
 }

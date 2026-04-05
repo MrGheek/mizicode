@@ -28,6 +28,4 @@ export interface GpuProfile {
   searchParams: GpuProfileSearchParams;
   /** Estimated startup time in minutes (first launch) */
   startupTimeMin: number;
-  /** Estimated startup time in minutes (with volume) */
-  startupTimeVolume: number;
 }

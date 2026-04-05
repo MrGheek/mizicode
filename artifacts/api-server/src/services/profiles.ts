@@ -137,7 +137,6 @@ export async function seedProfiles() {
           llamaExtraArgs: profile.llamaExtraArgs,
           searchParams: profile.searchParams,
           startupTimeMin: profile.startupTimeMin,
-          startupTimeVolume: profile.startupTimeVolume,
         })
         .where(eq(gpuProfilesTable.name, profile.name))
         .returning();

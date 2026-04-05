@@ -41,9 +41,6 @@ export const ListProfilesResponseItem = zod.object({
   startupTimeMin: zod
     .number()
     .describe("Estimated startup time in minutes (first launch)"),
-  startupTimeVolume: zod
-    .number()
-    .describe("Estimated startup time in minutes (with volume)"),
 });
 export const ListProfilesResponse = zod.array(ListProfilesResponseItem);
 
@@ -76,9 +73,6 @@ export const GetProfileResponse = zod.object({
   startupTimeMin: zod
     .number()
     .describe("Estimated startup time in minutes (first launch)"),
-  startupTimeVolume: zod
-    .number()
-    .describe("Estimated startup time in minutes (with volume)"),
 });
 
 /**
@@ -445,72 +439,78 @@ export const SearchOffersResponseItem = zod.object({
 export const SearchOffersResponse = zod.array(SearchOffersResponseItem);
 
 /**
- * Returns all Vast.ai storage volumes with their status
- * @summary List all storage volumes
+ * Returns the current session scheduler configuration
+ * @summary Get scheduler configuration
  */
-export const ListVolumesResponseItem = zod.object({
+export const GetSchedulerConfigResponse = zod.object({
   id: zod.number(),
+  enabled: zod.boolean(),
   profileId: zod.number().nullish(),
-  profileName: zod.string().nullish(),
-  vastVolumeId: zod.number().nullish(),
-  name: zod.string(),
-  status: zod.enum(["pending", "provisioning", "ready", "error"]),
-  sizeGb: zod.number(),
-  statusMessage: zod.string().nullish(),
-  provisioningInstanceId: zod.number().nullish(),
-  createdAt: zod.coerce.date(),
-  updatedAt: zod.coerce.date(),
-});
-export const ListVolumesResponse = zod.array(ListVolumesResponseItem);
-
-/**
- * Creates a Vast.ai volume and launches a provisioning instance to download model weights
- * @summary Create a storage volume and start model provisioning
- */
-export const CreateVolumeBody = zod.object({
-  profileId: zod.number(),
-  name: zod
+  launchTime: zod
     .string()
-    .nullish()
-    .describe("Volume name (auto-generated if omitted)"),
-  sizeGb: zod
-    .number()
-    .nullish()
-    .describe("Volume size in GB (auto-sized from profile if omitted)"),
-});
-
-/**
- * Returns volume details, syncing provisioning status from Vast.ai if in progress
- * @summary Get volume status
- */
-export const GetVolumeParams = zod.object({
-  volumeId: zod.coerce.number(),
-});
-
-export const GetVolumeResponse = zod.object({
-  id: zod.number(),
-  profileId: zod.number().nullish(),
-  profileName: zod.string().nullish(),
-  vastVolumeId: zod.number().nullish(),
-  name: zod.string(),
-  status: zod.enum(["pending", "provisioning", "ready", "error"]),
-  sizeGb: zod.number(),
-  statusMessage: zod.string().nullish(),
-  provisioningInstanceId: zod.number().nullish(),
+    .describe("Time to auto-launch session (HH:mm format)"),
+  stopTime: zod.string().describe("Time to auto-stop session (HH:mm format)"),
+  secondReminderTime: zod
+    .string()
+    .describe(
+      "Time to show reminder notification (HH:mm format, default midnight)",
+    ),
+  daysOfWeek: zod
+    .array(zod.string())
+    .describe("Days to run scheduler (mon, tue, wed, thu, fri, sat, sun)"),
+  timezone: zod.string().describe("IANA timezone (e.g. America\/New_York)"),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
 
 /**
- * Destroys the Vast.ai volume and any associated provisioning instance
- * @summary Delete a volume
+ * Updates the session scheduler configuration
+ * @summary Update scheduler configuration
  */
-export const DeleteVolumeParams = zod.object({
-  volumeId: zod.coerce.number(),
+export const UpdateSchedulerConfigBody = zod.object({
+  enabled: zod.boolean().optional(),
+  profileId: zod.number().nullish(),
+  launchTime: zod
+    .string()
+    .optional()
+    .describe("Time to auto-launch session (HH:mm format)"),
+  stopTime: zod
+    .string()
+    .optional()
+    .describe("Time to auto-stop session (HH:mm format)"),
+  secondReminderTime: zod
+    .string()
+    .optional()
+    .describe("Time to show reminder notification (HH:mm format)"),
+  daysOfWeek: zod
+    .array(zod.string())
+    .optional()
+    .describe("Days to run scheduler (mon, tue, wed, thu, fri, sat, sun)"),
+  timezone: zod
+    .string()
+    .optional()
+    .describe("IANA timezone (e.g. America\/New_York)"),
 });
 
-export const DeleteVolumeResponse = zod.object({
-  success: zod.boolean(),
+export const UpdateSchedulerConfigResponse = zod.object({
+  id: zod.number(),
+  enabled: zod.boolean(),
+  profileId: zod.number().nullish(),
+  launchTime: zod
+    .string()
+    .describe("Time to auto-launch session (HH:mm format)"),
+  stopTime: zod.string().describe("Time to auto-stop session (HH:mm format)"),
+  secondReminderTime: zod
+    .string()
+    .describe(
+      "Time to show reminder notification (HH:mm format, default midnight)",
+    ),
+  daysOfWeek: zod
+    .array(zod.string())
+    .describe("Days to run scheduler (mon, tue, wed, thu, fri, sat, sun)"),
+  timezone: zod.string().describe("IANA timezone (e.g. America\/New_York)"),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
 });
 
 /**

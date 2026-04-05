@@ -40,8 +40,6 @@ export interface GpuProfile {
   searchParams: GpuProfileSearchParams;
   /** Estimated startup time in minutes (first launch) */
   startupTimeMin: number;
-  /** Estimated startup time in minutes (with volume) */
-  startupTimeVolume: number;
 }
 
 export type SessionStatus = (typeof SessionStatus)[keyof typeof SessionStatus];
@@ -148,37 +146,6 @@ export interface GpuOffer {
   verification?: string;
 }
 
-export type VolumeStatus = (typeof VolumeStatus)[keyof typeof VolumeStatus];
-
-export const VolumeStatus = {
-  pending: "pending",
-  provisioning: "provisioning",
-  ready: "ready",
-  error: "error",
-} as const;
-
-export interface Volume {
-  id: number;
-  profileId?: number | null;
-  profileName?: string | null;
-  vastVolumeId?: number | null;
-  name: string;
-  status: VolumeStatus;
-  sizeGb: number;
-  statusMessage?: string | null;
-  provisioningInstanceId?: number | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CreateVolumeRequest {
-  profileId: number;
-  /** Volume name (auto-generated if omitted) */
-  name?: string | null;
-  /** Volume size in GB (auto-sized from profile if omitted) */
-  sizeGb?: number | null;
-}
-
 export type DashboardSummaryProfileCounts = { [key: string]: number };
 
 export interface DashboardSummary {
@@ -187,6 +154,39 @@ export interface DashboardSummary {
   totalCost: number;
   totalHours: number;
   profileCounts: DashboardSummaryProfileCounts;
+}
+
+export interface SchedulerConfig {
+  id: number;
+  enabled: boolean;
+  profileId?: number | null;
+  /** Time to auto-launch session (HH:mm format) */
+  launchTime: string;
+  /** Time to auto-stop session (HH:mm format) */
+  stopTime: string;
+  /** Time to show reminder notification (HH:mm format, default midnight) */
+  secondReminderTime: string;
+  /** Days to run scheduler (mon, tue, wed, thu, fri, sat, sun) */
+  daysOfWeek: string[];
+  /** IANA timezone (e.g. America/New_York) */
+  timezone: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpdateSchedulerRequest {
+  enabled?: boolean;
+  profileId?: number | null;
+  /** Time to auto-launch session (HH:mm format) */
+  launchTime?: string;
+  /** Time to auto-stop session (HH:mm format) */
+  stopTime?: string;
+  /** Time to show reminder notification (HH:mm format) */
+  secondReminderTime?: string;
+  /** Days to run scheduler (mon, tue, wed, thu, fri, sat, sun) */
+  daysOfWeek?: string[];
+  /** IANA timezone (e.g. America/New_York) */
+  timezone?: string;
 }
 
 export type SearchOffersParams = {
