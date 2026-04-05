@@ -21,13 +21,19 @@ export function StopCountdownModal({ schedulerConfig, activeSession, onStop }: S
     activeSession.status !== "stopped" &&
     activeSession.status !== "error";
 
-  // Monitor for stop time
+  // Monitor for stop time or second reminder time
   useEffect(() => {
     if (!schedulerConfig?.enabled || !isActive || suppressedRef.current) return;
 
     const checkInterval = setInterval(() => {
       const localTime = getLocalHHMM(schedulerConfig.timezone);
-      if (localTime === schedulerConfig.stopTime && !showModal && !suppressedRef.current) {
+      const isStopTime = localTime === schedulerConfig.stopTime;
+      const isReminderTime =
+        schedulerConfig.secondReminderTime &&
+        schedulerConfig.secondReminderTime !== schedulerConfig.stopTime &&
+        localTime === schedulerConfig.secondReminderTime;
+
+      if ((isStopTime || isReminderTime) && !showModal && !suppressedRef.current) {
         setShowModal(true);
         setCountdown(10);
         stopTriggeredRef.current = false;

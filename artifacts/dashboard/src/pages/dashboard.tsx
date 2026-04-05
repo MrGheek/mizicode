@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useLocation } from "wouter";
 import { 
   useGetDashboardSummary, 
@@ -21,7 +21,6 @@ import { SchedulerConfigCard } from "@/components/scheduler-config-card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { getLocalHHMM } from "@/lib/time-utils";
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
@@ -41,24 +40,6 @@ export default function Dashboard() {
 
   const createSession = useCreateSession();
   const updateScheduler = useUpdateSchedulerConfig();
-
-  // Second reminder: show a toast at secondReminderTime
-  useEffect(() => {
-    if (!schedulerConfig?.enabled) return;
-
-    const interval = setInterval(() => {
-      const localTime = getLocalHHMM(schedulerConfig.timezone);
-      if (localTime === schedulerConfig.secondReminderTime) {
-        toast({
-          title: "Session Launching Tomorrow",
-          description: `Your coding session will auto-start at ${schedulerConfig.launchTime} (${schedulerConfig.timezone.replace(/_/g, " ")}).`,
-          duration: 10000,
-        });
-      }
-    }, 60 * 1000);
-
-    return () => clearInterval(interval);
-  }, [schedulerConfig, toast]);
 
   const handleLaunch = (profileId: number) => {
     setLaunchingProfileId(profileId);

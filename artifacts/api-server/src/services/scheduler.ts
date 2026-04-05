@@ -222,6 +222,18 @@ async function checkSchedule(): Promise<void> {
       }
     }
 
+    // Safety-net stop: 2 minutes after the second reminder time (if configured and different from stopTime)
+    if (config.secondReminderTime && config.secondReminderTime !== config.stopTime) {
+      const secondSafetyTime = addMinutesToTimeStr(config.secondReminderTime, 2);
+      if (localTime === secondSafetyTime) {
+        const actionKey = `stop2-${dateKey}-${localTime}`;
+        if (!recentActions.has(actionKey)) {
+          recentActions.add(actionKey);
+          await stopActiveSession();
+        }
+      }
+    }
+
     // Prune old action keys (keep only today's entries)
     for (const key of recentActions) {
       if (!key.includes(dateKey)) {
