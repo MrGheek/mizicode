@@ -445,6 +445,75 @@ export const SearchOffersResponseItem = zod.object({
 export const SearchOffersResponse = zod.array(SearchOffersResponseItem);
 
 /**
+ * Returns all Vast.ai storage volumes with their status
+ * @summary List all storage volumes
+ */
+export const ListVolumesResponseItem = zod.object({
+  id: zod.number(),
+  profileId: zod.number().nullish(),
+  profileName: zod.string().nullish(),
+  vastVolumeId: zod.number().nullish(),
+  name: zod.string(),
+  status: zod.enum(["pending", "provisioning", "ready", "error"]),
+  sizeGb: zod.number(),
+  statusMessage: zod.string().nullish(),
+  provisioningInstanceId: zod.number().nullish(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+export const ListVolumesResponse = zod.array(ListVolumesResponseItem);
+
+/**
+ * Creates a Vast.ai volume and launches a provisioning instance to download model weights
+ * @summary Create a storage volume and start model provisioning
+ */
+export const CreateVolumeBody = zod.object({
+  profileId: zod.number(),
+  name: zod
+    .string()
+    .nullish()
+    .describe("Volume name (auto-generated if omitted)"),
+  sizeGb: zod
+    .number()
+    .nullish()
+    .describe("Volume size in GB (auto-sized from profile if omitted)"),
+});
+
+/**
+ * Returns volume details, syncing provisioning status from Vast.ai if in progress
+ * @summary Get volume status
+ */
+export const GetVolumeParams = zod.object({
+  volumeId: zod.coerce.number(),
+});
+
+export const GetVolumeResponse = zod.object({
+  id: zod.number(),
+  profileId: zod.number().nullish(),
+  profileName: zod.string().nullish(),
+  vastVolumeId: zod.number().nullish(),
+  name: zod.string(),
+  status: zod.enum(["pending", "provisioning", "ready", "error"]),
+  sizeGb: zod.number(),
+  statusMessage: zod.string().nullish(),
+  provisioningInstanceId: zod.number().nullish(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * Destroys the Vast.ai volume and any associated provisioning instance
+ * @summary Delete a volume
+ */
+export const DeleteVolumeParams = zod.object({
+  volumeId: zod.coerce.number(),
+});
+
+export const DeleteVolumeResponse = zod.object({
+  success: zod.boolean(),
+});
+
+/**
  * Returns summary stats for the dashboard
  * @summary Dashboard summary
  */

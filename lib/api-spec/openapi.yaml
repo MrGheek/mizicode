@@ -18,6 +18,8 @@ tags:
     description: Vast.ai template operations
   - name: offers
     description: GPU offer operations
+  - name: volumes
+    description: Vast.ai storage volume management
 
 paths:
   /healthz:
@@ -369,6 +371,108 @@ paths:
                 items:
                   $ref: "#/components/schemas/GpuOffer"
 
+  /volumes:
+    get:
+      operationId: listVolumes
+      tags: [volumes]
+      summary: List all storage volumes
+      description: Returns all Vast.ai storage volumes with their status
+      responses:
+        "200":
+          description: List of volumes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Volume"
+    post:
+      operationId: createVolume
+      tags: [volumes]
+      summary: Create a storage volume and start model provisioning
+      description: Creates a Vast.ai volume and launches a provisioning instance to download model weights
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVolumeRequest"
+      responses:
+        "201":
+          description: Volume created and provisioning started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Volume"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Volume already exists for this profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: No GPU offers available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /volumes/{volumeId}:
+    get:
+      operationId: getVolume
+      tags: [volumes]
+      summary: Get volume status
+      description: Returns volume details, syncing provisioning status from Vast.ai if in progress
+      parameters:
+        - name: volumeId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Volume details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Volume"
+        "404":
+          description: Volume not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteVolume
+      tags: [volumes]
+      summary: Delete a volume
+      description: Destroys the Vast.ai volume and any associated provisioning instance
+      parameters:
+        - name: volumeId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Volume deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Volume not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /dashboard/summary:
     get:
       operationId: getDashboardSummary
@@ -708,6 +812,63 @@ components:
         - dphTotal
         - geolocation
         - rentable
+
+    Volume:
+      type: object
+      properties:
+        id:
+          type: integer
+        profileId:
+          type: integer
+          nullable: true
+        profileName:
+          type: string
+          nullable: true
+        vastVolumeId:
+          type: integer
+          nullable: true
+        name:
+          type: string
+        status:
+          type: string
+          enum: [pending, provisioning, ready, error]
+        sizeGb:
+          type: integer
+        statusMessage:
+          type: string
+          nullable: true
+        provisioningInstanceId:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - status
+        - sizeGb
+        - createdAt
+        - updatedAt
+
+    CreateVolumeRequest:
+      type: object
+      properties:
+        profileId:
+          type: integer
+        name:
+          type: string
+          nullable: true
+          description: Volume name (auto-generated if omitted)
+        sizeGb:
+          type: integer
+          nullable: true
+          description: Volume size in GB (auto-sized from profile if omitted)
+      required:
+        - profileId
 
     DashboardSummary:
       type: object

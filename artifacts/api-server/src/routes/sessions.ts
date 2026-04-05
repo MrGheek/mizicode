@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, sessionsTable, gpuProfilesTable, templatesTable } from "@workspace/db";
+import { db, sessionsTable, gpuProfilesTable, templatesTable, volumesTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
 import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
@@ -27,14 +27,20 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
     if (vastStatus === "running") {
       if (statusMsg.includes("downloading") || statusMsg.includes("pulling")) {
         status = "downloading";
-        statusMessage = "Downloading model and dependencies...";
-      } else {
+        statusMessage = "Downloading model weights...";
+      } else if (statusMsg.includes("starting_llm")) {
+        status = "starting";
+        statusMessage = "Loading model into GPU memory...";
+      } else if (statusMsg.includes("llm_ready") || statusMsg.includes("ready")) {
         status = "ready";
-        statusMessage = "Session is ready";
+        statusMessage = "Session is ready — vLLM online";
+      } else {
+        status = "starting";
+        statusMessage = "Services starting up...";
       }
     } else if (vastStatus === "loading" || vastStatus === "creating") {
       status = "provisioning";
-      statusMessage = "Instance is starting up...";
+      statusMessage = "Instance is booting...";
     } else if (vastStatus === "exited" || vastStatus === "error") {
       status = "error";
       statusMessage = `Instance error: ${instance.status_msg || vastStatus}`;
@@ -183,7 +189,7 @@ router.post("/sessions", async (req, res) => {
         res.status(400).json({ error: "No GPU offers available for this profile. Try again later or choose a different profile." });
         return;
       }
-      selectedOfferId = offers[0].id;
+      selectedOfferId = (offers[0] as { id: number }).id;
     }
 
     const [defaultTemplate] = await db
@@ -193,6 +199,21 @@ router.post("/sessions", async (req, res) => {
       .limit(1);
 
     const templateHash = defaultTemplate?.templateHash || undefined;
+
+    // Look up a ready storage volume for this profile
+    const [volumeRecord] = await db
+      .select()
+      .from(volumesTable)
+      .where(eq(volumesTable.profileId, profileId));
+
+    const hasReadyVolume = volumeRecord?.status === "ready" && !!volumeRecord?.vastVolumeId;
+    const vastVolumeId = hasReadyVolume ? volumeRecord.vastVolumeId! : undefined;
+
+    if (hasReadyVolume) {
+      logger.info({ profileId, vastVolumeId }, "Using storage volume for session — skipping model download");
+    } else {
+      logger.info({ profileId }, "No ready volume found — model will be downloaded on instance startup");
+    }
 
     const [session] = await db
       .insert(sessionsTable)
@@ -209,12 +230,17 @@ router.post("/sessions", async (req, res) => {
 
     insertedSessionId = session.id;
 
+    const MODEL_REPO = "moonshotai/Kimi-K2.5";
+    const MODEL_QUANT = profile.defaultQuant;
+
     const onstart = vastai.buildOnStartScript({
-      modelRepo: "unsloth/Kimi-K2.5-GGUF",
-      modelQuant: profile.defaultQuant,
+      modelRepo: MODEL_REPO,
+      modelQuant: MODEL_QUANT,
       llamaCtxSize: profile.llamaCtxSize,
       llamaBatchSize: profile.llamaBatchSize,
       llamaExtraArgs: profile.llamaExtraArgs || "",
+      numGpus: profile.numGpus,
+      hasVolume: hasReadyVolume,
     });
 
     const result = await vastai.createInstance({
@@ -223,22 +249,30 @@ router.post("/sessions", async (req, res) => {
       onstart,
       disk: profile.diskSizeGb,
       templateHashId: templateHash,
+      volumeId: vastVolumeId,
+      volumeMountPath: "/workspace/models",
       env: {
-        MODEL_REPO: "unsloth/Kimi-K2.5-GGUF",
-        MODEL_QUANT: profile.defaultQuant,
-        LLAMA_CTX_SIZE: String(profile.llamaCtxSize),
-        LLAMA_BATCH_SIZE: String(profile.llamaBatchSize),
+        MODEL_REPO,
+        MODEL_QUANT,
+        VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
+        VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
+        NUM_GPUS: String(profile.numGpus),
+        VOLUME_MOUNTED: hasReadyVolume ? "1" : "0",
       },
     });
 
     const instanceId = result.new_contract;
+
+    const statusMessage = hasReadyVolume
+      ? "Instance created — loading model from volume (fast start)..."
+      : "Instance created — waiting for startup and model download...";
 
     const [updated] = await db
       .update(sessionsTable)
       .set({
         vastInstanceId: instanceId,
         status: "provisioning",
-        statusMessage: "Instance created, waiting for startup...",
+        statusMessage,
         startedAt: new Date(),
         costPerHour: result.expected_price || null,
         updatedAt: new Date(),
@@ -296,17 +330,25 @@ router.post("/sessions/:sessionId/refresh", async (req, res) => {
     let statusMessage = session.statusMessage;
 
     const vastStatus = instance.actual_status || instance.status_msg || "";
+    const statusMsg = (instance.status_msg || "").toLowerCase();
+
     if (vastStatus === "running") {
-      if (instance.status_msg?.includes("downloading") || instance.status_msg?.includes("pulling")) {
+      if (statusMsg.includes("downloading") || statusMsg.includes("pulling")) {
         status = "downloading";
-        statusMessage = "Downloading model and dependencies...";
-      } else {
+        statusMessage = "Downloading model weights...";
+      } else if (statusMsg.includes("starting_llm")) {
+        status = "starting";
+        statusMessage = "Loading model into GPU memory...";
+      } else if (statusMsg.includes("llm_ready") || statusMsg.includes("ready")) {
         status = "ready";
-        statusMessage = "Session is ready";
+        statusMessage = "Session is ready — vLLM online";
+      } else {
+        status = "starting";
+        statusMessage = "Services starting up...";
       }
     } else if (vastStatus === "loading" || vastStatus === "creating") {
       status = "provisioning";
-      statusMessage = "Instance is starting up...";
+      statusMessage = "Instance is booting...";
     } else if (vastStatus === "exited" || vastStatus === "error") {
       status = "error";
       statusMessage = `Instance error: ${instance.status_msg || vastStatus}`;
@@ -366,7 +408,6 @@ router.delete("/sessions/:sessionId", async (req, res) => {
         await vastai.destroyInstance(session.vastInstanceId);
       } catch (vastErr: unknown) {
         const msg = vastErr instanceof Error ? vastErr.message : "";
-        // 404 means the instance is already gone on Vast.ai — proceed with DB cleanup
         if (msg.includes("404") || msg.includes("no_such_instance")) {
           logger.warn({ vastInstanceId: session.vastInstanceId }, "Instance already gone on Vast.ai — cleaning up DB record");
         } else {

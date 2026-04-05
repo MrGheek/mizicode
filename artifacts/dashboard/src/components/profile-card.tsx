@@ -1,12 +1,15 @@
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Cpu, HardDrive, Clock, Zap, Play } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Cpu, HardDrive, Clock, Zap, Play, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
 import type { GpuProfile } from "@workspace/api-client-react";
 
 interface ProfileCardProps {
   profile: GpuProfile;
   onLaunch: (profileId: number) => void;
   isLaunching?: boolean;
+  volumeStatus?: string;
+  hasReadyVolume?: boolean;
 }
 
 const PROFILE_TAGLINES: Record<string, string> = {
@@ -22,8 +25,42 @@ const PROFILE_TAGLINES: Record<string, string> = {
     "Dedicated cluster capacity for high-volume teams. Parallel sessions with zero contention across the largest models.",
 };
 
-export function ProfileCard({ profile, onLaunch, isLaunching }: ProfileCardProps) {
+function VolumeIndicator({ status }: { status?: string }) {
+  if (status === "ready") {
+    return (
+      <div className="flex items-center gap-1 text-xs text-emerald-400 font-medium">
+        <CheckCircle2 className="w-3 h-3" />
+        Volume ready — fast start
+      </div>
+    );
+  }
+  if (status === "provisioning" || status === "pending") {
+    return (
+      <div className="flex items-center gap-1 text-xs text-yellow-400 font-medium">
+        <Loader2 className="w-3 h-3 animate-spin" />
+        Volume provisioning...
+      </div>
+    );
+  }
+  if (status === "error") {
+    return (
+      <div className="flex items-center gap-1 text-xs text-red-400 font-medium">
+        <AlertCircle className="w-3 h-3" />
+        Volume error — set up again
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1 text-xs text-muted-foreground/60">
+      <HardDrive className="w-3 h-3" />
+      No volume — slow cold start
+    </div>
+  );
+}
+
+export function ProfileCard({ profile, onLaunch, isLaunching, volumeStatus, hasReadyVolume }: ProfileCardProps) {
   const tagline = PROFILE_TAGLINES[profile.name] ?? "";
+  const startupTime = hasReadyVolume ? profile.startupTimeVolume : profile.startupTimeMin;
 
   return (
     <Card className="flex flex-col bg-card/50 border-border/50 hover:border-primary/50 transition-colors">
@@ -47,22 +84,28 @@ export function ProfileCard({ profile, onLaunch, isLaunching }: ProfileCardProps
         )}
       </CardHeader>
       
-      <CardContent className="flex-1 grid grid-cols-2 gap-y-3 gap-x-4 text-sm text-muted-foreground">
-        <div className="flex items-center gap-2">
-          <Zap className="w-4 h-4 text-primary" />
-          <span>{profile.estimatedSpeedMin}-{profile.estimatedSpeedMax} t/s</span>
+      <CardContent className="flex-1 space-y-3">
+        <div className="grid grid-cols-2 gap-y-3 gap-x-4 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-primary" />
+            <span>{profile.estimatedSpeedMin}-{profile.estimatedSpeedMax} t/s</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <HardDrive className="w-4 h-4 text-primary" />
+            <span>{profile.diskSizeGb}GB Disk</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-primary" />
+            <span>{profile.defaultQuant} ({profile.quantSizeGb}GB)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-primary" />
+            <span>~{startupTime}m start</span>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <HardDrive className="w-4 h-4 text-primary" />
-          <span>{profile.diskSizeGb}GB Disk</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Cpu className="w-4 h-4 text-primary" />
-          <span>{profile.defaultQuant} ({profile.quantSizeGb}GB)</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Clock className="w-4 h-4 text-primary" />
-          <span>~{profile.startupTimeMin}m startup</span>
+
+        <div className="border-t border-border/30 pt-2">
+          <VolumeIndicator status={volumeStatus} />
         </div>
       </CardContent>
 
@@ -71,13 +114,14 @@ export function ProfileCard({ profile, onLaunch, isLaunching }: ProfileCardProps
           className="w-full font-bold tracking-wide" 
           onClick={() => onLaunch(profile.id)}
           disabled={isLaunching}
+          variant={hasReadyVolume ? "default" : "outline"}
         >
           {isLaunching ? (
-            "LAUNCHING..."
+            <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> LAUNCHING...</>
           ) : (
             <>
               <Play className="w-4 h-4 mr-2" fill="currentColor" />
-              LAUNCH SESSION
+              {hasReadyVolume ? "LAUNCH — FAST START" : "LAUNCH SESSION"}
             </>
           )}
         </Button>

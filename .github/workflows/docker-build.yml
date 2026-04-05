@@ -60,7 +60,7 @@ jobs:
             gheeklabs/coding-env:h100
             gheeklabs/coding-env:latest
           build-args: |
-            CUDA_VERSION=12.4.0
+            CUDA_VERSION=12.4.1
           # Use registry cache instead of GHA cache to avoid the 10 GB GHA cache
           # limit from causing secondary disk exhaustion.
           cache-from: type=registry,ref=gheeklabs/coding-env:buildcache

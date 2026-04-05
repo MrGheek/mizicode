@@ -5,6 +5,7 @@ import sessionsRouter from "./sessions";
 import templatesRouter from "./templates";
 import offersRouter from "./offers";
 import dashboardRouter from "./dashboard";
+import volumesRouter from "./volumes";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(sessionsRouter);
 router.use(templatesRouter);
 router.use(offersRouter);
 router.use(dashboardRouter);
+router.use(volumesRouter);
 
 export default router;

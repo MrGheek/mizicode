@@ -1,5 +1,5 @@
 ARG UBUNTU_VERSION=22.04
-ARG CUDA_VERSION=12.4.0
+ARG CUDA_VERSION=12.4.1
 
 # ── Stage 1: Build claw-code from bundled Rust source ─────────────────────────
 # Source is in docker/claw-code-src — no git clone or auth required.
@@ -18,7 +18,8 @@ RUN cd /opt/claw-code-src/rust && \
     cp target/release/claw /usr/local/bin/claw
 
 # ── Runtime image ──────────────────────────────────────────────────────────────
-FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+# Use cudnn-runtime for vLLM compatibility (includes cuDNN shared libs)
+FROM nvidia/cuda:${CUDA_VERSION}-cudnn-runtime-ubuntu${UBUNTU_VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -39,16 +40,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# llama-cpp-python with pre-built CUDA 12.4 wheels.
-# No nvcc, no cmake, no GPU required at build time — installs a pre-compiled binary.
-RUN pip3 install --no-cache-dir --prefer-binary \
-    "llama-cpp-python[server]" \
-    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+# vLLM: high-throughput inference engine with PagedAttention.
+# Replaces llama-cpp-python for better multi-request throughput.
+# Uses CUDA 12.4 wheels from PyPI.
+RUN pip3 install --no-cache-dir \
+    "vllm>=0.6.0" \
+    --extra-index-url https://download.pytorch.org/whl/cu124
 
 # litellm proxy: accepts both OpenAI /v1/chat/completions and Anthropic /v1/messages,
-# forwarding to llama-cpp-python. Lets claw-code use Anthropic format seamlessly.
+# forwarding to vLLM. Lets claw-code use Anthropic format seamlessly.
 RUN pip3 install --no-cache-dir litellm
 
+# HuggingFace CLI for volume provisioning (one-time model download)
 RUN pip3 install --no-cache-dir huggingface-hub
 
 COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw

@@ -148,6 +148,37 @@ export interface GpuOffer {
   verification?: string;
 }
 
+export type VolumeStatus = (typeof VolumeStatus)[keyof typeof VolumeStatus];
+
+export const VolumeStatus = {
+  pending: "pending",
+  provisioning: "provisioning",
+  ready: "ready",
+  error: "error",
+} as const;
+
+export interface Volume {
+  id: number;
+  profileId?: number | null;
+  profileName?: string | null;
+  vastVolumeId?: number | null;
+  name: string;
+  status: VolumeStatus;
+  sizeGb: number;
+  statusMessage?: string | null;
+  provisioningInstanceId?: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateVolumeRequest {
+  profileId: number;
+  /** Volume name (auto-generated if omitted) */
+  name?: string | null;
+  /** Volume size in GB (auto-sized from profile if omitted) */
+  sizeGb?: number | null;
+}
+
 export type DashboardSummaryProfileCounts = { [key: string]: number };
 
 export interface DashboardSummary {

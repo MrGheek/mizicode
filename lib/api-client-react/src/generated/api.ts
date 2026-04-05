@@ -20,6 +20,7 @@ import type {
   ActiveSessionResponse,
   CreateSessionRequest,
   CreateTemplateRequest,
+  CreateVolumeRequest,
   DashboardSummary,
   ErrorResponse,
   GpuOffer,
@@ -30,6 +31,7 @@ import type {
   SuccessResponse,
   Template,
   UpdateTemplateRequest,
+  Volume,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1291,6 +1293,338 @@ export function useSearchOffers<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Returns all Vast.ai storage volumes with their status
+ * @summary List all storage volumes
+ */
+export const getListVolumesUrl = () => {
+  return `/api/volumes`;
+};
+
+export const listVolumes = async (options?: RequestInit): Promise<Volume[]> => {
+  return customFetch<Volume[]>(getListVolumesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListVolumesQueryKey = () => {
+  return [`/api/volumes`] as const;
+};
+
+export const getListVolumesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listVolumes>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listVolumes>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListVolumesQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listVolumes>>> = ({
+    signal,
+  }) => listVolumes({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listVolumes>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListVolumesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listVolumes>>
+>;
+export type ListVolumesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all storage volumes
+ */
+
+export function useListVolumes<
+  TData = Awaited<ReturnType<typeof listVolumes>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listVolumes>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListVolumesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Creates a Vast.ai volume and launches a provisioning instance to download model weights
+ * @summary Create a storage volume and start model provisioning
+ */
+export const getCreateVolumeUrl = () => {
+  return `/api/volumes`;
+};
+
+export const createVolume = async (
+  createVolumeRequest: CreateVolumeRequest,
+  options?: RequestInit,
+): Promise<Volume> => {
+  return customFetch<Volume>(getCreateVolumeUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createVolumeRequest),
+  });
+};
+
+export const getCreateVolumeMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createVolume>>,
+    TError,
+    { data: BodyType<CreateVolumeRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createVolume>>,
+  TError,
+  { data: BodyType<CreateVolumeRequest> },
+  TContext
+> => {
+  const mutationKey = ["createVolume"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createVolume>>,
+    { data: BodyType<CreateVolumeRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createVolume(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateVolumeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createVolume>>
+>;
+export type CreateVolumeMutationBody = BodyType<CreateVolumeRequest>;
+export type CreateVolumeMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Create a storage volume and start model provisioning
+ */
+export const useCreateVolume = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createVolume>>,
+    TError,
+    { data: BodyType<CreateVolumeRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createVolume>>,
+  TError,
+  { data: BodyType<CreateVolumeRequest> },
+  TContext
+> => {
+  return useMutation(getCreateVolumeMutationOptions(options));
+};
+
+/**
+ * Returns volume details, syncing provisioning status from Vast.ai if in progress
+ * @summary Get volume status
+ */
+export const getGetVolumeUrl = (volumeId: number) => {
+  return `/api/volumes/${volumeId}`;
+};
+
+export const getVolume = async (
+  volumeId: number,
+  options?: RequestInit,
+): Promise<Volume> => {
+  return customFetch<Volume>(getGetVolumeUrl(volumeId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetVolumeQueryKey = (volumeId: number) => {
+  return [`/api/volumes/${volumeId}`] as const;
+};
+
+export const getGetVolumeQueryOptions = <
+  TData = Awaited<ReturnType<typeof getVolume>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  volumeId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getVolume>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetVolumeQueryKey(volumeId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getVolume>>> = ({
+    signal,
+  }) => getVolume(volumeId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!volumeId,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getVolume>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetVolumeQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getVolume>>
+>;
+export type GetVolumeQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get volume status
+ */
+
+export function useGetVolume<
+  TData = Awaited<ReturnType<typeof getVolume>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  volumeId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getVolume>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetVolumeQueryOptions(volumeId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Destroys the Vast.ai volume and any associated provisioning instance
+ * @summary Delete a volume
+ */
+export const getDeleteVolumeUrl = (volumeId: number) => {
+  return `/api/volumes/${volumeId}`;
+};
+
+export const deleteVolume = async (
+  volumeId: number,
+  options?: RequestInit,
+): Promise<SuccessResponse> => {
+  return customFetch<SuccessResponse>(getDeleteVolumeUrl(volumeId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteVolumeMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteVolume>>,
+    TError,
+    { volumeId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteVolume>>,
+  TError,
+  { volumeId: number },
+  TContext
+> => {
+  const mutationKey = ["deleteVolume"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteVolume>>,
+    { volumeId: number }
+  > = (props) => {
+    const { volumeId } = props ?? {};
+
+    return deleteVolume(volumeId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteVolumeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteVolume>>
+>;
+
+export type DeleteVolumeMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Delete a volume
+ */
+export const useDeleteVolume = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteVolume>>,
+    TError,
+    { volumeId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteVolume>>,
+  TError,
+  { volumeId: number },
+  TContext
+> => {
+  return useMutation(getDeleteVolumeMutationOptions(options));
+};
 
 /**
  * Returns summary stats for the dashboard

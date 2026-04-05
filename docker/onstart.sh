@@ -31,15 +31,18 @@ retry() {
     return 1
 }
 
-MODEL_REPO="${MODEL_REPO:-unsloth/Kimi-K2.5-GGUF}"
-MODEL_QUANT="${MODEL_QUANT:-UD-TQ1_0}"
-LLAMA_CTX_SIZE="${LLAMA_CTX_SIZE:-32768}"
-LLAMA_BATCH_SIZE="${LLAMA_BATCH_SIZE:-512}"
-LLAMA_EXTRA_ARGS="${LLAMA_EXTRA_ARGS:-}"
-# LLAMA_PORT is the external port (litellm proxy — speaks OpenAI + Anthropic API)
-LLAMA_PORT="${LLAMA_PORT:-8081}"
-# Internal port for llama-cpp-python (OpenAI format only)
-LLAMA_INTERNAL_PORT=8082
+MODEL_REPO="${MODEL_REPO:-moonshotai/Kimi-K2.5}"
+MODEL_QUANT="${MODEL_QUANT:-kimi-k2.5}"
+VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-32768}"
+VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-256}"
+VLLM_EXTRA_ARGS="${VLLM_EXTRA_ARGS:-}"
+NUM_GPUS="${NUM_GPUS:-1}"
+VOLUME_MOUNTED="${VOLUME_MOUNTED:-0}"
+
+# VLLM_PORT is the external port (litellm proxy — speaks OpenAI + Anthropic API)
+VLLM_PORT="${VLLM_PORT:-8081}"
+# Internal port for vLLM (OpenAI format only)
+VLLM_INTERNAL_PORT=8082
 CODE_SERVER_PORT="${CODE_SERVER_PORT:-8080}"
 BOLT_PORT="${BOLT_PORT:-5173}"
 PREVIEW_PORT="${PREVIEW_PORT:-3000}"
@@ -53,11 +56,12 @@ if [ -z "$CODE_SERVER_PASSWORD" ]; then
 fi
 
 log "=== OmniQL Coding Environment Starting ==="
-log "Model: $MODEL_REPO / $MODEL_QUANT"
-log "Context: $LLAMA_CTX_SIZE, Batch: $LLAMA_BATCH_SIZE"
+log "Model: $MODEL_REPO (cached as $MODEL_QUANT)"
+log "Volume mounted: $VOLUME_MOUNTED | GPUs: $NUM_GPUS"
+log "vLLM max-model-len: $VLLM_MAX_MODEL_LEN | max-num-seqs: $VLLM_MAX_NUM_SEQS"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE 1: Start all services that don't need the model (available immediately)
+# PHASE 1: Start all services immediately (no model needed)
 # ─────────────────────────────────────────────────────────────────────────────
 set_status "starting"
 
@@ -87,9 +91,9 @@ log "Claw Task Runner started"
 log "Configuring Bolt.diy..."
 cd /opt/bolt-diy
 cat > .env.local << EOF
-OPENAI_LIKE_API_BASE_URL=http://localhost:${LLAMA_PORT}/v1
+OPENAI_LIKE_API_BASE_URL=http://localhost:${VLLM_PORT}/v1
 OPENAI_LIKE_API_KEY=not-needed
-DEFAULT_NUM_CTX=${LLAMA_CTX_SIZE}
+DEFAULT_NUM_CTX=${VLLM_MAX_MODEL_LEN}
 EOF
 
 log "Starting Bolt.diy on port $BOLT_PORT..."
@@ -100,7 +104,7 @@ log "Configuring nginx with basic auth for exposed services..."
 NGINX_AUTH_USER="${NGINX_AUTH_USER:-omniql}"
 NGINX_AUTH_PASS="${NGINX_AUTH_PASS:-$CODE_SERVER_PASSWORD}"
 htpasswd -cb /etc/nginx/.htpasswd "$NGINX_AUTH_USER" "$NGINX_AUTH_PASS" 2>/dev/null
-log "Nginx auth credentials - user: $NGINX_AUTH_USER, pass: stored in /workspace/.code-server-password"
+log "Nginx credentials — user: $NGINX_AUTH_USER, pass: in /workspace/.code-server-password"
 
 cat > /etc/nginx/sites-available/preview << 'NGINX'
 server {
@@ -157,119 +161,111 @@ NGINX
 ln -sf /etc/nginx/sites-available/preview /etc/nginx/sites-enabled/preview
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && nginx
-log "nginx started — ports 5180 (Bolt), 5181 (Claw Runner), 3000 (Preview) now open"
+log "nginx started — ports 5180 (Bolt), 5181 (Claw Runner), 3000 (Preview) open"
+
+# Mark phase 1 done — code-server, Bolt.diy, and nginx are up
+set_status "ready"
+touch /tmp/instance-ready
+log "=== Phase 1 ready — code-server and tools available ==="
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PHASE 2: Download model in background, then start LLM services
+# PHASE 2: Model download (if needed) + vLLM + litellm in background
 # ─────────────────────────────────────────────────────────────────────────────
-set_status "downloading"
-log "Starting model download in background..."
+log "Starting LLM backend in background..."
 
 (
     MODEL_DIR="$VOLUME_MODEL_PATH/$MODEL_QUANT"
-    if [ -d "$MODEL_DIR" ] && [ "$(ls -A $MODEL_DIR/*.gguf 2>/dev/null)" ]; then
-        log "Model found at $MODEL_DIR, skipping download"
+
+    if [ "$VOLUME_MOUNTED" = "1" ] && [ -d "$MODEL_DIR" ] && ls "$MODEL_DIR"/*.safetensors > /dev/null 2>&1; then
+        log "Volume mounted with model at $MODEL_DIR — skipping download"
+    elif [ -d "$MODEL_DIR" ] && ls "$MODEL_DIR"/*.safetensors > /dev/null 2>&1; then
+        log "Model found at $MODEL_DIR — skipping download"
     else
-        log "Downloading model $MODEL_REPO ($MODEL_QUANT) — this may take a while..."
+        echo "downloading" > "$STATUS_FILE"
+        log "Downloading model $MODEL_REPO to $MODEL_DIR — this may take a while..."
         mkdir -p "$MODEL_DIR"
         retry huggingface-cli download "$MODEL_REPO" \
-            --include "${MODEL_QUANT}/*" \
             --local-dir "$MODEL_DIR" \
             --local-dir-use-symlinks False \
             --resume-download
         log "Model download complete"
     fi
 
-    GGUF_FILES=$(find "$MODEL_DIR" -name "*.gguf" -type f | sort | head -1)
-    if [ -z "$GGUF_FILES" ]; then
-        GGUF_FILES=$(find "$MODEL_DIR/$MODEL_QUANT" -name "*.gguf" -type f | sort | head -1)
-    fi
-
-    if [ -z "$GGUF_FILES" ]; then
-        log "ERROR: No GGUF files found in $MODEL_DIR"
-        echo "error: no model files found" > "$STATUS_FILE"
-        exit 1
-    fi
-
-    log "Using model file: $GGUF_FILES"
     echo "starting_llm" > "$STATUS_FILE"
+    log "Starting vLLM server on internal port $VLLM_INTERNAL_PORT..."
 
-    log "Starting llama-cpp-python server on internal port $LLAMA_INTERNAL_PORT..."
-    python3 -m llama_cpp.server \
-        --model "$GGUF_FILES" \
+    VLLM_CMD="python3 -m vllm.entrypoints.openai.api_server \
+        --model $MODEL_DIR \
         --host 0.0.0.0 \
-        --port $LLAMA_INTERNAL_PORT \
-        --n_gpu_layers -1 \
-        --n_ctx "$LLAMA_CTX_SIZE" \
-        --n_batch "$LLAMA_BATCH_SIZE" \
-        > /var/log/llama-server.log 2>&1 &
-    LLAMA_PID=$!
-    log "llama-cpp-python server started (PID: $LLAMA_PID)"
+        --port $VLLM_INTERNAL_PORT \
+        --tensor-parallel-size $NUM_GPUS \
+        --max-model-len $VLLM_MAX_MODEL_LEN \
+        --max-num-seqs $VLLM_MAX_NUM_SEQS \
+        --gpu-memory-utilization 0.92 \
+        --served-model-name kimi-k2 \
+        $VLLM_EXTRA_ARGS"
 
-    log "Starting litellm proxy on port $LLAMA_PORT (OpenAI + Anthropic API)..."
+    eval "$VLLM_CMD" > /var/log/vllm-server.log 2>&1 &
+    VLLM_PID=$!
+    log "vLLM server started (PID: $VLLM_PID)"
+
+    log "Starting litellm proxy on port $VLLM_PORT (OpenAI + Anthropic API)..."
     litellm \
         --model openai/kimi-k2 \
-        --api_base "http://localhost:${LLAMA_INTERNAL_PORT}/v1" \
+        --api_base "http://localhost:${VLLM_INTERNAL_PORT}/v1" \
         --api_key not-needed \
         --host 0.0.0.0 \
-        --port "$LLAMA_PORT" \
+        --port "$VLLM_PORT" \
         > /var/log/litellm.log 2>&1 &
     LITELLM_PID=$!
     log "litellm proxy started (PID: $LITELLM_PID)"
 
-    log "Waiting for llama-cpp-python to be ready (model loading may take a few minutes)..."
+    log "Waiting for vLLM to be ready (model loading may take a few minutes)..."
     for i in $(seq 1 120); do
-        if curl -sf "http://localhost:$LLAMA_INTERNAL_PORT/health" > /dev/null 2>&1; then
-            log "llama-cpp-python is ready!"
+        if curl -sf "http://localhost:$VLLM_INTERNAL_PORT/health" > /dev/null 2>&1; then
+            log "vLLM is ready!"
             break
         fi
         if [ $i -eq 120 ]; then
-            log "WARNING: llama-cpp-python did not respond within 600 seconds"
+            log "WARNING: vLLM did not respond within 600 seconds"
         fi
         sleep 5
     done
 
     log "Configuring claw-code CLI..."
-    export ANTHROPIC_BASE_URL="http://localhost:${LLAMA_PORT}"
+    export ANTHROPIC_BASE_URL="http://localhost:${VLLM_PORT}"
     export ANTHROPIC_API_KEY="not-needed"
-    echo "ANTHROPIC_BASE_URL=http://localhost:${LLAMA_PORT}" >> /etc/environment
+    echo "ANTHROPIC_BASE_URL=http://localhost:${VLLM_PORT}" >> /etc/environment
     echo "ANTHROPIC_API_KEY=not-needed" >> /etc/environment
-    echo "export ANTHROPIC_BASE_URL=http://localhost:${LLAMA_PORT}" >> /root/.bashrc
+    echo "export ANTHROPIC_BASE_URL=http://localhost:${VLLM_PORT}" >> /root/.bashrc
     echo "export ANTHROPIC_API_KEY=not-needed" >> /root/.bashrc
-    log "claw-code configured: ANTHROPIC_BASE_URL -> litellm proxy (port $LLAMA_PORT)"
+    log "claw-code configured: ANTHROPIC_BASE_URL -> litellm proxy (port $VLLM_PORT)"
 
-    echo "ready" > "$STATUS_FILE"
-    touch /tmp/instance-ready
-    log "=== OmniQL Coding Environment Fully Ready (LLM online) ==="
+    echo "llm_ready" > "$STATUS_FILE"
+    log "=== OmniQL Coding Environment Fully Ready (vLLM online) ==="
+    log "  vLLM API:      http://localhost:$VLLM_INTERNAL_PORT/v1 (OpenAI format)"
+    log "  LLM Proxy:     http://localhost:$VLLM_PORT (OpenAI + Anthropic via litellm)"
+    log "  Bolt.diy:      http://localhost:$BOLT_PORT (proxied on 5180)"
+    log "  code-server:   http://localhost:$CODE_SERVER_PORT"
+    log "  Claw Runner:   http://localhost:5181"
 
-    # Keep llama-cpp-python alive
+    # Keep vLLM alive
     while true; do
-        if ! kill -0 $LLAMA_PID 2>/dev/null; then
-            log "WARNING: llama-cpp-python process died, restarting..."
-            python3 -m llama_cpp.server \
-                --model "$GGUF_FILES" \
-                --host 0.0.0.0 \
-                --port $LLAMA_INTERNAL_PORT \
-                --n_gpu_layers -1 \
-                --n_ctx "$LLAMA_CTX_SIZE" \
-                --n_batch "$LLAMA_BATCH_SIZE" \
-                > /var/log/llama-server.log 2>&1 &
-            LLAMA_PID=$!
+        if ! kill -0 $VLLM_PID 2>/dev/null; then
+            log "WARNING: vLLM process died, restarting..."
+            eval "$VLLM_CMD" > /var/log/vllm-server.log 2>&1 &
+            VLLM_PID=$!
         fi
         sleep 30
     done
 ) &
 
-set_status "ready"
-touch /tmp/instance-ready
-
-log "=== Phase 1 services up — code-server, Bolt.diy, Claw Runner, nginx ready ==="
+log "Phase 2 (vLLM) starting in background — code-server and tools are already available"
 log "  code-server:  http://localhost:$CODE_SERVER_PORT"
 log "  Bolt.diy:     http://localhost:$BOLT_PORT (proxied with auth on 5180)"
 log "  Claw Runner:  http://localhost:5181"
-log "  LLM API:      http://localhost:$LLAMA_PORT (will be ready after model download)"
+log "  LLM API:      http://localhost:$VLLM_PORT (online after model loads)"
 log "  SSH:          port 22 (key-based only)"
-log "Model download running in background — LLM will come online automatically"
 
 # Keep container alive
 wait

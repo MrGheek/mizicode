@@ -1,6 +1,11 @@
 import { db, gpuProfilesTable, type InsertGpuProfile } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
+// defaultQuant is used as the model cache subdirectory name under /workspace/models/
+// llamaCtxSize  → vLLM --max-model-len
+// llamaBatchSize → vLLM --max-num-seqs
+// llamaExtraArgs → appended to the vllm serve command
+
 const DEFAULT_PROFILES: InsertGpuProfile[] = [
   {
     name: "starter",
@@ -8,8 +13,8 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "RTX 4090",
     numGpus: 1,
     totalVram: 24,
-    dockerImageTag: "gheeklabs/coding-env:cuda12.4",
-    defaultQuant: "UD-TQ1_0",
+    dockerImageTag: "gheeklabs/coding-env:latest",
+    defaultQuant: "kimi-k2.5",
     quantSizeGb: 245,
     diskSizeGb: 400,
     estimatedSpeedMin: 5,
@@ -17,7 +22,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMin: 0.13,
     estimatedCostMax: 0.20,
     llamaCtxSize: 8192,
-    llamaBatchSize: 512,
+    llamaBatchSize: 256,
     llamaExtraArgs: "",
     searchParams: {
       gpu_name: "RTX 4090",
@@ -33,8 +38,8 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "RTX 4090",
     numGpus: 4,
     totalVram: 96,
-    dockerImageTag: "gheeklabs/coding-env:cuda12.4",
-    defaultQuant: "UD-TQ1_0",
+    dockerImageTag: "gheeklabs/coding-env:latest",
+    defaultQuant: "kimi-k2.5",
     quantSizeGb: 245,
     diskSizeGb: 800,
     estimatedSpeedMin: 20,
@@ -42,8 +47,8 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMin: 0.50,
     estimatedCostMax: 0.80,
     llamaCtxSize: 32768,
-    llamaBatchSize: 1024,
-    llamaExtraArgs: "",
+    llamaBatchSize: 512,
+    llamaExtraArgs: "--enable-expert-parallel",
     searchParams: {
       gpu_name: "RTX 4090",
       num_gpus: 4,
@@ -58,8 +63,8 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "A100 80GB",
     numGpus: 4,
     totalVram: 320,
-    dockerImageTag: "gheeklabs/coding-env:a100",
-    defaultQuant: "Q3_K_M",
+    dockerImageTag: "gheeklabs/coding-env:latest",
+    defaultQuant: "kimi-k2.5",
     quantSizeGb: 490,
     diskSizeGb: 1000,
     estimatedSpeedMin: 40,
@@ -67,8 +72,8 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMin: 2.0,
     estimatedCostMax: 4.0,
     llamaCtxSize: 65536,
-    llamaBatchSize: 2048,
-    llamaExtraArgs: "--flash-attn",
+    llamaBatchSize: 1024,
+    llamaExtraArgs: "--enable-expert-parallel --kv-cache-dtype fp8",
     searchParams: {
       gpu_name: "A100_SXM4",
       num_gpus: 4,
@@ -83,8 +88,8 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "H100 80GB",
     numGpus: 8,
     totalVram: 640,
-    dockerImageTag: "gheeklabs/coding-env:h100",
-    defaultQuant: "IQ4_XS",
+    dockerImageTag: "gheeklabs/coding-env:latest",
+    defaultQuant: "kimi-k2.5",
     quantSizeGb: 547,
     diskSizeGb: 1200,
     estimatedSpeedMin: 80,
@@ -92,8 +97,8 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMin: 8.0,
     estimatedCostMax: 16.0,
     llamaCtxSize: 131072,
-    llamaBatchSize: 4096,
-    llamaExtraArgs: "--flash-attn",
+    llamaBatchSize: 2048,
+    llamaExtraArgs: "--enable-expert-parallel --kv-cache-dtype fp8",
     searchParams: {
       gpu_name: "H100_SXM5",
       num_gpus: 8,
@@ -106,12 +111,41 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
 
 export async function seedProfiles() {
   const existing = await db.select().from(gpuProfilesTable);
-  if (existing.length > 0) return existing;
 
+  // Upsert: insert new profiles, update fields that changed (e.g. switching llama → vLLM config)
   const inserted = [];
   for (const profile of DEFAULT_PROFILES) {
-    const [row] = await db.insert(gpuProfilesTable).values(profile).returning();
-    inserted.push(row);
+    const existingProfile = existing.find(p => p.name === profile.name);
+    if (existingProfile) {
+      const [updated] = await db
+        .update(gpuProfilesTable)
+        .set({
+          displayName: profile.displayName,
+          gpuName: profile.gpuName,
+          numGpus: profile.numGpus,
+          totalVram: profile.totalVram,
+          dockerImageTag: profile.dockerImageTag,
+          defaultQuant: profile.defaultQuant,
+          quantSizeGb: profile.quantSizeGb,
+          diskSizeGb: profile.diskSizeGb,
+          estimatedSpeedMin: profile.estimatedSpeedMin,
+          estimatedSpeedMax: profile.estimatedSpeedMax,
+          estimatedCostMin: profile.estimatedCostMin,
+          estimatedCostMax: profile.estimatedCostMax,
+          llamaCtxSize: profile.llamaCtxSize,
+          llamaBatchSize: profile.llamaBatchSize,
+          llamaExtraArgs: profile.llamaExtraArgs,
+          searchParams: profile.searchParams,
+          startupTimeMin: profile.startupTimeMin,
+          startupTimeVolume: profile.startupTimeVolume,
+        })
+        .where(eq(gpuProfilesTable.name, profile.name))
+        .returning();
+      inserted.push(updated);
+    } else {
+      const [row] = await db.insert(gpuProfilesTable).values(profile).returning();
+      inserted.push(row);
+    }
   }
   return inserted;
 }

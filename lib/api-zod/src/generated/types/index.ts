@@ -9,6 +9,7 @@
 export * from "./activeSessionResponse";
 export * from "./createSessionRequest";
 export * from "./createTemplateRequest";
+export * from "./createVolumeRequest";
 export * from "./dashboardSummary";
 export * from "./dashboardSummaryProfileCounts";
 export * from "./errorResponse";
@@ -22,3 +23,5 @@ export * from "./sessionStatus";
 export * from "./successResponse";
 export * from "./template";
 export * from "./updateTemplateRequest";
+export * from "./volume";
+export * from "./volumeStatus";
