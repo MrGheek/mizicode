@@ -14,6 +14,7 @@ interface StopCountdownModalProps {
 export function StopCountdownModal({ schedulerConfig, activeSession, onStop }: StopCountdownModalProps) {
   const [showModal, setShowModal] = useState(false);
   const [countdown, setCountdown] = useState(10);
+  const [triggerTime, setTriggerTime] = useState<string>("");
   const suppressedRef = useRef(false);
   const stopTriggeredRef = useRef(false);
 
@@ -34,6 +35,7 @@ export function StopCountdownModal({ schedulerConfig, activeSession, onStop }: S
         localTime === schedulerConfig.secondReminderTime;
 
       if ((isStopTime || isReminderTime) && !showModal && !suppressedRef.current) {
+        setTriggerTime(isStopTime ? schedulerConfig.stopTime : schedulerConfig.secondReminderTime);
         setShowModal(true);
         setCountdown(10);
         stopTriggeredRef.current = false;
@@ -82,7 +84,8 @@ export function StopCountdownModal({ schedulerConfig, activeSession, onStop }: S
             <DialogTitle>Scheduled Session Stop</DialogTitle>
           </div>
           <DialogDescription>
-            Your scheduled stop time (<strong>{schedulerConfig?.stopTime}</strong>) has been reached.
+            Your scheduled {triggerTime === schedulerConfig?.stopTime ? "stop time" : "second reminder"} (
+            <strong>{triggerTime}</strong>) has been reached.
             The session will be destroyed automatically in{" "}
             <strong className="text-destructive text-lg tabular-nums">{countdown}</strong> seconds.
           </DialogDescription>
