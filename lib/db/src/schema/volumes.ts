@@ -7,6 +7,9 @@ export const volumesTable = pgTable("volumes", {
   id: serial("id").primaryKey(),
   profileId: integer("profile_id").references(() => gpuProfilesTable.id),
   vastVolumeId: integer("vast_volume_id"),
+  // machineId is the Vast.ai physical host the volume lives on.
+  // Volumes are machine-local — future sessions must run on this machine to mount the volume.
+  machineId: integer("machine_id"),
   name: text("name").notNull(),
   status: text("status").notNull().default("pending"),
   sizeGb: integer("size_gb").notNull(),

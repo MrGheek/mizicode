@@ -30,6 +30,7 @@ async function vastFetch<T = Record<string, unknown>>(path: string, opts: Reques
 
 export interface VastOffer {
   id: number;
+  machine_id?: number;
   gpu_name?: string;
   num_gpus?: number;
   gpu_ram?: number;
@@ -147,6 +148,23 @@ export async function searchOffers(params: VastSearchParams) {
   return data.offers || [];
 }
 
+// Search for offers on a specific machine (for sessions that need to mount a volume)
+export async function searchOffersOnMachine(machineId: number): Promise<VastOffer[]> {
+  const query: Record<string, unknown> = {
+    rentable: { eq: true },
+    rented: { eq: false },
+    machine_id: { eq: machineId },
+    type: "ask",
+    order: [["dph_total", "asc"]],
+    limit: 5,
+  };
+  const data = await vastFetch<VastSearchResponse>("/bundles/", {
+    method: "POST",
+    body: JSON.stringify(query),
+  });
+  return data.offers || [];
+}
+
 export interface VastCreateInstanceParams {
   offerId: number;
   image: string;
@@ -222,10 +240,12 @@ export async function listInstances() {
 
 // ─── Volume management ──────────────────────────────────────────────────────
 
-export async function createVolume(name: string, sizeGb: number): Promise<VastVolume> {
+// Vast.ai volumes are machine-local: they must be created with the machine_id
+// of the physical host, and can only be mounted by instances on that same host.
+export async function createVolume(name: string, sizeGb: number, machineId: number): Promise<VastVolume> {
   const data = await vastFetch<VastVolumeCreateResponse>("/volumes/", {
     method: "POST",
-    body: JSON.stringify({ name, size: sizeGb }),
+    body: JSON.stringify({ name, size: sizeGb, machine_id: machineId }),
   });
   return data.volume || ({ id: data.id, name, size: sizeGb, status: "pending" } as VastVolume);
 }

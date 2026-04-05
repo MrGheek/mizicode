@@ -200,25 +200,10 @@ router.post("/volumes", async (req, res) => {
   let volumeDbId: number | undefined;
 
   try {
-    logger.info({ profileId, volumeName, volumeSizeGb }, "Creating Vast.ai volume");
-    const vastVolume = await vastai.createVolume(volumeName, volumeSizeGb);
-    const vastVolumeId = vastVolume.id!;
-
-    const [volumeRecord] = await db
-      .insert(volumesTable)
-      .values({
-        profileId,
-        vastVolumeId,
-        name: volumeName,
-        status: "provisioning",
-        sizeGb: volumeSizeGb,
-        statusMessage: "Volume created — finding GPU to download model weights...",
-      })
-      .returning();
-
-    volumeDbId = volumeRecord.id;
-
+    // Step 1: Find a GPU offer matching the profile — we need its machine_id before
+    // creating the volume, because Vast.ai volumes are machine-local.
     const searchParams = (profile.searchParams as Record<string, unknown>) || {};
+    logger.info({ profileId }, "Searching for GPU offer to determine volume machine_id");
     const offers = await vastai.searchOffers({
       gpu_name: searchParams.gpu_name as string,
       num_gpus: (searchParams.num_gpus as number) || 1,
@@ -228,15 +213,36 @@ router.post("/volumes", async (req, res) => {
     });
 
     if (!offers || offers.length === 0) {
-      await db
-        .update(volumesTable)
-        .set({ status: "error", statusMessage: "No GPU offers available to provision volume", updatedAt: new Date() })
-        .where(eq(volumesTable.id, volumeRecord.id));
       res.status(503).json({ error: "No GPU offers available to provision volume. Try again later." });
       return;
     }
 
     const selectedOffer = offers[0] as VastOffer;
+    const machineId = selectedOffer.machine_id;
+
+    if (!machineId) {
+      res.status(500).json({ error: "Could not determine machine ID from GPU offer. Please try again." });
+      return;
+    }
+
+    logger.info({ profileId, volumeName, volumeSizeGb, machineId }, "Creating Vast.ai volume on machine");
+    const vastVolume = await vastai.createVolume(volumeName, volumeSizeGb, machineId);
+    const vastVolumeId = vastVolume.id!;
+
+    const [volumeRecord] = await db
+      .insert(volumesTable)
+      .values({
+        profileId,
+        vastVolumeId,
+        machineId,
+        name: volumeName,
+        status: "provisioning",
+        sizeGb: volumeSizeGb,
+        statusMessage: `Volume created on machine ${machineId} — starting model download...`,
+      })
+      .returning();
+
+    volumeDbId = volumeRecord.id;
     const MODEL_REPO = "moonshotai/Kimi-K2.5";
     const MODEL_QUANT = profile.defaultQuant;
     const MODEL_DIR = `/workspace/models/${MODEL_QUANT}`;

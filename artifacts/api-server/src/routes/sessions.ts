@@ -179,23 +179,58 @@ router.post("/sessions", async (req, res) => {
   let insertedSessionId: number | undefined;
 
   try {
+    // Look up the most recent READY storage volume for this profile (do this first
+    // so we know whether to search machine-constrained offers)
+    const [volumeRecord] = await db
+      .select()
+      .from(volumesTable)
+      .where(and(eq(volumesTable.profileId, profileId), eq(volumesTable.status, "ready")))
+      .orderBy(desc(volumesTable.updatedAt))
+      .limit(1);
+
+    const hasReadyVolume = volumeRecord?.status === "ready" && !!volumeRecord?.vastVolumeId && !!volumeRecord?.machineId;
+    const vastVolumeId = hasReadyVolume ? volumeRecord.vastVolumeId! : undefined;
+    const volumeMachineId = hasReadyVolume ? volumeRecord.machineId! : undefined;
+
     let selectedOfferId = offerId;
+    let volumeMounted = false;
 
     if (!selectedOfferId) {
       const searchParams = (profile.searchParams as Record<string, unknown>) || {};
-      const offers = await vastai.searchOffers({
-        gpu_name: searchParams.gpu_name as string,
-        num_gpus: searchParams.num_gpus as number,
-        min_gpu_ram: searchParams.min_gpu_ram as number,
-        disk_space: profile.diskSizeGb,
-        limit: 1,
-      });
 
-      if (!offers || offers.length === 0) {
-        res.status(400).json({ error: "No GPU offers available for this profile. Try again later or choose a different profile." });
-        return;
+      // If a ready volume exists, try to find an offer on the same machine first.
+      // Vast.ai volumes are machine-local — the session must run on the same host to mount them.
+      if (hasReadyVolume && volumeMachineId) {
+        logger.info({ profileId, volumeMachineId }, "Volume ready — searching for offer on volume's machine");
+        const machineOffers = await vastai.searchOffersOnMachine(volumeMachineId);
+        if (machineOffers.length > 0) {
+          selectedOfferId = (machineOffers[0] as VastOffer).id;
+          volumeMounted = true;
+          logger.info({ selectedOfferId, volumeMachineId }, "Found offer on volume's machine — session will mount volume");
+        } else {
+          logger.warn({ volumeMachineId }, "No offers available on volume's machine — falling back to any machine (no volume mount)");
+        }
       }
-      selectedOfferId = (offers[0] as VastOffer).id;
+
+      // Fallback: search any machine (no volume mount)
+      if (!selectedOfferId) {
+        const offers = await vastai.searchOffers({
+          gpu_name: searchParams.gpu_name as string,
+          num_gpus: searchParams.num_gpus as number,
+          min_gpu_ram: searchParams.min_gpu_ram as number,
+          disk_space: profile.diskSizeGb,
+          limit: 1,
+        });
+
+        if (!offers || offers.length === 0) {
+          res.status(400).json({ error: "No GPU offers available for this profile. Try again later or choose a different profile." });
+          return;
+        }
+        selectedOfferId = (offers[0] as VastOffer).id;
+      }
+    } else {
+      // offerId was provided by caller — assume volume can be mounted if it's on the same machine
+      volumeMounted = hasReadyVolume;
     }
 
     const [defaultTemplate] = await db
@@ -206,21 +241,12 @@ router.post("/sessions", async (req, res) => {
 
     const templateHash = defaultTemplate?.templateHash || undefined;
 
-    // Look up the most recent READY storage volume for this profile
-    const [volumeRecord] = await db
-      .select()
-      .from(volumesTable)
-      .where(and(eq(volumesTable.profileId, profileId), eq(volumesTable.status, "ready")))
-      .orderBy(desc(volumesTable.updatedAt))
-      .limit(1);
-
-    const hasReadyVolume = volumeRecord?.status === "ready" && !!volumeRecord?.vastVolumeId;
-    const vastVolumeId = hasReadyVolume ? volumeRecord.vastVolumeId! : undefined;
-
-    if (hasReadyVolume) {
-      logger.info({ profileId, vastVolumeId }, "Using storage volume for session — skipping model download");
+    if (volumeMounted) {
+      logger.info({ profileId, vastVolumeId }, "Session will mount storage volume — model download skipped");
+    } else if (hasReadyVolume) {
+      logger.warn({ profileId }, "Volume exists but machine unavailable — session will run without volume mount");
     } else {
-      logger.info({ profileId }, "No ready volume found — model will be downloaded on instance startup");
+      logger.info({ profileId }, "No ready volume — model will be downloaded on instance startup");
     }
 
     const [session] = await db
@@ -248,7 +274,7 @@ router.post("/sessions", async (req, res) => {
       llamaBatchSize: profile.llamaBatchSize,
       llamaExtraArgs: profile.llamaExtraArgs || "",
       numGpus: profile.numGpus,
-      hasVolume: hasReadyVolume,
+      hasVolume: volumeMounted,
     });
 
     const result = await vastai.createInstance({
@@ -257,7 +283,7 @@ router.post("/sessions", async (req, res) => {
       onstart,
       disk: profile.diskSizeGb,
       templateHashId: templateHash,
-      volumeId: vastVolumeId,
+      volumeId: volumeMounted ? vastVolumeId : undefined,
       volumeMountPath: "/workspace/models",
       env: {
         MODEL_REPO,
@@ -265,13 +291,13 @@ router.post("/sessions", async (req, res) => {
         VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
         VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
         NUM_GPUS: String(profile.numGpus),
-        VOLUME_MOUNTED: hasReadyVolume ? "1" : "0",
+        VOLUME_MOUNTED: volumeMounted ? "1" : "0",
       },
     });
 
     const instanceId = result.new_contract;
 
-    const statusMessage = hasReadyVolume
+    const statusMessage = volumeMounted
       ? "Instance created — loading model from volume (fast start)..."
       : "Instance created — waiting for startup and model download...";
 
