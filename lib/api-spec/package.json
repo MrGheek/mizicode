@@ -3,7 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "codegen": "orval --config ./orval.config.ts"
+    "codegen": "orval --config ./orval.config.ts",
+    "postcodegen": "npx tsc --build ../../lib/api-client-react ../../lib/api-zod ../../lib/db"
   },
   "devDependencies": {
     "orval": "^8.5.2"
