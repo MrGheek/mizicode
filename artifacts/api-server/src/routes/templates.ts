@@ -44,7 +44,7 @@ router.post("/templates", async (req, res) => {
       disk_space: diskSpace || 400,
     });
 
-    const templateHash = vastTemplate.template_hash || vastTemplate.hash_id || "";
+    const templateHash = vastTemplate.template?.hash_id || vastTemplate.template_hash || vastTemplate.hash_id || "";
 
     if (isDefault) {
       await db.update(templatesTable).set({ isDefault: false });
@@ -104,7 +104,7 @@ router.put("/templates/:templateId", async (req, res) => {
         env: envVars || existing.envVars || "",
         disk_space: diskSpace || existing.diskSpace || 400,
       });
-      templateHash = vastResult.template_hash || vastResult.hash_id || templateHash;
+      templateHash = vastResult.template?.hash_id || vastResult.template_hash || vastResult.hash_id || templateHash;
       logger.info({ templateHash }, "Template updated on Vast.ai (delete+recreate)");
     } catch (err: unknown) {
       logger.error(err, "Failed to update template on Vast.ai — updating local DB only");

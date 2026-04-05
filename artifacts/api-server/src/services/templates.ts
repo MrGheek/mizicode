@@ -43,7 +43,7 @@ export async function registerDefaultTemplate(): Promise<void> {
       readme: "OmniQL Cloud Coding environment with llama.cpp (Kimi K2.5), code-server, and Bolt.diy",
     });
 
-    const templateHash = vastResult.template_hash || vastResult.hash_id || "";
+    const templateHash = vastResult.template?.hash_id || vastResult.template_hash || vastResult.hash_id || "";
 
     await db.insert(templatesTable).values({
       templateHash,

@@ -49,8 +49,14 @@ export interface VastInstanceListResponse {
 }
 
 export interface VastTemplateResponse {
+  success?: boolean;
   template_hash?: string;
   hash_id?: string;
+  template?: {
+    hash_id?: string;
+    id?: number;
+    name?: string;
+  };
 }
 
 export interface VastSearchParams {
