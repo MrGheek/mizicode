@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { db, volumesTable, gpuProfilesTable } from "@workspace/db";
-import { eq, desc, and, inArray } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import * as vastai from "../services/vastai";
+import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -235,7 +236,7 @@ router.post("/volumes", async (req, res) => {
       return;
     }
 
-    const selectedOffer = offers[0] as { id: number };
+    const selectedOffer = offers[0] as VastOffer;
     const MODEL_REPO = "moonshotai/Kimi-K2.5";
     const MODEL_QUANT = profile.defaultQuant;
     const MODEL_DIR = `/workspace/models/${MODEL_QUANT}`;

@@ -3,6 +3,7 @@ import { db, sessionsTable, gpuProfilesTable, templatesTable, volumesTable } fro
 import { eq, desc, inArray, and } from "drizzle-orm";
 import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
+import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -31,9 +32,14 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
       } else if (statusMsg.includes("starting_llm")) {
         status = "starting";
         statusMessage = "Loading model into GPU memory...";
-      } else if (statusMsg.includes("llm_ready") || statusMsg.includes("ready")) {
+      } else if (statusMsg.includes("llm_ready")) {
+        // Only mark fully ready once vLLM is confirmed online
         status = "ready";
         statusMessage = "Session is ready — vLLM online";
+      } else if (statusMsg.includes("services_ready")) {
+        // Phase 1 done: code-server/Bolt.diy/nginx up, but LLM still loading
+        status = "starting";
+        statusMessage = "Tools ready — LLM model loading in background...";
       } else {
         status = "starting";
         statusMessage = "Services starting up...";
@@ -189,7 +195,7 @@ router.post("/sessions", async (req, res) => {
         res.status(400).json({ error: "No GPU offers available for this profile. Try again later or choose a different profile." });
         return;
       }
-      selectedOfferId = (offers[0] as { id: number }).id;
+      selectedOfferId = (offers[0] as VastOffer).id;
     }
 
     const [defaultTemplate] = await db
@@ -341,9 +347,12 @@ router.post("/sessions/:sessionId/refresh", async (req, res) => {
       } else if (statusMsg.includes("starting_llm")) {
         status = "starting";
         statusMessage = "Loading model into GPU memory...";
-      } else if (statusMsg.includes("llm_ready") || statusMsg.includes("ready")) {
+      } else if (statusMsg.includes("llm_ready")) {
         status = "ready";
         statusMessage = "Session is ready — vLLM online";
+      } else if (statusMsg.includes("services_ready")) {
+        status = "starting";
+        statusMessage = "Tools ready — LLM model loading in background...";
       } else {
         status = "starting";
         statusMessage = "Services starting up...";

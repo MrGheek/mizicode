@@ -28,8 +28,28 @@ async function vastFetch<T = Record<string, unknown>>(path: string, opts: Reques
   return res.json() as Promise<T>;
 }
 
+export interface VastOffer {
+  id: number;
+  gpu_name?: string;
+  num_gpus?: number;
+  gpu_ram?: number;
+  cpu_cores?: number;
+  cpu_name?: string;
+  disk_space?: number;
+  inet_down?: number;
+  inet_up?: number;
+  dph_total?: number;
+  dlperf?: number;
+  reliability?: number;
+  geolocation?: string;
+  rentable?: boolean;
+  rented?: boolean;
+  verification?: string;
+  [key: string]: unknown;
+}
+
 export interface VastSearchResponse {
-  offers?: Record<string, unknown>[];
+  offers?: VastOffer[];
 }
 
 export interface VastInstanceResponse {

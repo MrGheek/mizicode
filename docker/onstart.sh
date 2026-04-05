@@ -163,10 +163,13 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t && nginx
 log "nginx started — ports 5180 (Bolt), 5181 (Claw Runner), 3000 (Preview) open"
 
-# Mark phase 1 done — code-server, Bolt.diy, and nginx are up
-set_status "ready"
+# Mark phase 1 done — code-server, Bolt.diy, and nginx are up.
+# Use "services_ready" (not "ready") so the dashboard knows tools are accessible
+# but does NOT yet confuse this with full LLM readiness. "ready" is reserved for
+# the final "llm_ready" state set by Phase 2 once vLLM is online.
+set_status "services_ready"
 touch /tmp/instance-ready
-log "=== Phase 1 ready — code-server and tools available ==="
+log "=== Phase 1 done — code-server and tools available (LLM loading in background) ==="
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 2: Model download (if needed) + vLLM + litellm in background
