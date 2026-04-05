@@ -44,6 +44,10 @@ export interface VastInstance {
   status_msg?: string;
 }
 
+export interface VastInstanceGetResponse {
+  instances?: VastInstance;
+}
+
 export interface VastInstanceListResponse {
   instances?: VastInstance[];
 }
@@ -156,8 +160,10 @@ export async function destroyInstance(instanceId: number) {
   });
 }
 
-export async function getInstance(instanceId: number) {
-  return vastFetch<VastInstance>(`/instances/${instanceId}/`);
+export async function getInstance(instanceId: number): Promise<VastInstance> {
+  const data = await vastFetch<VastInstanceGetResponse>(`/instances/${instanceId}/`);
+  // Vast.ai wraps single-instance GET in { instances: { ... } } (object, not array)
+  return (data.instances as VastInstance) || data as unknown as VastInstance;
 }
 
 export async function listInstances() {
