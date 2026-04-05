@@ -22,7 +22,6 @@ export const gpuProfilesTable = pgTable("gpu_profiles", {
   llamaExtraArgs: text("llama_extra_args").default(""),
   searchParams: jsonb("search_params").notNull(),
   startupTimeMin: integer("startup_time_min").notNull().default(20),
-  startupTimeVolume: integer("startup_time_volume").notNull().default(3),
 });
 
 export const insertGpuProfileSchema = createInsertSchema(gpuProfilesTable).omit({ id: true });

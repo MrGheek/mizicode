@@ -30,7 +30,6 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
       min_gpu_ram: 24,
     },
     startupTimeMin: 25,
-    startupTimeVolume: 3,
   },
   {
     name: "standard",
@@ -55,7 +54,6 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
       min_gpu_ram: 24,
     },
     startupTimeMin: 25,
-    startupTimeVolume: 3,
   },
   {
     name: "pro",
@@ -80,7 +78,6 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
       min_gpu_ram: 80,
     },
     startupTimeMin: 30,
-    startupTimeVolume: 5,
   },
   {
     name: "ultra",
@@ -105,7 +102,6 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
       min_gpu_ram: 80,
     },
     startupTimeMin: 35,
-    startupTimeVolume: 5,
   },
 ];
 
