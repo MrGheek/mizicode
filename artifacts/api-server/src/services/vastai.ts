@@ -141,9 +141,8 @@ export async function createInstance(params: VastCreateInstanceParams) {
     env: envDict,
   };
 
-  if (params.templateHashId) {
-    body.template_hash_id = params.templateHashId;
-  }
+  // Note: template_hash_id is intentionally omitted — Vast.ai rejects instance
+  // creation with an unrecognised hash. image + onstart + env are sufficient.
 
   return vastFetch<VastInstanceResponse>(`/asks/${params.offerId}/`, {
     method: "PUT",
