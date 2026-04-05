@@ -9,10 +9,25 @@ interface ProfileCardProps {
   isLaunching?: boolean;
 }
 
+const PROFILE_TAGLINES: Record<string, string> = {
+  starter:
+    "Great for solo projects and quick fixes. Expect real-time replies on most coding prompts — about as fast as you can read.",
+  standard:
+    "Handles large files and multi-component features without breaking stride. Fast enough to feel instant during active development.",
+  pro:
+    "Full-codebase reasoning at speed. Comfortably architects complex systems, long refactors, and multi-file changes in one shot.",
+  ultra:
+    "Near-instant output at maximum throughput. Built for demanding agentic pipelines where generation speed is the bottleneck.",
+  enterprise:
+    "Dedicated cluster capacity for high-volume teams. Parallel sessions with zero contention across the largest models.",
+};
+
 export function ProfileCard({ profile, onLaunch, isLaunching }: ProfileCardProps) {
+  const tagline = PROFILE_TAGLINES[profile.name] ?? "";
+
   return (
     <Card className="flex flex-col bg-card/50 border-border/50 hover:border-primary/50 transition-colors">
-      <CardHeader className="pb-4">
+      <CardHeader className="pb-3">
         <div className="flex justify-between items-start">
           <div>
             <CardTitle className="text-lg font-bold">{profile.displayName}</CardTitle>
@@ -27,6 +42,9 @@ export function ProfileCard({ profile, onLaunch, isLaunching }: ProfileCardProps
             <div className="text-xs text-muted-foreground">/ hour</div>
           </div>
         </div>
+        {tagline && (
+          <p className="text-xs text-muted-foreground/80 leading-relaxed mt-2">{tagline}</p>
+        )}
       </CardHeader>
       
       <CardContent className="flex-1 grid grid-cols-2 gap-y-3 gap-x-4 text-sm text-muted-foreground">
