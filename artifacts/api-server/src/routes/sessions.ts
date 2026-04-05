@@ -362,7 +362,17 @@ router.delete("/sessions/:sessionId", async (req, res) => {
 
   try {
     if (session.vastInstanceId) {
-      await vastai.destroyInstance(session.vastInstanceId);
+      try {
+        await vastai.destroyInstance(session.vastInstanceId);
+      } catch (vastErr: unknown) {
+        const msg = vastErr instanceof Error ? vastErr.message : "";
+        // 404 means the instance is already gone on Vast.ai — proceed with DB cleanup
+        if (msg.includes("404") || msg.includes("no_such_instance")) {
+          logger.warn({ vastInstanceId: session.vastInstanceId }, "Instance already gone on Vast.ai — cleaning up DB record");
+        } else {
+          throw vastErr;
+        }
+      }
     }
 
     const hoursRunning = session.startedAt
