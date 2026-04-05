@@ -114,17 +114,32 @@ export interface VastCreateInstanceParams {
 }
 
 export async function createInstance(params: VastCreateInstanceParams) {
+  // Vast.ai env dict uses Docker run-flag format:
+  //   "-p HOST:CONTAINER"  → port mapping
+  //   "-e KEY=VALUE"       → environment variable
+  const envDict: Record<string, string> = {
+    "-p 22:22": "1",
+    "-p 3000:3000": "1",
+    "-p 5180:5180": "1",
+    "-p 5181:5181": "1",
+    "-p 8080:8080": "1",
+    "-p 8081:8081": "1",
+  };
+
+  if (params.env) {
+    for (const [key, value] of Object.entries(params.env)) {
+      envDict[`-e ${key}=${value}`] = "1";
+    }
+  }
+
   const body: Record<string, unknown> = {
     client_id: "me",
     image: params.image,
     onstart: params.onstart,
-    runtype: "args",
+    runtype: "ssh_proxy",
     disk: params.disk || 400,
+    env: envDict,
   };
-
-  if (params.env) {
-    body.env = params.env;
-  }
 
   if (params.templateHashId) {
     body.template_hash_id = params.templateHashId;
