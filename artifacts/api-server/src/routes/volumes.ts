@@ -1,14 +1,87 @@
 import { Router } from "express";
 import { db, volumesTable, gpuProfilesTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, inArray } from "drizzle-orm";
 import * as vastai from "../services/vastai";
 import { logger } from "../lib/logger";
 
 const router = Router();
 
-// GET /volumes — list all volumes with associated profile info
+type VolumeRow = typeof volumesTable.$inferSelect & { profileName?: string | null };
+
+/**
+ * Sync a single provisioning volume against Vast.ai and update the DB.
+ * Returns the (possibly updated) merged record.
+ */
+async function syncProvisioningVolume(volume: VolumeRow): Promise<VolumeRow> {
+  if (volume.status !== "provisioning" || !volume.provisioningInstanceId) {
+    return volume;
+  }
+
+  try {
+    const instance = await vastai.getInstance(volume.provisioningInstanceId);
+    const vastStatus = instance.actual_status || "";
+    const statusMsg = (instance.status_msg || "").toLowerCase();
+
+    let newStatus = volume.status;
+    let newMessage = volume.statusMessage;
+    let clearInstanceId = false;
+
+    if (vastStatus === "running") {
+      if (statusMsg.includes("llm_ready") || statusMsg.includes("ready")) {
+        newStatus = "ready";
+        newMessage = "Model weights cached — volume ready";
+        clearInstanceId = true;
+        // Destroy the provisioning instance — model is downloaded
+        try {
+          await vastai.destroyInstance(volume.provisioningInstanceId);
+          logger.info({ instanceId: volume.provisioningInstanceId, volumeId: volume.id }, "Provisioning instance destroyed after successful download");
+        } catch {
+          logger.warn({ instanceId: volume.provisioningInstanceId }, "Failed to destroy provisioning instance after download");
+        }
+      } else if (statusMsg.includes("downloading")) {
+        newMessage = "Downloading model weights to volume...";
+      } else if (statusMsg.includes("starting") || statusMsg.includes("running")) {
+        newMessage = "Instance running — starting download...";
+      }
+    } else if (vastStatus === "loading" || vastStatus === "creating") {
+      newMessage = "Provisioning instance starting up...";
+    } else if (vastStatus === "exited" || vastStatus === "error") {
+      newStatus = "error";
+      newMessage = `Provisioning failed: ${instance.status_msg || vastStatus}`;
+      clearInstanceId = true;
+    }
+
+    const hasChanges =
+      newStatus !== volume.status ||
+      newMessage !== volume.statusMessage ||
+      clearInstanceId;
+
+    if (hasChanges) {
+      const updateSet: Partial<VolumeRow> & { updatedAt: Date } = {
+        status: newStatus,
+        statusMessage: newMessage,
+        updatedAt: new Date(),
+        ...(clearInstanceId ? { provisioningInstanceId: null } : {}),
+      };
+      const [updated] = await db
+        .update(volumesTable)
+        .set(updateSet)
+        .where(eq(volumesTable.id, volume.id))
+        .returning();
+      return { ...updated, profileName: volume.profileName };
+    }
+  } catch (err) {
+    logger.warn({ err, volumeId: volume.id }, "Failed to sync volume provisioning status from Vast.ai");
+  }
+
+  return volume;
+}
+
+// GET /volumes — list all volumes, syncing any that are provisioning
+// The dashboard polls this endpoint via useListVolumes, so we do Vast.ai sync here
+// to ensure volumes transition to `ready` and are visible to the session creation flow.
 router.get("/volumes", async (_req, res) => {
-  const volumes = await db
+  const rows = await db
     .select({
       id: volumesTable.id,
       profileId: volumesTable.profileId,
@@ -26,10 +99,19 @@ router.get("/volumes", async (_req, res) => {
     .leftJoin(gpuProfilesTable, eq(volumesTable.profileId, gpuProfilesTable.id))
     .orderBy(desc(volumesTable.createdAt));
 
-  res.json(volumes);
+  // Sync all provisioning volumes against Vast.ai in parallel
+  const synced = await Promise.all(
+    rows.map(row =>
+      row.status === "provisioning" && row.provisioningInstanceId
+        ? syncProvisioningVolume(row as VolumeRow)
+        : row
+    )
+  );
+
+  res.json(synced);
 });
 
-// GET /volumes/:id — get a single volume with status sync from Vast.ai
+// GET /volumes/:id — get a single volume (also syncs provisioning status)
 router.get("/volumes/:id", async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) {
@@ -60,65 +142,11 @@ router.get("/volumes/:id", async (req, res) => {
     return;
   }
 
-  // If provisioning, check the provisioning instance status
-  if (volume.status === "provisioning" && volume.provisioningInstanceId) {
-    try {
-      const instance = await vastai.getInstance(volume.provisioningInstanceId);
-      const vastStatus = instance.actual_status || "";
-      const statusMsg = (instance.status_msg || "").toLowerCase();
-
-      let newStatus = volume.status;
-      let newMessage = volume.statusMessage;
-
-      if (vastStatus === "running") {
-        // If model download is complete, mark volume as ready
-        if (statusMsg.includes("llm_ready") || statusMsg.includes("ready")) {
-          newStatus = "ready";
-          newMessage = "Model weights cached — volume ready";
-          // Destroy the provisioning instance now that model is downloaded
-          try {
-            await vastai.destroyInstance(volume.provisioningInstanceId);
-          } catch {
-            logger.warn({ instanceId: volume.provisioningInstanceId }, "Failed to destroy provisioning instance");
-          }
-          await db
-            .update(volumesTable)
-            .set({
-              status: newStatus,
-              statusMessage: newMessage,
-              provisioningInstanceId: null,
-              updatedAt: new Date(),
-            })
-            .where(eq(volumesTable.id, id));
-        } else if (statusMsg.includes("downloading") || statusMsg.includes("starting_llm")) {
-          newStatus = "provisioning";
-          newMessage = "Downloading model weights to volume...";
-          await db
-            .update(volumesTable)
-            .set({ statusMessage: newMessage, updatedAt: new Date() })
-            .where(eq(volumesTable.id, id));
-        }
-      } else if (vastStatus === "exited" || vastStatus === "error") {
-        newStatus = "error";
-        newMessage = `Provisioning failed: ${instance.status_msg || vastStatus}`;
-        await db
-          .update(volumesTable)
-          .set({ status: newStatus, statusMessage: newMessage, updatedAt: new Date() })
-          .where(eq(volumesTable.id, id));
-      }
-
-      res.json({ ...volume, status: newStatus, statusMessage: newMessage });
-      return;
-    } catch (err) {
-      logger.warn({ err, volumeId: id }, "Failed to sync volume provisioning status");
-    }
-  }
-
-  res.json(volume);
+  const synced = await syncProvisioningVolume(volume as VolumeRow);
+  res.json(synced);
 });
 
 // POST /volumes — create a Vast.ai volume and start a provisioning instance
-// to download model weights into it.
 router.post("/volumes", async (req, res) => {
   const { profileId, name, sizeGb } = req.body;
 
@@ -137,29 +165,44 @@ router.post("/volumes", async (req, res) => {
     return;
   }
 
-  // Check if a volume already exists for this profile (not in error state)
-  const [existing] = await db
+  // Check for existing volume records for this profile
+  const existingRecords = await db
     .select()
     .from(volumesTable)
-    .where(eq(volumesTable.profileId, profileId));
+    .where(eq(volumesTable.profileId, profileId))
+    .orderBy(desc(volumesTable.createdAt));
 
-  if (existing && existing.status !== "error") {
-    res.status(409).json({ error: `A volume already exists for this profile (status: ${existing.status})` });
+  const activeVolume = existingRecords.find(v => v.status !== "error");
+  if (activeVolume) {
+    res.status(409).json({
+      error: `A volume already exists for this profile (status: ${activeVolume.status}). Delete it first to set up a new one.`,
+    });
     return;
   }
 
+  // Clean up any error-state records for this profile before creating a fresh one
+  const errorRecords = existingRecords.filter(v => v.status === "error");
+  for (const errRecord of errorRecords) {
+    // Destroy the old Vast.ai volume if it exists
+    if (errRecord.vastVolumeId) {
+      await vastai.destroyVolume(errRecord.vastVolumeId).catch(() => {});
+    }
+    if (errRecord.provisioningInstanceId) {
+      await vastai.destroyInstance(errRecord.provisioningInstanceId).catch(() => {});
+    }
+    await db.delete(volumesTable).where(eq(volumesTable.id, errRecord.id)).catch(() => {});
+  }
+
   const volumeName = name || `omniql-${profile.name}-models`;
-  const volumeSizeGb = sizeGb || Math.max(profile.quantSizeGb + 20, 200);
+  const volumeSizeGb = sizeGb || Math.max(profile.quantSizeGb + 50, 300);
 
   let volumeDbId: number | undefined;
 
   try {
-    // Step 1: Create the Vast.ai volume
     logger.info({ profileId, volumeName, volumeSizeGb }, "Creating Vast.ai volume");
     const vastVolume = await vastai.createVolume(volumeName, volumeSizeGb);
     const vastVolumeId = vastVolume.id!;
 
-    // Step 2: Insert the volume record in DB
     const [volumeRecord] = await db
       .insert(volumesTable)
       .values({
@@ -168,20 +211,19 @@ router.post("/volumes", async (req, res) => {
         name: volumeName,
         status: "provisioning",
         sizeGb: volumeSizeGb,
-        statusMessage: "Volume created — starting model download instance...",
+        statusMessage: "Volume created — finding GPU to download model weights...",
       })
       .returning();
 
     volumeDbId = volumeRecord.id;
 
-    // Step 3: Find the cheapest offer for this profile to run the download
     const searchParams = (profile.searchParams as Record<string, unknown>) || {};
     const offers = await vastai.searchOffers({
       gpu_name: searchParams.gpu_name as string,
-      num_gpus: searchParams.num_gpus as number,
+      num_gpus: (searchParams.num_gpus as number) || 1,
       min_gpu_ram: searchParams.min_gpu_ram as number,
-      disk_space: 50, // minimal disk for provisioning
-      limit: 3,
+      disk_space: 50,
+      limit: 5,
     });
 
     if (!offers || offers.length === 0) {
@@ -189,13 +231,11 @@ router.post("/volumes", async (req, res) => {
         .update(volumesTable)
         .set({ status: "error", statusMessage: "No GPU offers available to provision volume", updatedAt: new Date() })
         .where(eq(volumesTable.id, volumeRecord.id));
-      res.status(503).json({ error: "No GPU offers available to provision volume" });
+      res.status(503).json({ error: "No GPU offers available to provision volume. Try again later." });
       return;
     }
 
     const selectedOffer = offers[0] as { id: number };
-
-    // Step 4: Build a minimal onstart script that just downloads the model and writes status
     const MODEL_REPO = "moonshotai/Kimi-K2.5";
     const MODEL_QUANT = profile.defaultQuant;
     const MODEL_DIR = `/workspace/models/${MODEL_QUANT}`;
@@ -204,26 +244,30 @@ router.post("/volumes", async (req, res) => {
 set -e
 LOG=/var/log/provision.log
 echo "starting" > /tmp/instance-status
-echo "[$(date)] Starting model download provisioning..." | tee -a $LOG
+echo "[$(date)] Starting model download provisioning for ${MODEL_REPO}..." | tee -a $LOG
+
+pip3 install -q huggingface-hub 2>&1 | tee -a $LOG
 
 mkdir -p "${MODEL_DIR}"
 
+echo "[$(date)] Downloading ${MODEL_REPO} → ${MODEL_DIR}..." | tee -a $LOG
 echo "downloading" > /tmp/instance-status
-echo "[$(date)] Downloading ${MODEL_REPO}..." | tee -a $LOG
-pip3 install -q huggingface-hub
+
 huggingface-cli download "${MODEL_REPO}" \\
   --local-dir "${MODEL_DIR}" \\
   --local-dir-use-symlinks False \\
   --resume-download 2>&1 | tee -a $LOG
 
-echo "[$(date)] Download complete!" | tee -a $LOG
-echo "llm_ready" > /tmp/instance-status
+echo "[$(date)] Download complete! Verifying..." | tee -a $LOG
+ls -lh "${MODEL_DIR}" | tee -a $LOG
 
-# Stay alive for a bit so the dashboard can detect completion
-sleep 120
+echo "llm_ready" > /tmp/instance-status
+echo "[$(date)] Volume provisioning done — model cached at ${MODEL_DIR}" | tee -a $LOG
+
+# Stay alive for 3 minutes so the dashboard can poll and detect completion
+sleep 180
 `;
 
-    // Step 5: Create a minimal provisioning instance with the volume mounted
     const result = await vastai.createInstance({
       offerId: selectedOffer.id,
       image: profile.dockerImageTag,
@@ -239,12 +283,11 @@ sleep 120
 
     const instanceId = result.new_contract;
 
-    // Step 6: Update DB with provisioning instance ID
     const [updated] = await db
       .update(volumesTable)
       .set({
         provisioningInstanceId: instanceId,
-        statusMessage: "Provisioning instance started — downloading model weights...",
+        statusMessage: "Provisioning instance started — downloading model weights (~15-30 min)...",
         updatedAt: new Date(),
       })
       .where(eq(volumesTable.id, volumeRecord.id))
@@ -252,10 +295,7 @@ sleep 120
 
     logger.info({ volumeDbId: updated.id, vastVolumeId, instanceId }, "Volume provisioning instance started");
 
-    res.status(201).json({
-      ...updated,
-      profileName: profile.displayName,
-    });
+    res.status(201).json({ ...updated, profileName: profile.displayName });
   } catch (err: unknown) {
     logger.error(err, "Failed to create volume");
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -272,7 +312,7 @@ sleep 120
   }
 });
 
-// DELETE /volumes/:id — destroy volume and associated Vast.ai volume
+// DELETE /volumes/:id — destroy volume and Vast.ai resources
 router.delete("/volumes/:id", async (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) {
@@ -287,28 +327,22 @@ router.delete("/volumes/:id", async (req, res) => {
   }
 
   try {
-    // Destroy provisioning instance if still running
     if (volume.provisioningInstanceId) {
-      try {
-        await vastai.destroyInstance(volume.provisioningInstanceId);
-      } catch (err) {
+      await vastai.destroyInstance(volume.provisioningInstanceId).catch((err) => {
         const msg = err instanceof Error ? err.message : "";
         if (!msg.includes("404") && !msg.includes("no_such_instance")) {
           logger.warn({ err, instanceId: volume.provisioningInstanceId }, "Failed to destroy provisioning instance");
         }
-      }
+      });
     }
 
-    // Destroy the Vast.ai volume
     if (volume.vastVolumeId) {
-      try {
-        await vastai.destroyVolume(volume.vastVolumeId);
-      } catch (err) {
+      await vastai.destroyVolume(volume.vastVolumeId).catch((err) => {
         const msg = err instanceof Error ? err.message : "";
         if (!msg.includes("404")) {
-          logger.warn({ err, vastVolumeId: volume.vastVolumeId }, "Failed to destroy Vast.ai volume (may already be deleted)");
+          logger.warn({ err, vastVolumeId: volume.vastVolumeId }, "Failed to destroy Vast.ai volume");
         }
-      }
+      });
     }
 
     await db.delete(volumesTable).where(eq(volumesTable.id, id));
@@ -321,4 +355,5 @@ router.delete("/volumes/:id", async (req, res) => {
   }
 });
 
+export { syncProvisioningVolume };
 export default router;

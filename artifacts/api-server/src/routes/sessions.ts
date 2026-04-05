@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, sessionsTable, gpuProfilesTable, templatesTable, volumesTable } from "@workspace/db";
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, and } from "drizzle-orm";
 import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import { logger } from "../lib/logger";
@@ -200,11 +200,13 @@ router.post("/sessions", async (req, res) => {
 
     const templateHash = defaultTemplate?.templateHash || undefined;
 
-    // Look up a ready storage volume for this profile
+    // Look up the most recent READY storage volume for this profile
     const [volumeRecord] = await db
       .select()
       .from(volumesTable)
-      .where(eq(volumesTable.profileId, profileId));
+      .where(and(eq(volumesTable.profileId, profileId), eq(volumesTable.status, "ready")))
+      .orderBy(desc(volumesTable.updatedAt))
+      .limit(1);
 
     const hasReadyVolume = volumeRecord?.status === "ready" && !!volumeRecord?.vastVolumeId;
     const vastVolumeId = hasReadyVolume ? volumeRecord.vastVolumeId! : undefined;
