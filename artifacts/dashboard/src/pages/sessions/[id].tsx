@@ -828,6 +828,30 @@ export default function SessionDetail() {
                       </div>
                     ) : null}
                   </div>
+                  {member.ideUrl && member.password && (
+                    <div className="pt-1">
+                      <button
+                        onClick={() => {
+                          const text = `Your IDE: ${member.ideUrl} | Password: ${member.password}`;
+                          const fieldId = `invite-${member.name}`;
+                          navigator.clipboard.writeText(text).then(() => {
+                            setCopiedField(fieldId);
+                            setTimeout(() => setCopiedField(null), 1500);
+                            toast({ title: "Invite link copied!", description: "Share this with your teammate to get them into their environment." });
+                          }).catch(() => {
+                            toast({ title: "Copy failed", description: "Could not access the clipboard. Try copying the fields manually.", variant: "destructive" });
+                          });
+                        }}
+                        className="w-full flex items-center justify-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground border border-border/40 hover:border-border/70 rounded px-2 py-1 transition-colors"
+                      >
+                        {copiedField === `invite-${member.name}` ? (
+                          <><Check className="w-3 h-3 text-emerald-500" /> Copied!</>
+                        ) : (
+                          <><Copy className="w-3 h-3" /> Copy invite</>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             };
