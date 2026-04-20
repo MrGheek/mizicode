@@ -67,43 +67,24 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
         status = "starting";
         statusMessage = "Tools ready — LLM model loading in background...";
       } else {
-        // Fallback: probe the code-server and LLM proxy URLs directly.
-        // Vast.ai sets status_msg itself (e.g. "running") — we cannot rely on it for our phases.
-        status = "starting";
-        statusMessage = rawStatusMsg ? `Starting... (${rawStatusMsg})` : "Services starting up...";
+        // Fallback: Vast.ai sets its own status_msg (e.g. "success, running <image>").
+        // Actual phase transitions come from the instance via POST /sessions/:id/status.
+        // Until the instance calls back, keep the current DB status (don't regress it).
+        if (!["downloading", "starting", "ready"].includes(status)) {
+          status = "starting";
+        }
+        statusMessage = session.statusMessage || (rawStatusMsg ? `Starting... (${rawStatusMsg})` : "Services starting up...");
 
-        if (urls.codeServerUrl) {
-          try {
-            const probeRes = await fetch(urls.codeServerUrl, {
-              method: "HEAD",
-              signal: AbortSignal.timeout(4000),
-            });
-            // Any HTTP response (200, 302, 401) means code-server is listening
-            if (probeRes.status < 500) {
-              status = "starting";
-              statusMessage = "Tools ready — LLM model loading in background...";
-              logger.info({ sessionId: session.id, codeServerStatus: probeRes.status }, "Code-server probe: UP");
-
-              // Also probe the LLM proxy on port 8081
-              if (urls.llmProxyUrl) {
-                try {
-                  const llmRes = await fetch(`${urls.llmProxyUrl}/health`, {
-                    signal: AbortSignal.timeout(4000),
-                  });
-                  if (llmRes.ok) {
-                    status = "ready";
-                    statusMessage = "Session is ready — vLLM online";
-                    logger.info({ sessionId: session.id }, "LLM proxy probe: READY");
-                  }
-                } catch (llmErr) {
-                  logger.debug({ sessionId: session.id, err: llmErr }, "LLM proxy not yet ready (expected during model load)");
-                }
-              }
-            }
-          } catch (probeErr) {
-            // Code-server not yet reachable — still starting
-            logger.debug({ sessionId: session.id, err: probeErr }, "Code-server probe: not yet reachable");
-          }
+        // Time-based heuristic: if Vast.ai reports "success" and the instance has been
+        // running for >30 min without a callback (e.g. older instance launched before
+        // callback was wired up), assume the LLM is ready.
+        const minutesRunning = session.startedAt
+          ? (Date.now() - session.startedAt.getTime()) / 60000
+          : 0;
+        if (rawStatusMsg.toLowerCase().startsWith("success") && minutesRunning > 30 && status !== "ready") {
+          status = "ready";
+          statusMessage = "Session is ready — vLLM online";
+          logger.info({ sessionId: session.id, minutesRunning: Math.round(minutesRunning) }, "Auto-marking session ready after 30+ min with success status");
         }
       }
     } else if (vastStatus === "loading" || vastStatus === "creating") {
@@ -153,6 +134,59 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
     return session;
   }
 }
+
+// ─── Instance callback: the running instance POSTs its phase transitions here ──
+// Replaces the unreliable server-side probe (Vast.ai firewall blocks server→instance).
+const CALLBACK_TOKEN = process.env["OMNIQL_MEM_TOKEN"] || "";
+
+const INSTANCE_STATUS_MAP: Record<string, { status: typeof sessionsTable.$inferSelect["status"]; statusMessage: string }> = {
+  services_ready: { status: "starting",    statusMessage: "Tools ready — LLM model loading in background..." },
+  downloading:    { status: "downloading", statusMessage: "Downloading model weights..." },
+  starting_llm:   { status: "starting",    statusMessage: "Loading model into GPU memory..." },
+  llm_ready:      { status: "ready",       statusMessage: "Session is ready — vLLM online" },
+};
+
+router.post("/sessions/:sessionId/status", async (req, res) => {
+  const sessionId = Number(req.params["sessionId"]);
+  if (!Number.isFinite(sessionId)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
+
+  // Validate Bearer token when OMNIQL_MEM_TOKEN is configured.
+  if (CALLBACK_TOKEN) {
+    const auth = req.headers["authorization"] || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    if (token !== CALLBACK_TOKEN) {
+      logger.warn({ sessionId }, "Instance callback: invalid token");
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+  }
+
+  const { status: instanceStatus, message } = req.body as { status?: string; message?: string };
+  if (!instanceStatus) {
+    res.status(400).json({ error: "Missing status field" });
+    return;
+  }
+
+  const mapped = INSTANCE_STATUS_MAP[instanceStatus];
+  if (!mapped) {
+    res.status(400).json({ error: `Unknown status: ${instanceStatus}` });
+    return;
+  }
+
+  const statusMessage = (message?.trim()) || mapped.statusMessage;
+
+  logger.info({ sessionId, instanceStatus, dbStatus: mapped.status, statusMessage }, "Instance status callback received");
+
+  await db
+    .update(sessionsTable)
+    .set({ status: mapped.status, statusMessage, updatedAt: new Date() })
+    .where(eq(sessionsTable.id, sessionId));
+
+  res.json({ ok: true, status: mapped.status });
+});
 
 router.get("/sessions", async (_req, res) => {
   const sessions = await db
@@ -348,6 +382,8 @@ router.post("/sessions", async (req, res) => {
 
     const memUserId = process.env["OMNIQL_MEM_USER_ID"] || "operator";
 
+    const callbackBaseUrl = memProxyUrl; // same base URL the instance can already reach
+
     const onstart = vastai.buildOnStartScript({
       modelRepo: MODEL_REPO,
       modelQuant: MODEL_QUANT,
@@ -360,6 +396,8 @@ router.post("/sessions", async (req, res) => {
       memAuthToken: process.env["OMNIQL_MEM_TOKEN"],
       memUserId,
       teamMembers: teamMemberRecords,
+      sessionId: insertedSessionId,
+      callbackBaseUrl,
     });
 
     const result = await vastai.createInstance({

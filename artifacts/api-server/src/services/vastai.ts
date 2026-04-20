@@ -266,12 +266,23 @@ export function buildOnStartScript(profileConfig: {
   memAuthToken?: string;
   memUserId?: string;
   teamMembers?: TeamMemberInput[];
+  sessionId?: number;
+  callbackBaseUrl?: string;
 }): string {
   const memLines = profileConfig.memProxyUrl
     ? [
         `export OMNIQL_MEM_PROXY_URL="${profileConfig.memProxyUrl}"`,
         `export OMNIQL_MEM_AUTH_TOKEN="${profileConfig.memAuthToken || ""}"`,
         `export OMNIQL_MEM_USER_ID="${profileConfig.memUserId || "default"}"`,
+      ].join("\n")
+    : "";
+
+  // Callback: instance posts phase transitions to the API server so the dashboard
+  // can track boot progress without needing to probe the instance (firewall blocks it).
+  const callbackLines = profileConfig.callbackBaseUrl && profileConfig.sessionId != null
+    ? [
+        `export OMNIQL_SESSION_ID="${profileConfig.sessionId}"`,
+        `export OMNIQL_CALLBACK_URL="${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/status"`,
       ].join("\n")
     : "";
 
@@ -290,6 +301,7 @@ export VLLM_MAX_NUM_SEQS="${profileConfig.llamaBatchSize}"
 export VLLM_EXTRA_ARGS="${profileConfig.llamaExtraArgs}"
 export NUM_GPUS="${profileConfig.numGpus || 1}"
 ${memLines}
+${callbackLines}
 ${teamLine}
 /opt/onstart.sh
 `;

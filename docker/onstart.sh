@@ -13,6 +13,29 @@ set_status() {
     log "STATUS: $1"
 }
 
+# Report phase to the OmniQL dashboard API so the boot log updates in real time.
+# OMNIQL_CALLBACK_URL and OMNIQL_MEM_AUTH_TOKEN are injected by the API server
+# into the onstart environment. Safe no-op if not set.
+report_status() {
+    local _phase="$1"
+    local _msg="$2"
+    if [ -z "${OMNIQL_CALLBACK_URL:-}" ]; then
+        return 0
+    fi
+    local _payload
+    if [ -n "$_msg" ]; then
+        _payload="{\"status\":\"${_phase}\",\"message\":\"${_msg}\"}"
+    else
+        _payload="{\"status\":\"${_phase}\"}"
+    fi
+    curl -sf -X POST "${OMNIQL_CALLBACK_URL}" \
+        -H "Authorization: Bearer ${OMNIQL_MEM_AUTH_TOKEN:-}" \
+        -H "Content-Type: application/json" \
+        -d "$_payload" \
+        --max-time 10 \
+        >> "$LOG_FILE" 2>&1 || log "WARNING: status callback failed (phase: $_phase) — dashboard may lag"
+}
+
 retry() {
     local max_attempts="${RETRY_MAX:-3}"
     local delay="${RETRY_DELAY:-5}"
@@ -307,6 +330,7 @@ fi
 # but does NOT yet confuse this with full LLM readiness. "ready" is reserved for
 # the final "llm_ready" state set by Phase 2 once vLLM is online.
 set_status "services_ready"
+report_status "services_ready"
 touch /tmp/instance-ready
 log "=== Phase 1 done — code-server and tools available (LLM loading in background) ==="
 
@@ -322,6 +346,7 @@ log "Starting LLM backend in background..."
         log "Model found at $MODEL_DIR — skipping download"
     else
         echo "downloading" > "$STATUS_FILE"
+        report_status "downloading"
         log "Downloading model $MODEL_REPO to $MODEL_DIR — this may take a while..."
         mkdir -p "$MODEL_DIR"
         retry huggingface-cli download "$MODEL_REPO" \
@@ -332,6 +357,7 @@ log "Starting LLM backend in background..."
     fi
 
     echo "starting_llm" > "$STATUS_FILE"
+    report_status "starting_llm"
     log "Starting vLLM server on internal port $VLLM_INTERNAL_PORT..."
 
     VLLM_CMD="python3 -m vllm.entrypoints.openai.api_server \
@@ -382,6 +408,7 @@ log "Starting LLM backend in background..."
     log "claw-code configured: ANTHROPIC_BASE_URL -> litellm proxy (port $VLLM_PORT)"
 
     echo "llm_ready" > "$STATUS_FILE"
+    report_status "llm_ready"
     log "=== OmniQL Coding Environment Fully Ready (vLLM online) ==="
     log "  vLLM API:      http://localhost:$VLLM_INTERNAL_PORT/v1 (OpenAI format)"
     log "  LLM Proxy:     http://localhost:$VLLM_PORT (OpenAI + Anthropic via litellm)"
