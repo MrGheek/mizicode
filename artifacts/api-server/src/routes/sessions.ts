@@ -5,7 +5,7 @@ import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
-import { listObservations, listSessions } from "../services/memory";
+import { listObservations, listSessions, subscribeToObservations } from "../services/memory";
 
 const router = Router();
 
@@ -475,6 +475,29 @@ router.get("/sessions/:sessionId/memory/sessions", (_req, res) => {
     logger.error(err, "Failed to list memory sessions for dashboard");
     res.status(500).json({ error: "Failed to list sessions" });
   }
+});
+
+// SSE stream: pushes new tool observations in real time as they are recorded.
+// The dashboard subscribes when the session is active and falls back to polling when stopped.
+router.get("/sessions/:sessionId/memory/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  const keepAlive = setInterval(() => {
+    res.write(": ping\n\n");
+  }, 20000);
+
+  const unsubscribe = subscribeToObservations(MEM_USER_ID, (obs) => {
+    res.write(`data: ${JSON.stringify(obs)}\n\n`);
+  });
+
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    unsubscribe();
+  });
 });
 
 export default router;

@@ -6,6 +6,7 @@ import {
   getPastContext,
   listObservations,
   listSessions,
+  subscribeToObservations,
 } from "../services/memory";
 import { logger } from "../lib/logger";
 
@@ -140,6 +141,37 @@ router.get("/mem/sessions", (req, res) => {
     logger.error(err, "Failed to list mem sessions");
     res.status(500).json({ error: "Failed to list sessions" });
   }
+});
+
+// SSE stream: real-time feed of new tool observations for a given userId.
+// Clients (e.g. AI agents, the dashboard) connect while a session is active and
+// receive each new observation as a JSON data event as it is recorded.
+router.get("/mem/observations/stream", (req, res) => {
+  if (!verifyMemToken(req, res)) return;
+  const userId = req.query["userId"] as string | undefined;
+  if (!userId) {
+    res.status(400).json({ error: "userId query param required" });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  const keepAlive = setInterval(() => {
+    res.write(": ping\n\n");
+  }, 20000);
+
+  const unsubscribe = subscribeToObservations(userId, (obs) => {
+    res.write(`data: ${JSON.stringify(obs)}\n\n`);
+  });
+
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    unsubscribe();
+  });
 });
 
 export default router;

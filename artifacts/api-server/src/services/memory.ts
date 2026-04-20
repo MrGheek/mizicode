@@ -2,7 +2,17 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import { EventEmitter } from "events";
 import { logger } from "../lib/logger";
+
+const observationEmitter = new EventEmitter();
+observationEmitter.setMaxListeners(200);
+
+export function subscribeToObservations(userId: string, handler: (obs: Observation) => void): () => void {
+  const event = `observation:${userId}`;
+  observationEmitter.on(event, handler);
+  return () => observationEmitter.off(event, handler);
+}
 
 const DATA_DIR = process.env["MEM_DATA_DIR"] || path.join(os.homedir(), "omniql-memory");
 const DB_PATH = path.join(DATA_DIR, "mem.db");
@@ -85,10 +95,21 @@ export function addObservation(
     VALUES (?, ?, '')
   `).run(sessionId, userId);
 
-  db.prepare(`
+  const result = db.prepare(`
     INSERT INTO mem_observations (session_id, user_id, tool_name, input_summary, output_summary)
     VALUES (?, ?, ?, ?, ?)
   `).run(sessionId, userId, toolName, inputSummary, outputSummary);
+
+  const obs: Observation = {
+    id: Number(result.lastInsertRowid),
+    sessionId,
+    userId,
+    toolName,
+    inputSummary,
+    outputSummary,
+    recordedAt: Math.floor(Date.now() / 1000),
+  };
+  observationEmitter.emit(`observation:${userId}`, obs);
 }
 
 export function addSummary(sessionId: string, userId: string, summary: string): void {

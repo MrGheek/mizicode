@@ -8,14 +8,14 @@ import {
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
-  Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight
+  Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SessionStatusBadge } from "@/components/session-status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 
@@ -53,7 +53,7 @@ function useMemSessions(sessionId: number) {
   });
 }
 
-function useMemObservations(sessionId: number) {
+function useMemObservations(sessionId: number, isActive: boolean) {
   return useQuery<MemObservation[]>({
     queryKey: ["mem-observations", sessionId],
     enabled: !!sessionId,
@@ -63,14 +63,72 @@ function useMemObservations(sessionId: number) {
       if (!res.ok) throw new Error("Failed to fetch memory observations");
       return res.json();
     },
-    refetchInterval: 30000,
+    refetchInterval: isActive ? false : 30000,
   });
 }
 
-function MemoryTab({ sessionId }: { sessionId: number }) {
+function MemoryTab({ sessionId, isActive }: { sessionId: number; isActive: boolean }) {
   const { data: sessions, isLoading: sessionsLoading } = useMemSessions(sessionId);
-  const { data: observations, isLoading: obsLoading } = useMemObservations(sessionId);
+  const { data: polledObservations, isLoading: obsLoading } = useMemObservations(sessionId, isActive);
+  const [streamedObservations, setStreamedObservations] = useState<MemObservation[]>([]);
+  const [streaming, setStreaming] = useState(false);
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
+  const esRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    setStreamedObservations([]);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || !isActive) {
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+        setStreaming(false);
+      }
+      return;
+    }
+
+    const url = `${BASE_URL}api/sessions/${sessionId}/memory/stream`;
+    const es = new EventSource(url);
+    esRef.current = es;
+
+    es.onopen = () => setStreaming(true);
+
+    es.onmessage = (event) => {
+      try {
+        const obs: MemObservation = JSON.parse(event.data);
+        setStreamedObservations(prev => {
+          if (prev.some(o => o.id === obs.id)) return prev;
+          return [obs, ...prev];
+        });
+      } catch {
+      }
+    };
+
+    es.onerror = () => {
+      setStreaming(false);
+    };
+
+    return () => {
+      es.close();
+      esRef.current = null;
+      setStreaming(false);
+    };
+  }, [sessionId, isActive]);
+
+  const observations = (() => {
+    if (!isActive) return polledObservations || [];
+    const seen = new Set<number>();
+    const merged: MemObservation[] = [];
+    for (const obs of [...streamedObservations, ...(polledObservations || [])]) {
+      if (!seen.has(obs.id)) {
+        seen.add(obs.id);
+        merged.push(obs);
+      }
+    }
+    return merged.sort((a, b) => b.recordedAt - a.recordedAt);
+  })();
 
   const toggleSession = (id: string) => {
     setExpandedSessions(prev => {
@@ -120,6 +178,11 @@ function MemoryTab({ sessionId }: { sessionId: number }) {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
               <Brain className="w-4 h-4" /> Recent Tool Observations
+              {streaming && (
+                <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-emerald-500 normal-case tracking-normal">
+                  <Radio className="w-3 h-3 animate-pulse" /> Live
+                </span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -424,7 +487,7 @@ export default function SessionDetail() {
         </>
       )}
 
-      {activeTab === "memory" && <MemoryTab sessionId={sessionId} />}
+      {activeTab === "memory" && <MemoryTab sessionId={sessionId} isActive={isActive} />}
 
     </div>
   );
