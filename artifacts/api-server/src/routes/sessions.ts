@@ -16,6 +16,16 @@ function generatePassword(length = 12): string {
   return Array.from(buf, (b) => chars[b % chars.length]).join("");
 }
 
+const RESERVED_NAMES = new Set(["__shared__", "owner", "admin", "root", "shared"]);
+const SAFE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,30}$/;
+
+function sanitizeMemberName(raw: string): string | null {
+  const cleaned = raw.trim().toLowerCase();
+  if (!SAFE_NAME_RE.test(cleaned)) return null;
+  if (RESERVED_NAMES.has(cleaned)) return null;
+  return cleaned;
+}
+
 const router = Router();
 
 const ACTIVE_STATUSES = ["pending", "provisioning", "downloading", "starting", "ready"];
@@ -235,24 +245,29 @@ router.post("/sessions", async (req, res) => {
 
     const templateHash = defaultTemplate?.templateHash || undefined;
 
-    // Build team member records (up to 4 named members + 1 shared workspace)
+    // Build team member records (up to 4 named members + __shared__ workspace)
     const rawNames: string[] = Array.isArray(teamMemberNames)
-      ? teamMemberNames.slice(0, 4).map(String).filter(n => n.trim())
+      ? teamMemberNames.map(String)
       : [];
-    const teamMemberRecords: TeamMemberRecord[] = rawNames.length > 0
+    const sanitizedNames = [...new Set(
+      rawNames.map(sanitizeMemberName).filter((n): n is string => n !== null)
+    )].slice(0, 4);
+
+    const teamMemberRecords: TeamMemberRecord[] = sanitizedNames.length > 0
       ? [
-          ...rawNames.map((name) => ({
-            name: name.trim(),
-            password: generatePassword(),
-            path: `/ide/${name.trim()}/`,
-            ideUrl: null,
-          })),
+          // __shared__ listed first so it appears as the primary team entry
           {
             name: "__shared__",
             password: generatePassword(),
             path: "/shared/",
             ideUrl: null,
           },
+          ...sanitizedNames.map((name) => ({
+            name,
+            password: generatePassword(),
+            path: `/ide/${name}/`,
+            ideUrl: null,
+          })),
         ]
       : [];
 

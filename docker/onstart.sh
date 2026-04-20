@@ -55,9 +55,10 @@ if [ -z "$CODE_SERVER_PASSWORD" ]; then
     log "code-server password generated and stored at /workspace/.code-server-password (readable after SSH)"
 fi
 
-# TEAM_MEMBERS is optional: comma-separated "name:password" pairs (may include "__shared__")
-# e.g. "alice:pass1,bob:pass2,__shared__:sharedpass"
-TEAM_MEMBERS="${TEAM_MEMBERS:-}"
+# TEAM_MEMBERS_JSON is optional: JSON array of {name, password, path} objects.
+# First element is always __shared__ when present.
+# e.g. '[{"name":"__shared__","password":"...","path":"/shared/"},{"name":"alice","password":"...","path":"/ide/alice/"}]'
+TEAM_MEMBERS_JSON="${TEAM_MEMBERS_JSON:-}"
 # Internal ports for team member code-server instances (not exposed externally)
 TEAM_MEMBER_INTERNAL_PORTS=(8093 8094 8095 8096)
 SHARED_INTERNAL_PORT=8097
@@ -83,7 +84,7 @@ log "SSH server started (key-based auth only)"
 
 # For team sessions, owner's code-server moves to an internal port (nginx will own port 8080).
 # For solo sessions, code-server binds directly on 8080 (existing behaviour).
-if [ -n "$TEAM_MEMBERS" ]; then
+if [ -n "$TEAM_MEMBERS_JSON" ]; then
     OWNER_CODE_SERVER_INTERNAL_PORT=8090
     log "Team session: owner code-server will start on internal port $OWNER_CODE_SERVER_INTERNAL_PORT (nginx routes port 8080)"
 else
@@ -184,12 +185,16 @@ log "nginx started — ports 5180 (Bolt), 5181 (Claw Runner), 3000 (Preview) ope
 # Team session: path-based nginx routing on port 8080
 # Owner IDE: /            → internal 8090
 # Member IDEs: /ide/<name>/ → internal 8093-8096
-# Shared workspace: /shared/ → internal 8097
+# Shared workspace: /shared/ → internal 8097  (combined htpasswd: all members)
 # All traffic flows through the single exposed port 8080.
 # ─────────────────────────────────────────────────────────────────────────────
-if [ -n "$TEAM_MEMBERS" ]; then
+if [ -n "$TEAM_MEMBERS_JSON" ]; then
     log "Team session: configuring path-based nginx routing on port 8080..."
-    IFS=',' read -ra _TM_ALL <<< "$TEAM_MEMBERS"
+
+    # Validate JSON is parseable
+    if ! echo "$TEAM_MEMBERS_JSON" | jq -e '.' > /dev/null 2>&1; then
+        log "ERROR: TEAM_MEMBERS_JSON is not valid JSON — skipping team setup"
+    else
 
     # Open the server block (owner's code-server at /)
     cat > /etc/nginx/sites-available/team-ide << 'TEAM_NGINX_OPEN'
@@ -197,7 +202,7 @@ server {
     listen 8080;
     server_name _;
 
-    # Owner IDE (no path prefix)
+    # Owner IDE at /
     location / {
         auth_basic "OmniQL";
         auth_basic_user_file /etc/nginx/.htpasswd;
@@ -212,42 +217,67 @@ server {
     }
 TEAM_NGINX_OPEN
 
-    _tm_member_idx=0
-    for _TM_ENTRY in "${_TM_ALL[@]}"; do
-        _TM_NAME="${_TM_ENTRY%%:*}"
-        _TM_PASS="${_TM_ENTRY#*:}"
+    # ── Combine all team member credentials into a shared htpasswd file ──
+    _SHARED_HTPASSWD=/etc/nginx/.htpasswd-shared
+    cp /dev/null "$_SHARED_HTPASSWD"
+
+    _tm_named_idx=0
+
+    while IFS= read -r _TM_ENTRY_JSON; do
+        _TM_NAME=$(printf '%s' "$_TM_ENTRY_JSON" | jq -r '.name')
+        _TM_PASS=$(printf '%s' "$_TM_ENTRY_JSON" | jq -r '.password')
+        _TM_PATH=$(printf '%s' "$_TM_ENTRY_JSON" | jq -r '.path')
 
         if [ "$_TM_NAME" = "__shared__" ]; then
-            # Shared workspace code-server
+            # Shared workspace: bind to SHARED_INTERNAL_PORT, accept combined creds
             _TM_INT_PORT=$SHARED_INTERNAL_PORT
             _TM_WORKSPACE=/workspace/shared
-            _TM_BASE=/shared/
         else
-            if [ $_tm_member_idx -ge 4 ]; then continue; fi
-            _TM_INT_PORT="${TEAM_MEMBER_INTERNAL_PORTS[$_tm_member_idx]}"
+            if [ $_tm_named_idx -ge 4 ]; then
+                log "Skipping '$_TM_NAME' — max 4 named members reached"
+                continue
+            fi
+            _TM_INT_PORT="${TEAM_MEMBER_INTERNAL_PORTS[$_tm_named_idx]}"
             _TM_WORKSPACE="/workspace/users/${_TM_NAME}"
-            _TM_BASE="/ide/${_TM_NAME}/"
-            _tm_member_idx=$((_tm_member_idx + 1))
+            _tm_named_idx=$((_tm_named_idx + 1))
+
+            # Per-member htpasswd (for /ide/<name>/ location)
+            htpasswd -cb "/etc/nginx/.htpasswd-${_TM_NAME}" "$_TM_NAME" "$_TM_PASS" 2>/dev/null
+
+            # Add member credential to the shared htpasswd (all members can access /shared/)
+            htpasswd -b "$_SHARED_HTPASSWD" "$_TM_NAME" "$_TM_PASS" 2>/dev/null
         fi
 
         mkdir -p "$_TM_WORKSPACE"
-        htpasswd -cb "/etc/nginx/.htpasswd-${_TM_NAME}" "$_TM_NAME" "$_TM_PASS" 2>/dev/null
+
+        # Write ANTHROPIC_BASE_URL .env so claw-code uses the litellm proxy inside the container
+        cat > "${_TM_WORKSPACE}/.env" << MEMBER_ENV
+ANTHROPIC_BASE_URL=http://localhost:8081
+ANTHROPIC_API_KEY=not-needed
+MEMBER_ENV
+        chmod 600 "${_TM_WORKSPACE}/.env"
 
         PASSWORD="$_TM_PASS" code-server \
             --bind-addr "0.0.0.0:${_TM_INT_PORT}" \
             --auth password \
             --disable-telemetry \
-            --base-path "${_TM_BASE}" \
+            --base-path "${_TM_PATH}" \
             "$_TM_WORKSPACE" \
             > "/var/log/code-server-${_TM_NAME}.log" 2>&1 &
 
-        # Append a location block for this member (nginx vars must NOT be expanded by bash)
-        printf '    location %s {\n        auth_basic "OmniQL - %s";\n        auth_basic_user_file /etc/nginx/.htpasswd-%s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
-            "$_TM_BASE" "$_TM_NAME" "$_TM_NAME" "$_TM_INT_PORT" \
-            >> /etc/nginx/sites-available/team-ide
+        if [ "$_TM_NAME" = "__shared__" ]; then
+            # /shared/ uses the combined htpasswd (populated after all named members are processed)
+            printf '    location /shared/ {\n        auth_basic "OmniQL Shared";\n        auth_basic_user_file %s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
+                "$_SHARED_HTPASSWD" "$_TM_INT_PORT" \
+                >> /etc/nginx/sites-available/team-ide
+        else
+            printf '    location %s {\n        auth_basic "OmniQL - %s";\n        auth_basic_user_file /etc/nginx/.htpasswd-%s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
+                "$_TM_PATH" "$_TM_NAME" "$_TM_NAME" "$_TM_INT_PORT" \
+                >> /etc/nginx/sites-available/team-ide
+        fi
 
-        log "Team member '$_TM_NAME': code-server on port $_TM_INT_PORT, path $_TM_BASE, workspace $_TM_WORKSPACE"
-    done
+        log "Team member '$_TM_NAME': code-server port=$_TM_INT_PORT path=$_TM_PATH workspace=$_TM_WORKSPACE"
+    done < <(printf '%s' "$TEAM_MEMBERS_JSON" | jq -c '.[]')
 
     # Close the server block
     echo '}' >> /etc/nginx/sites-available/team-ide
@@ -255,6 +285,8 @@ TEAM_NGINX_OPEN
     ln -sf /etc/nginx/sites-available/team-ide /etc/nginx/sites-enabled/team-ide
     nginx -t && nginx -s reload
     log "nginx reloaded with team path-based routing on port 8080"
+
+    fi  # end TEAM_MEMBERS_JSON valid JSON guard
 fi
 
 # Mark phase 1 done — code-server, Bolt.diy, and nginx are up.

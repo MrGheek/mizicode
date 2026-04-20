@@ -530,6 +530,8 @@ components:
           type: string
         password:
           type: string
+          nullable: true
+          description: Only present on GET /sessions/:id (detail). Omitted from list responses.
         path:
           type: string
         ideUrl:
@@ -537,7 +539,6 @@ components:
           nullable: true
       required:
         - name
-        - password
         - path
 
     Session:

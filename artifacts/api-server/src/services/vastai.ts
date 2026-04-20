@@ -275,8 +275,10 @@ export function buildOnStartScript(profileConfig: {
       ].join("\n")
     : "";
 
+  // Single-quoted so bash does not expand anything inside the JSON value.
+  // Passwords use [A-Za-z0-9] only so they never contain single-quotes.
   const teamLine = profileConfig.teamMembers && profileConfig.teamMembers.length > 0
-    ? `export TEAM_MEMBERS="${profileConfig.teamMembers.map(m => `${m.name}:${m.password}`).join(",")}"`
+    ? `export TEAM_MEMBERS_JSON='${JSON.stringify(profileConfig.teamMembers)}'`
     : "";
 
   return `#!/bin/bash

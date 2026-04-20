@@ -135,7 +135,12 @@ export const ListSessionsResponseItem = zod.object({
     .array(
       zod.object({
         name: zod.string(),
-        password: zod.string(),
+        password: zod
+          .string()
+          .nullish()
+          .describe(
+            "Only present on GET \/sessions\/:id (detail). Omitted from list responses.",
+          ),
         path: zod.string(),
         ideUrl: zod.string().nullish(),
       }),
@@ -206,7 +211,12 @@ export const GetSessionResponse = zod.object({
     .array(
       zod.object({
         name: zod.string(),
-        password: zod.string(),
+        password: zod
+          .string()
+          .nullish()
+          .describe(
+            "Only present on GET \/sessions\/:id (detail). Omitted from list responses.",
+          ),
         path: zod.string(),
         ideUrl: zod.string().nullish(),
       }),
@@ -258,7 +268,12 @@ export const DeleteSessionResponse = zod.object({
     .array(
       zod.object({
         name: zod.string(),
-        password: zod.string(),
+        password: zod
+          .string()
+          .nullish()
+          .describe(
+            "Only present on GET \/sessions\/:id (detail). Omitted from list responses.",
+          ),
         path: zod.string(),
         ideUrl: zod.string().nullish(),
       }),
@@ -308,7 +323,12 @@ export const GetActiveSessionResponse = zod.object({
         .array(
           zod.object({
             name: zod.string(),
-            password: zod.string(),
+            password: zod
+              .string()
+              .nullish()
+              .describe(
+                "Only present on GET \/sessions\/:id (detail). Omitted from list responses.",
+              ),
             path: zod.string(),
             ideUrl: zod.string().nullish(),
           }),
@@ -362,7 +382,12 @@ export const RefreshSessionStatusResponse = zod.object({
     .array(
       zod.object({
         name: zod.string(),
-        password: zod.string(),
+        password: zod
+          .string()
+          .nullish()
+          .describe(
+            "Only present on GET \/sessions\/:id (detail). Omitted from list responses.",
+          ),
         path: zod.string(),
         ideUrl: zod.string().nullish(),
       }),

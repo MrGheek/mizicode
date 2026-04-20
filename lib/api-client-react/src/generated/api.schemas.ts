@@ -50,7 +50,8 @@ export interface GpuProfile {
 
 export interface TeamMember {
   name: string;
-  password: string;
+  /** Only present on GET /sessions/:id (detail). Omitted from list responses. */
+  password?: string | null;
   path: string;
   ideUrl?: string | null;
 }
