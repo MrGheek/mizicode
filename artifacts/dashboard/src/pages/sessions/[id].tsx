@@ -67,13 +67,23 @@ function useMemObservations(sessionId: number, isActive: boolean) {
   });
 }
 
-function MemoryTab({ sessionId, isActive }: { sessionId: number; isActive: boolean }) {
+function MemoryTab({
+  sessionId,
+  isActive,
+  onNewObservation,
+}: {
+  sessionId: number;
+  isActive: boolean;
+  onNewObservation?: () => void;
+}) {
   const { data: sessions, isLoading: sessionsLoading } = useMemSessions(sessionId);
   const { data: polledObservations, isLoading: obsLoading } = useMemObservations(sessionId, isActive);
   const [streamedObservations, setStreamedObservations] = useState<MemObservation[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
   const esRef = useRef<EventSource | null>(null);
+  const onNewObservationRef = useRef(onNewObservation);
+  onNewObservationRef.current = onNewObservation;
 
   useEffect(() => {
     setStreamedObservations([]);
@@ -100,6 +110,7 @@ function MemoryTab({ sessionId, isActive }: { sessionId: number; isActive: boole
         const obs: MemObservation = JSON.parse(event.data);
         setStreamedObservations(prev => {
           if (prev.some(o => o.id === obs.id)) return prev;
+          onNewObservationRef.current?.();
           return [obs, ...prev];
         });
       } catch {
@@ -284,6 +295,7 @@ export default function SessionDetail() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"overview" | "memory">("overview");
+  const [newObsCount, setNewObsCount] = useState(0);
 
   const { data: session, isLoading } = useGetSession(sessionId, {
     query: {
@@ -382,7 +394,7 @@ export default function SessionDetail() {
           Overview
         </button>
         <button
-          onClick={() => setActiveTab("memory")}
+          onClick={() => { setActiveTab("memory"); setNewObsCount(0); }}
           className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
             activeTab === "memory"
               ? "border-primary text-foreground"
@@ -391,6 +403,11 @@ export default function SessionDetail() {
         >
           <Brain className="w-3.5 h-3.5" />
           Memory
+          {isActive && newObsCount > 0 && (
+            <span className="ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none">
+              {newObsCount > 99 ? "99+" : newObsCount}
+            </span>
+          )}
         </button>
       </div>
 
@@ -487,7 +504,13 @@ export default function SessionDetail() {
         </>
       )}
 
-      {activeTab === "memory" && <MemoryTab sessionId={sessionId} isActive={isActive} />}
+      <div className={activeTab === "memory" ? "" : "hidden"}>
+        <MemoryTab
+          sessionId={sessionId}
+          isActive={isActive}
+          onNewObservation={activeTab !== "memory" ? () => setNewObsCount(prev => prev + 1) : undefined}
+        />
+      </div>
 
     </div>
   );
