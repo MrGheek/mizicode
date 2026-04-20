@@ -797,7 +797,14 @@ export default function SessionDetail() {
                         <span className="text-xs text-muted-foreground italic">Available once ready</span>
                       )}
                     </div>
-                    {member.password && (
+                    {member.name === "__shared__" ? (
+                      <div className="flex items-start gap-2 pt-0.5">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wide w-12 shrink-0 pt-0.5">Auth</span>
+                        <p className="text-xs text-muted-foreground italic flex-1">
+                          Use your personal team IDE credentials to log in
+                        </p>
+                      </div>
+                    ) : member.password ? (
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] text-muted-foreground uppercase tracking-wide w-12 shrink-0">Pass</span>
                         <div className="flex items-center gap-1 flex-1 min-w-0">
@@ -809,9 +816,7 @@ export default function SessionDetail() {
                             className="shrink-0 text-muted-foreground hover:text-foreground"
                             title={revealed ? "Hide password" : "Show password"}
                           >
-                            {revealed
-                              ? <EyeOff className="w-3 h-3" />
-                              : <Eye className="w-3 h-3" />}
+                            {revealed ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                           </button>
                           <button
                             onClick={() => copyToClipboard(member.password!, passField + "-copy")}
@@ -821,7 +826,7 @@ export default function SessionDetail() {
                           </button>
                         </div>
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               );

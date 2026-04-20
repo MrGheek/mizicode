@@ -229,7 +229,8 @@ TEAM_NGINX_OPEN
         _TM_PATH=$(printf '%s' "$_TM_ENTRY_JSON" | jq -r '.path')
 
         if [ "$_TM_NAME" = "__shared__" ]; then
-            # Shared workspace: bind to SHARED_INTERNAL_PORT, accept combined creds
+            # Shared workspace: nginx handles all auth via combined htpasswd.
+            # code-server runs with --auth none (nginx is the sole auth gate).
             _TM_INT_PORT=$SHARED_INTERNAL_PORT
             _TM_WORKSPACE=/workspace/shared
         else
@@ -257,13 +258,25 @@ ANTHROPIC_API_KEY=not-needed
 MEMBER_ENV
         chmod 600 "${_TM_WORKSPACE}/.env"
 
-        PASSWORD="$_TM_PASS" code-server \
-            --bind-addr "0.0.0.0:${_TM_INT_PORT}" \
-            --auth password \
-            --disable-telemetry \
-            --base-path "${_TM_PATH}" \
-            "$_TM_WORKSPACE" \
-            > "/var/log/code-server-${_TM_NAME}.log" 2>&1 &
+        if [ "$_TM_NAME" = "__shared__" ]; then
+            # Shared code-server: nginx is the sole auth gate (combined htpasswd).
+            # Run without code-server password so member creds work transparently.
+            code-server \
+                --bind-addr "0.0.0.0:${_TM_INT_PORT}" \
+                --auth none \
+                --disable-telemetry \
+                --base-path "${_TM_PATH}" \
+                "$_TM_WORKSPACE" \
+                > "/var/log/code-server-${_TM_NAME}.log" 2>&1 &
+        else
+            PASSWORD="$_TM_PASS" code-server \
+                --bind-addr "0.0.0.0:${_TM_INT_PORT}" \
+                --auth password \
+                --disable-telemetry \
+                --base-path "${_TM_PATH}" \
+                "$_TM_WORKSPACE" \
+                > "/var/log/code-server-${_TM_NAME}.log" 2>&1 &
+        fi
 
         if [ "$_TM_NAME" = "__shared__" ]; then
             # /shared/ uses the combined htpasswd (populated after all named members are processed)
