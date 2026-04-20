@@ -172,7 +172,12 @@ router.get("/sessions/active", async (_req, res) => {
     .from(gpuProfilesTable)
     .where(eq(gpuProfilesTable.id, synced.profileId));
 
-  res.json({ session: { ...synced, profileName: profile?.displayName || "" } });
+  // Redact passwords (only /sessions/:id detail endpoint exposes them)
+  const sanitizedMembers = synced.teamMembers
+    ? (synced.teamMembers as TeamMemberRecord[]).map(({ password: _pw, ...rest }) => rest)
+    : null;
+
+  res.json({ session: { ...synced, teamMembers: sanitizedMembers, profileName: profile?.displayName || "" } });
 });
 
 router.get("/sessions/:sessionId", async (req, res) => {
