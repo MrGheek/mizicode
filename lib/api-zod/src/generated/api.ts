@@ -136,7 +136,7 @@ export const ListSessionsResponseItem = zod.object({
       zod.object({
         name: zod.string(),
         password: zod.string(),
-        port: zod.number(),
+        path: zod.string(),
         ideUrl: zod.string().nullish(),
       }),
     )
@@ -207,7 +207,7 @@ export const GetSessionResponse = zod.object({
       zod.object({
         name: zod.string(),
         password: zod.string(),
-        port: zod.number(),
+        path: zod.string(),
         ideUrl: zod.string().nullish(),
       }),
     )
@@ -259,7 +259,7 @@ export const DeleteSessionResponse = zod.object({
       zod.object({
         name: zod.string(),
         password: zod.string(),
-        port: zod.number(),
+        path: zod.string(),
         ideUrl: zod.string().nullish(),
       }),
     )
@@ -309,7 +309,7 @@ export const GetActiveSessionResponse = zod.object({
           zod.object({
             name: zod.string(),
             password: zod.string(),
-            port: zod.number(),
+            path: zod.string(),
             ideUrl: zod.string().nullish(),
           }),
         )
@@ -363,7 +363,7 @@ export const RefreshSessionStatusResponse = zod.object({
       zod.object({
         name: zod.string(),
         password: zod.string(),
-        port: zod.number(),
+        path: zod.string(),
         ideUrl: zod.string().nullish(),
       }),
     )

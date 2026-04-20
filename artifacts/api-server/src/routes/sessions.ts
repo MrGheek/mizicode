@@ -8,15 +8,13 @@ import { logger } from "../lib/logger";
 import { listObservations, listSessions, searchMemory, subscribeToObservations } from "../services/memory";
 import type { TeamMemberRecord } from "@workspace/db";
 
-function generatePassword(length = 12): string {
-  return Array.from({ length }, () =>
-    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"[
-      Math.floor(Math.random() * 57)
-    ]
-  ).join("");
-}
+import { randomBytes } from "crypto";
 
-const TEAM_MEMBER_PORTS = [8083, 8084, 8085, 8086];
+function generatePassword(length = 12): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const buf = randomBytes(length);
+  return Array.from(buf, (b) => chars[b % chars.length]).join("");
+}
 
 const router = Router();
 
@@ -68,12 +66,13 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
       : 0;
     const totalCost = session.costPerHour ? Math.round(session.costPerHour * hoursRunning * 100) / 100 : 0;
 
-    // Update team member ideUrls when instance ports are available
+    // Update team member ideUrls by appending each member's path to the codeServerUrl
     let updatedTeamMembers = session.teamMembers as TeamMemberRecord[] | null;
-    if (updatedTeamMembers && urls.teamMemberUrls && Object.keys(urls.teamMemberUrls).length > 0) {
+    const baseCodeServerUrl = (urls.codeServerUrl || session.codeServerUrl || "").replace(/\/$/, "");
+    if (updatedTeamMembers && baseCodeServerUrl) {
       updatedTeamMembers = updatedTeamMembers.map((m) => ({
         ...m,
-        ideUrl: (urls.teamMemberUrls as Record<number, string>)[m.port] || m.ideUrl,
+        ideUrl: m.ideUrl || `${baseCodeServerUrl}${m.path}`,
       }));
     }
 
@@ -133,7 +132,15 @@ router.get("/sessions", async (_req, res) => {
     .leftJoin(gpuProfilesTable, eq(sessionsTable.profileId, gpuProfilesTable.id))
     .orderBy(desc(sessionsTable.createdAt));
 
-  res.json(sessions);
+  // Redact passwords from list response — full credentials are only on the detail endpoint
+  const sanitized = sessions.map((s) => ({
+    ...s,
+    teamMembers: s.teamMembers
+      ? (s.teamMembers as TeamMemberRecord[]).map(({ password: _pw, ...rest }) => rest)
+      : null,
+  }));
+
+  res.json(sanitized);
 });
 
 router.get("/sessions/active", async (_req, res) => {
@@ -228,16 +235,26 @@ router.post("/sessions", async (req, res) => {
 
     const templateHash = defaultTemplate?.templateHash || undefined;
 
-    // Build team member records (up to 4)
+    // Build team member records (up to 4 named members + 1 shared workspace)
     const rawNames: string[] = Array.isArray(teamMemberNames)
       ? teamMemberNames.slice(0, 4).map(String).filter(n => n.trim())
       : [];
-    const teamMemberRecords: TeamMemberRecord[] = rawNames.map((name, i) => ({
-      name: name.trim(),
-      password: generatePassword(),
-      port: TEAM_MEMBER_PORTS[i],
-      ideUrl: null,
-    }));
+    const teamMemberRecords: TeamMemberRecord[] = rawNames.length > 0
+      ? [
+          ...rawNames.map((name) => ({
+            name: name.trim(),
+            password: generatePassword(),
+            path: `/ide/${name.trim()}/`,
+            ideUrl: null,
+          })),
+          {
+            name: "__shared__",
+            password: generatePassword(),
+            path: "/shared/",
+            ideUrl: null,
+          },
+        ]
+      : [];
 
     logger.info({ profileId, selectedOfferId, teamMemberCount: teamMemberRecords.length }, "Launching session — model will download on instance startup");
 
@@ -288,7 +305,6 @@ router.post("/sessions", async (req, res) => {
       onstart,
       disk: profile.diskSizeGb,
       templateHashId: templateHash,
-      teamMemberCount: teamMemberRecords.length,
       env: {
         MODEL_REPO,
         MODEL_QUANT,

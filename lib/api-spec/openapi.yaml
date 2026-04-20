@@ -530,15 +530,15 @@ components:
           type: string
         password:
           type: string
-        port:
-          type: integer
+        path:
+          type: string
         ideUrl:
           type: string
           nullable: true
       required:
         - name
         - password
-        - port
+        - path
 
     Session:
       type: object

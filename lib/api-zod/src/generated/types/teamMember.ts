@@ -9,6 +9,6 @@
 export interface TeamMember {
   name: string;
   password: string;
-  port: number;
+  path: string;
   ideUrl?: string | null;
 }

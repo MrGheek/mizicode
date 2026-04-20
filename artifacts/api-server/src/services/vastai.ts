@@ -135,7 +135,6 @@ export interface VastCreateInstanceParams {
   env?: Record<string, string>;
   disk?: number;
   templateHashId?: string;
-  teamMemberCount?: number;
 }
 
 export async function createInstance(params: VastCreateInstanceParams) {
@@ -150,13 +149,6 @@ export async function createInstance(params: VastCreateInstanceParams) {
     "-p 8080:8080": "1",
     "-p 8081:8081": "1",
   };
-
-  // Expose per-member nginx proxy ports (8083-8086) when team members are present
-  const TEAM_PORTS = [8083, 8084, 8085, 8086];
-  const count = Math.min(params.teamMemberCount || 0, 4);
-  for (let i = 0; i < count; i++) {
-    envDict[`-p ${TEAM_PORTS[i]}:${TEAM_PORTS[i]}`] = "1";
-  }
 
   if (params.env) {
     for (const [key, value] of Object.entries(params.env)) {
@@ -259,7 +251,7 @@ export async function updateTemplate(oldHash: string, params: VastTemplateParams
 export interface TeamMemberInput {
   name: string;
   password: string;
-  port: number;
+  path: string;
 }
 
 export function buildOnStartScript(profileConfig: {
@@ -318,14 +310,6 @@ export function buildInstanceUrls(instance: { public_ipaddr?: string; ports?: Re
   const previewPort = getPort("3000");
   const sshPort = getPort("22");
 
-  // Build team member port → URL map
-  const TEAM_PORTS = [8083, 8084, 8085, 8086];
-  const teamMemberUrls: Record<number, string> = {};
-  for (const p of TEAM_PORTS) {
-    const hp = getPort(String(p));
-    if (hp) teamMemberUrls[p] = `http://${ip}:${hp}`;
-  }
-
   return {
     boltDiyUrl: boltPort ? `http://${ip}:${boltPort}` : null,
     codeServerUrl: codeServerPort ? `http://${ip}:${codeServerPort}` : null,
@@ -333,6 +317,5 @@ export function buildInstanceUrls(instance: { public_ipaddr?: string; ports?: Re
     sshHost: ip,
     sshPort: sshPort ? parseInt(sshPort) : null,
     publicIp: ip,
-    teamMemberUrls,
   };
 }
