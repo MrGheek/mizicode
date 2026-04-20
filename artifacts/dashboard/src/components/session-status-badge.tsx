@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { Users } from "lucide-react";
 import type { SessionStatus } from "@workspace/api-client-react";
 
 export function SessionStatusBadge({ status }: { status: SessionStatus }) {
@@ -26,6 +27,15 @@ export function SessionStatusBadge({ status }: { status: SessionStatus }) {
   return (
     <Badge variant="outline" className={`font-mono text-xs uppercase ${colorClass}`}>
       {status}
+    </Badge>
+  );
+}
+
+export function TeamSessionBadge() {
+  return (
+    <Badge variant="outline" className="bg-violet-500/20 text-violet-400 border-violet-500/30 text-xs gap-1 font-medium">
+      <Users className="w-3 h-3" />
+      Team
     </Badge>
   );
 }

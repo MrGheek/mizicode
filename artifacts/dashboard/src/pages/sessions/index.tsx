@@ -4,7 +4,7 @@ import { format } from "date-fns";
 import { Terminal, Eye, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { SessionStatusBadge } from "@/components/session-status-badge";
+import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function SessionsList() {
@@ -55,7 +55,10 @@ export default function SessionsList() {
                   <TableCell className="font-mono text-muted-foreground">#{session.id}</TableCell>
                   <TableCell className="font-medium">{session.profileName}</TableCell>
                   <TableCell>
-                    <SessionStatusBadge status={session.status} />
+                    <div className="flex items-center gap-2">
+                      <SessionStatusBadge status={session.status} />
+                      {session.teamMembers && session.teamMembers.length > 0 && <TeamSessionBadge />}
+                    </div>
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-sm">
                     {session.gpuName ? `${session.gpuName} x${session.numGpus}` : 'N/A'}

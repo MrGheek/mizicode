@@ -16,7 +16,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight } from "lucide-react";
 import { ProfileCard } from "@/components/profile-card";
-import { SessionStatusBadge } from "@/components/session-status-badge";
+import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
 import { SchedulerConfigCard } from "@/components/scheduler-config-card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -164,6 +164,7 @@ export default function Dashboard() {
                   <div className="flex items-center gap-3 mb-2">
                     <h3 className="text-lg font-bold">{activeSession.profileName}</h3>
                     <SessionStatusBadge status={activeSession.status} />
+                    {activeSession.teamMembers && activeSession.teamMembers.length > 0 && <TeamSessionBadge />}
                   </div>
                   <p className="text-sm text-muted-foreground font-mono">
                     {activeSession.gpuName} x{activeSession.numGpus} • ${activeSession.costPerHour?.toFixed(2) || "0.00"}/hr
