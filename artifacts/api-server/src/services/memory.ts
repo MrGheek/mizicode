@@ -14,8 +14,11 @@ function getDb(): Database.Database {
 
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-  } catch {
+  } catch (err) {
+    logger.warn({ err, DATA_DIR }, "Could not create memory data directory");
   }
+
+  logger.info({ db: DB_PATH }, "Memory database initializing");
 
   _db = new Database(DB_PATH);
   _db.pragma("journal_mode = WAL");
