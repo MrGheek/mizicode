@@ -43,9 +43,17 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
     let statusMessage = session.statusMessage;
 
     const vastStatus = instance.actual_status || "";
-    const statusMsg = (instance.status_msg || "").toLowerCase();
+    const rawStatusMsg = (instance.status_msg || "").trim();
+    const statusMsg = rawStatusMsg.toLowerCase();
+
+    logger.info(
+      { sessionId: session.id, vastInstanceId: session.vastInstanceId, vastStatus, rawStatusMsg, codeServerUrl: urls.codeServerUrl, llmProxyUrl: urls.llmProxyUrl },
+      "Vast.ai sync — raw values"
+    );
 
     if (vastStatus === "running") {
+      // First: check for keyword markers written by onstart.sh to /tmp/instance-status
+      // (works when Vast.ai reads that file as status_msg, which depends on the image/agent)
       if (statusMsg.includes("downloading") || statusMsg.includes("pulling")) {
         status = "downloading";
         statusMessage = "Downloading model weights...";
@@ -59,16 +67,51 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
         status = "starting";
         statusMessage = "Tools ready — LLM model loading in background...";
       } else {
+        // Fallback: probe the code-server and LLM proxy URLs directly.
+        // Vast.ai sets status_msg itself (e.g. "running") — we cannot rely on it for our phases.
         status = "starting";
-        statusMessage = "Services starting up...";
+        statusMessage = rawStatusMsg ? `Starting... (${rawStatusMsg})` : "Services starting up...";
+
+        if (urls.codeServerUrl) {
+          try {
+            const probeRes = await fetch(urls.codeServerUrl, {
+              method: "HEAD",
+              signal: AbortSignal.timeout(4000),
+            });
+            // Any HTTP response (200, 302, 401) means code-server is listening
+            if (probeRes.status < 500) {
+              status = "starting";
+              statusMessage = "Tools ready — LLM model loading in background...";
+              logger.info({ sessionId: session.id, codeServerStatus: probeRes.status }, "Code-server probe: UP");
+
+              // Also probe the LLM proxy on port 8081
+              if (urls.llmProxyUrl) {
+                try {
+                  const llmRes = await fetch(`${urls.llmProxyUrl}/health`, {
+                    signal: AbortSignal.timeout(4000),
+                  });
+                  if (llmRes.ok) {
+                    status = "ready";
+                    statusMessage = "Session is ready — vLLM online";
+                    logger.info({ sessionId: session.id }, "LLM proxy probe: READY");
+                  }
+                } catch (llmErr) {
+                  logger.debug({ sessionId: session.id, err: llmErr }, "LLM proxy not yet ready (expected during model load)");
+                }
+              }
+            }
+          } catch (probeErr) {
+            // Code-server not yet reachable — still starting
+            logger.debug({ sessionId: session.id, err: probeErr }, "Code-server probe: not yet reachable");
+          }
+        }
       }
     } else if (vastStatus === "loading" || vastStatus === "creating") {
       status = "provisioning";
-      const rawMsg = (instance.status_msg || "").trim();
-      statusMessage = rawMsg ? `[${vastStatus}] ${rawMsg}` : "Instance is booting...";
+      statusMessage = rawStatusMsg ? `[${vastStatus}] ${rawStatusMsg}` : "Instance is booting...";
     } else if (vastStatus === "exited" || vastStatus === "error") {
       status = "error";
-      statusMessage = `Instance error: ${instance.status_msg || vastStatus}`;
+      statusMessage = `Instance error: ${rawStatusMsg || vastStatus}`;
     }
 
     const hoursRunning = session.startedAt

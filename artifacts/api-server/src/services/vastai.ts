@@ -312,9 +312,12 @@ export function buildInstanceUrls(instance: { public_ipaddr?: string; ports?: Re
   const previewPort = getPort("3000");
   const sshPort = getPort("22");
 
+  const llmProxyPort = getPort("8081");
+
   return {
     boltDiyUrl: boltPort ? `http://${ip}:${boltPort}` : null,
     codeServerUrl: codeServerPort ? `http://${ip}:${codeServerPort}` : null,
+    llmProxyUrl: llmProxyPort ? `http://${ip}:${llmProxyPort}` : null,
     previewUrl: previewPort ? `http://${ip}:${previewPort}` : null,
     sshHost: ip,
     sshPort: sshPort ? parseInt(sshPort) : null,
