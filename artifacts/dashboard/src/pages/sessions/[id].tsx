@@ -67,6 +67,9 @@ function useMemObservations(sessionId: number, isActive: boolean) {
   });
 }
 
+const RETRY_DELAYS = [3000, 10000, 30000];
+const MAX_RETRIES = RETRY_DELAYS.length;
+
 function MemoryTab({
   sessionId,
   isActive,
@@ -80,10 +83,13 @@ function MemoryTab({
   const { data: polledObservations, isLoading: obsLoading } = useMemObservations(sessionId, isActive);
   const [streamedObservations, setStreamedObservations] = useState<MemObservation[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
   const esRef = useRef<EventSource | null>(null);
   const onNewObservationRef = useRef(onNewObservation);
   onNewObservationRef.current = onNewObservation;
+  const retryCountRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setStreamedObservations([]);
@@ -91,40 +97,85 @@ function MemoryTab({
 
   useEffect(() => {
     if (!sessionId || !isActive) {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
       if (esRef.current) {
         esRef.current.close();
         esRef.current = null;
-        setStreaming(false);
       }
+      setStreaming(false);
+      setReconnecting(false);
+      retryCountRef.current = 0;
       return;
     }
 
-    const url = `${BASE_URL}api/sessions/${sessionId}/memory/stream`;
-    const es = new EventSource(url);
-    esRef.current = es;
+    let cancelled = false;
 
-    es.onopen = () => setStreaming(true);
+    function connect() {
+      if (cancelled) return;
 
-    es.onmessage = (event) => {
-      try {
-        const obs: MemObservation = JSON.parse(event.data);
-        setStreamedObservations(prev => {
-          if (prev.some(o => o.id === obs.id)) return prev;
-          onNewObservationRef.current?.();
-          return [obs, ...prev];
-        });
-      } catch {
-      }
-    };
+      const url = `${BASE_URL}api/sessions/${sessionId}/memory/stream`;
+      const es = new EventSource(url);
+      esRef.current = es;
 
-    es.onerror = () => {
-      setStreaming(false);
-    };
+      es.onopen = () => {
+        if (cancelled) { es.close(); return; }
+        retryCountRef.current = 0;
+        setStreaming(true);
+        setReconnecting(false);
+      };
+
+      es.onmessage = (event) => {
+        if (cancelled) return;
+        try {
+          const obs: MemObservation = JSON.parse(event.data);
+          setStreamedObservations(prev => {
+            if (prev.some(o => o.id === obs.id)) return prev;
+            onNewObservationRef.current?.();
+            return [obs, ...prev];
+          });
+        } catch {
+        }
+      };
+
+      es.onerror = () => {
+        if (cancelled) return;
+        es.close();
+        esRef.current = null;
+        setStreaming(false);
+
+        if (retryCountRef.current >= MAX_RETRIES) {
+          setReconnecting(false);
+          return;
+        }
+
+        const delay = RETRY_DELAYS[retryCountRef.current];
+        retryCountRef.current += 1;
+        setReconnecting(true);
+
+        retryTimerRef.current = setTimeout(() => {
+          if (!cancelled) connect();
+        }, delay);
+      };
+    }
+
+    connect();
 
     return () => {
-      es.close();
-      esRef.current = null;
+      cancelled = true;
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
       setStreaming(false);
+      setReconnecting(false);
+      retryCountRef.current = 0;
     };
   }, [sessionId, isActive]);
 
@@ -192,6 +243,11 @@ function MemoryTab({
               {streaming && (
                 <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-emerald-500 normal-case tracking-normal">
                   <Radio className="w-3 h-3 animate-pulse" /> Live
+                </span>
+              )}
+              {!streaming && reconnecting && (
+                <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-amber-500 normal-case tracking-normal">
+                  <Radio className="w-3 h-3 animate-pulse" /> Reconnecting…
                 </span>
               )}
             </CardTitle>
