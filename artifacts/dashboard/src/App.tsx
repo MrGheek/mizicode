@@ -8,6 +8,7 @@ import Dashboard from "@/pages/dashboard";
 import Sessions from "@/pages/sessions/index";
 import SessionDetail from "@/pages/sessions/[id]";
 import Templates from "@/pages/templates/index";
+import Memory from "@/pages/memory";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,6 +27,7 @@ function Router() {
         <Route path="/sessions" component={Sessions} />
         <Route path="/sessions/:id" component={SessionDetail} />
         <Route path="/templates" component={Templates} />
+        <Route path="/memory" component={Memory} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

@@ -8,10 +8,11 @@ import {
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
-  Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio
+  Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { SessionStatusBadge } from "@/components/session-status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -37,6 +38,16 @@ interface MemObservation {
   inputSummary: string;
   outputSummary: string;
   recordedAt: number;
+}
+
+interface SearchResultObservation extends MemObservation {
+  sessionSummary: string | null;
+  sessionStartedAt: number;
+}
+
+interface MemorySearchResult {
+  observations: SearchResultObservation[];
+  sessions: MemSession[];
 }
 
 function useMemSessions(sessionId: number) {
@@ -70,6 +81,107 @@ function useMemObservations(sessionId: number, isActive: boolean) {
 const RETRY_DELAYS = [3000, 10000, 30000];
 const MAX_RETRIES = RETRY_DELAYS.length;
 
+function useMemorySearch(sessionId: number, query: string) {
+  return useQuery<MemorySearchResult>({
+    queryKey: ["mem-search", sessionId, query],
+    enabled: !!sessionId && query.trim().length > 1,
+    queryFn: async () => {
+      const url = `${BASE_URL}api/sessions/${sessionId}/memory/search?q=${encodeURIComponent(query)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Failed to search memory");
+      return res.json();
+    },
+    staleTime: 5000,
+  });
+}
+
+function SearchResults({ results, isLoading }: { results: MemorySearchResult | undefined; isLoading: boolean }) {
+  if (isLoading) {
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-16 w-full" />
+        ))}
+      </div>
+    );
+  }
+  if (!results) return null;
+
+  const hasObs = results.observations.length > 0;
+  const hasSess = results.sessions.length > 0;
+
+  if (!hasObs && !hasSess) {
+    return (
+      <p className="text-sm text-muted-foreground text-center py-8">No results found.</p>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {hasSess && (
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+            Matching Sessions ({results.sessions.length})
+          </p>
+          <div className="space-y-2">
+            {results.sessions.map(sess => (
+              <div key={sess.id} className="border border-primary/30 bg-primary/5 rounded p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-mono text-[10px] text-primary/60 bg-primary/10 rounded px-1">
+                    {sess.id.length > 16 ? `${sess.id.slice(0, 16)}…` : sess.id}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {format(new Date(sess.startedAt * 1000), "MMM d, HH:mm")}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground ml-auto">{sess.observationCount} obs</span>
+                </div>
+                {sess.summary && (
+                  <p className="text-xs text-foreground/90 leading-relaxed">{sess.summary}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {hasObs && (
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+            Matching Observations ({results.observations.length})
+          </p>
+          <div className="space-y-1.5">
+            {results.observations.map(obs => (
+              <div key={obs.id} className="border border-border/40 rounded p-2 text-xs font-mono">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-primary font-semibold">{obs.toolName}</span>
+                  <span className="text-muted-foreground text-[10px]">
+                    {format(new Date(obs.recordedAt * 1000), "MMM d HH:mm")}
+                  </span>
+                </div>
+                {obs.inputSummary && (
+                  <p className="text-muted-foreground truncate" title={obs.inputSummary}>
+                    In: {obs.inputSummary}
+                  </p>
+                )}
+                {obs.outputSummary && (
+                  <p className="text-muted-foreground truncate" title={obs.outputSummary}>
+                    Out: {obs.outputSummary}
+                  </p>
+                )}
+                {obs.sessionSummary && (
+                  <p className="text-muted-foreground/60 text-[10px] mt-1 border-t border-border/30 pt-1 truncate" title={obs.sessionSummary}>
+                    Session: {obs.sessionSummary}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MemoryTab({
   sessionId,
   isActive,
@@ -90,6 +202,11 @@ function MemoryTab({
   onNewObservationRef.current = onNewObservation;
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Search state
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setStreamedObservations([]);
@@ -166,6 +283,17 @@ function MemoryTab({
     };
   }, [sessionId]);
 
+  // Debounce search input
+  useEffect(() => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => setDebouncedQuery(searchInput), 350);
+    return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
+  }, [searchInput]);
+
+  const isSearching = debouncedQuery.trim().length > 1;
+  const { data: searchResults, isLoading: searchLoading } = useMemorySearch(sessionId, debouncedQuery);
+
+  // Merge streamed + polled observations (deduped, sorted newest-first)
   const observations = (() => {
     if (!isActive) return polledObservations || [];
     const seen = new Set<number>();
@@ -201,18 +329,6 @@ function MemoryTab({
   const hasSessions = sessions && sessions.length > 0;
   const hasObservations = observations && observations.length > 0;
 
-  if (!hasSessions && !hasObservations) {
-    return (
-      <Card className="mt-4 bg-card/50 border-border/50">
-        <CardContent className="pt-6 pb-6 text-center text-muted-foreground text-sm">
-          <Brain className="w-8 h-8 mx-auto mb-3 opacity-30" />
-          <p>No session memory recorded yet.</p>
-          <p className="text-xs mt-1 opacity-70">Memory is captured automatically as the AI uses tools during a session.</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
   const obsBySession = (observations || []).reduce<Record<string, MemObservation[]>>((acc, obs) => {
     if (!acc[obs.sessionId]) acc[obs.sessionId] = [];
     acc[obs.sessionId].push(obs);
@@ -221,111 +337,154 @@ function MemoryTab({
 
   return (
     <div className="mt-4 space-y-3">
-      {/* Recent Tool Observations */}
-      {hasObservations && (
+      {/* Search bar */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+        <Input
+          value={searchInput}
+          onChange={e => setSearchInput(e.target.value)}
+          placeholder="Search session notes and tool observations…"
+          className="pl-9 pr-9 bg-secondary/30 border-border/50 text-sm"
+        />
+        {searchInput && (
+          <button
+            onClick={() => setSearchInput("")}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+
+      {/* Search results view */}
+      {isSearching && (
         <Card className="bg-card/50 border-border/50">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
-              <Brain className="w-4 h-4" /> Recent Tool Observations
-              {streaming && (
-                <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-emerald-500 normal-case tracking-normal">
-                  <Radio className="w-3 h-3 animate-pulse" /> Live
-                </span>
-              )}
-              {!streaming && reconnecting && (
-                <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-amber-500 normal-case tracking-normal">
-                  <Radio className="w-3 h-3 animate-pulse" /> Reconnecting…
-                </span>
-              )}
+              <Search className="w-4 h-4" /> Search Results for &ldquo;{debouncedQuery}&rdquo;
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
-            {(observations || []).slice(0, 20).map(obs => (
-              <div key={obs.id} className="border border-border/40 rounded p-2 text-xs font-mono">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-primary font-semibold">{obs.toolName}</span>
-                  <span className="text-muted-foreground text-[10px]">
-                    {format(new Date(obs.recordedAt * 1000), "MMM d HH:mm")}
-                  </span>
-                </div>
-                {obs.inputSummary && (
-                  <p className="text-muted-foreground truncate" title={obs.inputSummary}>
-                    In: {obs.inputSummary}
-                  </p>
-                )}
-                {obs.outputSummary && (
-                  <p className="text-muted-foreground truncate" title={obs.outputSummary}>
-                    Out: {obs.outputSummary}
-                  </p>
-                )}
-              </div>
-            ))}
+          <CardContent>
+            <SearchResults results={searchResults} isLoading={searchLoading} />
           </CardContent>
         </Card>
       )}
 
-      {/* Past Session Summaries */}
-      {hasSessions && (
-        <Card className="bg-card/50 border-border/50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
-              <Clock className="w-4 h-4" /> Session History
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {(sessions || []).map(sess => {
-              const isExpanded = expandedSessions.has(sess.id);
-              const sessObs = obsBySession[sess.id] || [];
-              return (
-                <div key={sess.id} className="border border-border/40 rounded">
-                  <button
-                    onClick={() => toggleSession(sess.id)}
-                    className="w-full flex items-center justify-between p-2 text-left hover:bg-secondary/20 transition-colors"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      {isExpanded ? (
-                        <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-                      ) : (
-                        <ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-                      )}
-                      <span className="font-mono text-[10px] text-primary/60 flex-shrink-0 bg-primary/10 rounded px-1">
-                        {sess.id.length > 16 ? `${sess.id.slice(0, 16)}…` : sess.id}
-                      </span>
-                      <span className="font-mono text-xs text-muted-foreground flex-shrink-0">
-                        {format(new Date(sess.startedAt * 1000), "MMM d, HH:mm")}
-                      </span>
+      {/* Default view — shown when not searching */}
+      {!isSearching && (
+        <>
+          {!hasSessions && !hasObservations && (
+            <Card className="bg-card/50 border-border/50">
+              <CardContent className="pt-6 pb-6 text-center text-muted-foreground text-sm">
+                <Brain className="w-8 h-8 mx-auto mb-3 opacity-30" />
+                <p>No session memory recorded yet.</p>
+                <p className="text-xs mt-1 opacity-70">Memory is captured automatically as the AI uses tools during a session.</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Past Session Summaries — shown first, prominently */}
+          {hasSessions && (
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+                  <Clock className="w-4 h-4" /> Session History
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {(sessions || []).map(sess => {
+                  const isExpanded = expandedSessions.has(sess.id);
+                  const sessObs = obsBySession[sess.id] || [];
+                  return (
+                    <div key={sess.id} className="border border-border/40 rounded">
+                      <button
+                        onClick={() => toggleSession(sess.id)}
+                        className="w-full flex items-center justify-between p-2 text-left hover:bg-secondary/20 transition-colors"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          {isExpanded ? (
+                            <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                          ) : (
+                            <ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                          )}
+                          <span className="font-mono text-[10px] text-primary/60 flex-shrink-0 bg-primary/10 rounded px-1">
+                            {sess.id.length > 16 ? `${sess.id.slice(0, 16)}…` : sess.id}
+                          </span>
+                          <span className="font-mono text-xs text-muted-foreground flex-shrink-0">
+                            {format(new Date(sess.startedAt * 1000), "MMM d, HH:mm")}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground flex-shrink-0 ml-2">
+                          {sess.observationCount} obs
+                        </span>
+                      </button>
+
+                      {/* Summary block — always visible below header when summary exists */}
                       {sess.summary && (
-                        <span className="text-xs truncate text-foreground/80">{sess.summary}</span>
-                      )}
-                    </div>
-                    <span className="text-[10px] text-muted-foreground flex-shrink-0 ml-2">
-                      {sess.observationCount} obs
-                    </span>
-                  </button>
-                  {isExpanded && (
-                    <div className="px-3 pb-3 space-y-1">
-                      {sess.summary && (
-                        <p className="text-xs text-muted-foreground mb-2 pt-1 border-t border-border/40">
+                        <div className="mx-2 mb-2 px-2 py-1.5 bg-primary/5 border border-primary/20 rounded text-xs text-foreground/90 leading-relaxed">
                           {sess.summary}
-                        </p>
+                        </div>
                       )}
-                      {sessObs.length > 0 ? (
-                        sessObs.map(obs => (
-                          <div key={obs.id} className="font-mono text-[10px] text-muted-foreground bg-secondary/20 rounded px-2 py-1">
-                            <span className="text-primary">{obs.toolName}</span>
-                            {obs.inputSummary && <span className="ml-2 truncate">({obs.inputSummary})</span>}
-                          </div>
-                        ))
-                      ) : (
-                        <p className="text-[10px] text-muted-foreground italic">No observations loaded for this session</p>
+
+                      {isExpanded && (
+                        <div className="px-3 pb-3 space-y-1">
+                          {sessObs.length > 0 ? (
+                            sessObs.map(obs => (
+                              <div key={obs.id} className="font-mono text-[10px] text-muted-foreground bg-secondary/20 rounded px-2 py-1">
+                                <span className="text-primary">{obs.toolName}</span>
+                                {obs.inputSummary && <span className="ml-2 truncate">({obs.inputSummary})</span>}
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-[10px] text-muted-foreground italic">No observations loaded for this session</p>
+                          )}
+                        </div>
                       )}
                     </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Recent Tool Observations */}
+          {hasObservations && (
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+                  <Brain className="w-4 h-4" /> Recent Tool Observations
+                  {streaming && (
+                    <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-emerald-500 normal-case tracking-normal">
+                      <Radio className="w-3 h-3 animate-pulse" /> Live
+                    </span>
                   )}
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {(observations || []).slice(0, 20).map(obs => (
+                  <div key={obs.id} className="border border-border/40 rounded p-2 text-xs font-mono">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-primary font-semibold">{obs.toolName}</span>
+                      <span className="text-muted-foreground text-[10px]">
+                        {format(new Date(obs.recordedAt * 1000), "MMM d HH:mm")}
+                      </span>
+                    </div>
+                    {obs.inputSummary && (
+                      <p className="text-muted-foreground truncate" title={obs.inputSummary}>
+                        In: {obs.inputSummary}
+                      </p>
+                    )}
+                    {obs.outputSummary && (
+                      <p className="text-muted-foreground truncate" title={obs.outputSummary}>
+                        Out: {obs.outputSummary}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
     </div>
   );

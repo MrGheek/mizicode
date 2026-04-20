@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Terminal, LayoutDashboard, Database, Layers, CheckCircle2, AlertCircle } from "lucide-react";
+import { Terminal, LayoutDashboard, Database, Layers, CheckCircle2, AlertCircle, Brain } from "lucide-react";
 import {
   useHealthCheck,
   useGetActiveSession,
@@ -43,6 +43,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
     { name: "Sessions", href: "/sessions", icon: Terminal },
     { name: "Templates", href: "/templates", icon: Layers },
+    { name: "Memory", href: "/memory", icon: Brain },
   ];
 
   return (

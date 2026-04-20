@@ -5,7 +5,7 @@ import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
-import { listObservations, listSessions, subscribeToObservations } from "../services/memory";
+import { listObservations, listSessions, searchMemory, subscribeToObservations } from "../services/memory";
 
 const router = Router();
 
@@ -498,6 +498,46 @@ router.get("/sessions/:sessionId/memory/stream", (req, res) => {
     clearInterval(keepAlive);
     unsubscribe();
   });
+});
+
+router.get("/sessions/:sessionId/memory/search", (req, res) => {
+  const q = (req.query["q"] as string | undefined) || "";
+  if (!q.trim()) {
+    res.json({ observations: [], sessions: [] });
+    return;
+  }
+  try {
+    const results = searchMemory(MEM_USER_ID, q);
+    res.json(results);
+  } catch (err) {
+    logger.error(err, "Failed to search memory for dashboard");
+    res.status(500).json({ error: "Failed to search memory" });
+  }
+});
+
+router.get("/memory/search", (req, res) => {
+  const q = (req.query["q"] as string | undefined) || "";
+  if (!q.trim()) {
+    res.json({ observations: [], sessions: [] });
+    return;
+  }
+  try {
+    const results = searchMemory(MEM_USER_ID, q);
+    res.json(results);
+  } catch (err) {
+    logger.error(err, "Failed to search global memory for dashboard");
+    res.status(500).json({ error: "Failed to search memory" });
+  }
+});
+
+router.get("/memory/sessions", (_req, res) => {
+  try {
+    const sessions = listSessions(MEM_USER_ID, 100, 0);
+    res.json(sessions);
+  } catch (err) {
+    logger.error(err, "Failed to list all memory sessions for dashboard");
+    res.status(500).json({ error: "Failed to list sessions" });
+  }
 });
 
 export default router;

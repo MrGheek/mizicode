@@ -214,6 +214,63 @@ export function listSessions(userId: string, limit = 50, offset = 0): SessionSum
   `).all(userId, limit, offset) as SessionSummary[];
 }
 
+export interface SearchResultObservation extends Observation {
+  sessionSummary: string | null;
+  sessionStartedAt: number;
+}
+
+export interface MemorySearchResult {
+  observations: SearchResultObservation[];
+  sessions: SessionSummary[];
+}
+
+export function searchMemory(userId: string, rawQuery: string, limit = 30): MemorySearchResult {
+  const db = getDb();
+  const trimmed = rawQuery.trim();
+  if (!trimmed) return { observations: [], sessions: [] };
+
+  const ftsQuery = trimmed
+    .split(/\s+/)
+    .map((w) => `"${w.replace(/"/g, '""')}"*`)
+    .join(" ");
+
+  let observations: SearchResultObservation[] = [];
+  try {
+    observations = db.prepare(`
+      SELECT o.id, o.session_id as sessionId, o.user_id as userId,
+             o.tool_name as toolName, o.input_summary as inputSummary,
+             o.output_summary as outputSummary, o.recorded_at as recordedAt,
+             s.summary as sessionSummary, s.started_at as sessionStartedAt
+      FROM mem_observations_fts fts
+      JOIN mem_observations o ON fts.rowid = o.id
+      JOIN mem_sessions s ON o.session_id = s.id
+      WHERE fts MATCH ?
+        AND o.user_id = ?
+      ORDER BY o.recorded_at DESC
+      LIMIT ?
+    `).all(ftsQuery, userId, limit) as SearchResultObservation[];
+  } catch (err) {
+    logger.warn({ err, ftsQuery, rawQuery }, "[mem] FTS5 query parse failed — returning empty observations");
+    observations = [];
+  }
+
+  const likePattern = `%${trimmed.replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
+  const sessions = db.prepare(`
+    SELECT s.id, s.user_id as userId, s.project_path as projectPath,
+           s.started_at as startedAt, s.ended_at as endedAt, s.summary,
+           COUNT(o.id) as observationCount
+    FROM mem_sessions s
+    LEFT JOIN mem_observations o ON o.session_id = s.id
+    WHERE s.user_id = ?
+      AND s.summary LIKE ? ESCAPE '\\'
+    GROUP BY s.id
+    ORDER BY s.started_at DESC
+    LIMIT ?
+  `).all(userId, likePattern, limit) as SessionSummary[];
+
+  return { observations, sessions };
+}
+
 export function healthCheck(): boolean {
   try {
     getDb();

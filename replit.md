@@ -86,7 +86,9 @@ artifacts-monorepo/
 
 Memory is scoped per `userId` (default: `"operator"`, override via `OMNIQL_MEM_USER_ID`). Optionally auth-gated via `OMNIQL_MEM_TOKEN` env var (required in `NODE_ENV=production`; warned-but-open in development). SQLite DB stored at `MEM_DATA_DIR` (defaults to `~/omniql-memory/mem.db` — outside workspace, not tracked by git).
 
-Dashboard accesses memory via session-scoped proxy routes (`GET /api/sessions/:id/memory/sessions` and `/observations`) — no bearer token required for dashboard access.
+Dashboard accesses memory via session-scoped proxy routes (`GET /api/sessions/:id/memory/sessions`, `/observations`, and `/search?q=`) and global proxy routes (`GET /api/memory/sessions` and `/api/memory/search?q=`) — no bearer token required for dashboard access.
+
+The `searchMemory(userId, query)` service function in `artifacts/api-server/src/services/memory.ts` uses FTS5 full-text search on tool observations and LIKE on session summaries, returning `{ observations, sessions }`.
 
 ## Docker Images
 
@@ -128,7 +130,9 @@ Express 5 API server with Vast.ai integration. Routes in `src/routes/`, services
 
 ### `artifacts/dashboard` (`@workspace/dashboard`)
 
-React + Vite frontend with dark theme. Pages: Dashboard, Sessions, Session Detail, GPU Offers, Templates.
+React + Vite frontend with dark theme. Pages: Dashboard, Sessions, Session Detail, Templates, Memory.
+
+Memory page (`artifacts/dashboard/src/pages/memory.tsx`) provides a global searchable notes view across all AI sessions — session summaries displayed as note blocks, full-text search via FTS5 (debounced, 350ms). Session Detail memory tab (`artifacts/dashboard/src/pages/sessions/[id].tsx`) also has per-session search and shows summaries prominently as a styled block below each session row header.
 
 ### `lib/db` (`@workspace/db`)
 
