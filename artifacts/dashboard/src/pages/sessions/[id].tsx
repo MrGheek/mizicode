@@ -96,20 +96,7 @@ function MemoryTab({
   }, [sessionId]);
 
   useEffect(() => {
-    if (!sessionId || !isActive) {
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
-      if (esRef.current) {
-        esRef.current.close();
-        esRef.current = null;
-      }
-      setStreaming(false);
-      setReconnecting(false);
-      retryCountRef.current = 0;
-      return;
-    }
+    if (!sessionId) return;
 
     let cancelled = false;
 
@@ -177,7 +164,7 @@ function MemoryTab({
       setReconnecting(false);
       retryCountRef.current = 0;
     };
-  }, [sessionId, isActive]);
+  }, [sessionId]);
 
   const observations = (() => {
     if (!isActive) return polledObservations || [];
@@ -459,7 +446,7 @@ export default function SessionDetail() {
         >
           <Brain className="w-3.5 h-3.5" />
           Memory
-          {isActive && newObsCount > 0 && (
+          {newObsCount > 0 && (
             <span className="ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none animate-badge-pop">
               {newObsCount > 99 ? "99+" : newObsCount}
             </span>
