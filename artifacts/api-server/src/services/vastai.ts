@@ -251,6 +251,7 @@ export async function updateTemplate(oldHash: string, params: VastTemplateParams
 export function buildOnStartScript(profileConfig: {
   modelRepo: string;
   modelQuant: string;
+  servedModelName: string;
   llamaCtxSize: number;
   llamaBatchSize: number;
   llamaExtraArgs: string;
@@ -259,6 +260,7 @@ export function buildOnStartScript(profileConfig: {
   return `#!/bin/bash
 export MODEL_REPO="${profileConfig.modelRepo}"
 export MODEL_QUANT="${profileConfig.modelQuant}"
+export SERVED_MODEL_NAME="${profileConfig.servedModelName}"
 export VLLM_MAX_MODEL_LEN="${profileConfig.llamaCtxSize}"
 export VLLM_MAX_NUM_SEQS="${profileConfig.llamaBatchSize}"
 export VLLM_EXTRA_ARGS="${profileConfig.llamaExtraArgs}"

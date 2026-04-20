@@ -1,5 +1,6 @@
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Cpu, HardDrive, Clock, Zap, Play, Loader2 } from "lucide-react";
 import type { GpuProfile } from "@workspace/api-client-react";
 
@@ -20,6 +21,16 @@ const PROFILE_TAGLINES: Record<string, string> = {
     "Near-instant output at maximum throughput. Built for demanding agentic pipelines where generation speed is the bottleneck.",
   enterprise:
     "Dedicated cluster capacity for high-volume teams. Parallel sessions with zero contention across the largest models.",
+  "qwen3-coder-pro":
+    "Highest SWE-Bench score per dollar. Compact 80B MoE architecture delivers frontier-class code edits at Pro-tier prices.",
+  "qwen3-coder-ultra":
+    "Qwen3-Coder-Next at maximum throughput. Ideal for rapid iteration cycles where latency matters as much as intelligence.",
+  "minimax-m2-ultra":
+    "Top open-weight model on SWE-Bench Verified (80.2%). Fast 229B MoE — fronts like a frontier model, runs on H100 hardware.",
+  "glm-5-1-h200":
+    "Best SWE-Bench Pro score of any open-weight model (58.4%). Excels at long-horizon tasks, sustaining quality over hundreds of iterations.",
+  "deepseek-v3-2-h200":
+    "671B MIT-licensed model with strong general coding and multi-language reasoning. Great fallback when you need open licensing.",
 };
 
 export function ProfileCard({ profile, onLaunch, isLaunching }: ProfileCardProps) {
@@ -30,7 +41,12 @@ export function ProfileCard({ profile, onLaunch, isLaunching }: ProfileCardProps
       <CardHeader className="pb-3">
         <div className="flex justify-between items-start">
           <div>
-            <CardTitle className="text-lg font-bold">{profile.displayName}</CardTitle>
+            <div className="flex items-center gap-2 flex-wrap">
+              <CardTitle className="text-lg font-bold">{profile.displayName}</CardTitle>
+              <Badge variant="secondary" className="text-xs font-mono px-1.5 py-0">
+                {profile.modelDisplayName}
+              </Badge>
+            </div>
             <CardDescription className="font-mono text-xs mt-1">
               {profile.gpuName} x{profile.numGpus} ({profile.totalVram}GB VRAM)
             </CardDescription>

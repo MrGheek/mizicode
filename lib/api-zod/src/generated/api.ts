@@ -41,6 +41,17 @@ export const ListProfilesResponseItem = zod.object({
   startupTimeMin: zod
     .number()
     .describe("Estimated startup time in minutes (first launch)"),
+  modelRepo: zod
+    .string()
+    .describe("HuggingFace model repository to download on the instance"),
+  servedModelName: zod
+    .string()
+    .describe(
+      "Model name used for the vLLM --served-model-name flag and litellm alias",
+    ),
+  modelDisplayName: zod
+    .string()
+    .describe("Human-readable model name shown in the dashboard"),
 });
 export const ListProfilesResponse = zod.array(ListProfilesResponseItem);
 
@@ -73,6 +84,17 @@ export const GetProfileResponse = zod.object({
   startupTimeMin: zod
     .number()
     .describe("Estimated startup time in minutes (first launch)"),
+  modelRepo: zod
+    .string()
+    .describe("HuggingFace model repository to download on the instance"),
+  servedModelName: zod
+    .string()
+    .describe(
+      "Model name used for the vLLM --served-model-name flag and litellm alias",
+    ),
+  modelDisplayName: zod
+    .string()
+    .describe("Human-readable model name shown in the dashboard"),
 });
 
 /**

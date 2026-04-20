@@ -28,4 +28,10 @@ export interface GpuProfile {
   searchParams: GpuProfileSearchParams;
   /** Estimated startup time in minutes (first launch) */
   startupTimeMin: number;
+  /** HuggingFace model repository to download on the instance */
+  modelRepo: string;
+  /** Model name used for the vLLM --served-model-name flag and litellm alias */
+  servedModelName: string;
+  /** Human-readable model name shown in the dashboard */
+  modelDisplayName: string;
 }

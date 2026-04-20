@@ -33,6 +33,7 @@ retry() {
 
 MODEL_REPO="${MODEL_REPO:-moonshotai/Kimi-K2.5}"
 MODEL_QUANT="${MODEL_QUANT:-kimi-k2.5}"
+SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-kimi-k2}"
 VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-32768}"
 VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-256}"
 VLLM_EXTRA_ARGS="${VLLM_EXTRA_ARGS:-}"
@@ -201,7 +202,7 @@ log "Starting LLM backend in background..."
         --max-model-len $VLLM_MAX_MODEL_LEN \
         --max-num-seqs $VLLM_MAX_NUM_SEQS \
         --gpu-memory-utilization 0.92 \
-        --served-model-name kimi-k2 \
+        --served-model-name $SERVED_MODEL_NAME \
         $VLLM_EXTRA_ARGS"
 
     eval "$VLLM_CMD" > /var/log/vllm-server.log 2>&1 &
@@ -210,7 +211,7 @@ log "Starting LLM backend in background..."
 
     log "Starting litellm proxy on port $VLLM_PORT (OpenAI + Anthropic API)..."
     litellm \
-        --model openai/kimi-k2 \
+        --model openai/$SERVED_MODEL_NAME \
         --api_base "http://localhost:${VLLM_INTERNAL_PORT}/v1" \
         --api_key not-needed \
         --host 0.0.0.0 \

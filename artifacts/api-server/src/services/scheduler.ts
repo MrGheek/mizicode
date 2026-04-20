@@ -102,12 +102,14 @@ async function launchScheduledSession(profileId: number): Promise<void> {
     })
     .returning();
 
-  const MODEL_REPO = "moonshotai/Kimi-K2.5";
+  const MODEL_REPO = profile.modelRepo;
   const MODEL_QUANT = profile.defaultQuant;
+  const SERVED_MODEL_NAME = profile.servedModelName;
 
   const onstart = vastai.buildOnStartScript({
     modelRepo: MODEL_REPO,
     modelQuant: MODEL_QUANT,
+    servedModelName: SERVED_MODEL_NAME,
     llamaCtxSize: profile.llamaCtxSize,
     llamaBatchSize: profile.llamaBatchSize,
     llamaExtraArgs: profile.llamaExtraArgs || "",
@@ -123,6 +125,7 @@ async function launchScheduledSession(profileId: number): Promise<void> {
     env: {
       MODEL_REPO,
       MODEL_QUANT,
+      SERVED_MODEL_NAME,
       VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
       VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
       NUM_GPUS: String(profile.numGpus),

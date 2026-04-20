@@ -491,6 +491,15 @@ components:
         startupTimeMin:
           type: integer
           description: Estimated startup time in minutes (first launch)
+        modelRepo:
+          type: string
+          description: HuggingFace model repository to download on the instance
+        servedModelName:
+          type: string
+          description: Model name used for the vLLM --served-model-name flag and litellm alias
+        modelDisplayName:
+          type: string
+          description: Human-readable model name shown in the dashboard
       required:
         - id
         - name
@@ -510,6 +519,9 @@ components:
         - llamaBatchSize
         - searchParams
         - startupTimeMin
+        - modelRepo
+        - servedModelName
+        - modelDisplayName
 
     Session:
       type: object

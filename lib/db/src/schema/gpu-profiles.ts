@@ -22,6 +22,9 @@ export const gpuProfilesTable = pgTable("gpu_profiles", {
   llamaExtraArgs: text("llama_extra_args").default(""),
   searchParams: jsonb("search_params").notNull(),
   startupTimeMin: integer("startup_time_min").notNull().default(20),
+  modelRepo: text("model_repo").notNull().default("moonshotai/Kimi-K2.5"),
+  servedModelName: text("served_model_name").notNull().default("kimi-k2"),
+  modelDisplayName: text("model_display_name").notNull().default("Kimi K2.5"),
 });
 
 export const insertGpuProfileSchema = createInsertSchema(gpuProfilesTable).omit({ id: true });
