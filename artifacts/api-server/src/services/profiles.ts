@@ -208,7 +208,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
   {
     name: "glm-5-1-h200",
     displayName: "GLM-5.1 H200",
-    gpuName: "H200 80GB",
+    gpuName: "H200 141GB",
     numGpus: 8,
     totalVram: 1128,
     dockerImageTag: "gheeklabs/coding-env:latest",
@@ -233,7 +233,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
   {
     name: "deepseek-v3-2-h200",
     displayName: "DeepSeek V3.2",
-    gpuName: "H200 80GB",
+    gpuName: "H200 141GB",
     numGpus: 8,
     totalVram: 1128,
     dockerImageTag: "gheeklabs/coding-env:latest",
