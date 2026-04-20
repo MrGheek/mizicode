@@ -46,8 +46,12 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
     const rawStatusMsg = (instance.status_msg || "").trim();
     const statusMsg = rawStatusMsg.toLowerCase();
 
+    // Actual cost fields from Vast.ai: dph_total is the running $/hr, cost_run_time is cumulative.
+    const actualCostPerHour = instance.dph_total ?? instance.dph_base ?? null;
+    const vastCumulativeCost = instance.cost_run_time ?? null;
+
     logger.info(
-      { sessionId: session.id, vastInstanceId: session.vastInstanceId, vastStatus, rawStatusMsg, codeServerUrl: urls.codeServerUrl, llmProxyUrl: urls.llmProxyUrl },
+      { sessionId: session.id, vastInstanceId: session.vastInstanceId, vastStatus, rawStatusMsg, codeServerUrl: urls.codeServerUrl, llmProxyUrl: urls.llmProxyUrl, dph_total: actualCostPerHour, cost_run_time: vastCumulativeCost },
       "Vast.ai sync — raw values"
     );
 
@@ -98,7 +102,11 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
     const hoursRunning = session.startedAt
       ? (Date.now() - session.startedAt.getTime()) / (1000 * 60 * 60)
       : 0;
-    const totalCost = session.costPerHour ? Math.round(session.costPerHour * hoursRunning * 100) / 100 : 0;
+    // Prefer Vast.ai's own cumulative cost_run_time; fall back to dph_total × hours; last resort: DB value × hours.
+    const costPerHourFinal = actualCostPerHour ?? session.costPerHour ?? 0;
+    const totalCost = vastCumulativeCost != null
+      ? Math.round(vastCumulativeCost * 1000) / 1000
+      : Math.round(costPerHourFinal * hoursRunning * 1000) / 1000;
 
     // Update team member ideUrls by appending each member's path to the codeServerUrl
     let updatedTeamMembers = session.teamMembers as TeamMemberRecord[] | null;
@@ -121,6 +129,8 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
         sshHost: urls.sshHost || session.sshHost,
         sshPort: urls.sshPort || session.sshPort,
         publicIp: urls.publicIp || session.publicIp,
+        // Always persist the latest cost data from Vast.ai so it survives restarts.
+        ...(costPerHourFinal > 0 ? { costPerHour: costPerHourFinal } : {}),
         totalCost,
         teamMembers: updatedTeamMembers,
         updatedAt: new Date(),

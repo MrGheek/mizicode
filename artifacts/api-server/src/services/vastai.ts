@@ -62,6 +62,9 @@ export interface VastInstance {
   ports?: Record<string, { HostPort?: string }[]>;
   actual_status?: string;
   status_msg?: string;
+  dph_total?: number;
+  dph_base?: number;
+  cost_run_time?: number;
 }
 
 export interface VastInstanceGetResponse {
