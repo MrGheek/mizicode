@@ -1,5 +1,5 @@
 import { db, gpuProfilesTable, type InsertGpuProfile } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, notInArray } from "drizzle-orm";
 
 // defaultQuant is used as the model cache subdirectory name under /workspace/models/
 // modelRepo        → HuggingFace repo to download (passed as MODEL_REPO env var)
@@ -10,7 +10,7 @@ import { eq } from "drizzle-orm";
 // llamaExtraArgs → appended to the vllm serve command
 
 const DEFAULT_PROFILES: InsertGpuProfile[] = [
-  // ── Kimi K2.5 profiles (existing) ────────────────────────────────────────
+  // ── Kimi K2.5 profiles ────────────────────────────────────────────────────
   {
     name: "starter",
     displayName: "Starter",
@@ -28,11 +28,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     llamaCtxSize: 8192,
     llamaBatchSize: 256,
     llamaExtraArgs: "",
-    searchParams: {
-      gpu_name: "RTX 4090",
-      num_gpus: 1,
-      min_gpu_ram: 24,
-    },
+    searchParams: { gpu_name: "RTX 4090", num_gpus: 1, min_gpu_ram: 24 },
     startupTimeMin: 25,
     modelRepo: "moonshotai/Kimi-K2.5",
     servedModelName: "kimi-k2",
@@ -55,11 +51,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     llamaCtxSize: 32768,
     llamaBatchSize: 512,
     llamaExtraArgs: "--enable-expert-parallel",
-    searchParams: {
-      gpu_name: "RTX 4090",
-      num_gpus: 4,
-      min_gpu_ram: 24,
-    },
+    searchParams: { gpu_name: "RTX 4090", num_gpus: 4, min_gpu_ram: 24 },
     startupTimeMin: 25,
     modelRepo: "moonshotai/Kimi-K2.5",
     servedModelName: "kimi-k2",
@@ -82,11 +74,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     llamaCtxSize: 65536,
     llamaBatchSize: 1024,
     llamaExtraArgs: "--enable-expert-parallel --kv-cache-dtype fp8",
-    searchParams: {
-      gpu_name: "A100_SXM4",
-      num_gpus: 4,
-      min_gpu_ram: 80,
-    },
+    searchParams: { gpu_name: "A100_SXM4", num_gpus: 4, min_gpu_ram: 80 },
     startupTimeMin: 30,
     modelRepo: "moonshotai/Kimi-K2.5",
     servedModelName: "kimi-k2",
@@ -109,21 +97,18 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     llamaCtxSize: 131072,
     llamaBatchSize: 2048,
     llamaExtraArgs: "--enable-expert-parallel --kv-cache-dtype fp8",
-    searchParams: {
-      gpu_name: "H100_SXM5",
-      num_gpus: 8,
-      min_gpu_ram: 80,
-    },
+    searchParams: { gpu_name: "H100_SXM5", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 35,
     modelRepo: "moonshotai/Kimi-K2.5",
     servedModelName: "kimi-k2",
     modelDisplayName: "Kimi K2.5",
   },
 
-  // ── Qwen3-Coder-Next (80B total / 3B active — fits Pro tier) ─────────────
+  // ── Qwen3-Coder-Next (80B total / 3B active) ──────────────────────────────
+  // Standard: 4× A100 80GB — affordable, fast
   {
-    name: "qwen3-coder-pro",
-    displayName: "Qwen3 Pro",
+    name: "qwen3-coder-standard",
+    displayName: "Qwen3 Standard",
     gpuName: "A100 80GB",
     numGpus: 4,
     totalVram: 320,
@@ -138,20 +123,17 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     llamaCtxSize: 65536,
     llamaBatchSize: 1024,
     llamaExtraArgs: "--enable-expert-parallel",
-    searchParams: {
-      gpu_name: "A100_SXM4",
-      num_gpus: 4,
-      min_gpu_ram: 80,
-    },
+    searchParams: { gpu_name: "A100_SXM4", num_gpus: 4, min_gpu_ram: 80 },
     startupTimeMin: 15,
     modelRepo: "Qwen/Qwen3-Coder-Next",
     servedModelName: "qwen3-coder-next",
     modelDisplayName: "Qwen3-Coder-Next",
   },
+  // Pro: 8× A100 80GB — higher throughput, longer context
   {
-    name: "qwen3-coder-ultra",
-    displayName: "Qwen3 Ultra",
-    gpuName: "H100 80GB",
+    name: "qwen3-coder-pro",
+    displayName: "Qwen3 Pro",
+    gpuName: "A100 80GB",
     numGpus: 8,
     totalVram: 640,
     dockerImageTag: "gheeklabs/coding-env:latest",
@@ -160,16 +142,12 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     diskSizeGb: 250,
     estimatedSpeedMin: 120,
     estimatedSpeedMax: 200,
-    estimatedCostMin: 8.0,
-    estimatedCostMax: 16.0,
+    estimatedCostMin: 4.0,
+    estimatedCostMax: 8.0,
     llamaCtxSize: 131072,
     llamaBatchSize: 2048,
     llamaExtraArgs: "--enable-expert-parallel",
-    searchParams: {
-      gpu_name: "H100_SXM5",
-      num_gpus: 8,
-      min_gpu_ram: 80,
-    },
+    searchParams: { gpu_name: "A100_SXM4", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 15,
     modelRepo: "Qwen/Qwen3-Coder-Next",
     servedModelName: "qwen3-coder-next",
@@ -194,18 +172,39 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     llamaCtxSize: 131072,
     llamaBatchSize: 1024,
     llamaExtraArgs: "--enable-expert-parallel",
-    searchParams: {
-      gpu_name: "H100_SXM5",
-      num_gpus: 8,
-      min_gpu_ram: 80,
-    },
+    searchParams: { gpu_name: "H100_SXM5", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 25,
     modelRepo: "MiniMaxAI/MiniMax-M2.5",
     servedModelName: "minimax-m2.5",
     modelDisplayName: "MiniMax M2.5",
   },
 
-  // ── GLM-5.1 FP8 (754B total / 40B active — needs 8× H200) ────────────────
+  // ── GLM-5.1 FP8 (754B total / 40B active) ────────────────────────────────
+  // Ultra: 8× H100 SXM5 — tight VRAM, reduced context window
+  {
+    name: "glm-5-1-ultra",
+    displayName: "GLM-5.1 Ultra",
+    gpuName: "H100 80GB",
+    numGpus: 8,
+    totalVram: 640,
+    dockerImageTag: "gheeklabs/coding-env:latest",
+    defaultQuant: "glm-5.1-fp8",
+    quantSizeGb: 760,
+    diskSizeGb: 1500,
+    estimatedSpeedMin: 25,
+    estimatedSpeedMax: 45,
+    estimatedCostMin: 8.0,
+    estimatedCostMax: 16.0,
+    llamaCtxSize: 32768,
+    llamaBatchSize: 512,
+    llamaExtraArgs: "--kv-cache-dtype fp8 --enable-expert-parallel --tool-call-parser glm47 --reasoning-parser glm45 --enable-auto-tool-choice --speculative-config.method mtp --speculative-config.num_speculative_tokens 3 --gpu-memory-utilization 0.98",
+    searchParams: { gpu_name: "H100_SXM5", num_gpus: 8, min_gpu_ram: 80 },
+    startupTimeMin: 45,
+    modelRepo: "zai-org/GLM-5.1-FP8",
+    servedModelName: "glm-5.1",
+    modelDisplayName: "GLM-5.1 (FP8)",
+  },
+  // H200: 8× H200 — full context, recommended
   {
     name: "glm-5-1-h200",
     displayName: "GLM-5.1 H200",
@@ -223,18 +222,14 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     llamaCtxSize: 131072,
     llamaBatchSize: 1024,
     llamaExtraArgs: "--kv-cache-dtype fp8 --enable-expert-parallel --tool-call-parser glm47 --reasoning-parser glm45 --enable-auto-tool-choice --speculative-config.method mtp --speculative-config.num_speculative_tokens 3",
-    searchParams: {
-      gpu_name: "H200",
-      num_gpus: 8,
-      min_gpu_ram: 80,
-    },
+    searchParams: { gpu_name: "H200", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 45,
     modelRepo: "zai-org/GLM-5.1-FP8",
     servedModelName: "glm-5.1",
     modelDisplayName: "GLM-5.1 (FP8)",
   },
 
-  // ── DeepSeek V3.2 (671B total / MIT — H200 tier) ─────────────────────────
+  // ── DeepSeek V3.2 (671B total / MIT) ─────────────────────────────────────
   {
     name: "deepseek-v3-2-h200",
     displayName: "DeepSeek V3.2",
@@ -252,11 +247,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     llamaCtxSize: 131072,
     llamaBatchSize: 1024,
     llamaExtraArgs: "--enable-expert-parallel",
-    searchParams: {
-      gpu_name: "H200",
-      num_gpus: 8,
-      min_gpu_ram: 80,
-    },
+    searchParams: { gpu_name: "H200", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 40,
     modelRepo: "deepseek-ai/DeepSeek-V3.2",
     servedModelName: "deepseek-v3.2",
@@ -266,6 +257,17 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
 
 export async function seedProfiles() {
   const existing = await db.select().from(gpuProfilesTable);
+  const canonicalNames = DEFAULT_PROFILES.map(p => p.name);
+
+  // Remove any profiles that are no longer in DEFAULT_PROFILES (e.g. renamed entries)
+  const staleNames = existing
+    .map(p => p.name)
+    .filter(n => !canonicalNames.includes(n));
+  if (staleNames.length > 0) {
+    await db
+      .delete(gpuProfilesTable)
+      .where(notInArray(gpuProfilesTable.name, canonicalNames));
+  }
 
   // Upsert: insert new profiles, update fields that changed
   const inserted = [];

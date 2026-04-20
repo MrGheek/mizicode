@@ -21,16 +21,18 @@ const PROFILE_TAGLINES: Record<string, string> = {
     "Near-instant output at maximum throughput. Built for demanding agentic pipelines where generation speed is the bottleneck.",
   enterprise:
     "Dedicated cluster capacity for high-volume teams. Parallel sessions with zero contention across the largest models.",
+  "qwen3-coder-standard":
+    "Highest SWE-Bench score per dollar. Compact 80B MoE delivers frontier-class code edits on 4× A100 hardware.",
   "qwen3-coder-pro":
-    "Highest SWE-Bench score per dollar. Compact 80B MoE architecture delivers frontier-class code edits at Pro-tier prices.",
-  "qwen3-coder-ultra":
-    "Qwen3-Coder-Next at maximum throughput. Ideal for rapid iteration cycles where latency matters as much as intelligence.",
+    "Qwen3-Coder-Next at maximum throughput on 8× A100. 256K context window ideal for full-repo reasoning and rapid iteration.",
   "minimax-m2-ultra":
     "Top open-weight model on SWE-Bench Verified (80.2%). Fast 229B MoE — fronts like a frontier model, runs on H100 hardware.",
+  "glm-5-1-ultra":
+    "GLM-5.1 FP8 on 8× H100 with reduced context. Best for shorter agentic tasks where H200 availability is limited.",
   "glm-5-1-h200":
-    "Best SWE-Bench Pro score of any open-weight model (58.4%). Excels at long-horizon tasks, sustaining quality over hundreds of iterations.",
+    "Best SWE-Bench Pro score of any open-weight model (58.4%). Full 128K context — the recommended GLM-5.1 configuration.",
   "deepseek-v3-2-h200":
-    "671B MIT-licensed model with strong general coding and multi-language reasoning. Great fallback when you need open licensing.",
+    "671B MIT-licensed model with strong general coding and multi-language reasoning. Great when open licensing is a requirement.",
 };
 
 export function ProfileCard({ profile, onLaunch, isLaunching }: ProfileCardProps) {
