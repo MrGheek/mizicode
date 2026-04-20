@@ -10,8 +10,16 @@
   100% { transform: scale(1);    opacity: 1; }
 }
 
+@keyframes badge-pulse {
+  0%   { transform: scale(1);    }
+  35%  { transform: scale(1.18); }
+  70%  { transform: scale(0.95); }
+  100% { transform: scale(1);    }
+}
+
 @theme inline {
   --animate-badge-pop: badge-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  --animate-badge-pulse: badge-pulse 0.4s ease-out both;
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
   --color-border: hsl(var(--border));

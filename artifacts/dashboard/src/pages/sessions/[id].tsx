@@ -498,6 +498,7 @@ export default function SessionDetail() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"overview" | "memory">("overview");
   const [newObsCount, setNewObsCount] = useState(0);
+  const [badgePulseKey, setBadgePulseKey] = useState(0);
 
   const { data: session, isLoading } = useGetSession(sessionId, {
     query: {
@@ -596,7 +597,7 @@ export default function SessionDetail() {
           Overview
         </button>
         <button
-          onClick={() => { setActiveTab("memory"); setNewObsCount(0); }}
+          onClick={() => { setActiveTab("memory"); setNewObsCount(0); setBadgePulseKey(0); }}
           className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
             activeTab === "memory"
               ? "border-primary text-foreground"
@@ -605,8 +606,11 @@ export default function SessionDetail() {
         >
           <Brain className="w-3.5 h-3.5" />
           Memory
-          {newObsCount > 0 && (
-            <span className="ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none animate-badge-pop">
+          {isActive && newObsCount > 0 && (
+            <span
+              key={badgePulseKey}
+              className={`ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none ${badgePulseKey === 0 ? "animate-badge-pop" : "animate-badge-pulse"}`}
+            >
               {newObsCount > 99 ? "99+" : newObsCount}
             </span>
           )}
@@ -710,7 +714,10 @@ export default function SessionDetail() {
         <MemoryTab
           sessionId={sessionId}
           isActive={isActive}
-          onNewObservation={activeTab !== "memory" ? () => setNewObsCount(prev => prev + 1) : undefined}
+          onNewObservation={activeTab !== "memory" ? () => setNewObsCount(prev => {
+            if (prev > 0) setBadgePulseKey(k => k + 1);
+            return prev + 1;
+          }) : undefined}
         />
       </div>
 
