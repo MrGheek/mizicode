@@ -828,11 +828,13 @@ export default function SessionDetail() {
                       </div>
                     ) : null}
                   </div>
-                  {member.ideUrl && member.password && (
+                  {member.ideUrl && (
                     <div className="pt-1">
                       <button
                         onClick={() => {
-                          const text = `Your IDE: ${member.ideUrl} | Password: ${member.password}`;
+                          const text = member.password
+                            ? `Your IDE: ${member.ideUrl} | Password: ${member.password}`
+                            : `Your IDE: ${member.ideUrl}`;
                           const fieldId = `invite-${member.name}`;
                           navigator.clipboard.writeText(text).then(() => {
                             setCopiedField(fieldId);
