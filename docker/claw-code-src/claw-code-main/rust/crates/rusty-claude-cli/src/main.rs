@@ -9,6 +9,8 @@ use std::io::{self, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use api::{
@@ -24,7 +26,8 @@ use compat_harness::{extract_manifest, UpstreamPaths};
 use init::initialize_repo;
 use render::{MarkdownStreamState, Spinner, TerminalRenderer};
 use runtime::{
-    clear_oauth_credentials, generate_pkce_pair, generate_state, load_system_prompt,
+    clear_oauth_credentials, generate_pkce_pair, generate_state,
+    load_system_prompt, load_system_prompt_with_past_context, mem_client::MemClientConfig,
     parse_oauth_callback_request_target, save_oauth_credentials, ApiClient, ApiRequest,
     AssistantEvent, CompactionConfig, ConfigLoader, ConfigSource, ContentBlock,
     ConversationMessage, ConversationRuntime, MessageRole, OAuthAuthorizationRequest, OAuthConfig,
@@ -932,16 +935,49 @@ fn run_resume_command(
     }
 }
 
+fn install_shutdown_signal_handler() -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    let flag_clone = flag.clone();
+    std::thread::spawn(move || {
+        if let Ok(rt) = tokio::runtime::Runtime::new() {
+            rt.block_on(async move {
+                #[cfg(unix)]
+                {
+                    use tokio::signal::unix::{signal, SignalKind};
+                    let mut sigterm = signal(SignalKind::terminate()).ok();
+                    let mut sigint = signal(SignalKind::interrupt()).ok();
+                    tokio::select! {
+                        _ = async { if let Some(s) = sigterm.as_mut() { s.recv().await } else { std::future::pending().await } } => {}
+                        _ = async { if let Some(s) = sigint.as_mut() { s.recv().await } else { std::future::pending().await } } => {}
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
+                flag_clone.store(true, Ordering::SeqCst);
+            });
+        }
+    });
+    flag
+}
+
 fn run_repl(
     model: String,
     allowed_tools: Option<AllowedToolSet>,
     permission_mode: PermissionMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let shutdown = install_shutdown_signal_handler();
     let mut cli = LiveCli::new(model, true, allowed_tools, permission_mode)?;
     let mut editor = input::LineEditor::new("> ", slash_command_completion_candidates());
     println!("{}", cli.startup_banner());
 
     loop {
+        if shutdown.load(Ordering::SeqCst) {
+            let _ = cli.persist_session();
+            cli.send_session_summary();
+            break;
+        }
         match editor.read_line()? {
             input::ReadOutcome::Submit(input) => {
                 let trimmed = input.trim().to_string();
@@ -950,6 +986,7 @@ fn run_repl(
                 }
                 if matches!(trimmed.as_str(), "/exit" | "/quit") {
                     cli.persist_session()?;
+                    cli.send_session_summary();
                     break;
                 }
                 if let Some(command) = SlashCommand::parse(&trimmed) {
@@ -964,8 +1001,14 @@ fn run_repl(
             input::ReadOutcome::Cancel => {}
             input::ReadOutcome::Exit => {
                 cli.persist_session()?;
+                cli.send_session_summary();
                 break;
             }
+        }
+        if shutdown.load(Ordering::SeqCst) {
+            let _ = cli.persist_session();
+            cli.send_session_summary();
+            break;
         }
     }
 
@@ -991,8 +1034,9 @@ struct LiveCli {
     allowed_tools: Option<AllowedToolSet>,
     permission_mode: PermissionMode,
     system_prompt: Vec<String>,
-    runtime: ConversationRuntime<AnthropicRuntimeClient, CliToolExecutor>,
+    runtime: ConversationRuntime<AnthropicRuntimeClient, MemRecordingToolExecutor>,
     session: SessionHandle,
+    mem_client: Option<MemClientConfig>,
 }
 
 impl LiveCli {
@@ -1002,8 +1046,13 @@ impl LiveCli {
         allowed_tools: Option<AllowedToolSet>,
         permission_mode: PermissionMode,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let system_prompt = build_system_prompt()?;
-        let session = create_managed_session_handle()?;
+        let session_handle = create_managed_session_handle()?;
+        let mem_client = MemClientConfig::from_env(&session_handle.id);
+        let past_context = mem_client.as_ref().and_then(|mc| mc.fetch_past_context());
+        if let Some(mc) = &mem_client {
+            mc.init_session();
+        }
+        let system_prompt = build_system_prompt_with_past_context(past_context)?;
         let runtime = build_runtime(
             Session::new(),
             model.clone(),
@@ -1012,6 +1061,7 @@ impl LiveCli {
             true,
             allowed_tools.clone(),
             permission_mode,
+            mem_client.clone(),
         )?;
         let cli = Self {
             model,
@@ -1019,7 +1069,8 @@ impl LiveCli {
             permission_mode,
             system_prompt,
             runtime,
-            session,
+            session: session_handle,
+            mem_client,
         };
         cli.persist_session()?;
         Ok(cli)
@@ -1099,6 +1150,106 @@ impl LiveCli {
         }
     }
 
+    fn send_session_summary(&self) {
+        if let Some(mc) = &self.mem_client {
+            let session = self.runtime.session();
+            let summary = self
+                .generate_ai_summary(session)
+                .unwrap_or_else(|_| build_session_summary(session, &self.model));
+            mc.summarize_session(summary);
+        }
+    }
+
+    fn generate_ai_summary(
+        &self,
+        session: &Session,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let total_assistant_turns = session
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Assistant)
+            .count();
+        if total_assistant_turns == 0 {
+            return Err("no turns to summarize".into());
+        }
+
+        let auth = resolve_cli_auth_source()?;
+        let client = AnthropicClient::from_auth(auth).with_base_url(api::read_base_url());
+        let rt = tokio::runtime::Runtime::new()?;
+
+        let tool_uses: Vec<String> = session
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Assistant)
+            .flat_map(|m| m.blocks.iter())
+            .filter_map(|b| {
+                if let ContentBlock::ToolUse { name, .. } = b {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let last_user_msg = session
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == MessageRole::User)
+            .and_then(|m| {
+                m.blocks.iter().find_map(|b| {
+                    if let ContentBlock::Text { text } = b {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or("")
+            .chars()
+            .take(500)
+            .collect::<String>();
+
+        let prompt = format!(
+            "Generate a concise 2-3 sentence summary of what was accomplished in this coding session.\n\nModel: {}\nTotal turns: {}\nTools used: {}\nLast user message: {}\n\nRespond with only the summary text, no preamble.",
+            self.model,
+            session.messages.iter().filter(|m| m.role == MessageRole::Assistant).count(),
+            if tool_uses.is_empty() { "none".to_string() } else { tool_uses.join(", ") },
+            last_user_msg
+        );
+
+        let req = MessageRequest {
+            model: self.model.clone(),
+            max_tokens: 256,
+            messages: vec![InputMessage {
+                role: "user".to_string(),
+                content: vec![InputContentBlock::Text { text: prompt }],
+            }],
+            system: None,
+            tools: None,
+            stream: false,
+            tool_choice: None,
+        };
+
+        let response = rt.block_on(client.send_message(&req))?;
+        let text = response
+            .content
+            .iter()
+            .find_map(|b| {
+                if let OutputContentBlock::Text { text } = b {
+                    Some(text.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        if text.trim().is_empty() {
+            Err("empty AI summary".into())
+        } else {
+            Ok(text.trim().to_string())
+        }
+    }
+
     fn run_prompt_json(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {
         let session = self.runtime.session().clone();
         let mut runtime = build_runtime(
@@ -1109,6 +1260,7 @@ impl LiveCli {
             false,
             self.allowed_tools.clone(),
             self.permission_mode,
+            self.mem_client.clone(),
         )?;
         let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
         let summary = runtime.run_turn(input, Some(&mut permission_prompter))?;
@@ -2297,12 +2449,15 @@ fn resolve_export_path(
     Ok(cwd.join(final_name))
 }
 
-fn build_system_prompt() -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    Ok(load_system_prompt(
+fn build_system_prompt_with_past_context(
+    past_context: Option<String>,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    Ok(load_system_prompt_with_past_context(
         env::current_dir()?,
         DEFAULT_DATE,
         env::consts::OS,
         "unknown",
+        past_context,
     )?)
 }
 
@@ -2323,12 +2478,15 @@ fn build_runtime(
     emit_output: bool,
     allowed_tools: Option<AllowedToolSet>,
     permission_mode: PermissionMode,
-) -> Result<ConversationRuntime<AnthropicRuntimeClient, CliToolExecutor>, Box<dyn std::error::Error>>
-{
+    mem_client: Option<MemClientConfig>,
+) -> Result<
+    ConversationRuntime<AnthropicRuntimeClient, MemRecordingToolExecutor>,
+    Box<dyn std::error::Error>,
+> {
     Ok(ConversationRuntime::new_with_features(
         session,
         AnthropicRuntimeClient::new(model, enable_tools, emit_output, allowed_tools.clone())?,
-        CliToolExecutor::new(allowed_tools, emit_output),
+        MemRecordingToolExecutor::new(CliToolExecutor::new(allowed_tools, emit_output), mem_client),
         permission_policy(permission_mode),
         system_prompt,
         build_runtime_feature_config()?,
@@ -2558,6 +2716,58 @@ impl ApiClient for AnthropicRuntimeClient {
             response_to_events(response, out)
         })
     }
+}
+
+fn build_session_summary(session: &Session, model: &str) -> String {
+    let mut tool_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut last_assistant_text = String::new();
+
+    for message in &session.messages {
+        if message.role == MessageRole::Assistant {
+            for block in &message.blocks {
+                match block {
+                    ContentBlock::ToolUse { name, .. } => {
+                        *tool_counts.entry(name.clone()).or_insert(0) += 1;
+                    }
+                    ContentBlock::Text { text } if !text.trim().is_empty() => {
+                        last_assistant_text = text.trim().to_string();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let total_turns = session
+        .messages
+        .iter()
+        .filter(|m| m.role == MessageRole::Assistant)
+        .count();
+
+    let tool_summary = if tool_counts.is_empty() {
+        "No tools used.".to_string()
+    } else {
+        tool_counts
+            .iter()
+            .map(|(name, count)| format!("{name}×{count}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let last_words = if last_assistant_text.len() > 400 {
+        format!("{}…", &last_assistant_text[..400])
+    } else {
+        last_assistant_text.clone()
+    };
+
+    let mut parts = vec![
+        format!("Model: {}. Turns: {}.", model, total_turns),
+        format!("Tools: {}", tool_summary),
+    ];
+    if !last_words.is_empty() {
+        parts.push(format!("Last message: {}", last_words));
+    }
+    parts.join(" | ")
 }
 
 fn final_assistant_text(summary: &runtime::TurnSummary) -> String {
@@ -3073,6 +3283,31 @@ impl ToolExecutor for CliToolExecutor {
                 Err(ToolError::new(error))
             }
         }
+    }
+}
+
+struct MemRecordingToolExecutor {
+    inner: CliToolExecutor,
+    mem_client: Option<MemClientConfig>,
+}
+
+impl MemRecordingToolExecutor {
+    fn new(inner: CliToolExecutor, mem_client: Option<MemClientConfig>) -> Self {
+        Self { inner, mem_client }
+    }
+}
+
+impl ToolExecutor for MemRecordingToolExecutor {
+    fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
+        let result = self.inner.execute(tool_name, input);
+        if let Some(mc) = &self.mem_client {
+            let output_summary = match &result {
+                Ok(out) => out.clone(),
+                Err(err) => format!("error: {err}"),
+            };
+            mc.record_observation(tool_name.to_string(), input.to_string(), output_summary);
+        }
+        result
     }
 }
 

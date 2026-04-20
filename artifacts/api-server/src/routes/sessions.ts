@@ -5,6 +5,7 @@ import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
+import { listObservations, listSessions } from "../services/memory";
 
 const router = Router();
 
@@ -225,6 +226,13 @@ router.post("/sessions", async (req, res) => {
     const MODEL_QUANT = profile.defaultQuant;
     const SERVED_MODEL_NAME = profile.servedModelName;
 
+    const memProxyUrl = process.env["OMNIQL_MEM_PROXY_URL"]
+      || (process.env["REPLIT_DEV_DOMAIN"]
+        ? `https://${process.env["REPLIT_DEV_DOMAIN"]}`
+        : undefined);
+
+    const memUserId = process.env["OMNIQL_MEM_USER_ID"] || "operator";
+
     const onstart = vastai.buildOnStartScript({
       modelRepo: MODEL_REPO,
       modelQuant: MODEL_QUANT,
@@ -233,6 +241,9 @@ router.post("/sessions", async (req, res) => {
       llamaBatchSize: profile.llamaBatchSize,
       llamaExtraArgs: profile.llamaExtraArgs || "",
       numGpus: profile.numGpus,
+      memProxyUrl,
+      memAuthToken: process.env["OMNIQL_MEM_TOKEN"],
+      memUserId,
     });
 
     const result = await vastai.createInstance({
@@ -432,6 +443,37 @@ router.delete("/sessions/:sessionId", async (req, res) => {
     logger.error(err, "Failed to destroy session");
     const message = err instanceof Error ? err.message : "Unknown error";
     res.status(500).json({ error: `Failed to destroy session: ${message}` });
+  }
+});
+
+const MEM_USER_ID = process.env["OMNIQL_MEM_USER_ID"] || "operator";
+
+// Dashboard memory proxy — these routes exist so the dashboard can fetch
+// operator-scoped memory without needing the OMNIQL_MEM_TOKEN bearer header.
+// OmniQL is a single-operator platform: all sessions share one userId
+// (OMNIQL_MEM_USER_ID, default "operator") for cross-session memory continuity.
+// The :sessionId path parameter identifies the Vast.ai/OmniQL session for
+// route namespacing; memory records are scoped by MEM_USER_ID globally, not
+// by individual session, since the intent is cross-session recall.
+router.get("/sessions/:sessionId/memory/observations", (_req, res) => {
+  const limit = 50;
+  try {
+    const observations = listObservations(MEM_USER_ID, limit, 0);
+    res.json(observations);
+  } catch (err) {
+    logger.error(err, "Failed to list memory observations for dashboard");
+    res.status(500).json({ error: "Failed to list observations" });
+  }
+});
+
+router.get("/sessions/:sessionId/memory/sessions", (_req, res) => {
+  const limit = 30;
+  try {
+    const sessions = listSessions(MEM_USER_ID, limit, 0);
+    res.json(sessions);
+  } catch (err) {
+    logger.error(err, "Failed to list memory sessions for dashboard");
+    res.status(500).json({ error: "Failed to list sessions" });
   }
 });
 

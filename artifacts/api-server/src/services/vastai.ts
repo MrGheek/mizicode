@@ -256,7 +256,18 @@ export function buildOnStartScript(profileConfig: {
   llamaBatchSize: number;
   llamaExtraArgs: string;
   numGpus?: number;
+  memProxyUrl?: string;
+  memAuthToken?: string;
+  memUserId?: string;
 }): string {
+  const memLines = profileConfig.memProxyUrl
+    ? [
+        `export OMNIQL_MEM_PROXY_URL="${profileConfig.memProxyUrl}"`,
+        `export OMNIQL_MEM_AUTH_TOKEN="${profileConfig.memAuthToken || ""}"`,
+        `export OMNIQL_MEM_USER_ID="${profileConfig.memUserId || "default"}"`,
+      ].join("\n")
+    : "";
+
   return `#!/bin/bash
 export MODEL_REPO="${profileConfig.modelRepo}"
 export MODEL_QUANT="${profileConfig.modelQuant}"
@@ -265,6 +276,7 @@ export VLLM_MAX_MODEL_LEN="${profileConfig.llamaCtxSize}"
 export VLLM_MAX_NUM_SEQS="${profileConfig.llamaBatchSize}"
 export VLLM_EXTRA_ARGS="${profileConfig.llamaExtraArgs}"
 export NUM_GPUS="${profileConfig.numGpus || 1}"
+${memLines}
 /opt/onstart.sh
 `;
 }

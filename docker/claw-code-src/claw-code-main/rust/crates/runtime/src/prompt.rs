@@ -81,6 +81,8 @@ impl ProjectContext {
     }
 }
 
+const MAX_PAST_CONTEXT_CHARS: usize = 8_000;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SystemPromptBuilder {
     output_style_name: Option<String>,
@@ -90,6 +92,7 @@ pub struct SystemPromptBuilder {
     append_sections: Vec<String>,
     project_context: Option<ProjectContext>,
     config: Option<RuntimeConfig>,
+    past_context: Option<String>,
 }
 
 impl SystemPromptBuilder {
@@ -131,6 +134,16 @@ impl SystemPromptBuilder {
     }
 
     #[must_use]
+    pub fn with_past_context(mut self, past_context: impl Into<String>) -> Self {
+        let ctx = past_context.into();
+        if !ctx.trim().is_empty() {
+            let capped: String = ctx.chars().take(MAX_PAST_CONTEXT_CHARS).collect();
+            self.past_context = Some(capped);
+        }
+        self
+    }
+
+    #[must_use]
     pub fn build(&self) -> Vec<String> {
         let mut sections = Vec::new();
         sections.push(get_simple_intro_section(self.output_style_name.is_some()));
@@ -150,6 +163,9 @@ impl SystemPromptBuilder {
         }
         if let Some(config) = &self.config {
             sections.push(render_config_section(config));
+        }
+        if let Some(past_context) = &self.past_context {
+            sections.push(render_past_context_section(past_context));
         }
         sections.extend(self.append_sections.iter().cloned());
         sections
@@ -407,14 +423,36 @@ pub fn load_system_prompt(
     os_name: impl Into<String>,
     os_version: impl Into<String>,
 ) -> Result<Vec<String>, PromptBuildError> {
+    load_system_prompt_with_past_context(cwd, current_date, os_name, os_version, None)
+}
+
+pub fn load_system_prompt_with_past_context(
+    cwd: impl Into<PathBuf>,
+    current_date: impl Into<String>,
+    os_name: impl Into<String>,
+    os_version: impl Into<String>,
+    past_context: Option<String>,
+) -> Result<Vec<String>, PromptBuildError> {
     let cwd = cwd.into();
     let project_context = ProjectContext::discover_with_git(&cwd, current_date.into())?;
     let config = ConfigLoader::default_for(&cwd).load()?;
-    Ok(SystemPromptBuilder::new()
+    let mut builder = SystemPromptBuilder::new()
         .with_os(os_name, os_version)
         .with_project_context(project_context)
-        .with_runtime_config(config)
-        .build())
+        .with_runtime_config(config);
+    if let Some(ctx) = past_context {
+        builder = builder.with_past_context(ctx);
+    }
+    Ok(builder.build())
+}
+
+fn render_past_context_section(past_context: &str) -> String {
+    format!(
+        "# Past Session Context\n\
+         The following is a summary of prior coding sessions for this user and project. \
+         Use it to maintain continuity across sessions.\n\n\
+         {past_context}"
+    )
 }
 
 fn render_config_section(config: &RuntimeConfig) -> String {

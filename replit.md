@@ -75,6 +75,19 @@ artifacts-monorepo/
 - `GET /api/offers` — Search GPU offers on Vast.ai marketplace
 - `GET /api/dashboard/summary` — Dashboard summary stats
 
+### Memory API (SQLite FTS5 — no external deps)
+
+- `POST /api/mem/init` — Start a memory session (`sessionId`, `userId`, `projectPath`)
+- `POST /api/mem/observation` — Record a tool observation (`sessionId`, `userId`, `toolName`, `inputSummary`, `outputSummary`)
+- `POST /api/mem/summarize` — Store end-of-session summary (`sessionId`, `userId`, `summary`)
+- `GET /api/mem/context/:userId` — Fetch past-session context string (FTS5 search, injected into system prompts)
+- `GET /api/mem/observations?userId=` — List recent tool observations
+- `GET /api/mem/sessions?userId=` — List past sessions with summaries
+
+Memory is scoped per `userId` (default: `"operator"`, override via `OMNIQL_MEM_USER_ID`). Optionally auth-gated via `OMNIQL_MEM_TOKEN` env var (required in `NODE_ENV=production`; warned-but-open in development). SQLite DB stored at `MEM_DATA_DIR` (defaults to `~/omniql-memory/mem.db` — outside workspace, not tracked by git).
+
+Dashboard accesses memory via session-scoped proxy routes (`GET /api/sessions/:id/memory/sessions` and `/observations`) — no bearer token required for dashboard access.
+
 ## Docker Images
 
 Docker images are tagged by GPU architecture:
@@ -110,8 +123,8 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 Express 5 API server with Vast.ai integration. Routes in `src/routes/`, services in `src/services/`.
 
 - Entry: `src/index.ts` — reads `PORT`, starts Express, seeds GPU profiles
-- Routes: profiles, sessions, templates, offers, dashboard
-- Services: `vastai.ts` (Vast.ai API wrapper), `profiles.ts` (profile management + seeding)
+- Routes: profiles, sessions, templates, offers, dashboard, memory
+- Services: `vastai.ts` (Vast.ai API wrapper), `profiles.ts` (profile management + seeding), `memory.ts` (SQLite FTS5 session memory)
 
 ### `artifacts/dashboard` (`@workspace/dashboard`)
 
