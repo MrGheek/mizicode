@@ -47,3 +47,7 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Memory SQLite databases
+.memory-data/
+**/.memory-data/
