@@ -460,7 +460,7 @@ export default function SessionDetail() {
           <Brain className="w-3.5 h-3.5" />
           Memory
           {isActive && newObsCount > 0 && (
-            <span className="ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none">
+            <span className="ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none animate-badge-pop">
               {newObsCount > 99 ? "99+" : newObsCount}
             </span>
           )}
