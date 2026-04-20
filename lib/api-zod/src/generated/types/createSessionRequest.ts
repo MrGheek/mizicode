@@ -10,4 +10,6 @@ export interface CreateSessionRequest {
   profileId: number;
   /** Specific Vast.ai offer ID to use (optional, auto-selects best if not provided) */
   offerId?: number | null;
+  /** Names of team members to provision per-user IDEs for (max 4) */
+  teamMembers?: string[] | null;
 }

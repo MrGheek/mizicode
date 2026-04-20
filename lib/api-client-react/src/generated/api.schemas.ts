@@ -48,6 +48,13 @@ export interface GpuProfile {
   modelDisplayName: string;
 }
 
+export interface TeamMember {
+  name: string;
+  password: string;
+  port: number;
+  ideUrl?: string | null;
+}
+
 export type SessionStatus = (typeof SessionStatus)[keyof typeof SessionStatus];
 
 export const SessionStatus = {
@@ -82,6 +89,7 @@ export interface Session {
   numGpus?: number | null;
   startedAt?: string | null;
   stoppedAt?: string | null;
+  teamMembers?: TeamMember[] | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -94,6 +102,8 @@ export interface CreateSessionRequest {
   profileId: number;
   /** Specific Vast.ai offer ID to use (optional, auto-selects best if not provided) */
   offerId?: number | null;
+  /** Names of team members to provision per-user IDEs for (max 4) */
+  teamMembers?: string[] | null;
 }
 
 export interface Template {

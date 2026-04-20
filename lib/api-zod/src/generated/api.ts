@@ -131,6 +131,16 @@ export const ListSessionsResponseItem = zod.object({
   numGpus: zod.number().nullish(),
   startedAt: zod.coerce.date().nullish(),
   stoppedAt: zod.coerce.date().nullish(),
+  teamMembers: zod
+    .array(
+      zod.object({
+        name: zod.string(),
+        password: zod.string(),
+        port: zod.number(),
+        ideUrl: zod.string().nullish(),
+      }),
+    )
+    .nullish(),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -148,6 +158,10 @@ export const CreateSessionBody = zod.object({
     .describe(
       "Specific Vast.ai offer ID to use (optional, auto-selects best if not provided)",
     ),
+  teamMembers: zod
+    .array(zod.string())
+    .nullish()
+    .describe("Names of team members to provision per-user IDEs for (max 4)"),
 });
 
 /**
@@ -188,6 +202,16 @@ export const GetSessionResponse = zod.object({
   numGpus: zod.number().nullish(),
   startedAt: zod.coerce.date().nullish(),
   stoppedAt: zod.coerce.date().nullish(),
+  teamMembers: zod
+    .array(
+      zod.object({
+        name: zod.string(),
+        password: zod.string(),
+        port: zod.number(),
+        ideUrl: zod.string().nullish(),
+      }),
+    )
+    .nullish(),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -230,6 +254,16 @@ export const DeleteSessionResponse = zod.object({
   numGpus: zod.number().nullish(),
   startedAt: zod.coerce.date().nullish(),
   stoppedAt: zod.coerce.date().nullish(),
+  teamMembers: zod
+    .array(
+      zod.object({
+        name: zod.string(),
+        password: zod.string(),
+        port: zod.number(),
+        ideUrl: zod.string().nullish(),
+      }),
+    )
+    .nullish(),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -270,6 +304,16 @@ export const GetActiveSessionResponse = zod.object({
       numGpus: zod.number().nullish(),
       startedAt: zod.coerce.date().nullish(),
       stoppedAt: zod.coerce.date().nullish(),
+      teamMembers: zod
+        .array(
+          zod.object({
+            name: zod.string(),
+            password: zod.string(),
+            port: zod.number(),
+            ideUrl: zod.string().nullish(),
+          }),
+        )
+        .nullish(),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     })
@@ -314,6 +358,16 @@ export const RefreshSessionStatusResponse = zod.object({
   numGpus: zod.number().nullish(),
   startedAt: zod.coerce.date().nullish(),
   stoppedAt: zod.coerce.date().nullish(),
+  teamMembers: zod
+    .array(
+      zod.object({
+        name: zod.string(),
+        password: zod.string(),
+        port: zod.number(),
+        ideUrl: zod.string().nullish(),
+      }),
+    )
+    .nullish(),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });

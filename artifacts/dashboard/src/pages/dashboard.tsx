@@ -41,9 +41,9 @@ export default function Dashboard() {
   const createSession = useCreateSession();
   const updateScheduler = useUpdateSchedulerConfig();
 
-  const handleLaunch = (profileId: number) => {
+  const handleLaunch = (profileId: number, teamMembers?: string[]) => {
     setLaunchingProfileId(profileId);
-    createSession.mutate({ data: { profileId } }, {
+    createSession.mutate({ data: { profileId, teamMembers: teamMembers ?? null } }, {
       onSuccess: (session) => {
         toast({
           title: "Session Launched",

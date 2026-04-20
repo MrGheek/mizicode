@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { SessionStatus } from "./sessionStatus";
+import type { TeamMember } from "./teamMember";
 
 export interface Session {
   id: number;
@@ -28,6 +29,7 @@ export interface Session {
   numGpus?: number | null;
   startedAt?: Date | null;
   stoppedAt?: Date | null;
+  teamMembers?: TeamMember[] | null;
   createdAt: Date;
   updatedAt: Date;
 }

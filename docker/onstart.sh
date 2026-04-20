@@ -55,6 +55,11 @@ if [ -z "$CODE_SERVER_PASSWORD" ]; then
     log "code-server password generated and stored at /workspace/.code-server-password (readable after SSH)"
 fi
 
+# TEAM_MEMBERS is optional: comma-separated "name:password" pairs e.g. "alice:pass1,bob:pass2"
+TEAM_MEMBERS="${TEAM_MEMBERS:-}"
+TEAM_MEMBER_PORTS=(8083 8084 8085 8086)
+TEAM_MEMBER_INTERNAL_PORTS=(8093 8094 8095 8096)
+
 log "=== OmniQL Coding Environment Starting ==="
 log "Model: $MODEL_REPO (cached as $MODEL_QUANT)"
 log "GPUs: $NUM_GPUS | vLLM max-model-len: $VLLM_MAX_MODEL_LEN | max-num-seqs: $VLLM_MAX_NUM_SEQS"
@@ -82,6 +87,27 @@ PASSWORD="$CODE_SERVER_PASSWORD" code-server \
     /workspace/projects \
     > /var/log/code-server.log 2>&1 &
 log "code-server started"
+
+# Start per-member code-server instances (if team session)
+if [ -n "$TEAM_MEMBERS" ]; then
+    log "Team session detected — starting per-member IDEs..."
+    IFS=',' read -ra MEMBERS <<< "$TEAM_MEMBERS"
+    _idx=0
+    for _MEMBER in "${MEMBERS[@]}"; do
+        if [ $_idx -ge 4 ]; then break; fi
+        _NAME="${_MEMBER%%:*}"
+        _PASS="${_MEMBER#*:}"
+        _INT_PORT="${TEAM_MEMBER_INTERNAL_PORTS[$_idx]}"
+        PASSWORD="$_PASS" code-server \
+            --bind-addr "0.0.0.0:${_INT_PORT}" \
+            --auth password \
+            --disable-telemetry \
+            /workspace/projects \
+            > "/var/log/code-server-${_NAME}.log" 2>&1 &
+        log "code-server for $_NAME started on internal port $_INT_PORT"
+        _idx=$((_idx + 1))
+    done
+fi
 
 log "Starting Claw Task Runner on port 5182..."
 node /opt/claw-runner.js > /var/log/claw-runner.log 2>&1 &
@@ -159,6 +185,26 @@ server {
 NGINX
 ln -sf /etc/nginx/sites-available/preview /etc/nginx/sites-enabled/preview
 rm -f /etc/nginx/sites-enabled/default
+
+# Add nginx blocks for each team member IDE
+if [ -n "$TEAM_MEMBERS" ]; then
+    IFS=',' read -ra _TM_MEMBERS <<< "$TEAM_MEMBERS"
+    _tm_idx=0
+    for _TM_MEMBER in "${_TM_MEMBERS[@]}"; do
+        if [ $_tm_idx -ge 4 ]; then break; fi
+        _TM_NAME="${_TM_MEMBER%%:*}"
+        _TM_PASS="${_TM_MEMBER#*:}"
+        _TM_EXT_PORT="${TEAM_MEMBER_PORTS[$_tm_idx]}"
+        _TM_INT_PORT="${TEAM_MEMBER_INTERNAL_PORTS[$_tm_idx]}"
+        htpasswd -cb "/etc/nginx/.htpasswd-${_TM_NAME}" "$_TM_NAME" "$_TM_PASS" 2>/dev/null
+        printf 'server {\n    listen %s;\n    server_name _;\n    auth_basic "OmniQL IDE - %s";\n    auth_basic_user_file /etc/nginx/.htpasswd-%s;\n    location / {\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n}\n' \
+            "$_TM_EXT_PORT" "$_TM_NAME" "$_TM_NAME" "$_TM_INT_PORT" \
+            >> /etc/nginx/sites-available/preview
+        log "nginx block added for $_TM_NAME on external port $_TM_EXT_PORT → internal $_TM_INT_PORT"
+        _tm_idx=$((_tm_idx + 1))
+    done
+fi
+
 nginx -t && nginx
 log "nginx started — ports 5180 (Bolt), 5181 (Claw Runner), 3000 (Preview) open"
 

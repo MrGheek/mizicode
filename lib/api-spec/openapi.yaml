@@ -523,6 +523,23 @@ components:
         - servedModelName
         - modelDisplayName
 
+    TeamMember:
+      type: object
+      properties:
+        name:
+          type: string
+        password:
+          type: string
+        port:
+          type: integer
+        ideUrl:
+          type: string
+          nullable: true
+      required:
+        - name
+        - password
+        - port
+
     Session:
       type: object
       properties:
@@ -585,6 +602,11 @@ components:
           type: string
           format: date-time
           nullable: true
+        teamMembers:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/TeamMember"
         createdAt:
           type: string
           format: date-time
@@ -617,6 +639,12 @@ components:
           type: integer
           nullable: true
           description: Specific Vast.ai offer ID to use (optional, auto-selects best if not provided)
+        teamMembers:
+          type: array
+          nullable: true
+          description: Names of team members to provision per-user IDEs for (max 4)
+          items:
+            type: string
       required:
         - profileId
 

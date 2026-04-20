@@ -1,7 +1,14 @@
-import { pgTable, serial, text, integer, real, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, real, timestamp, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { gpuProfilesTable } from "./gpu-profiles";
+
+export interface TeamMemberRecord {
+  name: string;
+  password: string;
+  port: number;
+  ideUrl: string | null;
+}
 
 export const sessionsTable = pgTable("sessions", {
   id: serial("id").primaryKey(),
@@ -23,6 +30,7 @@ export const sessionsTable = pgTable("sessions", {
   numGpus: integer("num_gpus"),
   startedAt: timestamp("started_at"),
   stoppedAt: timestamp("stopped_at"),
+  teamMembers: json("team_members").$type<TeamMemberRecord[]>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

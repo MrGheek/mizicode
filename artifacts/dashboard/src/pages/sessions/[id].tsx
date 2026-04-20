@@ -10,7 +10,7 @@ import {
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
-  Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw
+  Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw, Users, Copy, Check
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -503,6 +503,14 @@ export default function SessionDetail() {
   const [badgePulseKey, setBadgePulseKey] = useState(0);
   const [bootLog, setBootLog] = useState<string[]>([]);
   const lastBootMsgRef = useRef<string>("");
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const copyToClipboard = (text: string, fieldId: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedField(fieldId);
+      setTimeout(() => setCopiedField(null), 1500);
+    });
+  };
 
   const { data: session, isLoading } = useGetSession(sessionId, {
     query: {
@@ -731,6 +739,72 @@ export default function SessionDetail() {
               </CardContent>
             </Card>
           ) : null}
+
+          {/* Team Access — shown when session has team members */}
+          {session.teamMembers && session.teamMembers.length > 0 && (
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+                  <Users className="w-4 h-4" /> Team Access
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {(session.teamMembers as Array<{ name: string; password: string; port: number; ideUrl: string | null }>).map((member) => {
+                    const urlField = `url-${member.name}`;
+                    const passField = `pass-${member.name}`;
+                    return (
+                      <div key={member.name} className="border border-border/50 rounded-lg p-3 space-y-2">
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center">
+                            <span className="text-[10px] font-bold text-primary uppercase">{member.name[0]}</span>
+                          </div>
+                          <span className="font-semibold text-sm">{member.name}</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-muted-foreground uppercase tracking-wide w-12 shrink-0">URL</span>
+                            {member.ideUrl ? (
+                              <div className="flex items-center gap-1 flex-1 min-w-0">
+                                <a
+                                  href={member.ideUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-primary font-mono truncate hover:underline flex-1 min-w-0"
+                                >
+                                  {member.ideUrl}
+                                </a>
+                                <button
+                                  onClick={() => copyToClipboard(member.ideUrl!, urlField)}
+                                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                                >
+                                  {copiedField === urlField ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground italic">Available once ready</span>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-muted-foreground uppercase tracking-wide w-12 shrink-0">Pass</span>
+                            <div className="flex items-center gap-1 flex-1 min-w-0">
+                              <code className="text-xs font-mono text-primary flex-1 min-w-0">{member.password}</code>
+                              <button
+                                onClick={() => copyToClipboard(member.password, passField)}
+                                className="shrink-0 text-muted-foreground hover:text-foreground"
+                              >
+                                {copiedField === passField ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Details */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

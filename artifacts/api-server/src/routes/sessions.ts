@@ -6,6 +6,17 @@ import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
 import { listObservations, listSessions, searchMemory, subscribeToObservations } from "../services/memory";
+import type { TeamMemberRecord } from "@workspace/db";
+
+function generatePassword(length = 12): string {
+  return Array.from({ length }, () =>
+    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"[
+      Math.floor(Math.random() * 57)
+    ]
+  ).join("");
+}
+
+const TEAM_MEMBER_PORTS = [8083, 8084, 8085, 8086];
 
 const router = Router();
 
@@ -57,6 +68,15 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
       : 0;
     const totalCost = session.costPerHour ? Math.round(session.costPerHour * hoursRunning * 100) / 100 : 0;
 
+    // Update team member ideUrls when instance ports are available
+    let updatedTeamMembers = session.teamMembers as TeamMemberRecord[] | null;
+    if (updatedTeamMembers && urls.teamMemberUrls && Object.keys(urls.teamMemberUrls).length > 0) {
+      updatedTeamMembers = updatedTeamMembers.map((m) => ({
+        ...m,
+        ideUrl: (urls.teamMemberUrls as Record<number, string>)[m.port] || m.ideUrl,
+      }));
+    }
+
     const [updated] = await db
       .update(sessionsTable)
       .set({
@@ -69,6 +89,7 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
         sshPort: urls.sshPort || session.sshPort,
         publicIp: urls.publicIp || session.publicIp,
         totalCost,
+        teamMembers: updatedTeamMembers,
         updatedAt: new Date(),
       })
       .where(eq(sessionsTable.id, session.id))
@@ -104,6 +125,7 @@ router.get("/sessions", async (_req, res) => {
       numGpus: sessionsTable.numGpus,
       startedAt: sessionsTable.startedAt,
       stoppedAt: sessionsTable.stoppedAt,
+      teamMembers: sessionsTable.teamMembers,
       createdAt: sessionsTable.createdAt,
       updatedAt: sessionsTable.updatedAt,
     })
@@ -163,7 +185,7 @@ router.get("/sessions/:sessionId", async (req, res) => {
 });
 
 router.post("/sessions", async (req, res) => {
-  const { profileId, offerId } = req.body;
+  const { profileId, offerId, teamMembers: teamMemberNames } = req.body;
 
   if (!profileId) {
     res.status(400).json({ error: "profileId is required" });
@@ -206,7 +228,18 @@ router.post("/sessions", async (req, res) => {
 
     const templateHash = defaultTemplate?.templateHash || undefined;
 
-    logger.info({ profileId, selectedOfferId }, "Launching session — model will download on instance startup");
+    // Build team member records (up to 4)
+    const rawNames: string[] = Array.isArray(teamMemberNames)
+      ? teamMemberNames.slice(0, 4).map(String).filter(n => n.trim())
+      : [];
+    const teamMemberRecords: TeamMemberRecord[] = rawNames.map((name, i) => ({
+      name: name.trim(),
+      password: generatePassword(),
+      port: TEAM_MEMBER_PORTS[i],
+      ideUrl: null,
+    }));
+
+    logger.info({ profileId, selectedOfferId, teamMemberCount: teamMemberRecords.length }, "Launching session — model will download on instance startup");
 
     const [session] = await db
       .insert(sessionsTable)
@@ -218,6 +251,7 @@ router.post("/sessions", async (req, res) => {
         statusMessage: "Finding GPU and provisioning instance...",
         gpuName: profile.gpuName,
         numGpus: profile.numGpus,
+        teamMembers: teamMemberRecords.length > 0 ? teamMemberRecords : null,
       })
       .returning();
 
@@ -245,6 +279,7 @@ router.post("/sessions", async (req, res) => {
       memProxyUrl,
       memAuthToken: process.env["OMNIQL_MEM_TOKEN"],
       memUserId,
+      teamMembers: teamMemberRecords,
     });
 
     const result = await vastai.createInstance({
@@ -253,6 +288,7 @@ router.post("/sessions", async (req, res) => {
       onstart,
       disk: profile.diskSizeGb,
       templateHashId: templateHash,
+      teamMemberCount: teamMemberRecords.length,
       env: {
         MODEL_REPO,
         MODEL_QUANT,

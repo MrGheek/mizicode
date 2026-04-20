@@ -21,6 +21,7 @@ export * from "./searchOffersParams";
 export * from "./session";
 export * from "./sessionStatus";
 export * from "./successResponse";
+export * from "./teamMember";
 export * from "./template";
 export * from "./updateSchedulerRequest";
 export * from "./updateTemplateRequest";
