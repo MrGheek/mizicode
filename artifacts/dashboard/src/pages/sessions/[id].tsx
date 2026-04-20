@@ -3,12 +3,14 @@ import {
   useGetSession,
   useDeleteSession,
   useRefreshSessionStatus,
-  getGetSessionQueryKey
+  useCreateSession,
+  getGetSessionQueryKey,
+  getGetActiveSessionQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
-  Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X
+  Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -515,6 +517,8 @@ export default function SessionDetail() {
 
   const deleteSession = useDeleteSession();
   const refreshStatus = useRefreshSessionStatus();
+  const createSession = useCreateSession();
+  const [isRetrying, setIsRetrying] = useState(false);
 
   const handleStop = () => {
     if (!confirm("Stop and destroy this session? All data outside /workspace/projects will be lost.")) return;
@@ -531,6 +535,30 @@ export default function SessionDetail() {
     refreshStatus.mutate({ sessionId }, {
       onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) }),
       onError: () => toast({ title: "Refresh failed", variant: "destructive" }),
+    });
+  };
+
+  const handleDestroyAndRetry = () => {
+    if (!session?.profileId) return;
+    setIsRetrying(true);
+    deleteSession.mutate({ sessionId }, {
+      onSuccess: () => {
+        createSession.mutate({ data: { profileId: session.profileId } }, {
+          onSuccess: (newSession) => {
+            toast({ title: "Retrying on a new machine", description: "Launched a fresh instance." });
+            queryClient.invalidateQueries({ queryKey: getGetActiveSessionQueryKey() });
+            setLocation(`/sessions/${newSession.id}`);
+          },
+          onError: () => {
+            toast({ title: "Retry failed", description: "Could not launch a new session.", variant: "destructive" });
+            setIsRetrying(false);
+          },
+        });
+      },
+      onError: () => {
+        toast({ title: "Destroy failed", variant: "destructive" });
+        setIsRetrying(false);
+      },
     });
   };
 
@@ -609,6 +637,25 @@ export default function SessionDetail() {
               </div>
             ))}
           </div>
+          {bootLog.some(l => l.toLowerCase().includes("no space left on device")) && (
+            <div className="border-t border-yellow-500/30 bg-yellow-500/10 px-4 py-3 flex items-start gap-3">
+              <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-yellow-400 text-xs font-semibold">Host disk full</p>
+                <p className="text-muted-foreground text-xs mt-0.5">The rented machine ran out of disk space pulling the Docker image. Destroy this session and retry — Vast.ai will pick a different host.</p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/20 shrink-0"
+                onClick={handleDestroyAndRetry}
+                disabled={isRetrying}
+              >
+                <RotateCcw className={`w-3.5 h-3.5 mr-1.5 ${isRetrying ? "animate-spin" : ""}`} />
+                {isRetrying ? "Retrying…" : "Destroy & Retry"}
+              </Button>
+            </div>
+          )}
         </div>
       ) : session.statusMessage ? (
         <div className="bg-secondary/30 border border-secondary p-4 rounded-md font-mono text-sm text-muted-foreground">
