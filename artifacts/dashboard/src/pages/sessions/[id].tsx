@@ -505,6 +505,7 @@ export default function SessionDetail() {
   const lastBootMsgRef = useRef<string>("");
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [revealedPasswords, setRevealedPasswords] = useState<Set<string>>(new Set());
+  const [tunnelCopied, setTunnelCopied] = useState(false);
 
   const copyToClipboard = (text: string, fieldId: string) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -913,6 +914,36 @@ export default function SessionDetail() {
                     <code className="text-xs text-primary bg-secondary/50 px-2 py-1 rounded block break-all">
                       ssh -p {session.sshPort} root@{session.sshHost}
                     </code>
+                  </div>
+                )}
+                {session.sshHost && (
+                  <div className="border-t border-border/40 pt-3 space-y-2">
+                    <span className="text-muted-foreground block mb-1">SSH Tunnel (VPN-friendly)</span>
+                    <code className="text-xs text-primary bg-secondary/50 px-2 py-1 rounded block break-all">
+                      ssh -p {session.sshPort} -L 8080:localhost:8080 root@{session.sshHost}
+                    </code>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full text-xs h-7"
+                      onClick={() => {
+                        navigator.clipboard.writeText(`ssh -p ${session.sshPort} -L 8080:localhost:8080 root@${session.sshHost}`).then(() => {
+                          setTunnelCopied(true);
+                          setTimeout(() => setTunnelCopied(false), 2000);
+                        });
+                      }}
+                    >
+                      {tunnelCopied ? (
+                        <><Check className="w-3 h-3 mr-1" />Copied!</>
+                      ) : (
+                        <><Copy className="w-3 h-3 mr-1" />Copy tunnel command</>
+                      )}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      After running, open{" "}
+                      <span className="font-mono text-primary">http://localhost:8080</span>{" "}
+                      in your browser.
+                    </p>
                   </div>
                 )}
               </CardContent>
