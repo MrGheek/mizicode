@@ -499,6 +499,8 @@ export default function SessionDetail() {
   const [activeTab, setActiveTab] = useState<"overview" | "memory">("overview");
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
+  const [bootLog, setBootLog] = useState<string[]>([]);
+  const lastBootMsgRef = useRef<string>("");
 
   const { data: session, isLoading } = useGetSession(sessionId, {
     query: {
@@ -531,6 +533,22 @@ export default function SessionDetail() {
       onError: () => toast({ title: "Refresh failed", variant: "destructive" }),
     });
   };
+
+  useEffect(() => {
+    setBootLog([]);
+    lastBootMsgRef.current = "";
+  }, [sessionId]);
+
+  useEffect(() => {
+    const msg = session?.statusMessage;
+    const status = session?.status;
+    if (!msg || !status) return;
+    const isBootPhase = ["pending", "provisioning", "downloading", "starting"].includes(status);
+    if (!isBootPhase) return;
+    if (msg === lastBootMsgRef.current) return;
+    lastBootMsgRef.current = msg;
+    setBootLog((prev) => [...prev.slice(-49), msg]);
+  }, [session?.statusMessage, session?.status]);
 
   if (isLoading) {
     return <div className="p-8"><Skeleton className="h-64 w-full" /></div>;
@@ -577,12 +595,26 @@ export default function SessionDetail() {
         </div>
       </div>
 
-      {/* Status message */}
-      {session.statusMessage && (
+      {/* Boot log / status message */}
+      {bootLog.length > 0 ? (
+        <div className="bg-secondary/30 border border-secondary rounded-md font-mono text-sm overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-secondary/60 text-xs text-muted-foreground/60 uppercase tracking-wider">
+            <span className="inline-block w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
+            Boot log
+          </div>
+          <div className="px-4 py-3 space-y-0.5 max-h-48 overflow-y-auto">
+            {bootLog.map((line, i) => (
+              <div key={i} className={`text-muted-foreground ${i === bootLog.length - 1 ? "text-foreground" : "opacity-60"}`}>
+                <span className="text-primary/50 mr-2 select-none">›</span>{line}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : session.statusMessage ? (
         <div className="bg-secondary/30 border border-secondary p-4 rounded-md font-mono text-sm text-muted-foreground">
           {'>'} {session.statusMessage}
         </div>
-      )}
+      ) : null}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-border/50">

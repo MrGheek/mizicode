@@ -45,7 +45,8 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
       }
     } else if (vastStatus === "loading" || vastStatus === "creating") {
       status = "provisioning";
-      statusMessage = "Instance is booting...";
+      const rawMsg = (instance.status_msg || "").trim();
+      statusMessage = rawMsg ? `[${vastStatus}] ${rawMsg}` : "Instance is booting...";
     } else if (vastStatus === "exited" || vastStatus === "error") {
       status = "error";
       statusMessage = `Instance error: ${instance.status_msg || vastStatus}`;
@@ -348,7 +349,8 @@ router.post("/sessions/:sessionId/refresh", async (req, res) => {
       }
     } else if (vastStatus === "loading" || vastStatus === "creating") {
       status = "provisioning";
-      statusMessage = "Instance is booting...";
+      const rawMsg = (instance.status_msg || "").trim();
+      statusMessage = rawMsg ? `[${vastStatus}] ${rawMsg}` : "Instance is booting...";
     } else if (vastStatus === "exited" || vastStatus === "error") {
       status = "error";
       statusMessage = `Instance error: ${instance.status_msg || vastStatus}`;
