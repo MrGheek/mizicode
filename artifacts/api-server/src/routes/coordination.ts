@@ -18,7 +18,7 @@ import {
   sessionsTable,
   sessionRepoContextTable,
 } from "@workspace/db";
-import { eq, and, or, lt, desc, inArray, asc } from "drizzle-orm";
+import { eq, and, or, lt, desc, inArray, asc, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import {
   getLanePolicy,
@@ -340,6 +340,9 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
   const now = new Date();
   const expiresAt = new Date(Date.now() + ttl * 1000);
 
+  // Atomic upsert: INSERT or refresh the existing active claim for this lane + resource.
+  // The partial unique index on (lane_id, path_or_symbol) WHERE active = true guarantees
+  // that concurrent requests cannot produce duplicate active rows.
   const [claim] = await db.insert(laneClaimsTable).values({
     laneId,
     claimType: claimType ?? "file",
@@ -349,6 +352,15 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
     expiresAt,
     claimStrength,
     active: true,
+  }).onConflictDoUpdate({
+    target: [laneClaimsTable.laneId, laneClaimsTable.pathOrSymbol],
+    targetWhere: eq(laneClaimsTable.active, true),
+    set: {
+      claimType: claimType ?? sql`${laneClaimsTable.claimType}`,
+      claimStrength,
+      lastHeartbeatAt: now,
+      expiresAt,
+    },
   }).returning();
 
   // Detect overlaps with other active lanes in the same session

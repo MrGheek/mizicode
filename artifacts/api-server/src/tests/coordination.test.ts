@@ -10,7 +10,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import app from "../app";
 import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneHandoffsTable, laneHeavyJobsTable } from "@workspace/db";
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 
 // ─── Test Fixture Setup ────────────────────────────────────────────────────────
 
@@ -205,6 +205,37 @@ describe("POST /api/sessions/:id/lanes/:laneId/claim + DELETE (release)", () => 
     expect(res.status).toBe(200);
     expect(res.body.action).toBe("released");
     expect(res.body.claimId).toBe(claimId);
+  });
+
+  it("upserts an existing active claim instead of inserting a duplicate", async () => {
+    const resourcePath = "src/services/upsert-test.ts";
+
+    const firstRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneId}/claim`)
+      .send({ claimType: "file", resourcePath, strength: 0.4 });
+
+    expect(firstRes.status).toBe(201);
+    const firstClaimId = firstRes.body.claim.id;
+
+    // Claim the same resource again — should upsert, not insert a new row
+    const secondRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneId}/claim`)
+      .send({ claimType: "file", resourcePath, strength: 0.9 });
+
+    expect(secondRes.status).toBe(201);
+    expect(secondRes.body.claim.id).toBe(firstClaimId);
+
+    // Verify only one active claim row exists for this lane + resource
+    const rows = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(and(
+        eq(laneClaimsTable.laneId, laneId),
+        eq(laneClaimsTable.pathOrSymbol, resourcePath),
+        eq(laneClaimsTable.active, true),
+      ));
+    expect(rows.length).toBe(1);
+    expect(rows[0].id).toBe(firstClaimId);
   });
 
   it("refreshes claim heartbeat via DELETE?heartbeat=true", async () => {

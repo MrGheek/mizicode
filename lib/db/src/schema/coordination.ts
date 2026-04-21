@@ -1,4 +1,5 @@
-import { pgTable, serial, text, integer, timestamp, jsonb, real, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, jsonb, real, boolean, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { sessionsTable } from "./sessions";
 
 export type LaneType = "ux" | "debug" | "backend" | "review" | "general";
@@ -34,7 +35,11 @@ export const laneClaimsTable = pgTable("lane_claims", {
   expiresAt: timestamp("expires_at").notNull(),
   claimStrength: text("claim_strength").notNull().default("watching"),
   active: boolean("active").notNull().default(true),
-});
+}, (table) => [
+  uniqueIndex("lane_claims_active_unique_idx")
+    .on(table.laneId, table.pathOrSymbol)
+    .where(sql`${table.active} = true`),
+]);
 
 export const laneHandoffsTable = pgTable("lane_handoffs", {
   id: serial("id").primaryKey(),
