@@ -1,4 +1,4 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { writeFile, unlink } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -13,9 +13,15 @@ import type { SessionContext } from "../services/skills-types";
 
 const router = Router();
 
+/** Validates that a string is a safe hostname or IPv4 address (no shell-special chars). */
+function isSafeHost(host: string): boolean {
+  return /^[a-zA-Z0-9._-]{1,253}$/.test(host);
+}
+
 /**
  * Best-effort: write active-bundle.json to a running instance via SSH.
- * Falls back silently if SSH key is not configured or the instance is unreachable.
+ * This is an internal implementation detail — callers always return next-launch
+ * semantics regardless of whether this succeeds.
  */
 async function tryWriteActiveBundleViaSSH(
   sshHost: string,
@@ -25,26 +31,36 @@ async function tryWriteActiveBundleViaSSH(
   const privateKey = process.env["FLOATR_SSH_PRIVATE_KEY"];
   if (!privateKey) return; // SSH key not configured — skip
 
-  // Write key to temp file
+  // Validate host and port strictly before invoking ssh
+  if (!isSafeHost(sshHost)) {
+    logger.warn({ sshHost }, "SSH write skipped: unsafe host value");
+    return;
+  }
+  if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) {
+    logger.warn({ sshPort }, "SSH write skipped: invalid port");
+    return;
+  }
+
   const keyFile = join(tmpdir(), `floatr-ssh-${Date.now()}.pem`);
   await writeFile(keyFile, privateKey, { mode: 0o600 });
 
   const remoteDir = "/workspace/.floatr/skills";
   const remoteFile = `${remoteDir}/active-bundle.json`;
-  const escaped = payload.replace(/'/g, "'\\''");
+  // Write payload via stdin to avoid any shell-level interpolation of the JSON content
+  const remoteCmd = `mkdir -p ${remoteDir} && cat > ${remoteFile}`;
 
-  const sshCmd = [
-    "ssh",
+  // Use execFile (no shell) with explicit argument array to prevent injection
+  const sshArgs = [
     "-i", keyFile,
     "-p", String(sshPort),
-    "-o", "StrictHostKeyChecking=no",
+    "-o", "StrictHostKeyChecking=accept-new",
     "-o", "ConnectTimeout=5",
     `root@${sshHost}`,
-    `mkdir -p ${remoteDir} && printf '%s' '${escaped}' > ${remoteFile}`,
-  ].join(" ");
+    remoteCmd,
+  ];
 
   await new Promise<void>((resolve) => {
-    exec(sshCmd, { timeout: 8000 }, async (err) => {
+    const child = execFile("ssh", sshArgs, { timeout: 8000 }, async (err) => {
       await unlink(keyFile).catch(() => {});
       if (err) {
         logger.warn({ sshHost, sshPort, errMsg: err.message }, "SSH active-bundle.json write failed (instance may be starting)");
@@ -53,6 +69,8 @@ async function tryWriteActiveBundleViaSSH(
       }
       resolve();
     });
+    // Pipe payload to stdin so JSON never touches the command line
+    child.stdin?.end(payload, "utf8");
   });
 }
 
@@ -331,18 +349,14 @@ router.post("/skill-bundles/:bundleId/activate", async (req, res) => {
   const { sessionId, taskMode, tokenMode } = req.body as { sessionId?: number; taskMode?: string; tokenMode?: string };
   let sessionSkillsRecord: (typeof sessionSkillsTable.$inferSelect) | null = null;
 
-  let activationMode: "live" | "next-launch" = "next-launch";
-  let sshWriteAttempted = false;
-
   if (sessionId) {
     await db
       .update(sessionsTable)
       .set({ activeBundleId: id, updatedAt: new Date() })
       .where(eq(sessionsTable.id, sessionId));
 
-    // Compile bundle and record session_skills
+    // Compile bundle and record session_skills for next-launch
     try {
-      // Fetch session to get context and SSH info
       const [session] = await db
         .select({ status: sessionsTable.status, sshHost: sessionsTable.sshHost, sshPort: sessionsTable.sshPort, tokenMode: sessionsTable.tokenMode })
         .from(sessionsTable)
@@ -367,10 +381,9 @@ router.post("/skill-bundles/:bundleId/activate", async (req, res) => {
       }).returning();
       sessionSkillsRecord = record;
 
-      // If instance is running and has SSH, attempt live write (best-effort, non-blocking)
+      // Best-effort SSH pre-write when instance is already running.
+      // This is a silent optimisation — the API contract always returns next-launch.
       if (session?.status === "running" && session.sshHost && session.sshPort) {
-        activationMode = "live";
-        sshWriteAttempted = true;
         const b64 = buildActiveBundleEnvPayload(compiled, effectiveTokenMode);
         const payload = Buffer.from(b64, "base64").toString("utf8");
         tryWriteActiveBundleViaSSH(session.sshHost, session.sshPort, payload).catch(() => {});
@@ -379,17 +392,15 @@ router.post("/skill-bundles/:bundleId/activate", async (req, res) => {
       logger.warn({ err, sessionId, bundleId: id }, "Could not compile bundle for session_skills during activate");
     }
 
-    logger.info({ bundleId: id, sessionId, activationMode }, "Bundle set as active for session");
+    logger.info({ bundleId: id, sessionId }, "Bundle queued for next-launch activation");
   }
 
+  // v1 contract: always next-launch semantics (SSH write is a silent pre-write, not contract-visible)
   res.json({
     bundle,
     sessionSkills: sessionSkillsRecord,
-    activationMode,
-    sshWriteAttempted,
-    message: activationMode === "live"
-      ? "Bundle activated live on running instance (SSH write attempted)."
-      : "Bundle will be activated on the next session launch.",
+    activationMode: "next-launch",
+    message: "Bundle will be activated on the next session launch.",
   });
 });
 
