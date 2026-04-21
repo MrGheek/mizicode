@@ -358,14 +358,16 @@ router.post("/skill-bundles/:bundleId/activate", async (req, res) => {
     // Compile bundle and record session_skills for next-launch
     try {
       const [session] = await db
-        .select({ status: sessionsTable.status, sshHost: sessionsTable.sshHost, sshPort: sessionsTable.sshPort, tokenMode: sessionsTable.tokenMode })
+        .select({ status: sessionsTable.status, sshHost: sessionsTable.sshHost, sshPort: sessionsTable.sshPort, tokenMode: sessionsTable.tokenMode, teamMembers: sessionsTable.teamMembers, taskMode: sessionsTable.taskMode })
         .from(sessionsTable)
         .where(eq(sessionsTable.id, sessionId));
 
       const effectiveTokenMode = (tokenMode || session?.tokenMode || bundle.tokenMode || "core") as SessionContext["tokenMode"];
+      // Derive sessionType from the session row: if teamMembers array is non-empty → team, else solo
+      const derivedSessionType = Array.isArray(session?.teamMembers) && (session.teamMembers as unknown[]).length > 0 ? "team" : "solo";
       const ctx: SessionContext = {
-        sessionType: "solo",
-        taskMode: (taskMode || bundle.taskMode || "build") as SessionContext["taskMode"],
+        sessionType: derivedSessionType,
+        taskMode: (taskMode || session?.taskMode || bundle.taskMode || "build") as SessionContext["taskMode"],
         modelProfile: "kimi",
         repoLangs: [],
         tokenMode: effectiveTokenMode,

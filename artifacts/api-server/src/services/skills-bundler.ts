@@ -120,6 +120,17 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
     }
   }
 
+  // ── Step 5: Hard cap — always 3–7 skills, preserving doctrine+workflow guarantees ──
+  if (selected.length > MAX_SKILLS) {
+    // Keep doctrine and workflow anchors; trim excess from the tail (lower-scored)
+    const anchors = selected.filter(s => s.class === "doctrine" || s.class === "workflow");
+    const rest = selected.filter(s => s.class !== "doctrine" && s.class !== "workflow");
+    const slotsForRest = MAX_SKILLS - anchors.length;
+    const trimmed = [...anchors, ...rest.slice(0, Math.max(slotsForRest, 0))];
+    selected.length = 0;
+    trimmed.forEach(s => selected.push(s));
+  }
+
   return {
     bundleId,
     slug: bundle.slug,
@@ -258,10 +269,21 @@ export async function seedDefaultBundles(): Promise<void> {
   }
 }
 
-export async function getDefaultBundleForContext(ctx: SessionContext): Promise<typeof skillBundlesTable.$inferSelect | null> {
+export async function getDefaultBundleForContext(
+  ctx: SessionContext,
+  hasRepoContext = false,
+): Promise<typeof skillBundlesTable.$inferSelect | null> {
   const all = await db.select().from(skillBundlesTable).where(eq(skillBundlesTable.isDefault, true));
   if (all.length === 0) return null;
 
+  // Spec: when repo context is absent, always fall back to floatr-builder (generic safe default)
+  if (!hasRepoContext) {
+    const builder = all.find(b => b.slug === "floatr-builder");
+    if (builder) return builder;
+    // If floatr-builder not present yet, fall through to context scoring
+  }
+
+  // Context-scored selection when repo context is available
   const scored = all.map(b => {
     let score = 0;
     if (b.taskMode === ctx.taskMode) score += 2;

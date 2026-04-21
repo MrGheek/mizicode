@@ -469,7 +469,8 @@ router.post("/sessions", async (req, res) => {
         bundle = found || null;
       }
       if (!bundle) {
-        bundle = await getDefaultBundleForContext(sessionCtx);
+        // Pass hasRepoContext so floatr-builder is forced when no repo URL was supplied
+        bundle = await getDefaultBundleForContext(sessionCtx, !!(repoUrl && typeof repoUrl === "string" && repoUrl.trim()));
       }
 
       if (bundle) {
