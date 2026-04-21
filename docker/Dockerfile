@@ -76,6 +76,7 @@ RUN mkdir -p /run/sshd /workspace/models /workspace/projects /var/log && \
 COPY onstart.sh /opt/onstart.sh
 COPY claw-runner.js /opt/claw-runner.js
 COPY scripts/ /opt/repo-intelligence/
+RUN cd /opt/repo-intelligence && npm install --production --prefer-offline 2>&1 | tail -5 || true
 RUN chmod +x /opt/onstart.sh
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \

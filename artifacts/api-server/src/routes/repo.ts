@@ -556,7 +556,7 @@ interface RepoEdgeRaw {
   kind?: string;
 }
 
-interface ApproxSearchOptions {
+interface HybridSearchOptions {
   q: string;
   typeFilter?: string;
   limit: number;
@@ -567,52 +567,103 @@ interface ApproxSearchOptions {
   filesJson: RepoFileRaw[] | null;
 }
 
-function lexicalScore(text: string, q: string): number {
-  const ql = q.toLowerCase();
-  const tl = text.toLowerCase();
-  if (tl === ql) return 1.0;
-  if (tl.startsWith(ql)) return 0.85;
-  if (tl.includes(ql)) return 0.6;
-  const words = ql.split(/\s+/);
-  const matches = words.filter(w => tl.includes(w)).length;
-  return matches > 0 ? (matches / words.length) * 0.4 : 0;
+type SearchResult = {
+  type: string;
+  path: string;
+  name?: string | null;
+  lang?: string | null;
+  kind?: string | null;
+  snippet?: string | null;
+  line?: number | null;
+  scores: { combined: number; lexical: number; semantic: number; graph: number; confidence: number };
+};
+
+// ─── Hybrid Retrieval: BM25 lexical + n-gram semantic + graph centrality ─────
+
+const NGRAM_DIM_SEARCH = 512;
+
+function charNgramVec(text: string): number[] {
+  const t = text.toLowerCase().replace(/[^a-z0-9_]/g, " ").trim();
+  const vec = new Array(NGRAM_DIM_SEARCH).fill(0);
+  for (let i = 0; i <= t.length - 3; i++) {
+    const g = t.slice(i, i + 3);
+    let h = 0;
+    for (let k = 0; k < g.length; k++) h = (Math.imul(31, h) + g.charCodeAt(k)) | 0;
+    vec[Math.abs(h) % NGRAM_DIM_SEARCH] += 1;
+  }
+  const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
+  return vec.map(v => v / mag);
 }
 
-function approximateSearch(opts: ApproxSearchOptions) {
+function cosineSim(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  let dot = 0;
+  for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
+  return Math.max(0, Math.min(1, dot));
+}
+
+/** BM25 score for a term in a document field. */
+function bm25(termFreq: number, docLen: number, avgDocLen: number, k1 = 1.5, b = 0.75): number {
+  if (termFreq === 0 || avgDocLen === 0) return 0;
+  const norm = termFreq * (k1 + 1) / (termFreq + k1 * (1 - b + b * docLen / avgDocLen));
+  return norm;
+}
+
+function lexicalBm25(doc: string, query: string): number {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return 0;
+  const docLower = doc.toLowerCase();
+  const docLen = docLower.split(/\s+/).length;
+  let score = 0;
+  for (const term of terms) {
+    const tf = (docLower.match(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+    score += bm25(tf, docLen, 5);
+    if (docLower.startsWith(term)) score += 0.5;
+    if (docLower === term) score += 1.0;
+  }
+  return Math.min(1, score / terms.length);
+}
+
+function hybridSearch(opts: HybridSearchOptions) {
   const { q, typeFilter, limit, offset, langFilter, pathPrefix, symbolsJson, filesJson } = opts;
 
-  type SearchResult = {
-    type: string;
-    path: string;
-    name?: string | null;
-    lang?: string | null;
-    kind?: string | null;
-    snippet?: string | null;
-    line?: number | null;
-    scores: { combined: number; lexical: number; semantic: number; graph: number; confidence: number };
-  };
-
+  const qVec = charNgramVec(q);
   const results: SearchResult[] = [];
+
+  const avgSymDocLen = 5;
+  const avgFileDocLen = 4;
 
   if (!typeFilter || typeFilter === "symbol") {
     for (const sym of symbolsJson || []) {
       if (langFilter && sym.lang?.toLowerCase() !== langFilter.toLowerCase()) continue;
       if (pathPrefix && !sym.path?.startsWith(pathPrefix)) continue;
-      const nameScore = sym.name ? lexicalScore(sym.name, q) : 0;
-      const pathScore = sym.path ? lexicalScore(sym.path, q) * 0.3 : 0;
-      const docScore = sym.docstring ? lexicalScore(sym.docstring, q) * 0.4 : 0;
-      const lx = Math.min(1, nameScore + pathScore + docScore);
-      if (lx < 0.05) continue;
-      const combined = lx * 0.6 + 0.1;
+
+      // Lexical (BM25 over name + path + signature)
+      const nameDoc = sym.name || "";
+      const fullDoc = [sym.name, sym.path, sym.docstring, sym.signature].filter(Boolean).join(" ");
+      const lxName = lexicalBm25(nameDoc, q);
+      const lxFull = lexicalBm25(fullDoc, q) * 0.5;
+      const lexical = Math.min(1, lxName + lxFull);
+
+      if (lexical < 0.02) continue;
+
+      // Semantic (n-gram cosine)
+      const docText = [sym.name, sym.kind, sym.signature, sym.docstring].filter(Boolean).join(" ");
+      const docVec = charNgramVec(docText);
+      const semantic = cosineSim(qVec, docVec);
+
+      // Graph (zero on symbol level — centrality is file-level)
+      const graph = 0;
+
+      const combined = lexical * 0.55 + semantic * 0.35 + graph * 0.1;
+      const confidence = lexical > 0.5 ? 0.9 : 0.5;
+
       results.push({
-        type: "symbol",
-        path: sym.path || "",
-        name: sym.name || null,
-        lang: sym.lang || null,
-        kind: sym.kind || null,
-        snippet: sym.signature || sym.docstring?.slice(0, 200) || null,
+        type: "symbol", path: sym.path || "", name: sym.name || null,
+        lang: sym.lang || null, kind: sym.kind || null,
+        snippet: sym.signature?.slice(0, 200) || sym.docstring?.slice(0, 200) || null,
         line: sym.line || null,
-        scores: { combined, lexical: lx, semantic: 0, graph: 0, confidence: 0.4 },
+        scores: { combined, lexical, semantic, graph, confidence },
       });
     }
   }
@@ -621,26 +672,37 @@ function approximateSearch(opts: ApproxSearchOptions) {
     for (const file of filesJson || []) {
       if (langFilter && file.lang?.toLowerCase() !== langFilter.toLowerCase()) continue;
       if (pathPrefix && !file.path?.startsWith(pathPrefix)) continue;
-      const lx = file.path ? lexicalScore(file.path, q) : 0;
-      if (lx < 0.05) continue;
-      const graphBoost = Math.min(0.3, (file.centralityScore || 0) * 0.3 + (file.dependencyDegree || 0) * 0.01);
-      const combined = lx * 0.5 + graphBoost + 0.05;
+
+      const pathStr = file.path || "";
+      const lexical = lexicalBm25(pathStr, q);
+      if (lexical < 0.02) continue;
+
+      // Semantic
+      const docVec = charNgramVec(pathStr + " " + (file.lang || ""));
+      const semantic = cosineSim(qVec, docVec);
+
+      // Graph centrality score
+      const centralityNorm = Math.min(1, (file.centralityScore || 0));
+      const degreeNorm = Math.min(1, (file.dependencyDegree || 0) / 20);
+      const graph = centralityNorm * 0.6 + degreeNorm * 0.4;
+
+      const combined = lexical * 0.50 + semantic * 0.25 + graph * 0.25;
+      const confidence = graph > 0.3 ? 0.8 : 0.6;
+
       results.push({
-        type: "file",
-        path: file.path || "",
-        name: null,
-        lang: file.lang || null,
-        kind: null,
-        snippet: null,
-        line: null,
-        scores: { combined, lexical: lx, semantic: 0, graph: graphBoost, confidence: 0.5 },
+        type: "file", path: pathStr, name: null,
+        lang: file.lang || null, kind: null, snippet: null, line: null,
+        scores: { combined, lexical, semantic, graph, confidence },
       });
     }
   }
 
   results.sort((a, b) => b.scores.combined - a.scores.combined);
-  const total = results.length;
-  return { total, items: results.slice(offset, offset + limit) };
+  return { total: results.length, items: results.slice(offset, offset + limit) };
+}
+
+function approximateSearch(opts: HybridSearchOptions) {
+  return hybridSearch(opts);
 }
 
 function computeBlastRadius(opts: { file: string; edgesJson: RepoEdgeRaw[] | null; filesJson: RepoFileRaw[] | null }) {
