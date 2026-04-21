@@ -183,9 +183,17 @@ router.get("/summary", async (req, res) => {
       confidenceLevel: "none",
       summary: null,
       indexedAt: null,
+      symbolCount: 0,
+      chunkCount: 0,
+      fileCount: 0,
+      repoPath: null,
     });
     return;
   }
+
+  const symbolCount = Array.isArray(ctx.symbolsJson) ? (ctx.symbolsJson as unknown[]).length : 0;
+  const chunkCount = Array.isArray(ctx.chunksJson) ? (ctx.chunksJson as unknown[]).length : 0;
+  const fileCount = Array.isArray(ctx.filesJson) ? (ctx.filesJson as unknown[]).length : 0;
 
   res.json({
     sessionId,
@@ -194,6 +202,10 @@ router.get("/summary", async (req, res) => {
     confidenceLevel: ctx.confidenceLevel,
     summary: ctx.summaryJson || null,
     indexedAt: ctx.indexedAt?.toISOString() || null,
+    symbolCount,
+    chunkCount,
+    fileCount,
+    repoPath: ctx.repoPath || null,
   });
 });
 

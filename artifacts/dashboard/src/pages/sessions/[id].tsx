@@ -9,12 +9,14 @@ import {
   getGetSessionQueryKey,
   getGetActiveSessionQueryKey,
   getGetSessionSkillsQueryKey,
+  useEnqueueRepoIndex,
+  getGetRepoSummaryQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 import {
   Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw, Users, Copy, Check, Eye, EyeOff, FolderOpen,
-  Wand2, ThumbsUp, ThumbsDown, Wrench,
+  Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -756,13 +758,310 @@ function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?:
   );
 }
 
+interface RepoSummaryExt {
+  sessionId: number;
+  indexStatus: string;
+  isStale: boolean;
+  confidenceLevel: string;
+  summary: null | {
+    architectureSketch: string;
+    majorModules: { name: string; path: string; fileCount: number; primaryLang?: string | null }[];
+    hotspots: { path: string; score: number; lang?: string | null }[];
+    testStrategy?: string | null;
+    complexityClass?: string | null;
+  };
+  indexedAt: string | null;
+  symbolCount: number;
+  chunkCount: number;
+  fileCount: number;
+  repoPath: string | null;
+}
+
+const ACTIVE_STATUSES = ["queued", "scanning", "fingerprinting", "indexing_graph", "indexing_fts", "indexing_vectors", "summarizing"];
+
+function statusLabel(status: string): string {
+  const map: Record<string, string> = {
+    none: "Not indexed",
+    queued: "Queued",
+    scanning: "Scanning files",
+    fingerprinting: "Fingerprinting",
+    indexing_graph: "Building graph",
+    indexing_fts: "Full-text index",
+    indexing_vectors: "Vector index",
+    summarizing: "Summarizing",
+    ready: "Ready",
+    stale: "Stale",
+    error: "Error",
+  };
+  return map[status] ?? status;
+}
+
+function StatusIcon({ status }: { status: string }) {
+  if (ACTIVE_STATUSES.includes(status)) {
+    return <Loader2 className="w-4 h-4 animate-spin text-primary" />;
+  }
+  if (status === "ready") return <CheckCircle2 className="w-4 h-4 text-emerald-500" />;
+  if (status === "stale") return <AlertCircle className="w-4 h-4 text-yellow-400" />;
+  if (status === "error") return <XCircle className="w-4 h-4 text-destructive" />;
+  return <AlertCircle className="w-4 h-4 text-muted-foreground" />;
+}
+
+function IndexProgressBar({ status }: { status: string }) {
+  const steps = ["queued", "scanning", "fingerprinting", "indexing_graph", "indexing_fts", "indexing_vectors", "summarizing", "ready"];
+  const idx = steps.indexOf(status);
+  if (idx < 0) return null;
+  const pct = Math.round(((idx + 1) / steps.length) * 100);
+  return (
+    <div className="mt-3">
+      <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+        <span>Indexing in progress…</span>
+        <span>{pct}%</span>
+      </div>
+      <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden">
+        <div
+          className="h-full bg-primary rounded-full transition-all duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function RepoIndexTab({ sessionId }: { sessionId: number }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const isActive = (status: string) => ACTIVE_STATUSES.includes(status);
+
+  const { data: summary, isLoading, isError: isFetchError } = useQuery<RepoSummaryExt>({
+    queryKey: getGetRepoSummaryQueryKey(sessionId),
+    queryFn: async ({ signal }) => {
+      const res = await fetch(`${BASE_URL}api/sessions/${sessionId}/repo/summary`, { signal });
+      if (!res.ok) throw new Error("Failed to fetch repo summary");
+      return res.json();
+    },
+    enabled: !!sessionId,
+    refetchInterval: (q) => {
+      const st = (q.state.data as RepoSummaryExt | undefined)?.indexStatus;
+      return st && isActive(st) ? 3000 : 15000;
+    },
+  });
+
+  const enqueue = useEnqueueRepoIndex();
+
+  const handleReindex = () => {
+    enqueue.mutate(
+      { sessionId, data: { repoPath: summary?.repoPath ?? undefined } },
+      {
+        onSuccess: () => {
+          toast({ title: "Re-index triggered", description: "Indexing job enqueued — this may take a few minutes." });
+          queryClient.invalidateQueries({ queryKey: getGetRepoSummaryQueryKey(sessionId) });
+        },
+        onError: () => toast({ title: "Failed to trigger re-index", variant: "destructive" }),
+      }
+    );
+  };
+
+  if (isLoading) {
+    return (
+      <div className="mt-4 space-y-3">
+        {[1, 2, 3].map(i => <Skeleton key={i} className="h-20 w-full" />)}
+      </div>
+    );
+  }
+
+  if (isFetchError) {
+    return (
+      <div className="mt-4">
+        <Card className="bg-card/50 border-border/50">
+          <CardContent className="py-10 text-center text-muted-foreground">
+            <XCircle className="w-8 h-8 mx-auto mb-3 text-destructive/60" />
+            <p className="text-sm">Failed to load repo index status.</p>
+            <p className="text-xs mt-1 opacity-70">Check your network connection or try refreshing the page.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const status = summary?.indexStatus ?? "none";
+  const isIndexing = isActive(status);
+  const isReady = status === "ready";
+  const isError = status === "error";
+  const isStale = summary?.isStale ?? false;
+
+  return (
+    <div className="mt-4 space-y-4">
+      {/* Status card */}
+      <Card className="bg-card/50 border-border/50">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+            <GitBranch className="w-4 h-4" /> Repository Index
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Status row */}
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-2">
+              <StatusIcon status={status} />
+              <span className="font-semibold text-sm">{statusLabel(status)}</span>
+              {isStale && (
+                <Badge variant="outline" className="text-[10px] bg-yellow-500/15 text-yellow-400 border-yellow-500/40 gap-1">
+                  <AlertCircle className="w-2.5 h-2.5" /> Stale
+                </Badge>
+              )}
+              {isReady && (
+                <Badge variant="outline" className="text-[10px] bg-emerald-500/15 text-emerald-400 border-emerald-500/40">
+                  {summary?.confidenceLevel === "full" ? "Full index" : summary?.confidenceLevel === "partial" ? "Partial" : "Fingerprint only"}
+                </Badge>
+              )}
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 h-7 text-xs"
+              onClick={handleReindex}
+              disabled={enqueue.isPending || isIndexing}
+            >
+              {(enqueue.isPending || isIndexing) ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5" />
+              )}
+              {isIndexing ? "Indexing…" : "Re-index"}
+            </Button>
+          </div>
+
+          {/* Progress bar during active indexing */}
+          {isIndexing && <IndexProgressBar status={status} />}
+
+          {/* Stats grid */}
+          {(isReady || (summary?.symbolCount ?? 0) > 0) && (
+            <div className="grid grid-cols-3 gap-3 pt-1">
+              <div className="bg-secondary/30 rounded p-2.5 text-center">
+                <p className="text-lg font-bold text-foreground leading-none">{(summary?.symbolCount ?? 0).toLocaleString()}</p>
+                <p className="text-[10px] text-muted-foreground mt-1">Symbols</p>
+              </div>
+              <div className="bg-secondary/30 rounded p-2.5 text-center">
+                <p className="text-lg font-bold text-foreground leading-none">{(summary?.fileCount ?? 0).toLocaleString()}</p>
+                <p className="text-[10px] text-muted-foreground mt-1">Files</p>
+              </div>
+              <div className="bg-secondary/30 rounded p-2.5 text-center">
+                <p className="text-lg font-bold text-foreground leading-none">{(summary?.chunkCount ?? 0).toLocaleString()}</p>
+                <p className="text-[10px] text-muted-foreground mt-1">Chunks</p>
+              </div>
+            </div>
+          )}
+
+          {/* Last indexed */}
+          {summary?.indexedAt && (
+            <p className="text-xs text-muted-foreground">
+              Last indexed{" "}
+              <span className="text-foreground">
+                {formatDistanceToNow(new Date(summary.indexedAt), { addSuffix: true })}
+              </span>
+              {" "}— {format(new Date(summary.indexedAt), "MMM d, HH:mm")}
+            </p>
+          )}
+
+          {/* Repo path */}
+          {summary?.repoPath && (
+            <p className="text-xs text-muted-foreground font-mono truncate">
+              <span className="text-muted-foreground/60">Path: </span>{summary.repoPath}
+            </p>
+          )}
+
+          {/* Error note */}
+          {isError && (
+            <div className="flex items-start gap-2 bg-destructive/10 border border-destructive/30 rounded p-2.5 text-xs text-destructive">
+              <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>Indexing failed. Click Re-index to retry.</span>
+            </div>
+          )}
+
+          {/* No index yet */}
+          {status === "none" && (
+            <div className="text-center py-4 text-muted-foreground text-sm">
+              <DatabaseZap className="w-8 h-8 mx-auto mb-3 opacity-30" />
+              <p>This repository has not been indexed yet.</p>
+              <p className="text-xs mt-1 opacity-70">Indexing extracts symbols, file structure, and architecture insights.</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Architecture summary */}
+      {isReady && summary?.summary && (
+        <Card className="bg-card/50 border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+              <Brain className="w-4 h-4" /> Architecture Overview
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {summary.summary.architectureSketch && (
+              <p className="text-sm text-foreground/90 leading-relaxed">{summary.summary.architectureSketch}</p>
+            )}
+            {summary.summary.complexityClass && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Complexity:</span>
+                <Badge variant="outline" className="text-[10px]">
+                  {summary.summary.complexityClass}
+                </Badge>
+              </div>
+            )}
+            {summary.summary.majorModules.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Major Modules</p>
+                <div className="space-y-1.5">
+                  {summary.summary.majorModules.slice(0, 8).map((mod, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs border border-border/40 rounded px-2 py-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-mono text-primary truncate">{mod.path}</span>
+                        {mod.primaryLang && (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0">{mod.primaryLang}</Badge>
+                        )}
+                      </div>
+                      <span className="text-muted-foreground shrink-0 ml-2">{mod.fileCount} files</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {summary.summary.hotspots.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Hot Files</p>
+                <div className="space-y-1">
+                  {summary.summary.hotspots.slice(0, 5).map((h, i) => (
+                    <div key={i} className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground bg-secondary/20 rounded px-2 py-1">
+                      <span className="text-primary/60 w-4 shrink-0">{i + 1}.</span>
+                      <span className="truncate flex-1">{h.path}</span>
+                      {h.lang && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">{h.lang}</Badge>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {summary.summary.testStrategy && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Test Strategy</p>
+                <p className="text-xs text-muted-foreground leading-relaxed">{summary.summary.testStrategy}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 export default function SessionDetail() {
   const { id } = useParams();
   const sessionId = id ? parseInt(id, 10) : 0;
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo">("overview");
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
   const [bootLog, setBootLog] = useState<string[]>([]);
@@ -987,6 +1286,17 @@ export default function SessionDetail() {
         >
           <Wand2 className="w-3.5 h-3.5" />
           Smart Skills
+        </button>
+        <button
+          onClick={() => setActiveTab("repo")}
+          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
+            activeTab === "repo"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <GitBranch className="w-3.5 h-3.5" />
+          Repo Index
         </button>
       </div>
 
@@ -1266,6 +1576,10 @@ export default function SessionDetail() {
 
       {activeTab === "smart-skills" && (
         <SmartSkillsTab sessionId={sessionId} taskMode={session.taskMode ?? null} />
+      )}
+
+      {activeTab === "repo" && (
+        <RepoIndexTab sessionId={sessionId} />
       )}
 
     </div>
