@@ -1073,7 +1073,9 @@ export default function SessionDetail() {
   const [seenConflictFingerprint, setSeenConflictFingerprint] = useState<string>("");
   const [conflictBadgePulseKey, setConflictBadgePulseKey] = useState(0);
   const prevConflictFingerprintRef = useRef<string>("");
-  const [dismissedConflictFingerprint, setDismissedConflictFingerprint] = useState<string>("");
+  const [dismissedConflictFingerprint, setDismissedConflictFingerprint] = useState<string>(() =>
+    sessionId ? (sessionStorage.getItem(`conflict-dismissed:${sessionId}`) ?? "") : ""
+  );
   const [bootLog, setBootLog] = useState<string[]>([]);
   const lastBootMsgRef = useRef<string>("");
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -1162,7 +1164,9 @@ export default function SessionDetail() {
 
   useEffect(() => {
     setSeenConflictFingerprint("");
-    setDismissedConflictFingerprint("");
+    setDismissedConflictFingerprint(
+      sessionId ? (sessionStorage.getItem(`conflict-dismissed:${sessionId}`) ?? "") : ""
+    );
   }, [sessionId]);
 
   useEffect(() => {
@@ -1472,7 +1476,10 @@ export default function SessionDetail() {
               <button
                 aria-label="Dismiss conflict banner"
                 className="text-red-400 hover:text-red-200 transition-colors ml-1 shrink-0"
-                onClick={() => setDismissedConflictFingerprint(blockingConflictFingerprint)}
+                onClick={() => {
+                  sessionStorage.setItem(`conflict-dismissed:${sessionId}`, blockingConflictFingerprint);
+                  setDismissedConflictFingerprint(blockingConflictFingerprint);
+                }}
               >
                 <X className="w-4 h-4" />
               </button>
