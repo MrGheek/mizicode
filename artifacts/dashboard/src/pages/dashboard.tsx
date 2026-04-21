@@ -12,6 +12,7 @@ import {
   getGetSchedulerConfigQueryKey,
 } from "@workspace/api-client-react";
 import type { SchedulerConfig, UpdateSchedulerRequest } from "@workspace/api-client-react";
+import type { LaunchOptions } from "@/components/launch-session-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight } from "lucide-react";
@@ -41,9 +42,18 @@ export default function Dashboard() {
   const createSession = useCreateSession();
   const updateScheduler = useUpdateSchedulerConfig();
 
-  const handleLaunch = (profileId: number, teamMembers?: string[]) => {
+  const handleLaunch = (profileId: number, opts?: Omit<LaunchOptions, "profileId">) => {
     setLaunchingProfileId(profileId);
-    createSession.mutate({ data: { profileId, teamMembers: teamMembers ?? null } }, {
+    createSession.mutate({
+      data: {
+        profileId,
+        teamMembers: opts?.teamMembers ?? null,
+        taskMode: opts?.taskMode ?? null,
+        tokenMode: opts?.tokenMode ?? null,
+        bundleId: opts?.bundleId ?? null,
+        repoUrl: opts?.repoUrl ?? null,
+      }
+    }, {
       onSuccess: (session) => {
         toast({
           title: "Session Launched",

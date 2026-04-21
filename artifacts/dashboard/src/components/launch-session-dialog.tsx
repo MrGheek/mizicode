@@ -1,0 +1,357 @@
+import { useState, useEffect, useRef } from "react";
+import {
+  useCompileBundle,
+  useListSkillBundles,
+} from "@workspace/api-client-react";
+import type { GpuProfile, CompiledBundleResult } from "@workspace/api-client-react";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import {
+  Loader2, ChevronDown, ChevronRight, Wand2, Info,
+  Users, Plus, X, Play,
+} from "lucide-react";
+import { SkillClassBadge } from "@/components/skill-badges";
+
+export interface LaunchOptions {
+  profileId: number;
+  taskMode?: string | null;
+  tokenMode?: string | null;
+  bundleId?: number | null;
+  repoUrl?: string | null;
+  teamMembers?: string[];
+}
+
+interface LaunchSessionDialogProps {
+  profile: GpuProfile;
+  onConfirm: (opts: LaunchOptions) => void;
+  onClose: () => void;
+  isLaunching?: boolean;
+}
+
+const TASK_MODES = [
+  { value: "build",   label: "Build",   desc: "Writing new features and code" },
+  { value: "review",  label: "Review",  desc: "Code review and quality checks" },
+  { value: "debug",   label: "Debug",   desc: "Finding and fixing issues" },
+  { value: "refactor",label: "Refactor",desc: "Restructuring existing code" },
+  { value: "explore", label: "Explore", desc: "Research and experimentation" },
+  { value: "team",    label: "Team",    desc: "Collaborative multi-user session" },
+];
+
+const TOKEN_MODES = [
+  { value: "full",  label: "Full",  desc: "Maximum context, highest cost" },
+  { value: "core",  label: "Core",  desc: "Balanced context and efficiency" },
+  { value: "lean",  label: "Lean",  desc: "Reduced overhead, lower cost" },
+  { value: "ultra", label: "Ultra", desc: "Minimal context, lowest cost" },
+];
+
+type CompiledSkillItem = {
+  id?: string | number;
+  manifestId?: string;
+  name?: string;
+  class?: string;
+  summary?: string;
+};
+
+type ReasoningType = {
+  task?: string;
+  repo?: string;
+  model?: string;
+  tokenMode?: string;
+  [key: string]: unknown;
+};
+
+export function LaunchSessionDialog({
+  profile,
+  onConfirm,
+  onClose,
+  isLaunching,
+}: LaunchSessionDialogProps) {
+  const [taskMode, setTaskMode] = useState("build");
+  const [tokenMode, setTokenMode] = useState("core");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [bundleOverride, setBundleOverride] = useState<number | null | "none">(null);
+  const [reasoningExpanded, setReasoningExpanded] = useState(false);
+  const [teamOpen, setTeamOpen] = useState(false);
+  const [memberNames, setMemberNames] = useState<string[]>([""]);
+  const [recommendedBundle, setRecommendedBundle] = useState<CompiledBundleResult | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const compileBundle = useCompileBundle();
+  const { data: bundlesData } = useListSkillBundles();
+  const bundles = bundlesData?.bundles ?? [];
+
+  const compileRecommendation = () => {
+    compileBundle.mutate({
+      data: {
+        taskMode,
+        tokenMode,
+        modelProfile: profile.name,
+      },
+    }, {
+      onSuccess: (result) => setRecommendedBundle(result),
+      onError: () => setRecommendedBundle(null),
+    });
+  };
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(compileRecommendation, 400);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [taskMode, tokenMode, profile.id]);
+
+  const addMember = () => {
+    if (memberNames.length < 4) setMemberNames(prev => [...prev, ""]);
+  };
+  const removeMember = (i: number) => setMemberNames(prev => prev.filter((_, idx) => idx !== i));
+  const updateMember = (i: number, val: string) => setMemberNames(prev => prev.map((n, idx) => idx === i ? val : n));
+
+  const handleConfirm = () => {
+    const validTeam = teamOpen ? memberNames.map(n => n.trim()).filter(Boolean) : [];
+    onConfirm({
+      profileId: profile.id,
+      taskMode,
+      tokenMode,
+      bundleId: bundleOverride === "none" ? null : (bundleOverride ?? recommendedBundle?.bundleId ?? null),
+      repoUrl: repoUrl.trim() || null,
+      teamMembers: validTeam.length > 0 ? validTeam : undefined,
+    });
+  };
+
+  const displayedBundle = bundleOverride === "none"
+    ? null
+    : bundleOverride != null
+      ? bundles.find(b => b.id === bundleOverride) ?? null
+      : recommendedBundle;
+
+  const skillsToShow: CompiledSkillItem[] = bundleOverride == null
+    ? ((recommendedBundle?.skills ?? []) as CompiledSkillItem[])
+    : [];
+
+  const reasoning = (recommendedBundle?.reasoning ?? {}) as ReasoningType;
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Play className="w-4 h-4 text-primary" fill="currentColor" />
+            Launch: {profile.displayName}
+          </DialogTitle>
+          <p className="text-xs text-muted-foreground font-mono">
+            {profile.gpuName} x{profile.numGpus} · ${profile.estimatedCostMin.toFixed(2)}-${profile.estimatedCostMax.toFixed(2)}/hr
+          </p>
+        </DialogHeader>
+
+        <div className="space-y-5 py-2">
+          {/* Task Mode */}
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Task Mode</Label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {TASK_MODES.map(m => (
+                <button
+                  key={m.value}
+                  onClick={() => setTaskMode(m.value)}
+                  className={`text-left px-2.5 py-2 rounded border text-xs transition-colors ${
+                    taskMode === m.value
+                      ? "border-primary bg-primary/10 text-foreground"
+                      : "border-border/50 text-muted-foreground hover:border-border hover:text-foreground"
+                  }`}
+                >
+                  <div className="font-semibold">{m.label}</div>
+                  <div className="text-[10px] opacity-70 mt-0.5">{m.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Token Mode */}
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Token Mode</Label>
+            <div className="flex gap-1">
+              {TOKEN_MODES.map(m => (
+                <button
+                  key={m.value}
+                  onClick={() => setTokenMode(m.value)}
+                  title={m.desc}
+                  className={`flex-1 py-1.5 rounded text-xs font-medium transition-colors border ${
+                    tokenMode === m.value
+                      ? "border-primary bg-primary/10 text-foreground"
+                      : "border-border/50 text-muted-foreground hover:border-border hover:text-foreground"
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              {TOKEN_MODES.find(m => m.value === tokenMode)?.desc}
+            </p>
+          </div>
+
+          {/* Repo URL */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              Repo URL
+              <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground/60">(optional)</span>
+            </Label>
+            <Input
+              placeholder="https://github.com/org/repo"
+              value={repoUrl}
+              onChange={e => setRepoUrl(e.target.value)}
+              className="text-sm font-mono"
+            />
+            <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+              <Info className="w-3 h-3 shrink-0" />
+              Used to recommend the best skill bundle for your repo
+            </p>
+          </div>
+
+          {/* Recommended Bundle */}
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+              <Wand2 className="w-3.5 h-3.5 text-primary" />
+              Recommended Bundle
+              {compileBundle.isPending && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+            </Label>
+
+            {bundleOverride === "none" ? (
+              <div className="px-3 py-2 rounded border border-border/40 bg-secondary/20 text-sm text-muted-foreground">
+                No Skills (bundle disabled for this session)
+              </div>
+            ) : displayedBundle != null && "name" in displayedBundle ? (
+              <div className="px-3 py-2.5 rounded border border-primary/30 bg-primary/5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-sm">{(displayedBundle as { name: string }).name}</span>
+                  <Badge variant="outline" className="text-[10px]">
+                    {skillsToShow.length > 0 ? `${skillsToShow.length} skills` : "selected"}
+                  </Badge>
+                </div>
+                {skillsToShow.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {skillsToShow.map((s, i) => (
+                      s.class ? (
+                        <span key={s.id ?? i} title={s.name ?? String(s.id)}>
+                          <SkillClassBadge skillClass={s.class} />
+                        </span>
+                      ) : null
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : compileBundle.isPending ? (
+              <div className="px-3 py-2 rounded border border-border/40 bg-secondary/20 flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Calculating best bundle…
+              </div>
+            ) : (
+              <div className="px-3 py-2 rounded border border-border/40 bg-secondary/20 text-sm text-muted-foreground">
+                No bundle recommended
+              </div>
+            )}
+
+            {/* Explain why collapsible */}
+            {bundleOverride == null && recommendedBundle && Object.keys(reasoning).length > 0 && (
+              <button
+                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => setReasoningExpanded(v => !v)}
+              >
+                {reasoningExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                Explain why
+              </button>
+            )}
+            {reasoningExpanded && reasoning && (
+              <div className="rounded border border-border/40 bg-secondary/20 p-2.5 space-y-1 text-xs">
+                {reasoning.task && <p><span className="text-muted-foreground">Task match:</span> {reasoning.task}</p>}
+                {reasoning.repo && <p><span className="text-muted-foreground">Repo match:</span> {reasoning.repo}</p>}
+                {reasoning.model && <p><span className="text-muted-foreground">Model:</span> {reasoning.model}</p>}
+                {reasoning.tokenMode && <p><span className="text-muted-foreground">Token mode:</span> {reasoning.tokenMode}</p>}
+              </div>
+            )}
+
+            {/* Override */}
+            <div className="flex items-center gap-2">
+              <Label className="text-[10px] text-muted-foreground shrink-0">Override:</Label>
+              <select
+                className="flex-1 h-7 text-xs rounded border border-border/50 bg-background px-2 text-foreground"
+                value={bundleOverride == null ? "__auto__" : bundleOverride === "none" ? "__none__" : String(bundleOverride)}
+                onChange={e => {
+                  if (e.target.value === "__auto__") setBundleOverride(null);
+                  else if (e.target.value === "__none__") setBundleOverride("none");
+                  else setBundleOverride(Number(e.target.value));
+                }}
+              >
+                <option value="__auto__">Auto (recommended)</option>
+                <option value="__none__">No skills</option>
+                {bundles.map(b => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Team members */}
+          <div className="border border-border/40 rounded-md overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setTeamOpen(v => !v)}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/20 transition-colors"
+            >
+              <span className="flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5" />
+                Add team members
+                {teamOpen && memberNames.filter(Boolean).length > 0 && (
+                  <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">
+                    {memberNames.filter(Boolean).length}
+                  </Badge>
+                )}
+              </span>
+              {teamOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </button>
+            {teamOpen && (
+              <div className="px-3 pb-3 space-y-2 bg-secondary/10">
+                <p className="text-[10px] text-muted-foreground/70 pt-2">
+                  Each member gets a private IDE with a unique password (up to 4).
+                </p>
+                {memberNames.map((name, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      value={name}
+                      onChange={e => updateMember(i, e.target.value)}
+                      placeholder={`Member ${i + 1} name`}
+                      className="h-7 text-xs bg-background/50 border-border/50"
+                      maxLength={24}
+                    />
+                    {memberNames.length > 1 && (
+                      <button type="button" onClick={() => removeMember(i)} className="text-muted-foreground hover:text-destructive shrink-0">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {memberNames.length < 4 && (
+                  <button type="button" onClick={addMember} className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors">
+                    <Plus className="w-3 h-3" /> Add another
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={isLaunching}>Cancel</Button>
+          <Button onClick={handleConfirm} disabled={isLaunching} className="gap-2">
+            {isLaunching
+              ? <><Loader2 className="w-4 h-4 animate-spin" /> Launching…</>
+              : <><Play className="w-4 h-4" fill="currentColor" /> Launch Session</>
+            }
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
