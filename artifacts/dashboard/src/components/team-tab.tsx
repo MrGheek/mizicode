@@ -12,6 +12,7 @@ import {
   getListHeavyJobsQueryKey,
   getGetSessionCoordinationQueryKey,
 } from "@workspace/api-client-react";
+import { useCoordinationStream } from "@/hooks/use-coordination-stream";
 import type {
   LaneWithPolicy,
   ConflictItem,
@@ -611,13 +612,14 @@ function HandoffFeedItem({
 }
 
 export function TeamTab({ sessionId }: { sessionId: number }) {
+  useCoordinationStream(sessionId);
   const queryClient = useQueryClient();
 
   const { data: lanesData, isLoading: lanesLoading, isError: lanesError } = useListSessionLanes(sessionId, {
     query: {
       enabled: !!sessionId,
       queryKey: getListSessionLanesQueryKey(sessionId),
-      refetchInterval: 15000,
+      refetchInterval: 5000,
     },
   });
 
@@ -625,7 +627,7 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
     query: {
       enabled: !!sessionId,
       queryKey: getGetSessionConflictsQueryKey(sessionId),
-      refetchInterval: 20000,
+      refetchInterval: 5000,
     },
   });
 
@@ -636,7 +638,7 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
       query: {
         enabled: !!sessionId,
         queryKey: getListHeavyJobsQueryKey(sessionId, { status: "queued,running,deferred" }),
-        refetchInterval: 15000,
+        refetchInterval: 5000,
       },
     }
   );
@@ -645,7 +647,7 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
     query: {
       enabled: !!sessionId,
       queryKey: getGetSessionCoordinationQueryKey(sessionId),
-      refetchInterval: 20000,
+      refetchInterval: 5000,
     },
   });
 

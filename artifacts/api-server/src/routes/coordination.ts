@@ -43,6 +43,40 @@ import type { HeavyJobClass, HeavyJobStatus, HandoffType, ClaimType, SessionLane
 
 const router = Router({ mergeParams: true });
 
+// ─── SSE broadcaster for real-time Team tab updates ───────────────────────────
+
+type SseClient = import("express").Response;
+const coordinationClients = new Map<number, Set<SseClient>>();
+
+function addCoordinationClient(sessionId: number, res: SseClient): void {
+  let clients = coordinationClients.get(sessionId);
+  if (!clients) {
+    clients = new Set();
+    coordinationClients.set(sessionId, clients);
+  }
+  clients.add(res);
+}
+
+function removeCoordinationClient(sessionId: number, res: SseClient): void {
+  const clients = coordinationClients.get(sessionId);
+  if (clients) {
+    clients.delete(res);
+    if (clients.size === 0) coordinationClients.delete(sessionId);
+  }
+}
+
+function broadcastCoordinationUpdate(sessionId: number): void {
+  const clients = coordinationClients.get(sessionId);
+  if (!clients || clients.size === 0) return;
+  const payload = `data: ${JSON.stringify({ type: "coordination_update", sessionId })}\n\n`;
+  const dead: SseClient[] = [];
+  for (const res of clients) {
+    try { res.write(payload); } catch { dead.push(res); }
+  }
+  for (const res of dead) clients.delete(res);
+  if (clients.size === 0) coordinationClients.delete(sessionId);
+}
+
 // ─── Enums matching OpenAPI contract ──────────────────────────────────────────
 
 const VALID_LANE_STATUSES = ["active", "blocked", "review-needed", "ready-to-merge"] as const;
@@ -237,6 +271,7 @@ router.post("/sessions/:id/lanes", async (req, res) => {
   }).returning();
 
   logger.info({ laneId: lane.id, sessionId, memberIdentifier, laneType: resolvedLaneType }, "Lane created");
+  broadcastCoordinationUpdate(sessionId);
 
   // Fire-and-forget: compile per-lane overlay bundles and persist overlayBundleId.
   // Does not block the response — overlay delivery is eventually consistent.
@@ -307,6 +342,7 @@ router.put("/sessions/:id/lanes/:laneId", async (req, res) => {
   const [updated] = await db.update(sessionLanesTable).set(updates)
     .where(eq(sessionLanesTable.id, laneId)).returning();
 
+  broadcastCoordinationUpdate(sessionId);
   res.json(serializeLane(updated));
 });
 
@@ -417,6 +453,7 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
     : overlaps.some(o => o.recommendation === "warn") ? "warn"
     : "no_conflict";
 
+  broadcastCoordinationUpdate(sessionId);
   logger.info({ claimId: claim.id, laneId, resourcePath, overlaps: overlaps.length }, "Lane claim created");
   res.status(201).json({
     claim: serializeClaim(claim, lane.memberIdentifier),
@@ -462,6 +499,7 @@ router.delete("/sessions/:id/lanes/:laneId/claim/:claimId", async (req, res) => 
     .set({ active: false })
     .where(eq(laneClaimsTable.id, claimId));
 
+  broadcastCoordinationUpdate(sessionId);
   logger.info({ claimId, laneId }, "Lane claim released");
   res.json({ claimId, action: "released", expiresAt: null });
 });
@@ -515,6 +553,7 @@ router.post("/sessions/:id/lanes/:laneId/handoff", async (req, res) => {
       .where(eq(sessionLanesTable.id, laneId));
   }
 
+  broadcastCoordinationUpdate(sessionId);
   logger.info({ handoffId: handoff.id, laneId, handoffType }, "Lane handoff signal created");
   res.status(201).json(serializeHandoff(handoff));
 });
@@ -723,6 +762,7 @@ router.post("/sessions/:id/heavy-jobs", async (req, res) => {
     payload,
   });
 
+  broadcastCoordinationUpdate(sessionId);
   res.status(201).json(serializeJob(job));
 });
 
@@ -807,7 +847,34 @@ router.patch("/sessions/:id/heavy-jobs/:jobId", async (req, res) => {
     .where(eq(laneHeavyJobsTable.id, jobId));
   if (!updated) { res.status(404).json({ error: "Job not found after update" }); return; }
 
+  broadcastCoordinationUpdate(sessionId);
   res.json(serializeJob(updated));
+});
+
+// ─── GET /api/sessions/:id/coordination/stream ────────────────────────────────
+// SSE endpoint: pushes a `coordination_update` event whenever lanes, claims,
+// conflicts, handoffs, or heavy jobs change for this session.
+
+router.get("/sessions/:id/coordination/stream", (req, res) => {
+  const sessionId = getSessionId(req);
+  if (!sessionId) { res.status(400).json({ error: "Invalid session ID" }); return; }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  addCoordinationClient(sessionId, res);
+
+  const keepAlive = setInterval(() => {
+    try { res.write(": ping\n\n"); } catch { /* ignore */ }
+  }, 20000);
+
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    removeCoordinationClient(sessionId, res);
+  });
 });
 
 export { router as coordinationRouter };
