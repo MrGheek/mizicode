@@ -1,8 +1,12 @@
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useListSessionLanes,
   useGetSessionConflicts,
   useListHeavyJobs,
   useGetSessionCoordination,
+  useReleaseLaneClaim,
+  useCreateLaneHandoff,
   getListSessionLanesQueryKey,
   getGetSessionConflictsQueryKey,
   getListHeavyJobsQueryKey,
@@ -13,10 +17,28 @@ import type {
   ConflictItem,
   HeavyJobResponse,
   HandoffResponse,
+  CreateHandoffRequest,
 } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Users,
   AlertTriangle,
@@ -26,6 +48,8 @@ import {
   ArrowRight,
   Zap,
   Bell,
+  X,
+  Send,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -116,12 +140,242 @@ function HandoffTypeBadge({ handoffType }: { handoffType: string }) {
   );
 }
 
+const HANDOFF_TYPES: Array<{ value: CreateHandoffRequest["handoffType"]; label: string }> = [
+  { value: "blocked", label: "Blocked" },
+  { value: "needs_review", label: "Needs Review" },
+  { value: "safe_to_merge", label: "Safe to Merge" },
+  { value: "watch_files", label: "Watch Files" },
+  { value: "related_lane", label: "Related Lane" },
+];
+
+function SendHandoffDialog({
+  sessionId,
+  lane,
+  allLanes,
+  onSuccess,
+}: {
+  sessionId: number;
+  lane: LaneWithPolicy;
+  allLanes: LaneWithPolicy[];
+  onSuccess: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [handoffType, setHandoffType] = useState<CreateHandoffRequest["handoffType"]>("needs_review");
+  const [targetLaneId, setTargetLaneId] = useState<string>("all");
+  const [message, setMessage] = useState("");
+
+  const mutation = useCreateLaneHandoff();
+  const isPending = mutation.status === "pending";
+
+  const otherLanes = allLanes.filter((l) => l.id !== lane.id);
+
+  function handleSubmit() {
+    const toLaneIds = targetLaneId === "all" ? [] : [Number(targetLaneId)];
+    mutation.mutate(
+      {
+        id: sessionId,
+        laneId: lane.id,
+        data: {
+          handoffType,
+          toLaneIds,
+          resourcePaths: lane.claims.map((c) => c.resourcePath),
+          message: message.trim() || null,
+        },
+      },
+      {
+        onSuccess: () => {
+          setOpen(false);
+          setMessage("");
+          setHandoffType("needs_review");
+          setTargetLaneId("all");
+          onSuccess();
+        },
+      }
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-6 px-2 text-[10px] gap-1 border-border/50 text-muted-foreground hover:text-foreground"
+        >
+          <Send className="w-2.5 h-2.5" />
+          Send handoff
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="text-sm flex items-center gap-2">
+            <Send className="w-4 h-4" />
+            Send Handoff Signal
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-1">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">From lane</Label>
+            <p className="text-sm font-medium">{lane.memberIdentifier}</p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground" htmlFor="handoff-type">
+              Handoff type
+            </Label>
+            <Select
+              value={handoffType}
+              onValueChange={(v) => setHandoffType(v as CreateHandoffRequest["handoffType"])}
+            >
+              <SelectTrigger id="handoff-type" className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {HANDOFF_TYPES.map((ht) => (
+                  <SelectItem key={ht.value} value={ht.value} className="text-xs">
+                    {ht.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground" htmlFor="target-lane">
+              Target lane
+            </Label>
+            <Select value={targetLaneId} onValueChange={setTargetLaneId}>
+              <SelectTrigger id="target-lane" className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-xs">All lanes (broadcast)</SelectItem>
+                {otherLanes.map((l) => (
+                  <SelectItem key={l.id} value={String(l.id)} className="text-xs">
+                    {l.memberIdentifier}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground" htmlFor="handoff-message">
+              Message <span className="opacity-50">(optional)</span>
+            </Label>
+            <Textarea
+              id="handoff-message"
+              placeholder="Add a note for the recipient..."
+              className="h-16 text-xs resize-none"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+            />
+          </div>
+
+          {mutation.isError && (
+            <p className="text-xs text-red-400">Failed to send handoff. Please try again.</p>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setOpen(false)}
+              disabled={isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={handleSubmit}
+              disabled={isPending}
+            >
+              {isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+              Send
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ClaimRow({
+  claim,
+  sessionId,
+  laneId,
+  isConflicted,
+  conflictSeverity,
+  onReleased,
+}: {
+  claim: LaneWithPolicy["claims"][number];
+  sessionId: number;
+  laneId: number;
+  isConflicted: boolean;
+  conflictSeverity: string | undefined;
+  onReleased: () => void;
+}) {
+  const mutation = useReleaseLaneClaim();
+  const isPending = mutation.status === "pending";
+
+  function handleRelease() {
+    mutation.mutate(
+      { id: sessionId, laneId, claimId: claim.id },
+      { onSuccess: onReleased }
+    );
+  }
+
+  return (
+    <div
+      className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-mono ${
+        conflictSeverity === "block"
+          ? "bg-red-500/10 border border-red-500/20"
+          : conflictSeverity === "warn"
+          ? "bg-yellow-500/10 border border-yellow-500/20"
+          : "bg-secondary/20"
+      }`}
+    >
+      <FolderOpen className="w-3 h-3 text-muted-foreground shrink-0" />
+      <span className="truncate flex-1 text-foreground/80" title={claim.resourcePath}>
+        {claim.resourcePath}
+      </span>
+      <ClaimTypeBadge claimType={claim.claimType} />
+      {isConflicted && conflictSeverity === "block" && (
+        <XCircle className="w-3 h-3 text-red-400 shrink-0" />
+      )}
+      {isConflicted && conflictSeverity === "warn" && (
+        <AlertTriangle className="w-3 h-3 text-yellow-400 shrink-0" />
+      )}
+      <button
+        onClick={handleRelease}
+        disabled={isPending}
+        title="Release claim"
+        className="ml-0.5 shrink-0 text-muted-foreground/50 hover:text-red-400 transition-colors disabled:opacity-40"
+      >
+        {isPending ? (
+          <Loader2 className="w-3 h-3 animate-spin" />
+        ) : (
+          <X className="w-3 h-3" />
+        )}
+      </button>
+    </div>
+  );
+}
+
 function LaneCard({
   lane,
   conflicts,
+  sessionId,
+  allLanes,
+  onMutationSuccess,
 }: {
   lane: LaneWithPolicy;
   conflicts: ConflictItem[];
+  sessionId: number;
+  allLanes: LaneWithPolicy[];
+  onMutationSuccess: () => void;
 }) {
   const laneConflicts = conflicts.filter(
     (c) => c.laneIdA === lane.id || c.laneIdB === lane.id
@@ -155,6 +409,12 @@ function LaneCard({
           {hasBlock && <XCircle className="w-3.5 h-3.5 text-red-400" />}
           {!hasBlock && hasWarn && <AlertTriangle className="w-3.5 h-3.5 text-yellow-400" />}
           <LaneStatusBadge status={lane.status} />
+          <SendHandoffDialog
+            sessionId={sessionId}
+            lane={lane}
+            allLanes={allLanes}
+            onSuccess={onMutationSuccess}
+          />
         </div>
       </div>
 
@@ -182,28 +442,15 @@ function LaneCard({
                   (c.laneIdA === lane.id || c.laneIdB === lane.id)
               )?.recommendation;
               return (
-                <div
+                <ClaimRow
                   key={claim.id}
-                  className={`flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-mono ${
-                    conflictSeverity === "block"
-                      ? "bg-red-500/10 border border-red-500/20"
-                      : conflictSeverity === "warn"
-                      ? "bg-yellow-500/10 border border-yellow-500/20"
-                      : "bg-secondary/20"
-                  }`}
-                >
-                  <FolderOpen className="w-3 h-3 text-muted-foreground shrink-0" />
-                  <span className="truncate flex-1 text-foreground/80" title={claim.resourcePath}>
-                    {claim.resourcePath}
-                  </span>
-                  <ClaimTypeBadge claimType={claim.claimType} />
-                  {isConflicted && conflictSeverity === "block" && (
-                    <XCircle className="w-3 h-3 text-red-400 shrink-0" />
-                  )}
-                  {isConflicted && conflictSeverity === "warn" && (
-                    <AlertTriangle className="w-3 h-3 text-yellow-400 shrink-0" />
-                  )}
-                </div>
+                  claim={claim}
+                  sessionId={sessionId}
+                  laneId={lane.id}
+                  isConflicted={isConflicted}
+                  conflictSeverity={conflictSeverity}
+                  onReleased={onMutationSuccess}
+                />
               );
             })}
           </div>
@@ -364,6 +611,8 @@ function HandoffFeedItem({
 }
 
 export function TeamTab({ sessionId }: { sessionId: number }) {
+  const queryClient = useQueryClient();
+
   const { data: lanesData, isLoading: lanesLoading, isError: lanesError } = useListSessionLanes(sessionId, {
     query: {
       enabled: !!sessionId,
@@ -402,6 +651,13 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
 
   const isLoading = lanesLoading || conflictsLoading || jobsLoading || coordLoading;
   const hasError = lanesError || conflictsError || jobsError || coordError;
+
+  function invalidateAll() {
+    queryClient.invalidateQueries({ queryKey: getListSessionLanesQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getGetSessionConflictsQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getGetSessionCoordinationQueryKey(sessionId) });
+    queryClient.invalidateQueries({ queryKey: getListHeavyJobsQueryKey(sessionId, { status: "queued,running,deferred" }) });
+  }
 
   if (isLoading) {
     return (
@@ -477,7 +733,14 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
           </div>
           <div className="space-y-2">
             {lanes.map((lane) => (
-              <LaneCard key={lane.id} lane={lane} conflicts={conflicts} />
+              <LaneCard
+                key={lane.id}
+                lane={lane}
+                conflicts={conflicts}
+                sessionId={sessionId}
+                allLanes={lanes}
+                onMutationSuccess={invalidateAll}
+              />
             ))}
           </div>
         </div>
