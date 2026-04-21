@@ -80,11 +80,38 @@ export const skillFeedbackTable = pgTable("skill_feedback", {
 export const repoGraphJobsTable = pgTable("repo_graph_jobs", {
   id: serial("id").primaryKey(),
   sessionId: integer("session_id").notNull(),
-  status: text("status").notNull().default("pending"),
+  repoPath: text("repo_path"),
+  status: text("status").notNull().default("queued"),
   graphPath: text("graph_path"),
   indexedSymbols: integer("indexed_symbols"),
+  edgeCount: integer("edge_count"),
+  retrievalStatus: text("retrieval_status"),
+  indexVersion: integer("index_version").notNull().default(1),
+  embeddingsStatus: text("embeddings_status"),
+  errorDetails: text("error_details"),
+  contentHashSeed: text("content_hash_seed"),
+  durationMs: integer("duration_ms"),
   lastRunAt: timestamp("last_run_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const sessionRepoContextTable = pgTable("session_repo_context", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").notNull(),
+  repoPath: text("repo_path").notNull(),
+  repoUrl: text("repo_url"),
+  fingerprintJson: jsonb("fingerprint_json"),
+  fingerprintHash: text("fingerprint_hash"),
+  summaryJson: jsonb("summary_json"),
+  symbolsJson: jsonb("symbols_json"),
+  filesJson: jsonb("files_json"),
+  edgesJson: jsonb("edges_json"),
+  indexStatus: text("index_status").notNull().default("queued"),
+  isStale: boolean("is_stale").notNull().default(false),
+  confidenceLevel: text("confidence_level").notNull().default("none"),
+  indexedAt: timestamp("indexed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 export const insertSkillSchema = createInsertSchema(skillsTable).omit({ id: true, createdAt: true, updatedAt: true });
@@ -94,3 +121,5 @@ export type SkillSource = typeof skillSourcesTable.$inferSelect;
 export type SkillVersion = typeof skillVersionsTable.$inferSelect;
 export type SkillBundle = typeof skillBundlesTable.$inferSelect;
 export type SessionSkills = typeof sessionSkillsTable.$inferSelect;
+export type RepoGraphJob = typeof repoGraphJobsTable.$inferSelect;
+export type SessionRepoContext = typeof sessionRepoContextTable.$inferSelect;

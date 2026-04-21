@@ -97,6 +97,17 @@ export const TOKEN_MODE_PROFILES: Record<TokenMode, TokenModeProfile> = {
   },
 };
 
+export interface RepoIntelligenceContext {
+  primaryLangs: string[];
+  frameworks: string[];
+  monorepo: boolean;
+  graphDensity?: number;
+  complexityClass?: "low" | "medium" | "high" | "very-high";
+  confidenceLevel: "none" | "fingerprint" | "partial" | "full";
+  isStale: boolean;
+  hotspotPaths?: string[];
+}
+
 export interface SessionContext {
   sessionType: SessionType;
   taskMode: TaskMode;
@@ -105,6 +116,7 @@ export interface SessionContext {
   repoKind?: string;
   tokenMode: TokenMode;
   historyScores?: Record<string, number>;
+  repoIntelligence?: RepoIntelligenceContext;
 }
 
 export interface CompiledBundle {
@@ -118,6 +130,7 @@ export interface CompiledBundle {
     model: string;
     tokenMode: string;
   };
+  repoConfidenceLevel?: string;
 }
 
 export interface RepoFingerprint {

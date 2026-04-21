@@ -454,6 +454,200 @@ export interface SkillFeedbackResponse {
   feedback: SkillFeedbackResponseFeedback;
 }
 
+export interface RepoIndexRequest {
+  /** Absolute path to the repo on the instance. Defaults to /workspace/projects for team-owner sessions. */
+  repoPath?: string | null;
+  /** Optional original repository URL for metadata. */
+  repoUrl?: string | null;
+}
+
+export interface RepoIndexResponse {
+  jobId: number;
+  /** queued | scanning | fingerprinting | indexing_graph | indexing_fts | indexing_vectors | summarizing | ready | error */
+  status: string;
+  /** true if an existing active/queued job was returned rather than a new one created */
+  isExisting: boolean;
+  /** true if the previous index is stale and a fresh job has been enqueued */
+  isStale?: boolean;
+}
+
+export interface RepoJobStatus {
+  id: number;
+  sessionId: number;
+  repoPath?: string | null;
+  status: string;
+  indexedSymbols?: number | null;
+  edgeCount?: number | null;
+  embeddingsStatus?: string | null;
+  retrievalStatus?: string | null;
+  errorDetails?: string | null;
+  durationMs?: number | null;
+  lastRunAt?: string | null;
+  createdAt: string;
+}
+
+export interface RepoFingerprintData {
+  primaryLangs: string[];
+  allLangs: string[];
+  frameworks: string[];
+  packageManager?: string | null;
+  monorepo: boolean;
+  testTooling: string[];
+  entryPoints: string[];
+  fileCount: number;
+  fingerprintHash?: string | null;
+}
+
+export interface RepoFingerprintResponse {
+  sessionId: number;
+  indexStatus: string;
+  isStale: boolean;
+  fingerprint?: RepoFingerprintData | null;
+  indexedAt?: string | null;
+}
+
+export interface RepoHotspot {
+  path: string;
+  score: number;
+  centralityScore?: number;
+  dependencyDegree?: number;
+  fileSizeBytes?: number;
+  lang?: string | null;
+}
+
+export interface RepoModule {
+  name: string;
+  path: string;
+  fileCount: number;
+  primaryLang?: string | null;
+  description?: string | null;
+}
+
+export interface RepoSummaryData {
+  architectureSketch: string;
+  majorModules: RepoModule[];
+  hotspots: RepoHotspot[];
+  testStrategy?: string | null;
+  graphDensity?: number | null;
+  /** low | medium | high | very-high */
+  complexityClass?: string | null;
+}
+
+export interface RepoSummaryResponse {
+  sessionId: number;
+  indexStatus: string;
+  isStale: boolean;
+  /** none | fingerprint | partial | full */
+  confidenceLevel: string;
+  summary?: RepoSummaryData | null;
+  indexedAt?: string | null;
+}
+
+export type RepoSearchResultType =
+  (typeof RepoSearchResultType)[keyof typeof RepoSearchResultType];
+
+export const RepoSearchResultType = {
+  file: "file",
+  symbol: "symbol",
+  chunk: "chunk",
+} as const;
+
+export type RepoSearchResultScores = {
+  combined: number;
+  lexical: number;
+  semantic: number;
+  graph: number;
+  confidence: number;
+};
+
+export interface RepoSearchResult {
+  type: RepoSearchResultType;
+  path: string;
+  name?: string | null;
+  lang?: string | null;
+  kind?: string | null;
+  snippet?: string | null;
+  line?: number | null;
+  scores: RepoSearchResultScores;
+}
+
+export interface RepoSearchResponse {
+  sessionId: number;
+  q: string;
+  total: number;
+  indexStatus: string;
+  isStale: boolean;
+  confidenceLevel: string;
+  results: RepoSearchResult[];
+}
+
+export interface RepoBlastRadiusItem {
+  path: string;
+  /** direct_dependent | affected_test | related_module */
+  relation: string;
+  confidence: number;
+}
+
+export interface RepoBlastRadiusResponse {
+  sessionId: number;
+  file: string;
+  indexStatus: string;
+  isStale: boolean;
+  directDependents: RepoBlastRadiusItem[];
+  affectedTests: RepoBlastRadiusItem[];
+  relatedModules: RepoBlastRadiusItem[];
+  overallConfidence: number;
+}
+
+export interface RepoSymbolItem {
+  name: string;
+  kind: string;
+  path: string;
+  line?: number | null;
+  lang?: string | null;
+  signature?: string | null;
+  docstring?: string | null;
+  callers: string[];
+  callees: string[];
+}
+
+export interface RepoSymbolResponse {
+  sessionId: number;
+  indexStatus: string;
+  isStale: boolean;
+  symbols: RepoSymbolItem[];
+  total: number;
+}
+
+export type RepoSyncRequestFingerprint = { [key: string]: unknown } | null;
+
+export type RepoSyncRequestSummary = { [key: string]: unknown } | null;
+
+export type RepoSyncRequestSymbolsItem = { [key: string]: unknown };
+
+export type RepoSyncRequestFilesItem = { [key: string]: unknown };
+
+export type RepoSyncRequestEdgesItem = { [key: string]: unknown };
+
+export interface RepoSyncRequest {
+  jobId: number;
+  status: string;
+  repoPath: string;
+  fingerprintHash?: string | null;
+  fingerprint?: RepoSyncRequestFingerprint;
+  summary?: RepoSyncRequestSummary;
+  /** Top symbols for cloud-side search approximation (max 500) */
+  symbols?: RepoSyncRequestSymbolsItem[] | null;
+  /** Top files with metadata for cloud-side search approximation (max 500) */
+  files?: RepoSyncRequestFilesItem[] | null;
+  /** Import/caller edges for blast-radius approximation (max 2000) */
+  edges?: RepoSyncRequestEdgesItem[] | null;
+  indexedSymbols?: number | null;
+  edgeCount?: number | null;
+  durationMs?: number | null;
+  errorDetails?: string | null;
+}
+
 export type SearchOffersParams = {
   /**
    * Filter offers by GPU profile
@@ -517,4 +711,52 @@ export const ListSkillsReviewStatus = {
   pending: "pending",
   approved: "approved",
   rejected: "rejected",
+} as const;
+
+export type SearchRepoParams = {
+  q: string;
+  type?: SearchRepoType;
+  limit?: number;
+  offset?: number;
+  lang?: string;
+  pathPrefix?: string;
+};
+
+export type SearchRepoType =
+  (typeof SearchRepoType)[keyof typeof SearchRepoType];
+
+export const SearchRepoType = {
+  file: "file",
+  symbol: "symbol",
+  chunk: "chunk",
+} as const;
+
+export type GetRepoBlastRadiusParams = {
+  /**
+   * Relative file path within the repo
+   */
+  file: string;
+};
+
+export type GetRepoSymbolParams = {
+  name?: string;
+  path?: string;
+  lang?: string;
+  kind?: GetRepoSymbolKind;
+};
+
+export type GetRepoSymbolKind =
+  (typeof GetRepoSymbolKind)[keyof typeof GetRepoSymbolKind];
+
+export const GetRepoSymbolKind = {
+  function: "function",
+  class: "class",
+  interface: "interface",
+  type: "type",
+  variable: "variable",
+  constant: "constant",
+  enum: "enum",
+  struct: "struct",
+  import: "import",
+  export: "export",
 } as const;

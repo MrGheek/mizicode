@@ -22,6 +22,8 @@ tags:
     description: Session scheduler configuration
   - name: skills
     description: Smart Skills library and bundle management
+  - name: repo
+    description: Repository intelligence — indexing, search, fingerprint, and blast radius
 
 paths:
   /healthz:
@@ -886,6 +888,296 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Skill not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{sessionId}/repo/index:
+    post:
+      operationId: enqueueRepoIndex
+      tags: [sessions]
+      summary: Enqueue a repo indexing job
+      description: Enqueues an async indexing job for the session's repository. Returns immediately with jobId and status. Deduplicates on active/queued jobs. Completed or error jobs trigger a full rebuild.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RepoIndexRequest"
+      responses:
+        "202":
+          description: Job enqueued (or existing active job returned)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoIndexResponse"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{sessionId}/repo/fingerprint:
+    get:
+      operationId: getRepoFingerprint
+      tags: [sessions]
+      summary: Get repository fingerprint
+      description: Returns detected languages, frameworks, monorepo flag, package manager, test tooling, and entry points. Populated by the Claw Runner after indexing.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Repository fingerprint
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoFingerprintResponse"
+        "404":
+          description: Session not found or no index yet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{sessionId}/repo/summary:
+    get:
+      operationId: getRepoSummary
+      tags: [sessions]
+      summary: Get repository architecture summary
+      description: Returns a compact architecture sketch with major modules, hotspots, and test strategy.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Repository summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoSummaryResponse"
+        "404":
+          description: Session not found or no summary yet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{sessionId}/repo/search:
+    get:
+      operationId: searchRepo
+      tags: [sessions]
+      summary: Search the repository index
+      description: Searches indexed files, symbols, and chunks. Each result includes combined, lexical, semantic, graph, and confidence scores.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [file, symbol, chunk]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: lang
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: pathPrefix
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Search results with score breakdowns
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoSearchResponse"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{sessionId}/repo/blast-radius:
+    get:
+      operationId: getRepoBlastRadius
+      tags: [sessions]
+      summary: Get blast radius for a file
+      description: Returns direct dependents, likely affected tests, and related modules with confidence scores.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: file
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Relative file path within the repo
+      responses:
+        "200":
+          description: Blast radius analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoBlastRadiusResponse"
+        "404":
+          description: Session not found or file not indexed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{sessionId}/repo/symbol:
+    get:
+      operationId: getRepoSymbol
+      tags: [sessions]
+      summary: Look up a symbol in the repo index
+      description: Returns symbol definition details. Accepts name, path, lang, and kind query params to disambiguate.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: name
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: lang
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [function, class, interface, type, variable, constant, enum, struct, import, export]
+      responses:
+        "200":
+          description: Matching symbols
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoSymbolResponse"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{sessionId}/repo/sync:
+    post:
+      operationId: syncRepoIndex
+      tags: [sessions]
+      summary: Instance callback — sync indexed repo data
+      description: Called by the Claw Runner on the instance to push fingerprint, summary, symbols, and files into the cloud API. Authenticated with the same Bearer token as the status callback.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RepoSyncRequest"
+      responses:
+        "200":
+          description: Sync accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Invalid payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{sessionId}/repo/jobs/{jobId}:
+    get:
+      operationId: getRepoJob
+      tags: [sessions]
+      summary: Get repo indexing job status
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoJobStatus"
+        "404":
+          description: Job not found
           content:
             application/json:
               schema:
@@ -1852,3 +2144,474 @@ components:
           additionalProperties: true
       required:
         - feedback
+
+    RepoIndexRequest:
+      type: object
+      properties:
+        repoPath:
+          type: string
+          nullable: true
+          description: Absolute path to the repo on the instance. Defaults to /workspace/projects for team-owner sessions.
+        repoUrl:
+          type: string
+          nullable: true
+          description: Optional original repository URL for metadata.
+
+    RepoIndexResponse:
+      type: object
+      properties:
+        jobId:
+          type: integer
+        status:
+          type: string
+          description: "queued | scanning | fingerprinting | indexing_graph | indexing_fts | indexing_vectors | summarizing | ready | error"
+        isExisting:
+          type: boolean
+          description: true if an existing active/queued job was returned rather than a new one created
+        isStale:
+          type: boolean
+          description: true if the previous index is stale and a fresh job has been enqueued
+      required:
+        - jobId
+        - status
+        - isExisting
+
+    RepoJobStatus:
+      type: object
+      properties:
+        id:
+          type: integer
+        sessionId:
+          type: integer
+        repoPath:
+          type: string
+          nullable: true
+        status:
+          type: string
+        indexedSymbols:
+          type: integer
+          nullable: true
+        edgeCount:
+          type: integer
+          nullable: true
+        embeddingsStatus:
+          type: string
+          nullable: true
+        retrievalStatus:
+          type: string
+          nullable: true
+        errorDetails:
+          type: string
+          nullable: true
+        durationMs:
+          type: integer
+          nullable: true
+        lastRunAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - sessionId
+        - status
+        - createdAt
+
+    RepoFingerprintData:
+      type: object
+      properties:
+        primaryLangs:
+          type: array
+          items:
+            type: string
+        allLangs:
+          type: array
+          items:
+            type: string
+        frameworks:
+          type: array
+          items:
+            type: string
+        packageManager:
+          type: string
+          nullable: true
+        monorepo:
+          type: boolean
+        testTooling:
+          type: array
+          items:
+            type: string
+        entryPoints:
+          type: array
+          items:
+            type: string
+        fileCount:
+          type: integer
+        fingerprintHash:
+          type: string
+          nullable: true
+      required:
+        - primaryLangs
+        - allLangs
+        - frameworks
+        - monorepo
+        - testTooling
+        - entryPoints
+        - fileCount
+
+    RepoFingerprintResponse:
+      type: object
+      properties:
+        sessionId:
+          type: integer
+        indexStatus:
+          type: string
+        isStale:
+          type: boolean
+        fingerprint:
+          $ref: "#/components/schemas/RepoFingerprintData"
+          nullable: true
+        indexedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - sessionId
+        - indexStatus
+        - isStale
+
+    RepoHotspot:
+      type: object
+      properties:
+        path:
+          type: string
+        score:
+          type: number
+        centralityScore:
+          type: number
+        dependencyDegree:
+          type: integer
+        fileSizeBytes:
+          type: integer
+        lang:
+          type: string
+          nullable: true
+      required:
+        - path
+        - score
+
+    RepoModule:
+      type: object
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        fileCount:
+          type: integer
+        primaryLang:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+      required:
+        - name
+        - path
+        - fileCount
+
+    RepoSummaryData:
+      type: object
+      properties:
+        architectureSketch:
+          type: string
+        majorModules:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepoModule"
+        hotspots:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepoHotspot"
+        testStrategy:
+          type: string
+          nullable: true
+        graphDensity:
+          type: number
+          nullable: true
+        complexityClass:
+          type: string
+          nullable: true
+          description: "low | medium | high | very-high"
+      required:
+        - architectureSketch
+        - majorModules
+        - hotspots
+
+    RepoSummaryResponse:
+      type: object
+      properties:
+        sessionId:
+          type: integer
+        indexStatus:
+          type: string
+        isStale:
+          type: boolean
+        confidenceLevel:
+          type: string
+          description: "none | fingerprint | partial | full"
+        summary:
+          $ref: "#/components/schemas/RepoSummaryData"
+          nullable: true
+        indexedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - sessionId
+        - indexStatus
+        - isStale
+        - confidenceLevel
+
+    RepoSearchResult:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [file, symbol, chunk]
+        path:
+          type: string
+        name:
+          type: string
+          nullable: true
+        lang:
+          type: string
+          nullable: true
+        kind:
+          type: string
+          nullable: true
+        snippet:
+          type: string
+          nullable: true
+        line:
+          type: integer
+          nullable: true
+        scores:
+          type: object
+          properties:
+            combined:
+              type: number
+            lexical:
+              type: number
+            semantic:
+              type: number
+            graph:
+              type: number
+            confidence:
+              type: number
+          required:
+            - combined
+            - lexical
+            - semantic
+            - graph
+            - confidence
+      required:
+        - type
+        - path
+        - scores
+
+    RepoSearchResponse:
+      type: object
+      properties:
+        sessionId:
+          type: integer
+        q:
+          type: string
+        total:
+          type: integer
+        indexStatus:
+          type: string
+        isStale:
+          type: boolean
+        confidenceLevel:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepoSearchResult"
+      required:
+        - sessionId
+        - q
+        - total
+        - indexStatus
+        - isStale
+        - confidenceLevel
+        - results
+
+    RepoBlastRadiusItem:
+      type: object
+      properties:
+        path:
+          type: string
+        relation:
+          type: string
+          description: "direct_dependent | affected_test | related_module"
+        confidence:
+          type: number
+      required:
+        - path
+        - relation
+        - confidence
+
+    RepoBlastRadiusResponse:
+      type: object
+      properties:
+        sessionId:
+          type: integer
+        file:
+          type: string
+        indexStatus:
+          type: string
+        isStale:
+          type: boolean
+        directDependents:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepoBlastRadiusItem"
+        affectedTests:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepoBlastRadiusItem"
+        relatedModules:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepoBlastRadiusItem"
+        overallConfidence:
+          type: number
+      required:
+        - sessionId
+        - file
+        - indexStatus
+        - isStale
+        - directDependents
+        - affectedTests
+        - relatedModules
+        - overallConfidence
+
+    RepoSymbolItem:
+      type: object
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+        path:
+          type: string
+        line:
+          type: integer
+          nullable: true
+        lang:
+          type: string
+          nullable: true
+        signature:
+          type: string
+          nullable: true
+        docstring:
+          type: string
+          nullable: true
+        callers:
+          type: array
+          items:
+            type: string
+        callees:
+          type: array
+          items:
+            type: string
+      required:
+        - name
+        - kind
+        - path
+        - callers
+        - callees
+
+    RepoSymbolResponse:
+      type: object
+      properties:
+        sessionId:
+          type: integer
+        indexStatus:
+          type: string
+        isStale:
+          type: boolean
+        symbols:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepoSymbolItem"
+        total:
+          type: integer
+      required:
+        - sessionId
+        - indexStatus
+        - isStale
+        - symbols
+        - total
+
+    RepoSyncRequest:
+      type: object
+      properties:
+        jobId:
+          type: integer
+        status:
+          type: string
+        repoPath:
+          type: string
+        fingerprintHash:
+          type: string
+          nullable: true
+        fingerprint:
+          type: object
+          additionalProperties: true
+          nullable: true
+        summary:
+          type: object
+          additionalProperties: true
+          nullable: true
+        symbols:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          nullable: true
+          description: Top symbols for cloud-side search approximation (max 500)
+        files:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          nullable: true
+          description: Top files with metadata for cloud-side search approximation (max 500)
+        edges:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          nullable: true
+          description: Import/caller edges for blast-radius approximation (max 2000)
+        indexedSymbols:
+          type: integer
+          nullable: true
+        edgeCount:
+          type: integer
+          nullable: true
+        durationMs:
+          type: integer
+          nullable: true
+        errorDetails:
+          type: string
+          nullable: true
+      required:
+        - jobId
+        - status
+        - repoPath

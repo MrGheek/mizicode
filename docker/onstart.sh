@@ -402,6 +402,36 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PHASE 1.6: Repo Intelligence daemon (async, non-blocking)
+# Starts the repo-indexer in daemon (polling) mode if OMNIQL_SESSION_ID is set.
+# The daemon polls for queued indexing jobs and processes them automatically.
+# FLOATR_REPO_JOB_ID can be pre-set to run a specific job immediately.
+# Hard limits: REPO_INDEX_MAX_DURATION_MS (default 300000ms = 5min).
+# ─────────────────────────────────────────────────────────────────────────────
+REPO_INTEL_DIR="/opt/repo-intelligence"
+FLOATR_DIR="/workspace/.floatr"
+mkdir -p "$FLOATR_DIR"
+
+if [ -n "${OMNIQL_SESSION_ID:-}" ] && [ -f "${REPO_INTEL_DIR}/repo-indexer.mjs" ]; then
+    log "=== Phase 1.6: Starting Repo Intelligence daemon (session ${OMNIQL_SESSION_ID}) ==="
+    export FLOATR_REPO_PATH="${FLOATR_REPO_PATH:-/workspace/projects}"
+    export REPO_INDEX_POLL_INTERVAL_SECS="${REPO_INDEX_POLL_INTERVAL_SECS:-30}"
+    export REPO_INDEX_MAX_DURATION_MS="${REPO_INDEX_MAX_DURATION_MS:-300000}"
+
+    node "${REPO_INTEL_DIR}/repo-indexer.mjs" \
+        >> /var/log/repo-indexer.log 2>&1 &
+    REPO_INDEXER_PID=$!
+    log "Repo Intelligence: daemon started (PID ${REPO_INDEXER_PID}), polling every ${REPO_INDEX_POLL_INTERVAL_SECS}s"
+    log "Repo Intelligence: tail /var/log/repo-indexer.log to monitor progress"
+else
+    if [ -z "${OMNIQL_SESSION_ID:-}" ]; then
+        log "Repo Intelligence: OMNIQL_SESSION_ID not set — skipping Phase 1.6"
+    else
+        log "WARNING: Repo Intelligence scripts not found at ${REPO_INTEL_DIR} — skipping Phase 1.6"
+    fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PHASE 2: Model download + vLLM + litellm in background
 # ─────────────────────────────────────────────────────────────────────────────
 log "Starting LLM backend in background..."

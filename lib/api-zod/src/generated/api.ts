@@ -1205,3 +1205,302 @@ export const SubmitSkillFeedbackBody = zod.object({
   tokenDelta: zod.number().nullish(),
   taskSuccessScore: zod.number().nullish(),
 });
+
+/**
+ * Enqueues an async indexing job for the session's repository. Returns immediately with jobId and status. Deduplicates on active/queued jobs. Completed or error jobs trigger a full rebuild.
+ * @summary Enqueue a repo indexing job
+ */
+export const EnqueueRepoIndexParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const EnqueueRepoIndexBody = zod.object({
+  repoPath: zod
+    .string()
+    .nullish()
+    .describe(
+      "Absolute path to the repo on the instance. Defaults to \/workspace\/projects for team-owner sessions.",
+    ),
+  repoUrl: zod
+    .string()
+    .nullish()
+    .describe("Optional original repository URL for metadata."),
+});
+
+/**
+ * Returns detected languages, frameworks, monorepo flag, package manager, test tooling, and entry points. Populated by the Claw Runner after indexing.
+ * @summary Get repository fingerprint
+ */
+export const GetRepoFingerprintParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const GetRepoFingerprintResponse = zod.object({
+  sessionId: zod.number(),
+  indexStatus: zod.string(),
+  isStale: zod.boolean(),
+  fingerprint: zod
+    .object({
+      primaryLangs: zod.array(zod.string()),
+      allLangs: zod.array(zod.string()),
+      frameworks: zod.array(zod.string()),
+      packageManager: zod.string().nullish(),
+      monorepo: zod.boolean(),
+      testTooling: zod.array(zod.string()),
+      entryPoints: zod.array(zod.string()),
+      fileCount: zod.number(),
+      fingerprintHash: zod.string().nullish(),
+    })
+    .nullish(),
+  indexedAt: zod.coerce.date().nullish(),
+});
+
+/**
+ * Returns a compact architecture sketch with major modules, hotspots, and test strategy.
+ * @summary Get repository architecture summary
+ */
+export const GetRepoSummaryParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const GetRepoSummaryResponse = zod.object({
+  sessionId: zod.number(),
+  indexStatus: zod.string(),
+  isStale: zod.boolean(),
+  confidenceLevel: zod.string().describe("none | fingerprint | partial | full"),
+  summary: zod
+    .object({
+      architectureSketch: zod.string(),
+      majorModules: zod.array(
+        zod.object({
+          name: zod.string(),
+          path: zod.string(),
+          fileCount: zod.number(),
+          primaryLang: zod.string().nullish(),
+          description: zod.string().nullish(),
+        }),
+      ),
+      hotspots: zod.array(
+        zod.object({
+          path: zod.string(),
+          score: zod.number(),
+          centralityScore: zod.number().optional(),
+          dependencyDegree: zod.number().optional(),
+          fileSizeBytes: zod.number().optional(),
+          lang: zod.string().nullish(),
+        }),
+      ),
+      testStrategy: zod.string().nullish(),
+      graphDensity: zod.number().nullish(),
+      complexityClass: zod
+        .string()
+        .nullish()
+        .describe("low | medium | high | very-high"),
+    })
+    .nullish(),
+  indexedAt: zod.coerce.date().nullish(),
+});
+
+/**
+ * Searches indexed files, symbols, and chunks. Each result includes combined, lexical, semantic, graph, and confidence scores.
+ * @summary Search the repository index
+ */
+export const SearchRepoParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const searchRepoQueryLimitDefault = 20;
+export const searchRepoQueryOffsetDefault = 0;
+
+export const SearchRepoQueryParams = zod.object({
+  q: zod.coerce.string(),
+  type: zod.enum(["file", "symbol", "chunk"]).optional(),
+  limit: zod.coerce.number().default(searchRepoQueryLimitDefault),
+  offset: zod.coerce.number().default(searchRepoQueryOffsetDefault),
+  lang: zod.coerce.string().optional(),
+  pathPrefix: zod.coerce.string().optional(),
+});
+
+export const SearchRepoResponse = zod.object({
+  sessionId: zod.number(),
+  q: zod.string(),
+  total: zod.number(),
+  indexStatus: zod.string(),
+  isStale: zod.boolean(),
+  confidenceLevel: zod.string(),
+  results: zod.array(
+    zod.object({
+      type: zod.enum(["file", "symbol", "chunk"]),
+      path: zod.string(),
+      name: zod.string().nullish(),
+      lang: zod.string().nullish(),
+      kind: zod.string().nullish(),
+      snippet: zod.string().nullish(),
+      line: zod.number().nullish(),
+      scores: zod.object({
+        combined: zod.number(),
+        lexical: zod.number(),
+        semantic: zod.number(),
+        graph: zod.number(),
+        confidence: zod.number(),
+      }),
+    }),
+  ),
+});
+
+/**
+ * Returns direct dependents, likely affected tests, and related modules with confidence scores.
+ * @summary Get blast radius for a file
+ */
+export const GetRepoBlastRadiusParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const GetRepoBlastRadiusQueryParams = zod.object({
+  file: zod.coerce.string().describe("Relative file path within the repo"),
+});
+
+export const GetRepoBlastRadiusResponse = zod.object({
+  sessionId: zod.number(),
+  file: zod.string(),
+  indexStatus: zod.string(),
+  isStale: zod.boolean(),
+  directDependents: zod.array(
+    zod.object({
+      path: zod.string(),
+      relation: zod
+        .string()
+        .describe("direct_dependent | affected_test | related_module"),
+      confidence: zod.number(),
+    }),
+  ),
+  affectedTests: zod.array(
+    zod.object({
+      path: zod.string(),
+      relation: zod
+        .string()
+        .describe("direct_dependent | affected_test | related_module"),
+      confidence: zod.number(),
+    }),
+  ),
+  relatedModules: zod.array(
+    zod.object({
+      path: zod.string(),
+      relation: zod
+        .string()
+        .describe("direct_dependent | affected_test | related_module"),
+      confidence: zod.number(),
+    }),
+  ),
+  overallConfidence: zod.number(),
+});
+
+/**
+ * Returns symbol definition details. Accepts name, path, lang, and kind query params to disambiguate.
+ * @summary Look up a symbol in the repo index
+ */
+export const GetRepoSymbolParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const GetRepoSymbolQueryParams = zod.object({
+  name: zod.coerce.string().optional(),
+  path: zod.coerce.string().optional(),
+  lang: zod.coerce.string().optional(),
+  kind: zod
+    .enum([
+      "function",
+      "class",
+      "interface",
+      "type",
+      "variable",
+      "constant",
+      "enum",
+      "struct",
+      "import",
+      "export",
+    ])
+    .optional(),
+});
+
+export const GetRepoSymbolResponse = zod.object({
+  sessionId: zod.number(),
+  indexStatus: zod.string(),
+  isStale: zod.boolean(),
+  symbols: zod.array(
+    zod.object({
+      name: zod.string(),
+      kind: zod.string(),
+      path: zod.string(),
+      line: zod.number().nullish(),
+      lang: zod.string().nullish(),
+      signature: zod.string().nullish(),
+      docstring: zod.string().nullish(),
+      callers: zod.array(zod.string()),
+      callees: zod.array(zod.string()),
+    }),
+  ),
+  total: zod.number(),
+});
+
+/**
+ * Called by the Claw Runner on the instance to push fingerprint, summary, symbols, and files into the cloud API. Authenticated with the same Bearer token as the status callback.
+ * @summary Instance callback — sync indexed repo data
+ */
+export const SyncRepoIndexParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const SyncRepoIndexBody = zod.object({
+  jobId: zod.number(),
+  status: zod.string(),
+  repoPath: zod.string(),
+  fingerprintHash: zod.string().nullish(),
+  fingerprint: zod.record(zod.string(), zod.unknown()).nullish(),
+  summary: zod.record(zod.string(), zod.unknown()).nullish(),
+  symbols: zod
+    .array(zod.record(zod.string(), zod.unknown()))
+    .nullish()
+    .describe("Top symbols for cloud-side search approximation (max 500)"),
+  files: zod
+    .array(zod.record(zod.string(), zod.unknown()))
+    .nullish()
+    .describe(
+      "Top files with metadata for cloud-side search approximation (max 500)",
+    ),
+  edges: zod
+    .array(zod.record(zod.string(), zod.unknown()))
+    .nullish()
+    .describe("Import\/caller edges for blast-radius approximation (max 2000)"),
+  indexedSymbols: zod.number().nullish(),
+  edgeCount: zod.number().nullish(),
+  durationMs: zod.number().nullish(),
+  errorDetails: zod.string().nullish(),
+});
+
+export const SyncRepoIndexResponse = zod.object({
+  success: zod.boolean(),
+});
+
+/**
+ * @summary Get repo indexing job status
+ */
+export const GetRepoJobParams = zod.object({
+  sessionId: zod.coerce.number(),
+  jobId: zod.coerce.number(),
+});
+
+export const GetRepoJobResponse = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  repoPath: zod.string().nullish(),
+  status: zod.string(),
+  indexedSymbols: zod.number().nullish(),
+  edgeCount: zod.number().nullish(),
+  embeddingsStatus: zod.string().nullish(),
+  retrievalStatus: zod.string().nullish(),
+  errorDetails: zod.string().nullish(),
+  durationMs: zod.number().nullish(),
+  lastRunAt: zod.coerce.date().nullish(),
+  createdAt: zod.coerce.date(),
+});

@@ -31,6 +31,8 @@ import type {
   CreateTemplateRequest,
   DashboardSummary,
   ErrorResponse,
+  GetRepoBlastRadiusParams,
+  GetRepoSymbolParams,
   GpuOffer,
   GpuProfile,
   HealthStatus,
@@ -38,9 +40,19 @@ import type {
   ImportSkillResponse,
   ListSkillsParams,
   NotImplementedResponse,
+  RepoBlastRadiusResponse,
+  RepoFingerprintResponse,
+  RepoIndexRequest,
+  RepoIndexResponse,
+  RepoJobStatus,
+  RepoSearchResponse,
+  RepoSummaryResponse,
+  RepoSymbolResponse,
+  RepoSyncRequest,
   ReviewSkillRequest,
   SchedulerConfig,
   SearchOffersParams,
+  SearchRepoParams,
   Session,
   SessionSkillsResponse,
   SkillDetailResponse,
@@ -3245,3 +3257,802 @@ export const useSubmitSkillFeedback = <
 > => {
   return useMutation(getSubmitSkillFeedbackMutationOptions(options));
 };
+
+/**
+ * Enqueues an async indexing job for the session's repository. Returns immediately with jobId and status. Deduplicates on active/queued jobs. Completed or error jobs trigger a full rebuild.
+ * @summary Enqueue a repo indexing job
+ */
+export const getEnqueueRepoIndexUrl = (sessionId: number) => {
+  return `/api/sessions/${sessionId}/repo/index`;
+};
+
+export const enqueueRepoIndex = async (
+  sessionId: number,
+  repoIndexRequest?: RepoIndexRequest,
+  options?: RequestInit,
+): Promise<RepoIndexResponse> => {
+  return customFetch<RepoIndexResponse>(getEnqueueRepoIndexUrl(sessionId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(repoIndexRequest),
+  });
+};
+
+export const getEnqueueRepoIndexMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof enqueueRepoIndex>>,
+    TError,
+    { sessionId: number; data: BodyType<RepoIndexRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof enqueueRepoIndex>>,
+  TError,
+  { sessionId: number; data: BodyType<RepoIndexRequest> },
+  TContext
+> => {
+  const mutationKey = ["enqueueRepoIndex"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof enqueueRepoIndex>>,
+    { sessionId: number; data: BodyType<RepoIndexRequest> }
+  > = (props) => {
+    const { sessionId, data } = props ?? {};
+
+    return enqueueRepoIndex(sessionId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type EnqueueRepoIndexMutationResult = NonNullable<
+  Awaited<ReturnType<typeof enqueueRepoIndex>>
+>;
+export type EnqueueRepoIndexMutationBody = BodyType<RepoIndexRequest>;
+export type EnqueueRepoIndexMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Enqueue a repo indexing job
+ */
+export const useEnqueueRepoIndex = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof enqueueRepoIndex>>,
+    TError,
+    { sessionId: number; data: BodyType<RepoIndexRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof enqueueRepoIndex>>,
+  TError,
+  { sessionId: number; data: BodyType<RepoIndexRequest> },
+  TContext
+> => {
+  return useMutation(getEnqueueRepoIndexMutationOptions(options));
+};
+
+/**
+ * Returns detected languages, frameworks, monorepo flag, package manager, test tooling, and entry points. Populated by the Claw Runner after indexing.
+ * @summary Get repository fingerprint
+ */
+export const getGetRepoFingerprintUrl = (sessionId: number) => {
+  return `/api/sessions/${sessionId}/repo/fingerprint`;
+};
+
+export const getRepoFingerprint = async (
+  sessionId: number,
+  options?: RequestInit,
+): Promise<RepoFingerprintResponse> => {
+  return customFetch<RepoFingerprintResponse>(
+    getGetRepoFingerprintUrl(sessionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetRepoFingerprintQueryKey = (sessionId: number) => {
+  return [`/api/sessions/${sessionId}/repo/fingerprint`] as const;
+};
+
+export const getGetRepoFingerprintQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRepoFingerprint>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRepoFingerprint>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetRepoFingerprintQueryKey(sessionId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getRepoFingerprint>>
+  > = ({ signal }) =>
+    getRepoFingerprint(sessionId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sessionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRepoFingerprint>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetRepoFingerprintQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRepoFingerprint>>
+>;
+export type GetRepoFingerprintQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get repository fingerprint
+ */
+
+export function useGetRepoFingerprint<
+  TData = Awaited<ReturnType<typeof getRepoFingerprint>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRepoFingerprint>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetRepoFingerprintQueryOptions(sessionId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns a compact architecture sketch with major modules, hotspots, and test strategy.
+ * @summary Get repository architecture summary
+ */
+export const getGetRepoSummaryUrl = (sessionId: number) => {
+  return `/api/sessions/${sessionId}/repo/summary`;
+};
+
+export const getRepoSummary = async (
+  sessionId: number,
+  options?: RequestInit,
+): Promise<RepoSummaryResponse> => {
+  return customFetch<RepoSummaryResponse>(getGetRepoSummaryUrl(sessionId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetRepoSummaryQueryKey = (sessionId: number) => {
+  return [`/api/sessions/${sessionId}/repo/summary`] as const;
+};
+
+export const getGetRepoSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRepoSummary>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRepoSummary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetRepoSummaryQueryKey(sessionId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRepoSummary>>> = ({
+    signal,
+  }) => getRepoSummary(sessionId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sessionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRepoSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetRepoSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRepoSummary>>
+>;
+export type GetRepoSummaryQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get repository architecture summary
+ */
+
+export function useGetRepoSummary<
+  TData = Awaited<ReturnType<typeof getRepoSummary>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRepoSummary>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetRepoSummaryQueryOptions(sessionId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Searches indexed files, symbols, and chunks. Each result includes combined, lexical, semantic, graph, and confidence scores.
+ * @summary Search the repository index
+ */
+export const getSearchRepoUrl = (
+  sessionId: number,
+  params: SearchRepoParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sessions/${sessionId}/repo/search?${stringifiedParams}`
+    : `/api/sessions/${sessionId}/repo/search`;
+};
+
+export const searchRepo = async (
+  sessionId: number,
+  params: SearchRepoParams,
+  options?: RequestInit,
+): Promise<RepoSearchResponse> => {
+  return customFetch<RepoSearchResponse>(getSearchRepoUrl(sessionId, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getSearchRepoQueryKey = (
+  sessionId: number,
+  params?: SearchRepoParams,
+) => {
+  return [
+    `/api/sessions/${sessionId}/repo/search`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getSearchRepoQueryOptions = <
+  TData = Awaited<ReturnType<typeof searchRepo>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  params: SearchRepoParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof searchRepo>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getSearchRepoQueryKey(sessionId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof searchRepo>>> = ({
+    signal,
+  }) => searchRepo(sessionId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sessionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof searchRepo>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type SearchRepoQueryResult = NonNullable<
+  Awaited<ReturnType<typeof searchRepo>>
+>;
+export type SearchRepoQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Search the repository index
+ */
+
+export function useSearchRepo<
+  TData = Awaited<ReturnType<typeof searchRepo>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  params: SearchRepoParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof searchRepo>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getSearchRepoQueryOptions(sessionId, params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns direct dependents, likely affected tests, and related modules with confidence scores.
+ * @summary Get blast radius for a file
+ */
+export const getGetRepoBlastRadiusUrl = (
+  sessionId: number,
+  params: GetRepoBlastRadiusParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sessions/${sessionId}/repo/blast-radius?${stringifiedParams}`
+    : `/api/sessions/${sessionId}/repo/blast-radius`;
+};
+
+export const getRepoBlastRadius = async (
+  sessionId: number,
+  params: GetRepoBlastRadiusParams,
+  options?: RequestInit,
+): Promise<RepoBlastRadiusResponse> => {
+  return customFetch<RepoBlastRadiusResponse>(
+    getGetRepoBlastRadiusUrl(sessionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetRepoBlastRadiusQueryKey = (
+  sessionId: number,
+  params?: GetRepoBlastRadiusParams,
+) => {
+  return [
+    `/api/sessions/${sessionId}/repo/blast-radius`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetRepoBlastRadiusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRepoBlastRadius>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  params: GetRepoBlastRadiusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRepoBlastRadius>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetRepoBlastRadiusQueryKey(sessionId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getRepoBlastRadius>>
+  > = ({ signal }) =>
+    getRepoBlastRadius(sessionId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sessionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRepoBlastRadius>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetRepoBlastRadiusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRepoBlastRadius>>
+>;
+export type GetRepoBlastRadiusQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get blast radius for a file
+ */
+
+export function useGetRepoBlastRadius<
+  TData = Awaited<ReturnType<typeof getRepoBlastRadius>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  params: GetRepoBlastRadiusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRepoBlastRadius>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetRepoBlastRadiusQueryOptions(
+    sessionId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns symbol definition details. Accepts name, path, lang, and kind query params to disambiguate.
+ * @summary Look up a symbol in the repo index
+ */
+export const getGetRepoSymbolUrl = (
+  sessionId: number,
+  params?: GetRepoSymbolParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sessions/${sessionId}/repo/symbol?${stringifiedParams}`
+    : `/api/sessions/${sessionId}/repo/symbol`;
+};
+
+export const getRepoSymbol = async (
+  sessionId: number,
+  params?: GetRepoSymbolParams,
+  options?: RequestInit,
+): Promise<RepoSymbolResponse> => {
+  return customFetch<RepoSymbolResponse>(
+    getGetRepoSymbolUrl(sessionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetRepoSymbolQueryKey = (
+  sessionId: number,
+  params?: GetRepoSymbolParams,
+) => {
+  return [
+    `/api/sessions/${sessionId}/repo/symbol`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetRepoSymbolQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRepoSymbol>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  params?: GetRepoSymbolParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRepoSymbol>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetRepoSymbolQueryKey(sessionId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRepoSymbol>>> = ({
+    signal,
+  }) => getRepoSymbol(sessionId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sessionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRepoSymbol>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetRepoSymbolQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRepoSymbol>>
+>;
+export type GetRepoSymbolQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Look up a symbol in the repo index
+ */
+
+export function useGetRepoSymbol<
+  TData = Awaited<ReturnType<typeof getRepoSymbol>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  params?: GetRepoSymbolParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRepoSymbol>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetRepoSymbolQueryOptions(sessionId, params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Called by the Claw Runner on the instance to push fingerprint, summary, symbols, and files into the cloud API. Authenticated with the same Bearer token as the status callback.
+ * @summary Instance callback — sync indexed repo data
+ */
+export const getSyncRepoIndexUrl = (sessionId: number) => {
+  return `/api/sessions/${sessionId}/repo/sync`;
+};
+
+export const syncRepoIndex = async (
+  sessionId: number,
+  repoSyncRequest: RepoSyncRequest,
+  options?: RequestInit,
+): Promise<SuccessResponse> => {
+  return customFetch<SuccessResponse>(getSyncRepoIndexUrl(sessionId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(repoSyncRequest),
+  });
+};
+
+export const getSyncRepoIndexMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof syncRepoIndex>>,
+    TError,
+    { sessionId: number; data: BodyType<RepoSyncRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof syncRepoIndex>>,
+  TError,
+  { sessionId: number; data: BodyType<RepoSyncRequest> },
+  TContext
+> => {
+  const mutationKey = ["syncRepoIndex"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof syncRepoIndex>>,
+    { sessionId: number; data: BodyType<RepoSyncRequest> }
+  > = (props) => {
+    const { sessionId, data } = props ?? {};
+
+    return syncRepoIndex(sessionId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SyncRepoIndexMutationResult = NonNullable<
+  Awaited<ReturnType<typeof syncRepoIndex>>
+>;
+export type SyncRepoIndexMutationBody = BodyType<RepoSyncRequest>;
+export type SyncRepoIndexMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Instance callback — sync indexed repo data
+ */
+export const useSyncRepoIndex = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof syncRepoIndex>>,
+    TError,
+    { sessionId: number; data: BodyType<RepoSyncRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof syncRepoIndex>>,
+  TError,
+  { sessionId: number; data: BodyType<RepoSyncRequest> },
+  TContext
+> => {
+  return useMutation(getSyncRepoIndexMutationOptions(options));
+};
+
+/**
+ * @summary Get repo indexing job status
+ */
+export const getGetRepoJobUrl = (sessionId: number, jobId: number) => {
+  return `/api/sessions/${sessionId}/repo/jobs/${jobId}`;
+};
+
+export const getRepoJob = async (
+  sessionId: number,
+  jobId: number,
+  options?: RequestInit,
+): Promise<RepoJobStatus> => {
+  return customFetch<RepoJobStatus>(getGetRepoJobUrl(sessionId, jobId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetRepoJobQueryKey = (sessionId: number, jobId: number) => {
+  return [`/api/sessions/${sessionId}/repo/jobs/${jobId}`] as const;
+};
+
+export const getGetRepoJobQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRepoJob>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  jobId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRepoJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetRepoJobQueryKey(sessionId, jobId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRepoJob>>> = ({
+    signal,
+  }) => getRepoJob(sessionId, jobId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(sessionId && jobId),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRepoJob>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetRepoJobQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRepoJob>>
+>;
+export type GetRepoJobQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get repo indexing job status
+ */
+
+export function useGetRepoJob<
+  TData = Awaited<ReturnType<typeof getRepoJob>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  jobId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRepoJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetRepoJobQueryOptions(sessionId, jobId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}

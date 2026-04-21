@@ -1,10 +1,10 @@
 import crypto from "crypto";
-import { db, skillsTable, skillBundlesTable, skillVersionsTable, skillSourcesTable, sessionSkillsTable, sessionsTable } from "@workspace/db";
+import { db, skillsTable, skillBundlesTable, skillVersionsTable, skillSourcesTable, sessionSkillsTable, sessionsTable, sessionRepoContextTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { DEFAULT_SKILLS, DEFAULT_BUNDLES } from "./default-skills";
-import { rankSkills } from "./skills-ranker";
+import { rankSkills, buildRepoIntelligenceContext } from "./skills-ranker";
 import { TOKEN_MODE_PROFILES } from "./skills-types";
-import type { FloatrSkillManifest, SessionContext, CompiledBundle, TokenMode } from "./skills-types";
+import type { FloatrSkillManifest, SessionContext, CompiledBundle, TokenMode, RepoIntelligenceContext } from "./skills-types";
 import { logger } from "../lib/logger";
 
 async function getAllEnabledManifests(): Promise<FloatrSkillManifest[]> {
@@ -168,6 +168,15 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
     trimmed.forEach(s => selected.push(s));
   }
 
+  const intel = ctx.repoIntelligence;
+  const repoReasoningParts: string[] = [`repoLangs=[${ctx.repoLangs.join(",")}]`];
+  if (intel && intel.confidenceLevel !== "none") {
+    repoReasoningParts.push(`confidence=${intel.confidenceLevel}`);
+    if (intel.complexityClass) repoReasoningParts.push(`complexity=${intel.complexityClass}`);
+    if (intel.monorepo) repoReasoningParts.push("monorepo=true");
+    if (intel.isStale) repoReasoningParts.push("stale=true");
+  }
+
   return {
     bundleId,
     slug: bundle.slug,
@@ -175,10 +184,11 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
     skills: selected,
     reasoning: {
       task: `taskMode=${ctx.taskMode}`,
-      repo: `repoLangs=[${ctx.repoLangs.join(",")}]`,
+      repo: repoReasoningParts.join(", "),
       model: `modelProfile=${ctx.modelProfile}`,
       tokenMode: `tokenMode=${ctx.tokenMode}, budget=${tokenBudget}/${maxTokenBudget} tokens, skills=${selected.length}`,
     },
+    repoConfidenceLevel: intel?.confidenceLevel || "none",
   };
 }
 
@@ -344,4 +354,28 @@ export function extractRepoFingerprint(repoFingerprintJson: unknown): {
     langs: Array.isArray(fp.langs) ? (fp.langs as string[]) : [],
     repoKind: typeof fp.repoKind === "string" ? fp.repoKind : null,
   };
+}
+
+export async function getRepoIntelligenceForSession(sessionId: number): Promise<RepoIntelligenceContext | undefined> {
+  try {
+    const [ctx] = await db
+      .select()
+      .from(sessionRepoContextTable)
+      .where(eq(sessionRepoContextTable.sessionId, sessionId))
+      .orderBy(desc(sessionRepoContextTable.updatedAt))
+      .limit(1);
+
+    if (!ctx) return undefined;
+    if (ctx.confidenceLevel === "none") return undefined;
+
+    return buildRepoIntelligenceContext({
+      fingerprintJson: ctx.fingerprintJson,
+      summaryJson: ctx.summaryJson,
+      confidenceLevel: ctx.confidenceLevel,
+      isStale: ctx.isStale,
+    });
+  } catch (err) {
+    logger.warn({ err, sessionId }, "Failed to load repo intelligence for session — continuing without it");
+    return undefined;
+  }
 }
