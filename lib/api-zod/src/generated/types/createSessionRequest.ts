@@ -12,4 +12,10 @@ export interface CreateSessionRequest {
   offerId?: number | null;
   /** Names of team members to provision per-user IDEs for (max 4) */
   teamMembers?: string[] | null;
+  /** Task mode for Smart Skills selection (build, review, debug, refactor, explore, team) */
+  taskMode?: string | null;
+  /** Token budget mode (full, core, lean, ultra). Defaults to core. */
+  tokenMode?: string | null;
+  /** Specific skill bundle ID to activate on launch (auto-selects default if not provided) */
+  bundleId?: number | null;
 }

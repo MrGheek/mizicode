@@ -7,6 +7,7 @@ import offersRouter from "./offers";
 import dashboardRouter from "./dashboard";
 import schedulerRouter from "./scheduler";
 import memoryRouter from "./memory";
+import skillsRouter from "./skills";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(offersRouter);
 router.use(dashboardRouter);
 router.use(schedulerRouter);
 router.use(memoryRouter);
+router.use(skillsRouter);
 
 export default router;

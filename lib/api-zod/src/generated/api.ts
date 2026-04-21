@@ -146,6 +146,22 @@ export const ListSessionsResponseItem = zod.object({
       }),
     )
     .nullish(),
+  taskMode: zod
+    .string()
+    .nullish()
+    .describe(
+      "Task mode used for Smart Skills selection (build, review, debug, refactor, explore, team)",
+    ),
+  tokenMode: zod
+    .string()
+    .nullish()
+    .describe(
+      "Token mode used for context budgeting (full, core, lean, ultra)",
+    ),
+  activeBundleId: zod
+    .number()
+    .nullish()
+    .describe("Active Smart Skills bundle ID"),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -167,6 +183,22 @@ export const CreateSessionBody = zod.object({
     .array(zod.string())
     .nullish()
     .describe("Names of team members to provision per-user IDEs for (max 4)"),
+  taskMode: zod
+    .string()
+    .nullish()
+    .describe(
+      "Task mode for Smart Skills selection (build, review, debug, refactor, explore, team)",
+    ),
+  tokenMode: zod
+    .string()
+    .nullish()
+    .describe("Token budget mode (full, core, lean, ultra). Defaults to core."),
+  bundleId: zod
+    .number()
+    .nullish()
+    .describe(
+      "Specific skill bundle ID to activate on launch (auto-selects default if not provided)",
+    ),
 });
 
 /**
@@ -222,6 +254,22 @@ export const GetSessionResponse = zod.object({
       }),
     )
     .nullish(),
+  taskMode: zod
+    .string()
+    .nullish()
+    .describe(
+      "Task mode used for Smart Skills selection (build, review, debug, refactor, explore, team)",
+    ),
+  tokenMode: zod
+    .string()
+    .nullish()
+    .describe(
+      "Token mode used for context budgeting (full, core, lean, ultra)",
+    ),
+  activeBundleId: zod
+    .number()
+    .nullish()
+    .describe("Active Smart Skills bundle ID"),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -279,6 +327,22 @@ export const DeleteSessionResponse = zod.object({
       }),
     )
     .nullish(),
+  taskMode: zod
+    .string()
+    .nullish()
+    .describe(
+      "Task mode used for Smart Skills selection (build, review, debug, refactor, explore, team)",
+    ),
+  tokenMode: zod
+    .string()
+    .nullish()
+    .describe(
+      "Token mode used for context budgeting (full, core, lean, ultra)",
+    ),
+  activeBundleId: zod
+    .number()
+    .nullish()
+    .describe("Active Smart Skills bundle ID"),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -334,6 +398,22 @@ export const GetActiveSessionResponse = zod.object({
           }),
         )
         .nullish(),
+      taskMode: zod
+        .string()
+        .nullish()
+        .describe(
+          "Task mode used for Smart Skills selection (build, review, debug, refactor, explore, team)",
+        ),
+      tokenMode: zod
+        .string()
+        .nullish()
+        .describe(
+          "Token mode used for context budgeting (full, core, lean, ultra)",
+        ),
+      activeBundleId: zod
+        .number()
+        .nullish()
+        .describe("Active Smart Skills bundle ID"),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     })
@@ -393,6 +473,22 @@ export const RefreshSessionStatusResponse = zod.object({
       }),
     )
     .nullish(),
+  taskMode: zod
+    .string()
+    .nullish()
+    .describe(
+      "Task mode used for Smart Skills selection (build, review, debug, refactor, explore, team)",
+    ),
+  tokenMode: zod
+    .string()
+    .nullish()
+    .describe(
+      "Token mode used for context budgeting (full, core, lean, ultra)",
+    ),
+  activeBundleId: zod
+    .number()
+    .nullish()
+    .describe("Active Smart Skills bundle ID"),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -624,4 +720,310 @@ export const GetDashboardSummaryResponse = zod.object({
   totalCost: zod.number(),
   totalHours: zod.number(),
   profileCounts: zod.record(zod.string(), zod.number()),
+});
+
+/**
+ * Returns imported skills and built-in skill metadata
+ * @summary List all skills
+ */
+export const ListSkillsResponse = zod.object({
+  skills: zod.array(
+    zod.object({
+      id: zod.number(),
+      slug: zod.string(),
+      name: zod.string(),
+      class: zod.string(),
+      description: zod.string().optional(),
+      sourceId: zod.number().nullish(),
+      trustTier: zod.string(),
+      installRisk: zod.string(),
+      tokenOverheadEstimate: zod.number().optional(),
+      enabled: zod.boolean(),
+      reviewStatus: zod.string(),
+      reviewedAt: zod.coerce.date().nullish(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+  builtins: zod.array(
+    zod.object({
+      id: zod.string(),
+      name: zod.string(),
+      class: zod.string(),
+      summary: zod.string(),
+    }),
+  ),
+});
+
+/**
+ * @summary Import skills from a GitHub repository
+ */
+export const ImportSkillBody = zod.object({
+  url: zod.string().describe("GitHub repository URL to import skills from"),
+});
+
+/**
+ * Compile a bundle against a context and return the result without persisting
+ * @summary Preview bundle compilation
+ */
+export const CompileSkillPreviewBody = zod.object({
+  bundleId: zod.number(),
+  taskMode: zod.string().nullish(),
+  tokenMode: zod.string().nullish(),
+  repoLangs: zod.array(zod.string()).nullish(),
+  modelProfile: zod.string().nullish(),
+});
+
+export const CompileSkillPreviewResponse = zod.object({
+  compiled: zod.record(zod.string(), zod.unknown()),
+  activeBundleB64: zod.string(),
+  byteLength: zod.number(),
+});
+
+/**
+ * @summary Get skill details and version history
+ */
+export const GetSkillParams = zod.object({
+  skillId: zod.coerce.number(),
+});
+
+export const GetSkillResponse = zod.object({
+  skill: zod.object({
+    id: zod.number(),
+    slug: zod.string(),
+    name: zod.string(),
+    class: zod.string(),
+    description: zod.string().optional(),
+    sourceId: zod.number().nullish(),
+    trustTier: zod.string(),
+    installRisk: zod.string(),
+    tokenOverheadEstimate: zod.number().optional(),
+    enabled: zod.boolean(),
+    reviewStatus: zod.string(),
+    reviewedAt: zod.coerce.date().nullish(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  versions: zod.array(zod.record(zod.string(), zod.unknown())).optional(),
+});
+
+/**
+ * @summary Approve, reject, or disable a skill
+ */
+export const ReviewSkillParams = zod.object({
+  skillId: zod.coerce.number(),
+});
+
+export const ReviewSkillBody = zod.object({
+  action: zod.enum(["approve", "reject", "disable"]),
+  reason: zod.string().nullish(),
+});
+
+export const ReviewSkillResponse = zod.object({
+  skill: zod.object({
+    id: zod.number(),
+    slug: zod.string(),
+    name: zod.string(),
+    class: zod.string(),
+    description: zod.string().optional(),
+    sourceId: zod.number().nullish(),
+    trustTier: zod.string(),
+    installRisk: zod.string(),
+    tokenOverheadEstimate: zod.number().optional(),
+    enabled: zod.boolean(),
+    reviewStatus: zod.string(),
+    reviewedAt: zod.coerce.date().nullish(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  versions: zod.array(zod.record(zod.string(), zod.unknown())).optional(),
+});
+
+/**
+ * @summary List all skill bundles
+ */
+export const ListSkillBundlesResponse = zod.object({
+  bundles: zod.array(
+    zod.object({
+      id: zod.number(),
+      slug: zod.string(),
+      name: zod.string(),
+      bundleJson: zod.record(zod.string(), zod.unknown()),
+      sessionMode: zod.string().nullish(),
+      taskMode: zod.string().nullish(),
+      repoKind: zod.string().nullish(),
+      modelFamily: zod.string().nullish(),
+      tokenMode: zod.string(),
+      isDefault: zod.boolean(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create a new skill bundle
+ */
+export const CreateSkillBundleBody = zod.object({
+  name: zod.string(),
+  slug: zod.string(),
+  skillIds: zod.array(zod.string()),
+  taskMode: zod.string().nullish(),
+  sessionMode: zod.string().nullish(),
+  tokenMode: zod.string().nullish(),
+});
+
+/**
+ * Seeds the four default bundles if they do not exist
+ * @summary Seed default bundles
+ */
+export const SeedDefaultBundlesResponse = zod.object({
+  bundles: zod.array(
+    zod.object({
+      id: zod.number(),
+      slug: zod.string(),
+      name: zod.string(),
+      bundleJson: zod.record(zod.string(), zod.unknown()),
+      sessionMode: zod.string().nullish(),
+      taskMode: zod.string().nullish(),
+      repoKind: zod.string().nullish(),
+      modelFamily: zod.string().nullish(),
+      tokenMode: zod.string(),
+      isDefault: zod.boolean(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get bundle details
+ */
+export const GetSkillBundleParams = zod.object({
+  bundleId: zod.coerce.number(),
+});
+
+export const GetSkillBundleResponse = zod.object({
+  bundle: zod.object({
+    id: zod.number(),
+    slug: zod.string(),
+    name: zod.string(),
+    bundleJson: zod.record(zod.string(), zod.unknown()),
+    sessionMode: zod.string().nullish(),
+    taskMode: zod.string().nullish(),
+    repoKind: zod.string().nullish(),
+    modelFamily: zod.string().nullish(),
+    tokenMode: zod.string(),
+    isDefault: zod.boolean(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  activationMode: zod.string().nullish(),
+  message: zod.string().nullish(),
+});
+
+/**
+ * @summary Update a skill bundle
+ */
+export const UpdateSkillBundleParams = zod.object({
+  bundleId: zod.coerce.number(),
+});
+
+export const UpdateSkillBundleBody = zod.object({
+  name: zod.string().nullish(),
+  skillIds: zod.array(zod.string()).nullish(),
+  taskMode: zod.string().nullish(),
+  sessionMode: zod.string().nullish(),
+  tokenMode: zod.string().nullish(),
+});
+
+export const UpdateSkillBundleResponse = zod.object({
+  bundle: zod.object({
+    id: zod.number(),
+    slug: zod.string(),
+    name: zod.string(),
+    bundleJson: zod.record(zod.string(), zod.unknown()),
+    sessionMode: zod.string().nullish(),
+    taskMode: zod.string().nullish(),
+    repoKind: zod.string().nullish(),
+    modelFamily: zod.string().nullish(),
+    tokenMode: zod.string(),
+    isDefault: zod.boolean(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  activationMode: zod.string().nullish(),
+  message: zod.string().nullish(),
+});
+
+/**
+ * @summary Set a bundle as active for the next session launch
+ */
+export const ActivateSkillBundleParams = zod.object({
+  bundleId: zod.coerce.number(),
+});
+
+export const ActivateSkillBundleBody = zod.object({
+  sessionId: zod
+    .number()
+    .nullish()
+    .describe(
+      "Session ID to associate the bundle with (next-launch only in v1)",
+    ),
+});
+
+export const ActivateSkillBundleResponse = zod.object({
+  bundle: zod.object({
+    id: zod.number(),
+    slug: zod.string(),
+    name: zod.string(),
+    bundleJson: zod.record(zod.string(), zod.unknown()),
+    sessionMode: zod.string().nullish(),
+    taskMode: zod.string().nullish(),
+    repoKind: zod.string().nullish(),
+    modelFamily: zod.string().nullish(),
+    tokenMode: zod.string(),
+    isDefault: zod.boolean(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  activationMode: zod.string().describe("Always next-launch in v1"),
+  message: zod.string().optional(),
+});
+
+/**
+ * @summary Get active skills for a session
+ */
+export const GetSessionSkillsParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const GetSessionSkillsResponse = zod.object({
+  activations: zod.array(
+    zod.object({
+      id: zod.number(),
+      sessionId: zod.number(),
+      bundleId: zod.number().nullish(),
+      activatedSkillsJson: zod.array(zod.string()).optional(),
+      rationaleJson: zod.record(zod.string(), zod.unknown()).nullish(),
+      tokenMode: zod.string(),
+      activationMode: zod.string(),
+      activatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Submit feedback on a skill during a session
+ */
+export const SubmitSkillFeedbackParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const SubmitSkillFeedbackBody = zod.object({
+  skillId: zod.number(),
+  helpful: zod.boolean(),
+  notes: zod.string().nullish(),
+  tokenDelta: zod.number().nullish(),
+  taskSuccessScore: zod.number().nullish(),
 });

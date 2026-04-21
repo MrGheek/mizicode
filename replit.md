@@ -46,8 +46,15 @@ artifacts-monorepo/
 ## Database Schema
 
 - **gpu_profiles** — GPU tier definitions (Starter/Standard/Pro/Ultra) with Vast.ai search params, model quant configs, and llama.cpp settings
-- **sessions** — Coding session records with Vast.ai instance IDs, status tracking, service URLs (Bolt.diy, code-server, preview), cost tracking
+- **sessions** — Coding session records with Vast.ai instance IDs, status tracking, service URLs, cost tracking. New: `taskMode`, `tokenMode`, `activeBundleId`, `repoFingerprintJson`
 - **templates** — Vast.ai template records with Docker image, on-start script, and env vars
+- **skill_sources** — GitHub repos imported as skill sources (url, branch, commit SHA, license, trust level)
+- **skills** — Individual skills with `trustTier` (floatr_native|reviewed|user_approved|experimental), `installRisk` (virtual|config|hooked|binary|networked), `reviewStatus` (pending|approved|rejected)
+- **skill_versions** — Versioned manifest snapshots per skill (manifest JSON, extracted rules, version hash)
+- **skill_bundles** — Named skill sets with task/session/model/token mode metadata; 4 default bundles seeded at startup
+- **session_skills** — Records which skills were activated for each session (bundle, token mode, activation mode)
+- **skill_feedback** — Per-session helpful/unhelpful feedback on skills, with token delta and task success score
+- **repo_graph_jobs** — Tracks repo indexing jobs for context-aware skill ranking (Phase 2)
 
 ## GPU Profiles
 
@@ -74,6 +81,26 @@ artifacts-monorepo/
 - `DELETE /api/templates/:id` — Delete template
 - `GET /api/offers` — Search GPU offers on Vast.ai marketplace
 - `GET /api/dashboard/summary` — Dashboard summary stats
+- `POST /api/sessions` — Now accepts `taskMode`, `tokenMode`, `bundleId` — auto-compiles Smart Skills bundle on launch
+
+### Smart Skills API
+
+- `GET /api/skills` — List all skills (imported + builtins summary)
+- `POST /api/skills/import` — Import skills from a GitHub repo URL
+- `GET /api/skills/:id` — Get skill details and version history
+- `PUT /api/skills/:id/review` — Approve, reject, or disable a skill
+- `GET /api/skill-bundles` — List all skill bundles
+- `POST /api/skill-bundles` — Create a custom bundle
+- `POST /api/skill-bundles/seed` — Seed the 4 default bundles
+- `GET /api/skill-bundles/:id` — Get bundle details
+- `PUT /api/skill-bundles/:id` — Update a bundle
+- `POST /api/skill-bundles/:id/activate` — Mark bundle as active for next session launch (next-launch semantics, v1)
+- `POST /api/skills/compile-preview` — Preview bundle compilation against a given context
+- `GET /api/sessions/:id/skills` — Get skill activations for a session
+- `POST /api/sessions/:id/skills/feedback` — Submit helpful/unhelpful feedback on a skill
+- `GET /api/skills/discover` — (501, Phase 4) Discovery feed
+- `GET /api/skills/leaderboard` — (501, Phase 4) Skill leaderboard
+- `POST /api/skills/evals/run` — (501, Phase 4) Run skill eval harness
 
 ### Memory API (SQLite FTS5 — no external deps)
 
@@ -125,8 +152,8 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 Express 5 API server with Vast.ai integration. Routes in `src/routes/`, services in `src/services/`.
 
 - Entry: `src/index.ts` — reads `PORT`, starts Express, seeds GPU profiles
-- Routes: profiles, sessions, templates, offers, dashboard, memory
-- Services: `vastai.ts` (Vast.ai API wrapper), `profiles.ts` (profile management + seeding), `memory.ts` (SQLite FTS5 session memory)
+- Routes: profiles, sessions, templates, offers, dashboard, memory, skills
+- Services: `vastai.ts` (Vast.ai API wrapper), `profiles.ts` (profile management + seeding), `memory.ts` (SQLite FTS5 session memory), `skills-types.ts` (types + token mode profiles), `default-skills.ts` (11 built-in skills + 4 default bundles), `skills-normalizer.ts` (GitHub repo → FloatrSkillManifest[]), `skills-import.ts` (GitHub import pipeline), `skills-ranker.ts` (multi-factor skill scorer), `skills-bundler.ts` (bundle compiler + env payload builder)
 
 ### `artifacts/dashboard` (`@workspace/dashboard`)
 

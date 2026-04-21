@@ -91,6 +91,12 @@ export interface Session {
   startedAt?: string | null;
   stoppedAt?: string | null;
   teamMembers?: TeamMember[] | null;
+  /** Task mode used for Smart Skills selection (build, review, debug, refactor, explore, team) */
+  taskMode?: string | null;
+  /** Token mode used for context budgeting (full, core, lean, ultra) */
+  tokenMode?: string | null;
+  /** Active Smart Skills bundle ID */
+  activeBundleId?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -105,6 +111,12 @@ export interface CreateSessionRequest {
   offerId?: number | null;
   /** Names of team members to provision per-user IDEs for (max 4) */
   teamMembers?: string[] | null;
+  /** Task mode for Smart Skills selection (build, review, debug, refactor, explore, team) */
+  taskMode?: string | null;
+  /** Token budget mode (full, core, lean, ultra). Defaults to core. */
+  tokenMode?: string | null;
+  /** Specific skill bundle ID to activate on launch (auto-selects default if not provided) */
+  bundleId?: number | null;
 }
 
 export interface Template {
@@ -204,6 +216,180 @@ export interface UpdateSchedulerRequest {
   daysOfWeek?: string[];
   /** IANA timezone (e.g. America/New_York) */
   timezone?: string;
+}
+
+export interface NotImplementedResponse {
+  error: string;
+  feature?: string;
+  availableIn: string;
+}
+
+export interface SkillSummary {
+  id: string;
+  name: string;
+  class: string;
+  summary: string;
+}
+
+export interface SkillRecord {
+  id: number;
+  slug: string;
+  name: string;
+  class: string;
+  description?: string;
+  sourceId?: number | null;
+  trustTier: string;
+  installRisk: string;
+  tokenOverheadEstimate?: number;
+  enabled: boolean;
+  reviewStatus: string;
+  reviewedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillsListResponse {
+  skills: SkillRecord[];
+  builtins: SkillSummary[];
+}
+
+export type SkillDetailResponseVersionsItem = { [key: string]: unknown };
+
+export interface SkillDetailResponse {
+  skill: SkillRecord;
+  versions?: SkillDetailResponseVersionsItem[];
+}
+
+export interface ImportSkillRequest {
+  /** GitHub repository URL to import skills from */
+  url: string;
+}
+
+export type ImportSkillResponseSource = { [key: string]: unknown };
+
+export interface ImportSkillResponse {
+  source: ImportSkillResponseSource;
+  skills: SkillRecord[];
+  count: number;
+}
+
+export type ReviewSkillRequestAction =
+  (typeof ReviewSkillRequestAction)[keyof typeof ReviewSkillRequestAction];
+
+export const ReviewSkillRequestAction = {
+  approve: "approve",
+  reject: "reject",
+  disable: "disable",
+} as const;
+
+export interface ReviewSkillRequest {
+  action: ReviewSkillRequestAction;
+  reason?: string | null;
+}
+
+export type SkillBundleBundleJson = { [key: string]: unknown };
+
+export interface SkillBundle {
+  id: number;
+  slug: string;
+  name: string;
+  bundleJson: SkillBundleBundleJson;
+  sessionMode?: string | null;
+  taskMode?: string | null;
+  repoKind?: string | null;
+  modelFamily?: string | null;
+  tokenMode: string;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BundleListResponse {
+  bundles: SkillBundle[];
+}
+
+export interface BundleResponse {
+  bundle: SkillBundle;
+  activationMode?: string | null;
+  message?: string | null;
+}
+
+export interface CreateBundleRequest {
+  name: string;
+  slug: string;
+  skillIds: string[];
+  taskMode?: string | null;
+  sessionMode?: string | null;
+  tokenMode?: string | null;
+}
+
+export interface UpdateBundleRequest {
+  name?: string | null;
+  skillIds?: string[] | null;
+  taskMode?: string | null;
+  sessionMode?: string | null;
+  tokenMode?: string | null;
+}
+
+export interface ActivateBundleRequest {
+  /** Session ID to associate the bundle with (next-launch only in v1) */
+  sessionId?: number | null;
+}
+
+export interface ActivateBundleResponse {
+  bundle: SkillBundle;
+  /** Always next-launch in v1 */
+  activationMode: string;
+  message?: string;
+}
+
+export interface CompilePreviewRequest {
+  bundleId: number;
+  taskMode?: string | null;
+  tokenMode?: string | null;
+  repoLangs?: string[] | null;
+  modelProfile?: string | null;
+}
+
+export type CompilePreviewResponseCompiled = { [key: string]: unknown };
+
+export interface CompilePreviewResponse {
+  compiled: CompilePreviewResponseCompiled;
+  activeBundleB64: string;
+  byteLength: number;
+}
+
+export type SessionSkillActivationRationaleJson = {
+  [key: string]: unknown;
+} | null;
+
+export interface SessionSkillActivation {
+  id: number;
+  sessionId: number;
+  bundleId?: number | null;
+  activatedSkillsJson?: string[];
+  rationaleJson?: SessionSkillActivationRationaleJson;
+  tokenMode: string;
+  activationMode: string;
+  activatedAt: string;
+}
+
+export interface SessionSkillsResponse {
+  activations: SessionSkillActivation[];
+}
+
+export interface SkillFeedbackRequest {
+  skillId: number;
+  helpful: boolean;
+  notes?: string | null;
+  tokenDelta?: number | null;
+  taskSuccessScore?: number | null;
+}
+
+export type SkillFeedbackResponseFeedback = { [key: string]: unknown };
+
+export interface SkillFeedbackResponse {
+  feedback: SkillFeedbackResponseFeedback;
 }
 
 export type SearchOffersParams = {

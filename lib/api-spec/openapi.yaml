@@ -20,6 +20,8 @@ tags:
     description: GPU offer operations
   - name: scheduler
     description: Session scheduler configuration
+  - name: skills
+    description: Smart Skills library and bundle management
 
 paths:
   /healthz:
@@ -423,6 +425,344 @@ paths:
               schema:
                 $ref: "#/components/schemas/DashboardSummary"
 
+  /skills:
+    get:
+      operationId: listSkills
+      tags: [skills]
+      summary: List all skills
+      description: Returns imported skills and built-in skill metadata
+      responses:
+        "200":
+          description: Skills list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillsListResponse"
+
+  /skills/import:
+    post:
+      operationId: importSkill
+      tags: [skills]
+      summary: Import skills from a GitHub repository
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportSkillRequest"
+      responses:
+        "201":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportSkillResponse"
+        "400":
+          description: Invalid URL or no skills found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/compile-preview:
+    post:
+      operationId: compileSkillPreview
+      tags: [skills]
+      summary: Preview bundle compilation
+      description: Compile a bundle against a context and return the result without persisting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompilePreviewRequest"
+      responses:
+        "200":
+          description: Compiled bundle preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompilePreviewResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/discover:
+    get:
+      operationId: discoverSkills
+      tags: [skills]
+      summary: Discover skills (not yet available)
+      responses:
+        "501":
+          description: Not implemented
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotImplementedResponse"
+
+  /skills/leaderboard:
+    get:
+      operationId: getSkillLeaderboard
+      tags: [skills]
+      summary: Skill leaderboard (not yet available)
+      responses:
+        "501":
+          description: Not implemented
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotImplementedResponse"
+
+  /skills/{skillId}:
+    get:
+      operationId: getSkill
+      tags: [skills]
+      summary: Get skill details and version history
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Skill with versions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillDetailResponse"
+        "404":
+          description: Skill not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/{skillId}/review:
+    put:
+      operationId: reviewSkill
+      tags: [skills]
+      summary: Approve, reject, or disable a skill
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewSkillRequest"
+      responses:
+        "200":
+          description: Updated skill
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillDetailResponse"
+        "404":
+          description: Skill not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skill-bundles:
+    get:
+      operationId: listSkillBundles
+      tags: [skills]
+      summary: List all skill bundles
+      responses:
+        "200":
+          description: Bundle list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundleListResponse"
+    post:
+      operationId: createSkillBundle
+      tags: [skills]
+      summary: Create a new skill bundle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBundleRequest"
+      responses:
+        "201":
+          description: Bundle created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundleResponse"
+        "409":
+          description: Slug already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skill-bundles/seed:
+    post:
+      operationId: seedDefaultBundles
+      tags: [skills]
+      summary: Seed default bundles
+      description: Seeds the four default bundles if they do not exist
+      responses:
+        "200":
+          description: Seed result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundleListResponse"
+
+  /skill-bundles/{bundleId}:
+    get:
+      operationId: getSkillBundle
+      tags: [skills]
+      summary: Get bundle details
+      parameters:
+        - name: bundleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bundle details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundleResponse"
+        "404":
+          description: Bundle not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateSkillBundle
+      tags: [skills]
+      summary: Update a skill bundle
+      parameters:
+        - name: bundleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBundleRequest"
+      responses:
+        "200":
+          description: Updated bundle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundleResponse"
+        "404":
+          description: Bundle not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skill-bundles/{bundleId}/activate:
+    post:
+      operationId: activateSkillBundle
+      tags: [skills]
+      summary: Set a bundle as active for the next session launch
+      parameters:
+        - name: bundleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivateBundleRequest"
+      responses:
+        "200":
+          description: Activation queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivateBundleResponse"
+        "404":
+          description: Bundle not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{sessionId}/skills:
+    get:
+      operationId: getSessionSkills
+      tags: [skills]
+      summary: Get active skills for a session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Session skill activations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionSkillsResponse"
+
+  /sessions/{sessionId}/skills/feedback:
+    post:
+      operationId: submitSkillFeedback
+      tags: [skills]
+      summary: Submit feedback on a skill during a session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillFeedbackRequest"
+      responses:
+        "201":
+          description: Feedback recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillFeedbackResponse"
+        "400":
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Skill not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -608,6 +948,18 @@ components:
           nullable: true
           items:
             $ref: "#/components/schemas/TeamMember"
+        taskMode:
+          type: string
+          nullable: true
+          description: "Task mode used for Smart Skills selection (build, review, debug, refactor, explore, team)"
+        tokenMode:
+          type: string
+          nullable: true
+          description: "Token mode used for context budgeting (full, core, lean, ultra)"
+        activeBundleId:
+          type: integer
+          nullable: true
+          description: Active Smart Skills bundle ID
         createdAt:
           type: string
           format: date-time
@@ -646,6 +998,18 @@ components:
           description: Names of team members to provision per-user IDEs for (max 4)
           items:
             type: string
+        taskMode:
+          type: string
+          nullable: true
+          description: "Task mode for Smart Skills selection (build, review, debug, refactor, explore, team)"
+        tokenMode:
+          type: string
+          nullable: true
+          description: "Token budget mode (full, core, lean, ultra). Defaults to core."
+        bundleId:
+          type: integer
+          nullable: true
+          description: Specific skill bundle ID to activate on launch (auto-selects default if not provided)
       required:
         - profileId
 
@@ -877,3 +1241,391 @@ components:
         timezone:
           type: string
           description: "IANA timezone (e.g. America/New_York)"
+
+    NotImplementedResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        feature:
+          type: string
+        availableIn:
+          type: string
+      required:
+        - error
+        - availableIn
+
+    SkillSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        class:
+          type: string
+        summary:
+          type: string
+      required:
+        - id
+        - name
+        - class
+        - summary
+
+    SkillRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+        slug:
+          type: string
+        name:
+          type: string
+        class:
+          type: string
+        description:
+          type: string
+        sourceId:
+          type: integer
+          nullable: true
+        trustTier:
+          type: string
+        installRisk:
+          type: string
+        tokenOverheadEstimate:
+          type: integer
+        enabled:
+          type: boolean
+        reviewStatus:
+          type: string
+        reviewedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - slug
+        - name
+        - class
+        - trustTier
+        - installRisk
+        - enabled
+        - reviewStatus
+        - createdAt
+        - updatedAt
+
+    SkillsListResponse:
+      type: object
+      properties:
+        skills:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillRecord"
+        builtins:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillSummary"
+      required:
+        - skills
+        - builtins
+
+    SkillDetailResponse:
+      type: object
+      properties:
+        skill:
+          $ref: "#/components/schemas/SkillRecord"
+        versions:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      required:
+        - skill
+
+    ImportSkillRequest:
+      type: object
+      properties:
+        url:
+          type: string
+          description: GitHub repository URL to import skills from
+      required:
+        - url
+
+    ImportSkillResponse:
+      type: object
+      properties:
+        source:
+          type: object
+          additionalProperties: true
+        skills:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillRecord"
+        count:
+          type: integer
+      required:
+        - source
+        - skills
+        - count
+
+    ReviewSkillRequest:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [approve, reject, disable]
+        reason:
+          type: string
+          nullable: true
+      required:
+        - action
+
+    SkillBundle:
+      type: object
+      properties:
+        id:
+          type: integer
+        slug:
+          type: string
+        name:
+          type: string
+        bundleJson:
+          type: object
+          additionalProperties: true
+        sessionMode:
+          type: string
+          nullable: true
+        taskMode:
+          type: string
+          nullable: true
+        repoKind:
+          type: string
+          nullable: true
+        modelFamily:
+          type: string
+          nullable: true
+        tokenMode:
+          type: string
+        isDefault:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - slug
+        - name
+        - bundleJson
+        - tokenMode
+        - isDefault
+        - createdAt
+        - updatedAt
+
+    BundleListResponse:
+      type: object
+      properties:
+        bundles:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillBundle"
+      required:
+        - bundles
+
+    BundleResponse:
+      type: object
+      properties:
+        bundle:
+          $ref: "#/components/schemas/SkillBundle"
+        activationMode:
+          type: string
+          nullable: true
+        message:
+          type: string
+          nullable: true
+      required:
+        - bundle
+
+    CreateBundleRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        skillIds:
+          type: array
+          items:
+            type: string
+        taskMode:
+          type: string
+          nullable: true
+        sessionMode:
+          type: string
+          nullable: true
+        tokenMode:
+          type: string
+          nullable: true
+      required:
+        - name
+        - slug
+        - skillIds
+
+    UpdateBundleRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+        skillIds:
+          type: array
+          nullable: true
+          items:
+            type: string
+        taskMode:
+          type: string
+          nullable: true
+        sessionMode:
+          type: string
+          nullable: true
+        tokenMode:
+          type: string
+          nullable: true
+
+    ActivateBundleRequest:
+      type: object
+      properties:
+        sessionId:
+          type: integer
+          nullable: true
+          description: Session ID to associate the bundle with (next-launch only in v1)
+
+    ActivateBundleResponse:
+      type: object
+      properties:
+        bundle:
+          $ref: "#/components/schemas/SkillBundle"
+        activationMode:
+          type: string
+          description: "Always next-launch in v1"
+        message:
+          type: string
+      required:
+        - bundle
+        - activationMode
+
+    CompilePreviewRequest:
+      type: object
+      properties:
+        bundleId:
+          type: integer
+        taskMode:
+          type: string
+          nullable: true
+        tokenMode:
+          type: string
+          nullable: true
+        repoLangs:
+          type: array
+          nullable: true
+          items:
+            type: string
+        modelProfile:
+          type: string
+          nullable: true
+      required:
+        - bundleId
+
+    CompilePreviewResponse:
+      type: object
+      properties:
+        compiled:
+          type: object
+          additionalProperties: true
+        activeBundleB64:
+          type: string
+        byteLength:
+          type: integer
+      required:
+        - compiled
+        - activeBundleB64
+        - byteLength
+
+    SessionSkillActivation:
+      type: object
+      properties:
+        id:
+          type: integer
+        sessionId:
+          type: integer
+        bundleId:
+          type: integer
+          nullable: true
+        activatedSkillsJson:
+          type: array
+          items:
+            type: string
+        rationaleJson:
+          type: object
+          nullable: true
+          additionalProperties: true
+        tokenMode:
+          type: string
+        activationMode:
+          type: string
+        activatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - sessionId
+        - tokenMode
+        - activationMode
+        - activatedAt
+
+    SessionSkillsResponse:
+      type: object
+      properties:
+        activations:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionSkillActivation"
+      required:
+        - activations
+
+    SkillFeedbackRequest:
+      type: object
+      properties:
+        skillId:
+          type: integer
+        helpful:
+          type: boolean
+        notes:
+          type: string
+          nullable: true
+        tokenDelta:
+          type: integer
+          nullable: true
+        taskSuccessScore:
+          type: integer
+          nullable: true
+      required:
+        - skillId
+        - helpful
+
+    SkillFeedbackResponse:
+      type: object
+      properties:
+        feedback:
+          type: object
+          additionalProperties: true
+      required:
+        - feedback

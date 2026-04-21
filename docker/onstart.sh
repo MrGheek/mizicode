@@ -335,6 +335,52 @@ touch /tmp/instance-ready
 log "=== Phase 1 done — code-server and tools available (LLM loading in background) ==="
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PHASE 1.5: Smart Skills bundle activation
+# Runs synchronously after services_ready, before model download begins.
+# FLOATR_ACTIVE_BUNDLE_B64 is a base64-encoded JSON payload containing:
+#   - bundleSlug, tokenMode, skills[], systemPromptFragment
+# ─────────────────────────────────────────────────────────────────────────────
+if [ -n "${FLOATR_ACTIVE_BUNDLE_B64:-}" ]; then
+    log "=== Phase 1.5: Smart Skills bundle activation ==="
+    set_status "skills_compiling"
+    report_status "skills_compiling" "Activating Smart Skills bundle..."
+
+    SKILLS_DIR="/workspace/.floatr/skills"
+    PROMPTS_DIR="/workspace/.floatr/prompts"
+    mkdir -p "$SKILLS_DIR" "$PROMPTS_DIR"
+
+    # Decode and write the bundle JSON
+    if printf '%s' "$FLOATR_ACTIVE_BUNDLE_B64" | base64 -d > "$SKILLS_DIR/active-bundle.json" 2>/dev/null; then
+        log "Smart Skills: active-bundle.json written to $SKILLS_DIR"
+
+        # Extract and write the system prompt fragment for claw-code SYSTEM_PROMPT injection
+        if command -v jq > /dev/null 2>&1; then
+            PROMPT_FRAGMENT=$(jq -r '.systemPromptFragment // empty' "$SKILLS_DIR/active-bundle.json" 2>/dev/null)
+            if [ -n "$PROMPT_FRAGMENT" ]; then
+                printf '%s\n' "$PROMPT_FRAGMENT" > "$PROMPTS_DIR/active-bundle.md"
+                log "Smart Skills: prompt fragment written to $PROMPTS_DIR/active-bundle.md"
+
+                # Append to global environment so claw-runner can read it on startup
+                echo "FLOATR_SKILLS_PROMPT_PATH=$PROMPTS_DIR/active-bundle.md" >> /etc/environment
+
+                BUNDLE_SLUG=$(jq -r '.bundleSlug // "unknown"' "$SKILLS_DIR/active-bundle.json" 2>/dev/null)
+                TOKEN_MODE=$(jq -r '.tokenMode // "core"' "$SKILLS_DIR/active-bundle.json" 2>/dev/null)
+                SKILL_COUNT=$(jq '.skills | length' "$SKILLS_DIR/active-bundle.json" 2>/dev/null || echo "0")
+                log "Smart Skills: bundle=$BUNDLE_SLUG tokenMode=$TOKEN_MODE skillCount=$SKILL_COUNT"
+            fi
+        fi
+
+        set_status "skills_ready"
+        report_status "skills_ready" "Smart Skills bundle loaded"
+        log "=== Phase 1.5 done — Smart Skills bundle active ==="
+    else
+        log "WARNING: Failed to decode FLOATR_ACTIVE_BUNDLE_B64 — Smart Skills will be unavailable this session"
+    fi
+else
+    log "No Smart Skills bundle configured for this session — skipping Phase 1.5"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PHASE 2: Model download + vLLM + litellm in background
 # ─────────────────────────────────────────────────────────────────────────────
 log "Starting LLM backend in background..."

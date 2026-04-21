@@ -271,6 +271,7 @@ export function buildOnStartScript(profileConfig: {
   teamMembers?: TeamMemberInput[];
   sessionId?: number;
   callbackBaseUrl?: string;
+  activeBundleB64?: string;
 }): string {
   const memLines = profileConfig.memProxyUrl
     ? [
@@ -295,6 +296,12 @@ export function buildOnStartScript(profileConfig: {
     ? `export TEAM_MEMBERS_JSON='${JSON.stringify(profileConfig.teamMembers)}'`
     : "";
 
+  // Smart Skills bundle: written to /workspace/.floatr/skills/active-bundle.json during boot.
+  // The base64 payload contains the compiled bundle + system prompt fragment.
+  const skillsLine = profileConfig.activeBundleB64
+    ? `export FLOATR_ACTIVE_BUNDLE_B64='${profileConfig.activeBundleB64}'`
+    : "";
+
   return `#!/bin/bash
 export MODEL_REPO="${profileConfig.modelRepo}"
 export MODEL_QUANT="${profileConfig.modelQuant}"
@@ -306,6 +313,7 @@ export NUM_GPUS="${profileConfig.numGpus || 1}"
 ${memLines}
 ${callbackLines}
 ${teamLine}
+${skillsLine}
 /opt/onstart.sh
 `;
 }

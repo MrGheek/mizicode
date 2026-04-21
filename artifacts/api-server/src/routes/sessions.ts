@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, sessionsTable, gpuProfilesTable, templatesTable } from "@workspace/db";
+import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
 import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
@@ -7,6 +7,8 @@ import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
 import { listObservations, listSessions, searchMemory, subscribeToObservations } from "../services/memory";
 import type { TeamMemberRecord } from "@workspace/db";
+import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles } from "../services/skills-bundler";
+import type { SessionContext } from "../services/skills-types";
 
 import { randomBytes } from "crypto";
 
@@ -150,10 +152,12 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
 const CALLBACK_TOKEN = process.env["OMNIQL_MEM_TOKEN"] || "";
 
 const INSTANCE_STATUS_MAP: Record<string, { status: typeof sessionsTable.$inferSelect["status"]; statusMessage: string }> = {
-  services_ready: { status: "starting",    statusMessage: "Tools ready — LLM model loading in background..." },
-  downloading:    { status: "downloading", statusMessage: "Downloading model weights..." },
-  starting_llm:   { status: "starting",    statusMessage: "Loading model into GPU memory..." },
-  llm_ready:      { status: "ready",       statusMessage: "Session is ready — vLLM online" },
+  services_ready:   { status: "starting",    statusMessage: "Tools ready — LLM model loading in background..." },
+  downloading:      { status: "downloading", statusMessage: "Downloading model weights..." },
+  starting_llm:     { status: "starting",    statusMessage: "Loading model into GPU memory..." },
+  skills_compiling: { status: "starting",    statusMessage: "Compiling Smart Skills bundle..." },
+  skills_ready:     { status: "starting",    statusMessage: "Smart Skills loaded — LLM loading in background..." },
+  llm_ready:        { status: "ready",       statusMessage: "Session is ready — vLLM online" },
 };
 
 router.post("/sessions/:sessionId/status", async (req, res) => {
@@ -294,7 +298,7 @@ router.get("/sessions/:sessionId", async (req, res) => {
 });
 
 router.post("/sessions", async (req, res) => {
-  const { profileId, offerId, teamMembers: teamMemberNames } = req.body;
+  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId } = req.body;
 
   if (!profileId) {
     res.status(400).json({ error: "profileId is required" });
@@ -365,6 +369,10 @@ router.post("/sessions", async (req, res) => {
 
     logger.info({ profileId, selectedOfferId, teamMemberCount: teamMemberRecords.length }, "Launching session — model will download on instance startup");
 
+    const resolvedTaskMode = taskMode || (teamMemberRecords.length > 0 ? "team" : "build");
+    const resolvedTokenMode = tokenMode || "core";
+    const sessionType = teamMemberRecords.length > 0 ? "team" : "solo";
+
     const [session] = await db
       .insert(sessionsTable)
       .values({
@@ -376,6 +384,9 @@ router.post("/sessions", async (req, res) => {
         gpuName: profile.gpuName,
         numGpus: profile.numGpus,
         teamMembers: teamMemberRecords.length > 0 ? teamMemberRecords : null,
+        taskMode: resolvedTaskMode,
+        tokenMode: resolvedTokenMode,
+        activeBundleId: requestedBundleId || null,
       })
       .returning();
 
@@ -394,6 +405,43 @@ router.post("/sessions", async (req, res) => {
 
     const callbackBaseUrl = memProxyUrl; // same base URL the instance can already reach
 
+    // ── Smart Skills: compile the active bundle and encode it for the onstart script ──
+    let activeBundleB64: string | undefined;
+    let resolvedBundleId: number | undefined;
+    try {
+      await seedDefaultBundles();
+      const sessionCtx: SessionContext = {
+        sessionType: sessionType as SessionContext["sessionType"],
+        taskMode: resolvedTaskMode as SessionContext["taskMode"],
+        modelProfile: profile.servedModelName || "kimi",
+        repoLangs: [],
+        tokenMode: resolvedTokenMode as SessionContext["tokenMode"],
+      };
+
+      let bundle: typeof skillBundlesTable.$inferSelect | null = null;
+      if (requestedBundleId) {
+        const [found] = await db.select().from(skillBundlesTable).where(eq(skillBundlesTable.id, requestedBundleId));
+        bundle = found || null;
+      }
+      if (!bundle) {
+        bundle = await getDefaultBundleForContext(sessionCtx);
+      }
+
+      if (bundle) {
+        resolvedBundleId = bundle.id;
+        const compiled = await compileBundle(bundle.id, sessionCtx);
+        activeBundleB64 = buildActiveBundleEnvPayload(compiled, resolvedTokenMode as SessionContext["tokenMode"]);
+        await recordSessionActivation(session.id, compiled, resolvedTokenMode as SessionContext["tokenMode"]);
+        logger.info({ sessionId: session.id, bundleId: bundle.id, bundleSlug: bundle.slug }, "Smart Skills bundle compiled for session");
+      }
+    } catch (skillsErr) {
+      logger.warn({ err: skillsErr, sessionId: session.id }, "Smart Skills compilation failed — session will launch without skills bundle");
+    }
+
+    if (resolvedBundleId && resolvedBundleId !== (requestedBundleId || null)) {
+      await db.update(sessionsTable).set({ activeBundleId: resolvedBundleId, updatedAt: new Date() }).where(eq(sessionsTable.id, session.id));
+    }
+
     const onstart = vastai.buildOnStartScript({
       modelRepo: MODEL_REPO,
       modelQuant: MODEL_QUANT,
@@ -408,6 +456,7 @@ router.post("/sessions", async (req, res) => {
       teamMembers: teamMemberRecords,
       sessionId: insertedSessionId,
       callbackBaseUrl,
+      activeBundleB64,
     });
 
     const result = await vastai.createInstance({

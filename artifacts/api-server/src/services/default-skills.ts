@@ -1,0 +1,341 @@
+import type { FloatrSkillManifest } from "./skills-types";
+
+const FLOATR_NATIVE_SOURCE = {
+  repoUrl: "https://github.com/floatr/skills",
+  commitSha: "builtin",
+  license: "MIT",
+  trust: "floatr_native" as const,
+};
+
+export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
+  {
+    schemaVersion: 1,
+    id: "karpathy-doctrine",
+    name: "Karpathy Doctrine",
+    class: "doctrine",
+    source: FLOATR_NATIVE_SOURCE,
+    summary: "Coding doctrine favoring explicit assumptions, simplicity, surgical edits, and verifiable success criteria.",
+    triggers: {
+      tasks: ["build", "debug", "refactor", "review"],
+      repoKinds: ["any"],
+      sessionModes: ["solo", "team"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode", "bolt", "api"] },
+    instructions: {
+      system: [
+        "State assumptions explicitly before starting any implementation.",
+        "Prefer the smallest possible change that solves the problem.",
+        "Avoid unrelated edits — if you notice something else, note it separately.",
+        "Define what done looks like before writing code.",
+        "Think step by step before producing output.",
+        "When uncertain, ask a clarifying question rather than guessing.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment", "cockpit_badge"] },
+    cost: { tokenOverheadEstimate: 180 },
+    rankingHints: { taskFitWeight: 0.9, repoFitWeight: 0.5, measuredLiftWeight: 1.0 },
+    safety: { shellExecution: "none", networkAccess: "none" },
+  },
+  {
+    schemaVersion: 1,
+    id: "flow-router",
+    name: "Flow Router",
+    class: "workflow",
+    source: FLOATR_NATIVE_SOURCE,
+    summary: "Structured plan → build → verify → ship workflow with routing for different task types.",
+    triggers: {
+      tasks: ["build", "refactor", "debug"],
+      repoKinds: ["any"],
+      sessionModes: ["solo", "team"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode"] },
+    instructions: {
+      system: [
+        "For any non-trivial task, follow: Plan → Build → Verify → Ship.",
+        "In the Plan phase: state the goal, list the files that will change, and identify any risks.",
+        "In the Build phase: implement one change at a time, verify each step before proceeding.",
+        "In the Verify phase: check that the success criteria from the Plan phase are met.",
+        "For debug tasks: reproduce first, then isolate, then fix, then confirm fix.",
+        "For review tasks: summarize changes, identify blast radius, flag regressions.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment"] },
+    cost: { tokenOverheadEstimate: 220 },
+    rankingHints: { taskFitWeight: 1.0, repoFitWeight: 0.4, measuredLiftWeight: 0.8 },
+    safety: { shellExecution: "none", networkAccess: "none" },
+  },
+  {
+    schemaVersion: 1,
+    id: "memory-compact",
+    name: "Memory Compact",
+    class: "context",
+    source: FLOATR_NATIVE_SOURCE,
+    summary: "Cross-session memory context injection — retrieves the most relevant past observations into system prompt.",
+    triggers: {
+      tasks: ["build", "debug", "refactor", "explore"],
+      repoKinds: ["any"],
+      sessionModes: ["solo", "team"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw"] },
+    instructions: {
+      system: [
+        "Relevant context from past sessions is injected at the start of this session.",
+        "Use past observations to avoid repeating work already done.",
+        "If past context seems outdated or contradicted by current state, note the discrepancy.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment"] },
+    cost: { tokenOverheadEstimate: 120 },
+    rankingHints: { taskFitWeight: 0.7, repoFitWeight: 0.6, measuredLiftWeight: 0.9 },
+    safety: { shellExecution: "none", networkAccess: "none" },
+  },
+  {
+    schemaVersion: 1,
+    id: "lean-compression",
+    name: "Lean Compression",
+    class: "efficiency",
+    source: FLOATR_NATIVE_SOURCE,
+    summary: "Response compression profile — reduces token usage by tightening response style.",
+    triggers: {
+      tasks: ["build", "debug", "refactor", "review", "explore", "team"],
+      repoKinds: ["any"],
+      sessionModes: ["solo", "team"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode", "bolt"] },
+    instructions: {
+      system: [
+        "Be concise. Skip preamble and filler phrases.",
+        "Omit restating the question unless it helps clarity.",
+        "Use bullet points over paragraphs for lists of items.",
+        "Show code without wrapping it in explanation unless the explanation is genuinely useful.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment"] },
+    cost: { tokenOverheadEstimate: 80 },
+    rankingHints: { taskFitWeight: 0.5, repoFitWeight: 0.3, measuredLiftWeight: 0.7 },
+    safety: { shellExecution: "none", networkAccess: "none" },
+  },
+  {
+    schemaVersion: 1,
+    id: "focused-memory",
+    name: "Focused Memory",
+    class: "context",
+    source: FLOATR_NATIVE_SOURCE,
+    summary: "Retrieves only the most directly relevant past observations — lower token cost than Memory Compact.",
+    triggers: {
+      tasks: ["debug", "review", "refactor"],
+      repoKinds: ["any"],
+      sessionModes: ["solo"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw"] },
+    instructions: {
+      system: [
+        "A focused set of past observations most relevant to the current task has been injected.",
+        "Use this context to avoid re-discovering known facts about the codebase.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment"] },
+    cost: { tokenOverheadEstimate: 60 },
+    rankingHints: { taskFitWeight: 0.8, repoFitWeight: 0.5, measuredLiftWeight: 0.7 },
+    safety: { shellExecution: "none", networkAccess: "none" },
+  },
+  {
+    schemaVersion: 1,
+    id: "one-line-review",
+    name: "One-Line Review Mode",
+    class: "efficiency",
+    source: FLOATR_NATIVE_SOURCE,
+    summary: "Maximally terse review output — one actionable line per file or issue.",
+    triggers: {
+      tasks: ["review"],
+      repoKinds: ["any"],
+      sessionModes: ["solo", "team"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode"] },
+    instructions: {
+      system: [
+        "For code review, produce one line of feedback per file or issue.",
+        "Format: [SEVERITY] filename:line — description. Example: [WARN] auth.ts:42 — token not validated before use.",
+        "Severity levels: CRIT, WARN, INFO, STYLE.",
+        "Omit commentary on correct code. Only flag actionable issues.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment"] },
+    cost: { tokenOverheadEstimate: 90 },
+    rankingHints: { taskFitWeight: 1.0, repoFitWeight: 0.3, measuredLiftWeight: 0.8 },
+    safety: { shellExecution: "none", networkAccess: "none" },
+  },
+  {
+    schemaVersion: 1,
+    id: "debug-flow",
+    name: "Debug Flow",
+    class: "workflow",
+    source: FLOATR_NATIVE_SOURCE,
+    summary: "Structured debugging workflow: reproduce → isolate → fix → confirm.",
+    triggers: {
+      tasks: ["debug"],
+      repoKinds: ["any"],
+      sessionModes: ["solo", "team"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode"] },
+    instructions: {
+      system: [
+        "Debug workflow: Reproduce → Isolate → Fix → Confirm.",
+        "Step 1 Reproduce: get a minimal reproducible case before touching any code.",
+        "Step 2 Isolate: binary search the call stack or data path until the exact fault is found.",
+        "Step 3 Fix: make only the change needed to fix the fault. Do not refactor during debug.",
+        "Step 4 Confirm: re-run the reproduction case and verify it passes.",
+        "If you cannot reproduce the bug, say so clearly and list what you tried.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment"] },
+    cost: { tokenOverheadEstimate: 200 },
+    rankingHints: { taskFitWeight: 1.0, repoFitWeight: 0.4, measuredLiftWeight: 0.9 },
+    safety: { shellExecution: "none", networkAccess: "none" },
+  },
+  {
+    schemaVersion: 1,
+    id: "checkpoints-lite",
+    name: "Checkpoints Lite",
+    class: "workflow",
+    source: FLOATR_NATIVE_SOURCE,
+    summary: "Lightweight checkpoint pattern — placeholder; full implementation in Phase 2.",
+    triggers: {
+      tasks: ["debug", "build", "refactor"],
+      repoKinds: ["any"],
+      sessionModes: ["solo", "team"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw"] },
+    instructions: {
+      system: [
+        "Before making a complex multi-step change, summarize the current state in one sentence.",
+        "After each major step, confirm what changed and whether it worked before moving on.",
+        "If something goes wrong mid-task, state clearly which step failed and what the rollback plan is.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment"] },
+    cost: { tokenOverheadEstimate: 100 },
+    rankingHints: { taskFitWeight: 0.7, repoFitWeight: 0.4, measuredLiftWeight: 0.6 },
+    safety: { shellExecution: "none", networkAccess: "none" },
+  },
+  {
+    schemaVersion: 1,
+    id: "compact-response",
+    name: "Compact Response",
+    class: "efficiency",
+    source: FLOATR_NATIVE_SOURCE,
+    summary: "Minimal response style for debug and fix tasks — error + fix only, no narration.",
+    triggers: {
+      tasks: ["debug", "refactor"],
+      repoKinds: ["any"],
+      sessionModes: ["solo"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode"] },
+    instructions: {
+      system: [
+        "For bug reports or errors: state the cause in one sentence, then show the fix.",
+        "No narration before or after the fix. No 'Here is the updated code:' headers.",
+        "If multiple files change, show each as a separate code block with the filename above it.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment"] },
+    cost: { tokenOverheadEstimate: 70 },
+    rankingHints: { taskFitWeight: 0.8, repoFitWeight: 0.3, measuredLiftWeight: 0.7 },
+    safety: { shellExecution: "none", networkAccess: "none" },
+  },
+  {
+    schemaVersion: 1,
+    id: "shared-memory-lite",
+    name: "Shared Memory Lite",
+    class: "context",
+    source: FLOATR_NATIVE_SOURCE,
+    summary: "Team session memory — placeholder; full shared-workspace memory tree in Phase 3.",
+    triggers: {
+      tasks: ["build", "review", "debug", "team"],
+      repoKinds: ["any"],
+      sessionModes: ["team"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode"] },
+    instructions: {
+      system: [
+        "This is a team session. Multiple developers are working in the same environment.",
+        "Before making changes to shared code, note what you are changing and why.",
+        "Prefer small, well-scoped commits so teammates can follow your work.",
+        "If you see work in progress by another developer, do not overwrite it without checking.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment"] },
+    cost: { tokenOverheadEstimate: 110 },
+    rankingHints: { taskFitWeight: 0.6, repoFitWeight: 0.4, measuredLiftWeight: 0.5 },
+    safety: { shellExecution: "none", networkAccess: "none" },
+  },
+  {
+    schemaVersion: 1,
+    id: "decision-log-lite",
+    name: "Decision Log Lite",
+    class: "workflow",
+    source: FLOATR_NATIVE_SOURCE,
+    summary: "Lightweight architectural decision logging — placeholder; full ADR system in Phase 3.",
+    triggers: {
+      tasks: ["build", "refactor", "team"],
+      repoKinds: ["any"],
+      sessionModes: ["team"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode"] },
+    instructions: {
+      system: [
+        "When making an architectural decision, briefly note: what you chose, what you rejected, and why.",
+        "Format: DECISION: <choice> | REJECTED: <alternative> | REASON: <why>.",
+        "This helps teammates understand past decisions without digging through history.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment"] },
+    cost: { tokenOverheadEstimate: 90 },
+    rankingHints: { taskFitWeight: 0.5, repoFitWeight: 0.4, measuredLiftWeight: 0.5 },
+    safety: { shellExecution: "none", networkAccess: "none" },
+  },
+];
+
+export interface DefaultBundleSpec {
+  slug: string;
+  name: string;
+  skillIds: string[];
+  taskMode: string;
+  sessionMode: string;
+  description: string;
+}
+
+export const DEFAULT_BUNDLES: DefaultBundleSpec[] = [
+  {
+    slug: "floatr-builder",
+    name: "FLOATR Builder",
+    skillIds: ["karpathy-doctrine", "flow-router", "memory-compact", "lean-compression"],
+    taskMode: "build",
+    sessionMode: "solo",
+    description: "Default bundle for building new features — doctrine + flow + memory + compression.",
+  },
+  {
+    slug: "floatr-reviewer",
+    name: "FLOATR Reviewer",
+    skillIds: ["karpathy-doctrine", "flow-router", "focused-memory", "one-line-review"],
+    taskMode: "review",
+    sessionMode: "solo",
+    description: "Code review bundle — doctrine + flow + focused memory + terse review output.",
+  },
+  {
+    slug: "floatr-debugger",
+    name: "FLOATR Debugger",
+    skillIds: ["debug-flow", "checkpoints-lite", "focused-memory", "compact-response"],
+    taskMode: "debug",
+    sessionMode: "solo",
+    description: "Debugging bundle — structured debug flow + checkpoints + focused memory + compact output.",
+  },
+  {
+    slug: "floatr-team-studio",
+    name: "FLOATR Team Studio",
+    skillIds: ["shared-memory-lite", "flow-router", "decision-log-lite", "lean-compression"],
+    taskMode: "team",
+    sessionMode: "team",
+    description: "Team session bundle — shared memory + flow + decision log + lean compression.",
+  },
+];

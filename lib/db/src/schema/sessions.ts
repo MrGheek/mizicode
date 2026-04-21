@@ -2,6 +2,7 @@ import { pgTable, serial, text, integer, real, timestamp, jsonb } from "drizzle-
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { gpuProfilesTable } from "./gpu-profiles";
+import { skillBundlesTable } from "./skills";
 
 export interface TeamMemberRecord {
   name: string;
@@ -31,6 +32,10 @@ export const sessionsTable = pgTable("sessions", {
   startedAt: timestamp("started_at"),
   stoppedAt: timestamp("stopped_at"),
   teamMembers: jsonb("team_members").$type<TeamMemberRecord[]>(),
+  taskMode: text("task_mode"),
+  tokenMode: text("token_mode"),
+  activeBundleId: integer("active_bundle_id").references(() => skillBundlesTable.id),
+  repoFingerprintJson: jsonb("repo_fingerprint_json"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

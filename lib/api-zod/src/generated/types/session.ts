@@ -30,6 +30,12 @@ export interface Session {
   startedAt?: Date | null;
   stoppedAt?: Date | null;
   teamMembers?: TeamMember[] | null;
+  /** Task mode used for Smart Skills selection (build, review, debug, refactor, explore, team) */
+  taskMode?: string | null;
+  /** Token mode used for context budgeting (full, core, lean, ultra) */
+  tokenMode?: string | null;
+  /** Active Smart Skills bundle ID */
+  activeBundleId?: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
