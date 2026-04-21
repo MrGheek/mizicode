@@ -1026,6 +1026,12 @@ export const CompileBundleBody = zod.object({
   taskMode: zod.string().nullish(),
   tokenMode: zod.string().nullish(),
   repoLangs: zod.array(zod.string()).nullish(),
+  repoUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "Optional repo URL to help select the best skill bundle for the project's stack.",
+    ),
   modelProfile: zod.string().nullish(),
 });
 

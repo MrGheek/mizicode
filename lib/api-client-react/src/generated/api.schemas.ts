@@ -386,6 +386,8 @@ export interface CompileBundleRequest {
   taskMode?: string | null;
   tokenMode?: string | null;
   repoLangs?: string[] | null;
+  /** Optional repo URL to help select the best skill bundle for the project's stack. */
+  repoUrl?: string | null;
   modelProfile?: string | null;
 }
 

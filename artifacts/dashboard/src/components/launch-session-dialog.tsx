@@ -91,6 +91,7 @@ export function LaunchSessionDialog({
         taskMode,
         tokenMode,
         modelProfile: profile.name,
+        repoUrl: repoUrl.trim() || undefined,
       },
     }, {
       onSuccess: (result) => setRecommendedBundle(result),

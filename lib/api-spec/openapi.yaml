@@ -1721,6 +1721,10 @@ components:
           nullable: true
           items:
             type: string
+        repoUrl:
+          type: string
+          nullable: true
+          description: Optional repo URL to help select the best skill bundle for the project's stack.
         modelProfile:
           type: string
           nullable: true

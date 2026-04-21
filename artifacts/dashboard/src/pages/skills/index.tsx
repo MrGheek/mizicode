@@ -55,11 +55,24 @@ function SkillSourceBlock({ skillId, alwaysOpen }: { skillId: number; alwaysOpen
           className="w-full flex items-center justify-between px-2.5 py-2 text-muted-foreground hover:text-foreground transition-colors"
           onClick={() => setOpen(v => !v)}
         >
-          <span className="flex items-center gap-1.5">
-            <GitBranch className="w-3 h-3" />
-            Source & Manifest
+          <span className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
+            <GitBranch className="w-3 h-3 shrink-0" />
+            {src?.repoUrl ? (
+              <a
+                href={src.repoUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary/80 hover:text-primary underline underline-offset-2 truncate"
+                onClick={e => e.stopPropagation()}
+              >
+                {src.repoUrl.replace("https://github.com/", "")}
+                <ExternalLink className="inline w-2.5 h-2.5 ml-0.5 mb-0.5" />
+              </a>
+            ) : (
+              <span>Source & Manifest</span>
+            )}
           </span>
-          {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          {open ? <ChevronDown className="w-3 h-3 shrink-0 ml-1" /> : <ChevronRight className="w-3 h-3 shrink-0 ml-1" />}
         </button>
       )}
       {(alwaysOpen || open) && (
@@ -302,6 +315,14 @@ function BundleSkillAccordion({ skill, index }: { skill: CompiledSkill; index: n
               ))}
             </div>
           )}
+          <details className="border-t border-border/30 pt-2">
+            <summary className="cursor-pointer select-none text-[10px] font-semibold text-foreground/50 uppercase tracking-wide hover:text-foreground/80 transition-colors">
+              Full Manifest JSON
+            </summary>
+            <pre className="mt-1.5 bg-secondary/40 rounded p-2 overflow-x-auto text-[10px] font-mono leading-relaxed whitespace-pre-wrap break-all">
+              {JSON.stringify(skill, null, 2)}
+            </pre>
+          </details>
         </div>
       )}
     </div>

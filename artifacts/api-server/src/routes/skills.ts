@@ -273,12 +273,13 @@ router.post("/skill-bundles/seed", async (_req, res) => {
 });
 
 router.post("/skill-bundles/compile", async (req, res) => {
-  const { bundleId, sessionType, taskMode, tokenMode, repoLangs, modelProfile } = req.body as {
+  const { bundleId, sessionType, taskMode, tokenMode, repoLangs, repoUrl, modelProfile } = req.body as {
     bundleId?: number;
     sessionType?: string;
     taskMode?: string;
     tokenMode?: string;
     repoLangs?: string[];
+    repoUrl?: string;
     modelProfile?: string;
   };
 
@@ -294,8 +295,8 @@ router.post("/skill-bundles/compile", async (req, res) => {
     // Auto-select default bundle from context if none specified
     let resolvedBundleId = bundleId;
     if (!resolvedBundleId) {
-      // hasRepoContext=true when repoLangs were supplied, enabling context-scored selection
-      const hasRepoCtx = Array.isArray(repoLangs) && repoLangs.length > 0;
+      // hasRepoContext=true when repoLangs were supplied, or when repoUrl is provided
+      const hasRepoCtx = (Array.isArray(repoLangs) && repoLangs.length > 0) || !!repoUrl;
       const defaultBundle = await getDefaultBundleForContext(ctx, hasRepoCtx);
       if (!defaultBundle) {
         res.status(400).json({ error: "No bundle found for provided context" });
