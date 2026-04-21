@@ -349,25 +349,44 @@ if [ -n "${FLOATR_ACTIVE_BUNDLE_B64:-}" ]; then
     PROMPTS_DIR="/workspace/.floatr/prompts"
     mkdir -p "$SKILLS_DIR" "$PROMPTS_DIR"
 
+    SKILL_PROMPTS_DIR="$PROMPTS_DIR/skills"
+    mkdir -p "$SKILL_PROMPTS_DIR"
+
     # Decode and write the bundle JSON
     if printf '%s' "$FLOATR_ACTIVE_BUNDLE_B64" | base64 -d > "$SKILLS_DIR/active-bundle.json" 2>/dev/null; then
         log "Smart Skills: active-bundle.json written to $SKILLS_DIR"
 
-        # Extract and write the system prompt fragment for claw-code SYSTEM_PROMPT injection
         if command -v jq > /dev/null 2>&1; then
+            BUNDLE_SLUG=$(jq -r '.bundleSlug // "unknown"' "$SKILLS_DIR/active-bundle.json" 2>/dev/null)
+            TOKEN_MODE=$(jq -r '.tokenMode // "core"' "$SKILLS_DIR/active-bundle.json" 2>/dev/null)
+            SKILL_COUNT=$(jq '.skills | length' "$SKILLS_DIR/active-bundle.json" 2>/dev/null || echo "0")
+            log "Smart Skills: bundle=$BUNDLE_SLUG tokenMode=$TOKEN_MODE skillCount=$SKILL_COUNT"
+
+            # Write token-mode.json for runtime inspection
+            printf '{"tokenMode":"%s","bundleSlug":"%s","skillCount":%s,"activatedAt":"%s"}\n' \
+                "$TOKEN_MODE" "$BUNDLE_SLUG" "$SKILL_COUNT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                > "$SKILLS_DIR/token-mode.json"
+            log "Smart Skills: token-mode.json written"
+
+            # Write the combined system prompt fragment
             PROMPT_FRAGMENT=$(jq -r '.systemPromptFragment // empty' "$SKILLS_DIR/active-bundle.json" 2>/dev/null)
             if [ -n "$PROMPT_FRAGMENT" ]; then
                 printf '%s\n' "$PROMPT_FRAGMENT" > "$PROMPTS_DIR/active-bundle.md"
                 log "Smart Skills: prompt fragment written to $PROMPTS_DIR/active-bundle.md"
-
-                # Append to global environment so claw-runner can read it on startup
                 echo "FLOATR_SKILLS_PROMPT_PATH=$PROMPTS_DIR/active-bundle.md" >> /etc/environment
-
-                BUNDLE_SLUG=$(jq -r '.bundleSlug // "unknown"' "$SKILLS_DIR/active-bundle.json" 2>/dev/null)
-                TOKEN_MODE=$(jq -r '.tokenMode // "core"' "$SKILLS_DIR/active-bundle.json" 2>/dev/null)
-                SKILL_COUNT=$(jq '.skills | length' "$SKILLS_DIR/active-bundle.json" 2>/dev/null || echo "0")
-                log "Smart Skills: bundle=$BUNDLE_SLUG tokenMode=$TOKEN_MODE skillCount=$SKILL_COUNT"
             fi
+
+            # Write individual per-skill prompt files: prompts/skills/<skill-id>.md
+            SKILL_IDS=$(jq -r '.skills[].id' "$SKILLS_DIR/active-bundle.json" 2>/dev/null || true)
+            for SKILL_ID in $SKILL_IDS; do
+                SKILL_BULLETS=$(jq -r --arg sid "$SKILL_ID" \
+                    '.skills[] | select(.id==$sid) | .instructions.system // "" | if type=="array" then .[] else . end' \
+                    "$SKILLS_DIR/active-bundle.json" 2>/dev/null || true)
+                if [ -n "$SKILL_BULLETS" ]; then
+                    printf '%s\n' "$SKILL_BULLETS" > "$SKILL_PROMPTS_DIR/${SKILL_ID}.md"
+                    log "Smart Skills: wrote prompts/skills/${SKILL_ID}.md"
+                fi
+            done
         fi
 
         set_status "skills_ready"

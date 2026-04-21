@@ -24,7 +24,7 @@ router.get("/skills", async (_req, res) => {
   res.json({ skills, builtins: DEFAULT_SKILLS.map(s => ({ id: s.id, name: s.name, class: s.class, summary: s.summary })) });
 });
 
-router.get("/skills/discover", (_req, res) => {
+router.post("/skills/discover", (_req, res) => {
   res.status(501).json(NOT_IMPLEMENTED("skill discovery"));
 });
 
@@ -83,16 +83,16 @@ router.post("/skills/import", async (req, res) => {
   }
 });
 
-router.put("/skills/:skillId/review", async (req, res) => {
+router.post("/skills/:skillId/review", async (req, res) => {
   const id = parseInt(req.params.skillId);
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid skill ID" });
     return;
   }
 
-  const { action, reason } = req.body as { action?: string; reason?: string };
-  if (!action || !["approve", "reject", "disable"].includes(action)) {
-    res.status(400).json({ error: "action must be approve, reject, or disable" });
+  const { approved, reason } = req.body as { approved?: boolean; reason?: string };
+  if (typeof approved !== "boolean") {
+    res.status(400).json({ error: "approved (boolean) is required" });
     return;
   }
 
@@ -102,8 +102,8 @@ router.put("/skills/:skillId/review", async (req, res) => {
     return;
   }
 
-  const reviewStatus = action === "approve" ? "approved" : action === "reject" ? "rejected" : skill.reviewStatus;
-  const enabled = action === "approve" ? true : action === "disable" ? false : skill.enabled;
+  const reviewStatus = approved ? "approved" : "rejected";
+  const enabled = approved;
 
   const [updated] = await db
     .update(skillsTable)
@@ -111,7 +111,53 @@ router.put("/skills/:skillId/review", async (req, res) => {
     .where(eq(skillsTable.id, id))
     .returning();
 
-  logger.info({ skillId: id, action, reason }, "Skill review action applied");
+  logger.info({ skillId: id, approved, reason }, "Skill review action applied");
+  res.json({ skill: updated });
+});
+
+router.post("/skills/:skillId/enable", async (req, res) => {
+  const id = parseInt(req.params.skillId);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid skill ID" });
+    return;
+  }
+
+  const [skill] = await db.select().from(skillsTable).where(eq(skillsTable.id, id));
+  if (!skill) {
+    res.status(404).json({ error: "Skill not found" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(skillsTable)
+    .set({ enabled: true, updatedAt: new Date() })
+    .where(eq(skillsTable.id, id))
+    .returning();
+
+  logger.info({ skillId: id }, "Skill enabled");
+  res.json({ skill: updated });
+});
+
+router.post("/skills/:skillId/disable", async (req, res) => {
+  const id = parseInt(req.params.skillId);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid skill ID" });
+    return;
+  }
+
+  const [skill] = await db.select().from(skillsTable).where(eq(skillsTable.id, id));
+  if (!skill) {
+    res.status(404).json({ error: "Skill not found" });
+    return;
+  }
+
+  const [updated] = await db
+    .update(skillsTable)
+    .set({ enabled: false, updatedAt: new Date() })
+    .where(eq(skillsTable.id, id))
+    .returning();
+
+  logger.info({ skillId: id }, "Skill disabled");
   res.json({ skill: updated });
 });
 
@@ -127,6 +173,38 @@ router.post("/skill-bundles/seed", async (_req, res) => {
     res.json({ seeded: true, bundles });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Seed failed";
+    res.status(500).json({ error: message });
+  }
+});
+
+router.post("/skill-bundles/compile", async (req, res) => {
+  const { bundleId, taskMode, tokenMode, repoLangs, modelProfile } = req.body as {
+    bundleId?: number;
+    taskMode?: string;
+    tokenMode?: string;
+    repoLangs?: string[];
+    modelProfile?: string;
+  };
+
+  if (!bundleId) {
+    res.status(400).json({ error: "bundleId is required" });
+    return;
+  }
+
+  const ctx: SessionContext = {
+    sessionType: "solo",
+    taskMode: (taskMode || "build") as SessionContext["taskMode"],
+    modelProfile: modelProfile || "kimi",
+    repoLangs: repoLangs || [],
+    tokenMode: (tokenMode || "core") as SessionContext["tokenMode"],
+  };
+
+  try {
+    const compiled = await compileBundle(bundleId, ctx);
+    const b64 = buildActiveBundleEnvPayload(compiled, ctx.tokenMode);
+    res.json({ compiled, activeBundleB64: b64, byteLength: Buffer.from(b64, "base64").length });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Compile failed";
     res.status(500).json({ error: message });
   }
 });
@@ -160,7 +238,8 @@ router.post("/skill-bundles/:bundleId/activate", async (req, res) => {
     return;
   }
 
-  const { sessionId } = req.body as { sessionId?: number };
+  const { sessionId, taskMode, tokenMode } = req.body as { sessionId?: number; taskMode?: string; tokenMode?: string };
+  let sessionSkillsRecord: (typeof sessionSkillsTable.$inferSelect) | null = null;
 
   if (sessionId) {
     const { sessionsTable } = await import("@workspace/db");
@@ -168,11 +247,36 @@ router.post("/skill-bundles/:bundleId/activate", async (req, res) => {
       .update(sessionsTable)
       .set({ activeBundleId: id, updatedAt: new Date() })
       .where(eq(sessionsTable.id, sessionId));
+
+    // Compile bundle and record pending session_skills for next-launch
+    try {
+      const ctx: SessionContext = {
+        sessionType: "solo",
+        taskMode: (taskMode || bundle.taskMode || "build") as SessionContext["taskMode"],
+        modelProfile: "kimi",
+        repoLangs: [],
+        tokenMode: (tokenMode || bundle.tokenMode || "core") as SessionContext["tokenMode"],
+      };
+      const compiled = await compileBundle(id, ctx);
+      const [record] = await db.insert(sessionSkillsTable).values({
+        sessionId,
+        bundleId: id,
+        activatedSkillsJson: compiled.skills as unknown as Record<string, unknown>[],
+        rationaleJson: compiled.reasoning as unknown as Record<string, unknown>,
+        tokenMode: ctx.tokenMode,
+        activationMode: "next-launch",
+      }).returning();
+      sessionSkillsRecord = record;
+    } catch (err) {
+      logger.warn({ err, sessionId, bundleId: id }, "Could not compile bundle for session_skills during activate");
+    }
+
     logger.info({ bundleId: id, sessionId }, "Bundle set as active for session (next-launch)");
   }
 
   res.json({
     bundle,
+    sessionSkills: sessionSkillsRecord,
     activationMode: "next-launch",
     message: "Bundle will be activated on the next session launch.",
   });

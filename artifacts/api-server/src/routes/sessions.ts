@@ -298,7 +298,7 @@ router.get("/sessions/:sessionId", async (req, res) => {
 });
 
 router.post("/sessions", async (req, res) => {
-  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId } = req.body;
+  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint } = req.body;
 
   if (!profileId) {
     res.status(400).json({ error: "profileId is required" });
@@ -373,6 +373,21 @@ router.post("/sessions", async (req, res) => {
     const resolvedTokenMode = tokenMode || "core";
     const sessionType = teamMemberRecords.length > 0 ? "team" : "solo";
 
+    // Build repo fingerprint from provided data or derive a simple hash from repoUrl
+    let repoFingerprintJson: Record<string, unknown> | null = null;
+    if (repoFingerprint && typeof repoFingerprint === "object") {
+      repoFingerprintJson = repoFingerprint as Record<string, unknown>;
+    } else if (repoUrl && typeof repoUrl === "string") {
+      const { createHash } = await import("crypto");
+      const urlHash = createHash("sha256").update(repoUrl.trim().toLowerCase()).digest("hex").slice(0, 16);
+      repoFingerprintJson = {
+        url: repoUrl.trim(),
+        branch: repoBranch || "main",
+        urlHash,
+        derivedAt: new Date().toISOString(),
+      };
+    }
+
     const [session] = await db
       .insert(sessionsTable)
       .values({
@@ -387,6 +402,7 @@ router.post("/sessions", async (req, res) => {
         taskMode: resolvedTaskMode,
         tokenMode: resolvedTokenMode,
         activeBundleId: requestedBundleId || null,
+        repoFingerprintJson,
       })
       .returning();
 
@@ -410,11 +426,15 @@ router.post("/sessions", async (req, res) => {
     let resolvedBundleId: number | undefined;
     try {
       await seedDefaultBundles();
+      const repoLangs: string[] = Array.isArray((repoFingerprintJson as Record<string, unknown> | null)?.langs)
+        ? ((repoFingerprintJson as Record<string, unknown>).langs as string[])
+        : [];
+
       const sessionCtx: SessionContext = {
         sessionType: sessionType as SessionContext["sessionType"],
         taskMode: resolvedTaskMode as SessionContext["taskMode"],
         modelProfile: profile.servedModelName || "kimi",
-        repoLangs: [],
+        repoLangs,
         tokenMode: resolvedTokenMode as SessionContext["tokenMode"],
       };
 

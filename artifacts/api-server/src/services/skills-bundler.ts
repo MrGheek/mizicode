@@ -30,6 +30,9 @@ async function getAllEnabledManifests(): Promise<FloatrSkillManifest[]> {
     .filter(Boolean);
 }
 
+const MIN_SKILLS = 3;
+const MAX_SKILLS = 7;
+
 export async function compileBundle(bundleId: number, ctx: SessionContext): Promise<CompiledBundle> {
   const [bundle] = await db.select().from(skillBundlesTable).where(eq(skillBundlesTable.id, bundleId));
   if (!bundle) throw new Error(`Bundle ${bundleId} not found`);
@@ -43,18 +46,51 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
   ];
 
   const tokenProfile = TOKEN_MODE_PROFILES[ctx.tokenMode];
-  const maxSkills = tokenProfile.activeSkillCountLimit;
-
-  const ranked = rankSkills(allManifests, ctx);
-  const selected: FloatrSkillManifest[] = [];
-  let tokenBudget = 0;
+  const maxSkills = Math.min(tokenProfile.activeSkillCountLimit, MAX_SKILLS);
   const maxTokenBudget = Math.floor(tokenProfile.maxContextBudget * 0.05);
 
+  const ranked = rankSkills(allManifests, ctx);
+
+  // ── Step 1: Reserve mandatory slots for doctrine + workflow coverage ──
+  const mandatory: FloatrSkillManifest[] = [];
+  const remaining: FloatrSkillManifest[] = [];
+
+  const hasDoctrine = () => mandatory.some(s => s.class === "doctrine");
+  const hasWorkflow = () => mandatory.some(s => s.class === "workflow");
+
   for (const { manifest } of ranked) {
+    if (!hasDoctrine() && manifest.class === "doctrine") {
+      mandatory.push(manifest);
+    } else if (!hasWorkflow() && manifest.class === "workflow") {
+      mandatory.push(manifest);
+    } else {
+      remaining.push(manifest);
+    }
+  }
+
+  // ── Step 2: Fill remaining slots up to maxSkills ──
+  const selected: FloatrSkillManifest[] = [...mandatory];
+  let tokenBudget = selected.reduce((sum, s) => sum + s.cost.tokenOverheadEstimate, 0);
+
+  for (const manifest of remaining) {
     if (selected.length >= maxSkills) break;
     if (tokenBudget + manifest.cost.tokenOverheadEstimate > maxTokenBudget) continue;
     selected.push(manifest);
     tokenBudget += manifest.cost.tokenOverheadEstimate;
+  }
+
+  // ── Step 3: If still below minimum, add from all default skills regardless of requestedIds ──
+  if (selected.length < MIN_SKILLS) {
+    const fallbackRanked = rankSkills(DEFAULT_SKILLS, ctx);
+    const selectedIds = new Set(selected.map(s => s.id));
+    for (const { manifest } of fallbackRanked) {
+      if (selected.length >= MIN_SKILLS) break;
+      if (!selectedIds.has(manifest.id)) {
+        selected.push(manifest);
+        selectedIds.add(manifest.id);
+        tokenBudget += manifest.cost.tokenOverheadEstimate;
+      }
+    }
   }
 
   return {
@@ -66,7 +102,7 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
       task: `taskMode=${ctx.taskMode}`,
       repo: `repoLangs=[${ctx.repoLangs.join(",")}]`,
       model: `modelProfile=${ctx.modelProfile}`,
-      tokenMode: `tokenMode=${ctx.tokenMode}, budget=${tokenBudget}/${maxTokenBudget} tokens`,
+      tokenMode: `tokenMode=${ctx.tokenMode}, budget=${tokenBudget}/${maxTokenBudget} tokens, skills=${selected.length}`,
     },
   };
 }

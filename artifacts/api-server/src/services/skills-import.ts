@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { db, skillSourcesTable, skillsTable, skillVersionsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { normalizeSource } from "./skills-normalizer";
 import { logger } from "../lib/logger";
 import type { FloatrSkillManifest } from "./skills-types";
@@ -168,7 +168,7 @@ export async function getLatestManifestForSkill(skillId: number): Promise<Floatr
     .select()
     .from(skillVersionsTable)
     .where(eq(skillVersionsTable.skillId, skillId))
-    .orderBy(skillVersionsTable.createdAt)
+    .orderBy(desc(skillVersionsTable.createdAt))
     .limit(1);
 
   if (!version) return null;
