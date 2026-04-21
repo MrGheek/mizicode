@@ -7,6 +7,7 @@ import {
   useGetSessionCoordination,
   useReleaseLaneClaim,
   useCreateLaneHandoff,
+  useAcknowledgeLaneHandoff,
   getListSessionLanesQueryKey,
   getGetSessionConflictsQueryKey,
   getListHeavyJobsQueryKey,
@@ -51,6 +52,7 @@ import {
   Bell,
   X,
   Send,
+  CheckCircle2,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -572,13 +574,47 @@ function HeavyJobRow({ job }: { job: HeavyJobResponse }) {
 function HandoffFeedItem({
   handoff,
   lanes,
+  sessionId,
+  onAction,
 }: {
   handoff: HandoffResponse;
   lanes: LaneWithPolicy[];
+  sessionId: number;
+  onAction: () => void;
 }) {
   const laneById = Object.fromEntries(lanes.map((l) => [l.id, l]));
   const fromLane = laneById[handoff.fromLaneId];
   const toLanes = handoff.toLaneIds.map((id) => laneById[id]?.memberIdentifier ?? `Lane ${id}`);
+
+  const acknowledgeMutation = useAcknowledgeLaneHandoff();
+  const isPending = handoff.status === "pending";
+  const isActing = acknowledgeMutation.isPending;
+
+  function handleAcknowledge() {
+    acknowledgeMutation.mutate(
+      { id: sessionId, laneId: handoff.fromLaneId, handoffId: handoff.id, data: { status: "acknowledged" } },
+      { onSuccess: onAction },
+    );
+  }
+
+  function handleDismiss() {
+    acknowledgeMutation.mutate(
+      { id: sessionId, laneId: handoff.fromLaneId, handoffId: handoff.id, data: { status: "dismissed" } },
+      { onSuccess: onAction },
+    );
+  }
+
+  const statusBadge = handoff.status !== "pending" && (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+      handoff.status === "acknowledged"
+        ? "bg-emerald-500/15 text-emerald-400"
+        : handoff.status === "dismissed"
+        ? "bg-secondary/60 text-muted-foreground"
+        : "bg-secondary/60 text-muted-foreground"
+    }`}>
+      {handoff.status}
+    </span>
+  );
 
   return (
     <div className="flex items-start gap-2 text-xs border-b border-border/30 pb-2 last:border-0 last:pb-0">
@@ -594,6 +630,7 @@ function HandoffFeedItem({
               → {toLanes.join(", ")}
             </span>
           )}
+          {statusBadge}
         </div>
         {handoff.resourcePaths.length > 0 && (
           <p className="text-[10px] font-mono text-muted-foreground/70 mt-0.5 truncate">
@@ -604,9 +641,35 @@ function HandoffFeedItem({
           <p className="text-[11px] text-muted-foreground mt-0.5 italic">{handoff.message}</p>
         )}
       </div>
-      <span className="text-[10px] text-muted-foreground/60 shrink-0 mt-0.5">
-        {formatDistanceToNow(new Date(handoff.createdAt), { addSuffix: true })}
-      </span>
+      <div className="flex items-center gap-1 shrink-0">
+        <span className="text-[10px] text-muted-foreground/60">
+          {formatDistanceToNow(new Date(handoff.createdAt), { addSuffix: true })}
+        </span>
+        {isPending && (
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10"
+              title="Acknowledge"
+              disabled={isActing}
+              onClick={handleAcknowledge}
+            >
+              {isActing ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+              title="Dismiss"
+              disabled={isActing}
+              onClick={handleDismiss}
+            >
+              <X className="w-3 h-3" />
+            </Button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -782,7 +845,13 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
           </CardHeader>
           <CardContent className="space-y-2">
             {recentHandoffs.map((handoff) => (
-              <HandoffFeedItem key={handoff.id} handoff={handoff} lanes={lanes} />
+              <HandoffFeedItem
+                key={handoff.id}
+                handoff={handoff}
+                lanes={lanes}
+                sessionId={sessionId}
+                onAction={() => queryClient.invalidateQueries({ queryKey: getGetSessionCoordinationQueryKey(sessionId) })}
+              />
             ))}
           </CardContent>
         </Card>

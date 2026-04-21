@@ -137,6 +137,7 @@ function serializeLane(lane: SessionLane) {
 /** Serialize a DB handoff row to the API HandoffResponse shape. */
 function serializeHandoff(handoff: LaneHandoff) {
   const meta = (handoff.watchFiles ?? {}) as { toLaneIds?: number[]; resourcePaths?: string[] };
+  const status = (handoff.status ?? "pending") as "pending" | "acknowledged" | "dismissed" | "expired";
   return {
     id: handoff.id,
     fromLaneId: handoff.laneId,
@@ -144,7 +145,8 @@ function serializeHandoff(handoff: LaneHandoff) {
     handoffType: handoff.handoffType,
     resourcePaths: meta.resourcePaths ?? [],
     message: handoff.notes ?? null,
-    status: "pending" as const,
+    status,
+    acknowledgedAt: handoff.acknowledgedAt?.toISOString() ?? null,
     createdAt: handoff.createdAt.toISOString(),
   };
 }
@@ -556,6 +558,47 @@ router.post("/sessions/:id/lanes/:laneId/handoff", async (req, res) => {
   broadcastCoordinationUpdate(sessionId);
   logger.info({ handoffId: handoff.id, laneId, handoffType }, "Lane handoff signal created");
   res.status(201).json(serializeHandoff(handoff));
+});
+
+// ─── PATCH /api/sessions/:id/lanes/:laneId/handoff/:handoffId ─────────────────
+// Acknowledge or dismiss a handoff signal.
+
+const VALID_HANDOFF_STATUSES = ["acknowledged", "dismissed"] as const;
+type HandoffUpdateStatus = typeof VALID_HANDOFF_STATUSES[number];
+
+router.patch("/sessions/:id/lanes/:laneId/handoff/:handoffId", async (req, res) => {
+  const sessionId = getSessionId(req);
+  const laneId = parseInt(req.params["laneId"] ?? "");
+  const handoffId = parseInt(req.params["handoffId"] ?? "");
+  if (!sessionId || !Number.isFinite(laneId) || !Number.isFinite(handoffId)) {
+    res.status(400).json({ error: "Invalid session, lane, or handoff ID" }); return;
+  }
+
+  const [lane] = await db.select({ id: sessionLanesTable.id })
+    .from(sessionLanesTable)
+    .where(and(eq(sessionLanesTable.id, laneId), eq(sessionLanesTable.sessionId, sessionId)));
+  if (!lane) { res.status(404).json({ error: "Lane not found in this session" }); return; }
+
+  // Scope handoff lookup by both handoffId AND laneId to prevent IDOR attacks.
+  const [existing] = await db.select().from(laneHandoffsTable)
+    .where(and(eq(laneHandoffsTable.id, handoffId), eq(laneHandoffsTable.laneId, laneId)));
+  if (!existing) { res.status(404).json({ error: "Handoff not found" }); return; }
+
+  const { status } = req.body as { status?: string };
+  if (!status || !VALID_HANDOFF_STATUSES.includes(status as HandoffUpdateStatus)) {
+    res.status(400).json({ error: `status must be one of: ${VALID_HANDOFF_STATUSES.join(", ")}` }); return;
+  }
+
+  const now = new Date();
+  // Update is scoped to both handoffId and laneId for defense in depth.
+  const [updated] = await db.update(laneHandoffsTable)
+    .set({ status, acknowledgedAt: now })
+    .where(and(eq(laneHandoffsTable.id, handoffId), eq(laneHandoffsTable.laneId, laneId)))
+    .returning();
+
+  logger.info({ handoffId, laneId, status }, "Handoff signal updated");
+  res.json(serializeHandoff(updated));
+  broadcastCoordinationUpdate(sessionId);
 });
 
 // ─── GET /api/sessions/:id/coordination ───────────────────────────────────────

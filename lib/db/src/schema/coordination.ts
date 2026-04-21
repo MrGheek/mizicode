@@ -48,6 +48,8 @@ export const laneHandoffsTable = pgTable("lane_handoffs", {
   notes: text("notes"),
   relatedLaneId: integer("related_lane_id"),
   watchFiles: jsonb("watch_files"),
+  status: text("status").notNull().default("pending"),
+  acknowledgedAt: timestamp("acknowledged_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

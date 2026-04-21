@@ -17,6 +17,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AcknowledgeHandoffRequest,
   ActivateBundleRequest,
   ActivateBundleResponse,
   ActiveSessionResponse,
@@ -6484,6 +6485,95 @@ export const useCreateLaneHandoff = <
   TContext
 > => {
   return useMutation(getCreateLaneHandoffMutationOptions(options));
+};
+
+/**
+ * @summary Acknowledge or dismiss a handoff signal
+ */
+export const getAcknowledgeLaneHandoffUrl = (id: number, laneId: number, handoffId: number) => {
+  return `/api/sessions/${id}/lanes/${laneId}/handoff/${handoffId}`;
+};
+
+export const acknowledgeLaneHandoff = async (
+  id: number,
+  laneId: number,
+  handoffId: number,
+  acknowledgeHandoffRequest: AcknowledgeHandoffRequest,
+  options?: RequestInit,
+): Promise<HandoffResponse> => {
+  return customFetch<HandoffResponse>(getAcknowledgeLaneHandoffUrl(id, laneId, handoffId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(acknowledgeHandoffRequest),
+  });
+};
+
+export const getAcknowledgeLaneHandoffMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof acknowledgeLaneHandoff>>,
+    TError,
+    { id: number; laneId: number; handoffId: number; data: BodyType<AcknowledgeHandoffRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof acknowledgeLaneHandoff>>,
+  TError,
+  { id: number; laneId: number; handoffId: number; data: BodyType<AcknowledgeHandoffRequest> },
+  TContext
+> => {
+  const mutationKey = ["acknowledgeLaneHandoff"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof acknowledgeLaneHandoff>>,
+    { id: number; laneId: number; handoffId: number; data: BodyType<AcknowledgeHandoffRequest> }
+  > = (props) => {
+    const { id, laneId, handoffId, data } = props ?? {};
+
+    return acknowledgeLaneHandoff(id, laneId, handoffId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AcknowledgeLaneHandoffMutationResult = NonNullable<
+  Awaited<ReturnType<typeof acknowledgeLaneHandoff>>
+>;
+export type AcknowledgeLaneHandoffMutationBody = BodyType<AcknowledgeHandoffRequest>;
+export type AcknowledgeLaneHandoffMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Acknowledge or dismiss a handoff signal
+ */
+export const useAcknowledgeLaneHandoff = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof acknowledgeLaneHandoff>>,
+    TError,
+    { id: number; laneId: number; handoffId: number; data: BodyType<AcknowledgeHandoffRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof acknowledgeLaneHandoff>>,
+  TError,
+  { id: number; laneId: number; handoffId: number; data: BodyType<AcknowledgeHandoffRequest> },
+  TContext
+> => {
+  return useMutation(getAcknowledgeLaneHandoffMutationOptions(options));
 };
 
 /**

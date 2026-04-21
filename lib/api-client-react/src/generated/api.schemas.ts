@@ -1315,6 +1315,7 @@ export type HandoffResponseStatus =
 export const HandoffResponseStatus = {
   pending: "pending",
   acknowledged: "acknowledged",
+  dismissed: "dismissed",
   expired: "expired",
 } as const;
 
@@ -1326,7 +1327,12 @@ export interface HandoffResponse {
   resourcePaths: string[];
   message?: string | null;
   status: HandoffResponseStatus;
+  acknowledgedAt?: string | null;
   createdAt: string;
+}
+
+export interface AcknowledgeHandoffRequest {
+  status: "acknowledged" | "dismissed";
 }
 
 export type CreateHandoffRequestHandoffType =
