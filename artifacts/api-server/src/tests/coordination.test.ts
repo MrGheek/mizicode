@@ -1,0 +1,691 @@
+/**
+ * Integration tests for the coordination API endpoints.
+ *
+ * Tests the full HTTP layer: lanes, claims, handoffs, conflicts, and heavy-jobs.
+ * Uses a real PostgreSQL database; test data is isolated by a unique test session
+ * and cleaned up in afterAll.
+ */
+
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import request from "supertest";
+import app from "../app";
+import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneHandoffsTable, laneHeavyJobsTable } from "@workspace/db";
+import { eq, inArray, sql } from "drizzle-orm";
+
+// ─── Test Fixture Setup ────────────────────────────────────────────────────────
+
+let testSessionId: number;
+let testProfileId: number;
+const TEST_PROFILE_NAME = `test-profile-coordination-${Date.now()}`;
+
+async function cleanupSession(sessionId: number) {
+  const lanes = await db
+    .select({ id: sessionLanesTable.id })
+    .from(sessionLanesTable)
+    .where(eq(sessionLanesTable.sessionId, sessionId));
+  const laneIds = lanes.map((l) => l.id);
+
+  if (laneIds.length > 0) {
+    await db.delete(laneClaimsTable).where(inArray(laneClaimsTable.laneId, laneIds));
+    await db.delete(laneHandoffsTable).where(inArray(laneHandoffsTable.laneId, laneIds));
+    await db.delete(sessionLanesTable).where(eq(sessionLanesTable.sessionId, sessionId));
+  }
+  await db.delete(laneHeavyJobsTable).where(eq(laneHeavyJobsTable.sessionId, sessionId));
+  await db.delete(sessionsTable).where(eq(sessionsTable.id, sessionId));
+}
+
+beforeAll(async () => {
+  // Create a GPU profile for the test session
+  const [profile] = await db
+    .insert(gpuProfilesTable)
+    .values({
+      name: TEST_PROFILE_NAME,
+      displayName: "Test GPU",
+      gpuName: "A100",
+      numGpus: 1,
+      totalVram: 80,
+      dockerImageTag: "test:latest",
+      defaultQuant: "Q4_K_M",
+      quantSizeGb: 10,
+      diskSizeGb: 50,
+      estimatedSpeedMin: 20,
+      estimatedSpeedMax: 40,
+      estimatedCostMin: 0.5,
+      estimatedCostMax: 1.0,
+      searchParams: {},
+    })
+    .returning();
+  testProfileId = profile.id;
+
+  // Create a test session
+  const [session] = await db
+    .insert(sessionsTable)
+    .values({
+      profileId: testProfileId,
+      status: "ready",
+    })
+    .returning();
+  testSessionId = session.id;
+});
+
+afterAll(async () => {
+  if (testSessionId) await cleanupSession(testSessionId);
+  if (testProfileId) {
+    await db.delete(gpuProfilesTable).where(eq(gpuProfilesTable.id, testProfileId));
+  }
+});
+
+// ─── Lanes ─────────────────────────────────────────────────────────────────────
+
+describe("GET /api/sessions/:id/lanes", () => {
+  it("returns empty lanes list for a new session", async () => {
+    const res = await request(app).get(`/api/sessions/${testSessionId}/lanes`);
+    expect(res.status).toBe(200);
+    expect(res.body.sessionId).toBe(testSessionId);
+    expect(Array.isArray(res.body.lanes)).toBe(true);
+  });
+
+  it("returns 404 for a non-existent session", async () => {
+    const res = await request(app).get("/api/sessions/999999999/lanes");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 for an invalid session ID", async () => {
+    const res = await request(app).get("/api/sessions/not-a-number/lanes");
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /api/sessions/:id/lanes", () => {
+  it("creates a lane with required fields", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes`)
+      .send({ memberIdentifier: "alice@test.com", laneType: "ux" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.memberIdentifier).toBe("alice@test.com");
+    expect(res.body.laneType).toBe("ux");
+    expect(res.body.status).toBe("active");
+    expect(res.body.policy).toBeDefined();
+    expect(res.body.claims).toEqual([]);
+  });
+
+  it("defaults laneType to 'general' for unknown type", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes`)
+      .send({ memberIdentifier: "bob@test.com", laneType: "unknown-type" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.laneType).toBe("general");
+  });
+
+  it("returns 400 when memberIdentifier is missing", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes`)
+      .send({ laneType: "backend" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 for a non-existent session", async () => {
+    const res = await request(app)
+      .post("/api/sessions/999999999/lanes")
+      .send({ memberIdentifier: "ghost@test.com" });
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("PUT /api/sessions/:id/lanes/:laneId", () => {
+  it("updates lane status and currentTask", async () => {
+    // Create lane
+    const createRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes`)
+      .send({ memberIdentifier: "charlie@test.com", laneType: "backend" });
+    const laneId = createRes.body.id;
+
+    const res = await request(app)
+      .put(`/api/sessions/${testSessionId}/lanes/${laneId}`)
+      .send({ status: "blocked", currentTask: "Fixing auth bug" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("blocked");
+    expect(res.body.currentTask).toBe("Fixing auth bug");
+  });
+
+  it("returns 404 for non-existent lane", async () => {
+    const res = await request(app)
+      .put(`/api/sessions/${testSessionId}/lanes/999999999`)
+      .send({ status: "blocked" });
+
+    expect(res.status).toBe(404);
+  });
+});
+
+// ─── Claims ────────────────────────────────────────────────────────────────────
+
+describe("POST /api/sessions/:id/lanes/:laneId/claim + DELETE (release)", () => {
+  let laneId: number;
+
+  beforeAll(async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes`)
+      .send({ memberIdentifier: "claimer@test.com", laneType: "backend" });
+    laneId = res.body.id;
+  });
+
+  it("creates a file claim on a lane", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneId}/claim`)
+      .send({ claimType: "file", resourcePath: "src/routes/auth.ts", strength: 0.8 });
+
+    expect(res.status).toBe(201);
+    expect(res.body.claim.resourcePath).toBe("src/routes/auth.ts");
+    expect(res.body.claim.strength).toBeGreaterThan(0);
+    expect(res.body.overallRecommendation).toBe("no_conflict");
+  });
+
+  it("returns 400 when resourcePath is missing", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneId}/claim`)
+      .send({ claimType: "file" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("releases a claim via DELETE", async () => {
+    const createRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneId}/claim`)
+      .send({ resourcePath: "src/utils/helpers.ts" });
+    const claimId = createRes.body.claim.id;
+
+    const res = await request(app)
+      .delete(`/api/sessions/${testSessionId}/lanes/${laneId}/claim/${claimId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.action).toBe("released");
+    expect(res.body.claimId).toBe(claimId);
+  });
+
+  it("refreshes claim heartbeat via DELETE?heartbeat=true", async () => {
+    const createRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneId}/claim`)
+      .send({ resourcePath: "src/db/schema.ts" });
+    const claimId = createRes.body.claim.id;
+
+    const res = await request(app)
+      .delete(`/api/sessions/${testSessionId}/lanes/${laneId}/claim/${claimId}?heartbeat=true`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.action).toBe("heartbeat_refreshed");
+    expect(res.body.expiresAt).toBeDefined();
+  });
+});
+
+// ─── Conflict Detection ────────────────────────────────────────────────────────
+
+describe("Conflict detection: two lanes claiming the same file", () => {
+  let laneAId: number;
+  let laneBId: number;
+
+  beforeAll(async () => {
+    const resA = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes`)
+      .send({ memberIdentifier: "conflict-alice@test.com", laneType: "ux" });
+    laneAId = resA.body.id;
+
+    const resB = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes`)
+      .send({ memberIdentifier: "conflict-bob@test.com", laneType: "backend" });
+    laneBId = resB.body.id;
+  });
+
+  it("detects overlap when two lanes claim the exact same file", async () => {
+    // Lane A claims the file
+    await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneAId}/claim`)
+      .send({ resourcePath: "src/shared/config.ts", strength: 0.9 });
+
+    // Lane B claims the same file — should produce a warn or block recommendation
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneBId}/claim`)
+      .send({ resourcePath: "src/shared/config.ts", strength: 0.9 });
+
+    expect(res.status).toBe(201);
+    expect(res.body.overlaps.length).toBeGreaterThan(0);
+    expect(["warn", "block"]).toContain(res.body.overallRecommendation);
+
+    // Verify the overlap references the correct conflicting lane
+    const overlap = res.body.overlaps[0];
+    expect(overlap.conflictingLaneId).toBe(laneAId);
+  });
+
+  it("produces no_conflict when lanes claim different files", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneBId}/claim`)
+      .send({ resourcePath: "src/backend-only/server.ts", strength: 0.5 });
+
+    expect(res.status).toBe(201);
+    expect(res.body.overallRecommendation).toBe("no_conflict");
+  });
+});
+
+describe("GET /api/sessions/:id/conflicts", () => {
+  it("returns a conflicts summary for the session", async () => {
+    const res = await request(app).get(`/api/sessions/${testSessionId}/conflicts`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.sessionId).toBe(testSessionId);
+    expect(Array.isArray(res.body.conflicts)).toBe(true);
+    expect(typeof res.body.totalConflicts).toBe("number");
+    expect(typeof res.body.highSeverity).toBe("number");
+  });
+});
+
+// ─── Handoffs ──────────────────────────────────────────────────────────────────
+
+describe("POST /api/sessions/:id/lanes/:laneId/handoff", () => {
+  let handoffLaneId: number;
+
+  beforeAll(async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes`)
+      .send({ memberIdentifier: "handoff-user@test.com", laneType: "review" });
+    handoffLaneId = res.body.id;
+  });
+
+  it("creates a blocked handoff signal and updates lane status", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${handoffLaneId}/handoff`)
+      .send({ handoffType: "blocked", message: "Waiting on API contract" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.handoffType).toBe("blocked");
+    expect(res.body.message).toBe("Waiting on API contract");
+
+    // Verify lane status was auto-updated to "blocked"
+    const laneRes = await request(app).get(`/api/sessions/${testSessionId}/lanes`);
+    const lane = laneRes.body.lanes.find((l: { id: number }) => l.id === handoffLaneId);
+    expect(lane.status).toBe("blocked");
+  });
+
+  it("creates a needs_review handoff and sets lane to review-needed", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${handoffLaneId}/handoff`)
+      .send({ handoffType: "needs_review", resourcePaths: ["src/api/auth.ts"] });
+
+    expect(res.status).toBe(201);
+    expect(res.body.handoffType).toBe("needs_review");
+
+    const laneRes = await request(app).get(`/api/sessions/${testSessionId}/lanes`);
+    const lane = laneRes.body.lanes.find((l: { id: number }) => l.id === handoffLaneId);
+    expect(lane.status).toBe("review-needed");
+  });
+
+  it("creates a safe_to_merge handoff and sets lane to ready-to-merge", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${handoffLaneId}/handoff`)
+      .send({ handoffType: "safe_to_merge" });
+
+    expect(res.status).toBe(201);
+
+    const laneRes = await request(app).get(`/api/sessions/${testSessionId}/lanes`);
+    const lane = laneRes.body.lanes.find((l: { id: number }) => l.id === handoffLaneId);
+    expect(lane.status).toBe("ready-to-merge");
+  });
+
+  it("returns 400 for an invalid handoffType", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${handoffLaneId}/handoff`)
+      .send({ handoffType: "teleport" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("creates a watch_files handoff without changing lane status", async () => {
+    const beforeRes = await request(app).get(`/api/sessions/${testSessionId}/lanes`);
+    const beforeLane = beforeRes.body.lanes.find((l: { id: number }) => l.id === handoffLaneId);
+    const statusBefore = beforeLane.status;
+
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${handoffLaneId}/handoff`)
+      .send({ handoffType: "watch_files", resourcePaths: ["src/shared/utils.ts"] });
+
+    expect(res.status).toBe(201);
+
+    const afterRes = await request(app).get(`/api/sessions/${testSessionId}/lanes`);
+    const afterLane = afterRes.body.lanes.find((l: { id: number }) => l.id === handoffLaneId);
+    expect(afterLane.status).toBe(statusBefore);
+  });
+});
+
+// ─── Heavy Jobs ────────────────────────────────────────────────────────────────
+
+describe("POST /api/sessions/:id/heavy-jobs (enqueue)", () => {
+  it("enqueues an indexing job with default priority", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/heavy-jobs`)
+      .send({ jobClass: "indexing" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.jobClass).toBe("indexing");
+    expect(res.body.status).toBe("queued");
+    expect(res.body.priority).toBe(5);
+    expect(typeof res.body.score).toBe("number");
+    expect(res.body.score).toBeGreaterThan(0);
+  });
+
+  it("enqueues a job with a custom priority and payload", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/heavy-jobs`)
+      .send({
+        jobClass: "embedding",
+        priority: 8,
+        payload: { files: ["src/routes/auth.ts"] },
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.priority).toBe(8);
+    expect(res.body.payload).toEqual({ files: ["src/routes/auth.ts"] });
+  });
+
+  it("returns 400 for an invalid jobClass", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/heavy-jobs`)
+      .send({ jobClass: "turbo-compute" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 for non-existent session", async () => {
+    const res = await request(app)
+      .post("/api/sessions/999999999/heavy-jobs")
+      .send({ jobClass: "indexing" });
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /api/sessions/:id/heavy-jobs", () => {
+  it("lists all jobs for the session", async () => {
+    const res = await request(app).get(`/api/sessions/${testSessionId}/heavy-jobs`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.sessionId).toBe(testSessionId);
+    expect(Array.isArray(res.body.jobs)).toBe(true);
+    expect(res.body.total).toBe(res.body.jobs.length);
+  });
+
+  it("filters by status query param", async () => {
+    const res = await request(app).get(
+      `/api/sessions/${testSessionId}/heavy-jobs?status=queued`,
+    );
+
+    expect(res.status).toBe(200);
+    for (const job of res.body.jobs) {
+      expect(job.status).toBe("queued");
+    }
+  });
+
+  it("returns 400 for invalid status filter", async () => {
+    const res = await request(app).get(
+      `/api/sessions/${testSessionId}/heavy-jobs?status=invalid`,
+    );
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /api/sessions/:id/heavy-jobs/next", () => {
+  it("peeks at the highest-scored queued job", async () => {
+    const res = await request(app).get(
+      `/api/sessions/${testSessionId}/heavy-jobs/next`,
+    );
+
+    // Session has queued jobs from earlier tests
+    if (res.status === 200) {
+      expect(res.body.job).toBeDefined();
+      expect(res.body.job.status).toBe("queued");
+    } else {
+      expect(res.status).toBe(204);
+    }
+  });
+});
+
+describe("Heavy-job scheduler: priority ordering", () => {
+  let lowPriorityJobId: number;
+  let highPriorityJobId: number;
+
+  beforeAll(async () => {
+    // Enqueue a low-priority job first
+    const lowRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/heavy-jobs`)
+      .send({ jobClass: "other", priority: 1 });
+    lowPriorityJobId = lowRes.body.id;
+
+    // Enqueue a high-priority job immediately after
+    const highRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/heavy-jobs`)
+      .send({ jobClass: "other", priority: 10 });
+    highPriorityJobId = highRes.body.id;
+  });
+
+  it("higher priority job has a higher effective score than lower priority", async () => {
+    const res = await request(app).get(`/api/sessions/${testSessionId}/heavy-jobs?status=queued`);
+    const jobs = res.body.jobs as Array<{ id: number; score: number; priority: number }>;
+
+    const lowJob = jobs.find((j) => j.id === lowPriorityJobId);
+    const highJob = jobs.find((j) => j.id === highPriorityJobId);
+
+    expect(lowJob).toBeDefined();
+    expect(highJob).toBeDefined();
+    expect(highJob!.score).toBeGreaterThan(lowJob!.score);
+  });
+
+  it("GET /heavy-jobs/next returns the highest-scored job", async () => {
+    const nextRes = await request(app).get(
+      `/api/sessions/${testSessionId}/heavy-jobs/next`,
+    );
+
+    if (nextRes.status === 200) {
+      // Should be the highest-scored queued job
+      expect(nextRes.body.job.status).toBe("queued");
+      // The next job should have the highest priority score among queued jobs
+      const listRes = await request(app).get(
+        `/api/sessions/${testSessionId}/heavy-jobs?status=queued`,
+      );
+      const maxScore = Math.max(
+        ...listRes.body.jobs.map((j: { score: number }) => j.score),
+      );
+      expect(nextRes.body.job.score).toBeCloseTo(maxScore, 1);
+    }
+  });
+});
+
+describe("PATCH /api/sessions/:id/heavy-jobs/:jobId (update status)", () => {
+  let jobId: number;
+
+  beforeAll(async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/heavy-jobs`)
+      .send({ jobClass: "eval", priority: 5 });
+    jobId = res.body.id;
+  });
+
+  it("marks a job as running", async () => {
+    const res = await request(app)
+      .patch(`/api/sessions/${testSessionId}/heavy-jobs/${jobId}`)
+      .send({ status: "running" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("running");
+    expect(res.body.startedAt).toBeDefined();
+  });
+
+  it("marks a running job as completed with a result", async () => {
+    const res = await request(app)
+      .patch(`/api/sessions/${testSessionId}/heavy-jobs/${jobId}`)
+      .send({ status: "completed", result: { filesIndexed: 42 } });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("completed");
+    expect(res.body.result).toEqual({ filesIndexed: 42 });
+    expect(res.body.completedAt).toBeDefined();
+  });
+
+  it("returns 400 for an invalid status transition value", async () => {
+    const res = await request(app)
+      .patch(`/api/sessions/${testSessionId}/heavy-jobs/${jobId}`)
+      .send({ status: "deleted" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("marks a job as failed with an error message", async () => {
+    const enqueueRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/heavy-jobs`)
+      .send({ jobClass: "blast_radius", priority: 3 });
+    const failJobId = enqueueRes.body.id;
+
+    const res = await request(app)
+      .patch(`/api/sessions/${testSessionId}/heavy-jobs/${failJobId}`)
+      .send({ status: "failed", errorMessage: "OOM error" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("failed");
+    expect(res.body.errorMessage).toBe("OOM error");
+  });
+
+  it("marks a job as deferred with a future timestamp", async () => {
+    const enqueueRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/heavy-jobs`)
+      .send({ jobClass: "compile", priority: 2 });
+    const deferJobId = enqueueRes.body.id;
+
+    const res = await request(app)
+      .patch(`/api/sessions/${testSessionId}/heavy-jobs/${deferJobId}`)
+      .send({ status: "deferred", deferUntilSeconds: 600 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("deferred");
+    expect(res.body.deferUntil).toBeDefined();
+    expect(new Date(res.body.deferUntil).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("returns 404 for a non-existent job", async () => {
+    const res = await request(app)
+      .patch(`/api/sessions/${testSessionId}/heavy-jobs/999999999`)
+      .send({ status: "running" });
+
+    expect(res.status).toBe(404);
+  });
+});
+
+// ─── Coordination Summary ──────────────────────────────────────────────────────
+
+describe("GET /api/sessions/:id/coordination", () => {
+  it("returns a full coordination summary for the session", async () => {
+    const res = await request(app).get(`/api/sessions/${testSessionId}/coordination`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.sessionId).toBe(testSessionId);
+    expect(Array.isArray(res.body.lanes)).toBe(true);
+    expect(typeof res.body.totalActiveClaims).toBe("number");
+    expect(typeof res.body.totalQueuedJobs).toBe("number");
+    expect(typeof res.body.pendingHandoffs).toBe("number");
+    expect(Array.isArray(res.body.recentHandoffs)).toBe(true);
+  });
+});
+
+// ─── Heavy-job scheduler: age-weight ordering ─────────────────────────────────
+//
+// Verifies that job age contributes to effective score independently of priority.
+// Score formula: priority_norm + ageWeight + laneWeight + classFloor
+// ageWeight accrues at 0.05 per minute, capped at 2.0.
+//
+// By backdating a job's createdAt by 60 minutes we add 2.0 to its score,
+// which must dominate any same-priority newly-created job.
+
+describe("Heavy-job scheduler: age-weight ordering", () => {
+  let ageSessionId: number;
+
+  beforeAll(async () => {
+    const [session] = await db
+      .insert(sessionsTable)
+      .values({ profileId: testProfileId, status: "ready" })
+      .returning();
+    ageSessionId = session.id;
+  });
+
+  afterAll(async () => {
+    await db.delete(laneHeavyJobsTable).where(eq(laneHeavyJobsTable.sessionId, ageSessionId));
+    await db.delete(sessionsTable).where(eq(sessionsTable.id, ageSessionId));
+  });
+
+  it("older job scores higher than newer job of equal priority", async () => {
+    // Enqueue two jobs with identical priority and jobClass
+    const newRes = await request(app)
+      .post(`/api/sessions/${ageSessionId}/heavy-jobs`)
+      .send({ jobClass: "other", priority: 5 });
+    const newJobId: number = newRes.body.id;
+
+    const oldRes = await request(app)
+      .post(`/api/sessions/${ageSessionId}/heavy-jobs`)
+      .send({ jobClass: "other", priority: 5 });
+    const oldJobId: number = oldRes.body.id;
+
+    // Backdate the "old" job's createdAt by 60 minutes to simulate age accrual.
+    // At 0.05 weight/min × 60 min = 3.0 → capped at MAX_AGE_WEIGHT = 2.0.
+    // This guarantees the old job will score higher after refreshJobWeights runs.
+    await db
+      .update(laneHeavyJobsTable)
+      .set({ createdAt: sql`NOW() - INTERVAL '60 minutes'` })
+      .where(eq(laneHeavyJobsTable.id, oldJobId));
+
+    // Trigger refreshJobWeights by listing jobs (the GET endpoint calls it)
+    const listRes = await request(app).get(`/api/sessions/${ageSessionId}/heavy-jobs?status=queued`);
+    expect(listRes.status).toBe(200);
+
+    const jobs = listRes.body.jobs as Array<{ id: number; score: number; ageWeight: number }>;
+    const newJob = jobs.find((j) => j.id === newJobId)!;
+    const oldJob = jobs.find((j) => j.id === oldJobId)!;
+
+    expect(newJob).toBeDefined();
+    expect(oldJob).toBeDefined();
+
+    // Old job must have accumulated non-zero age weight
+    expect(oldJob.ageWeight).toBeGreaterThan(0);
+
+    // Old job's effective score must exceed new job's score
+    expect(oldJob.score).toBeGreaterThan(newJob.score);
+  });
+
+  it("age alone can make a lower-priority job score higher than a brand-new one", async () => {
+    // A low-priority job (1) that is 60 minutes old should score higher
+    // than a high-priority job (10) that was just created, because:
+    // low-job score = 0.1 + 2.0 (age) + 1.0 (lane) + 0.1 (class floor) = 3.2
+    // high-job score = 1.0 + 0   (age) + 1.0 (lane) + 0.1 (class floor) = 2.1
+    const freshHighRes = await request(app)
+      .post(`/api/sessions/${ageSessionId}/heavy-jobs`)
+      .send({ jobClass: "other", priority: 10 });
+    const freshHighId: number = freshHighRes.body.id;
+
+    const staleRes = await request(app)
+      .post(`/api/sessions/${ageSessionId}/heavy-jobs`)
+      .send({ jobClass: "other", priority: 1 });
+    const staleJobId: number = staleRes.body.id;
+
+    await db
+      .update(laneHeavyJobsTable)
+      .set({ createdAt: sql`NOW() - INTERVAL '60 minutes'` })
+      .where(eq(laneHeavyJobsTable.id, staleJobId));
+
+    const listRes = await request(app).get(`/api/sessions/${ageSessionId}/heavy-jobs?status=queued`);
+    const jobs = listRes.body.jobs as Array<{ id: number; score: number }>;
+
+    const freshHighJob = jobs.find((j) => j.id === freshHighId)!;
+    const staleJob = jobs.find((j) => j.id === staleJobId)!;
+
+    expect(staleJob.score).toBeGreaterThan(freshHighJob.score);
+  });
+});
