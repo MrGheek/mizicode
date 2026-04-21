@@ -6,6 +6,8 @@ import {
   useCreateSession,
   useGetSessionSkills,
   useSubmitSkillFeedback,
+  useSessionCompleteFeedback,
+  useGetSessionRoutingStats,
   getGetSessionQueryKey,
   getGetActiveSessionQueryKey,
   getGetSessionSkillsQueryKey,
@@ -24,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { SessionStatusBadge } from "@/components/session-status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
@@ -1101,16 +1104,58 @@ export default function SessionDetail() {
   const refreshStatus = useRefreshSessionStatus();
   const createSession = useCreateSession();
   const [isRetrying, setIsRetrying] = useState(false);
+  const [stopRatingOpen, setStopRatingOpen] = useState(false);
+  const completeFeedback = useSessionCompleteFeedback();
+
+  // Fetch routing stats in the background so they are ready when the session stops.
+  // bytesAvoided is passed to complete-feedback to signal context-shield-core effectiveness.
+  const { data: routingStatsData } = useGetSessionRoutingStats(sessionId);
+  const bytesAvoided = routingStatsData?.stats?.totalBytesAvoided;
+
+  const doStop = (taskSuccessScore?: number) => {
+    if (taskSuccessScore !== undefined) {
+      const feedbackPayload = {
+        taskSuccessScore,
+        ...(bytesAvoided !== undefined && bytesAvoided > 0 ? { bytesAvoided } : {}),
+      };
+      completeFeedback.mutate({ sessionId, data: feedbackPayload }, {
+        onSettled: () => {
+          deleteSession.mutate({ sessionId }, {
+            onSuccess: () => {
+              toast({ title: "Session destroyed" });
+              queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+            },
+            onError: () => toast({ title: "Failed to stop session", variant: "destructive" }),
+          });
+        },
+      });
+    } else if (bytesAvoided !== undefined && bytesAvoided > 0) {
+      // No user rating, but we have routing stats — still submit the implicit signal
+      // for context-shield-core so it benefits from real bytesAvoided data.
+      completeFeedback.mutate({ sessionId, data: { bytesAvoided } }, {
+        onSettled: () => {
+          deleteSession.mutate({ sessionId }, {
+            onSuccess: () => {
+              toast({ title: "Session destroyed" });
+              queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+            },
+            onError: () => toast({ title: "Failed to stop session", variant: "destructive" }),
+          });
+        },
+      });
+    } else {
+      deleteSession.mutate({ sessionId }, {
+        onSuccess: () => {
+          toast({ title: "Session destroyed" });
+          queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+        },
+        onError: () => toast({ title: "Failed to stop session", variant: "destructive" }),
+      });
+    }
+  };
 
   const handleStop = () => {
-    if (!confirm("Stop and destroy this session? All data outside /workspace/projects will be lost.")) return;
-    deleteSession.mutate({ sessionId }, {
-      onSuccess: () => {
-        toast({ title: "Session destroyed" });
-        queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
-      },
-      onError: () => toast({ title: "Failed to stop session", variant: "destructive" }),
-    });
+    setStopRatingOpen(true);
   };
 
   const handleRefresh = () => {
@@ -1580,6 +1625,54 @@ export default function SessionDetail() {
 
       {activeTab === "repo" && (
         <RepoIndexTab sessionId={sessionId} />
+      )}
+
+      {stopRatingOpen && (
+        <Dialog open onOpenChange={(open) => { if (!open) setStopRatingOpen(false); }}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <StopCircle className="w-4 h-4 text-destructive" />
+                Stop session
+              </DialogTitle>
+            </DialogHeader>
+            <div className="py-2 space-y-3">
+              <p className="text-sm text-muted-foreground">
+                All data outside <code className="bg-secondary px-1 rounded text-xs">/workspace/projects</code> will be lost.
+              </p>
+              <p className="text-sm font-medium">How did this session go?</p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 h-9 gap-2 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border-emerald-600/30"
+                  onClick={() => { setStopRatingOpen(false); doStop(5); }}
+                  disabled={deleteSession.isPending || completeFeedback.isPending}
+                >
+                  <ThumbsUp className="w-4 h-4" /> Went well
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1 h-9 gap-2 bg-red-600/10 hover:bg-red-600/20 text-red-400 border-red-600/30"
+                  onClick={() => { setStopRatingOpen(false); doStop(1); }}
+                  disabled={deleteSession.isPending || completeFeedback.isPending}
+                >
+                  <ThumbsDown className="w-4 h-4" /> Had issues
+                </Button>
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setStopRatingOpen(false)}>Cancel</Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => { setStopRatingOpen(false); doStop(); }}
+                disabled={deleteSession.isPending}
+              >
+                Stop without rating
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
     </div>

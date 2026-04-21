@@ -4,10 +4,11 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { Router } from "express";
 import { db, skillsTable, skillBundlesTable, skillSourcesTable, skillVersionsTable, skillFeedbackTable, sessionSkillsTable, sessionsTable } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, or, like } from "drizzle-orm";
 import { importSkillFromUrl } from "../services/skills-import";
 import { seedDefaultBundles, compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext } from "../services/skills-bundler";
 import { DEFAULT_SKILLS } from "../services/default-skills";
+import { getSkillFeedbackScores } from "../services/skills-ranker";
 import { logger } from "../lib/logger";
 import type { SessionContext } from "../services/skills-types";
 
@@ -117,6 +118,17 @@ router.post("/skills/discover", (_req, res) => {
 
 router.get("/skills/leaderboard", (_req, res) => {
   res.status(501).json(NOT_IMPLEMENTED("skill leaderboard"));
+});
+
+router.get("/skills/feedback-scores", async (_req, res) => {
+  try {
+    const scores = await getSkillFeedbackScores();
+    res.json({ scores });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to load feedback scores";
+    logger.error({ err }, "Failed to load skill feedback scores");
+    res.status(500).json({ error: message });
+  }
 });
 
 router.get("/skills/evals", (_req, res) => {
@@ -531,7 +543,12 @@ router.post("/sessions/:sessionId/skills/feedback", async (req, res) => {
   if (rawSkillId) {
     [skill] = await db.select({ id: skillsTable.id }).from(skillsTable).where(eq(skillsTable.id, rawSkillId));
   } else if (manifestId) {
-    [skill] = await db.select({ id: skillsTable.id }).from(skillsTable).where(eq(skillsTable.slug, manifestId));
+    // Match both native slug (slug === manifestId) and imported slug (imported-{src}-{manifestId}).
+    // Order by id DESC so native or most-recently-imported skill wins when multiple rows match.
+    [skill] = await db.select({ id: skillsTable.id }).from(skillsTable)
+      .where(or(eq(skillsTable.slug, manifestId), like(skillsTable.slug, `imported-%-${manifestId}`)))
+      .orderBy(desc(skillsTable.id))
+      .limit(1);
   }
   if (!skill) {
     res.status(404).json({ error: "Skill not found" });
@@ -539,6 +556,9 @@ router.post("/sessions/:sessionId/skills/feedback", async (req, res) => {
   }
   const skillId = skill.id;
 
+  // Upsert: if feedback already exists for this session+skill, update it so users can
+  // revise their rating. The unique constraint on (session_id, skill_id) enforces one
+  // record per combination; onConflictDoUpdate replaces the stale values.
   const [feedback] = await db.insert(skillFeedbackTable).values({
     sessionId,
     skillId,
@@ -546,10 +566,136 @@ router.post("/sessions/:sessionId/skills/feedback", async (req, res) => {
     notes: notes || null,
     tokenDelta: tokenDelta ?? null,
     taskSuccessScore: taskSuccessScore ?? null,
-  }).returning();
+  })
+  .onConflictDoUpdate({
+    target: [skillFeedbackTable.sessionId, skillFeedbackTable.skillId],
+    set: {
+      helpful: Boolean(helpful),
+      notes: notes || null,
+      tokenDelta: tokenDelta ?? null,
+      taskSuccessScore: taskSuccessScore ?? null,
+    },
+  })
+  .returning();
 
   logger.info({ sessionId, skillId, helpful }, "Skill feedback recorded");
   res.status(201).json({ feedback });
+});
+
+/**
+ * Record implicit feedback signals on session completion.
+ * Uses routing stats (bytesAvoided) as a proxy signal for context-shield-core effectiveness,
+ * and per-skill implicit signals for all skills active in the session.
+ */
+router.post("/sessions/:sessionId/skills/complete-feedback", async (req, res) => {
+  const sessionId = parseInt(req.params.sessionId);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
+
+  const rawBody = req.body as {
+    bytesAvoided?: unknown;
+    taskSuccessScore?: unknown;
+  };
+
+  // Validate bytesAvoided: must be a finite, non-negative integer when provided
+  const rawBytesAvoided = Number(rawBody.bytesAvoided ?? 0);
+  const bytesAvoided = Number.isFinite(rawBytesAvoided) && rawBytesAvoided >= 0
+    ? Math.trunc(rawBytesAvoided)
+    : 0;
+
+  // Validate taskSuccessScore: must be an integer 1–5 when provided
+  let taskSuccessScore: number | undefined;
+  if (rawBody.taskSuccessScore !== undefined && rawBody.taskSuccessScore !== null) {
+    const rawScore = Number(rawBody.taskSuccessScore);
+    if (Number.isFinite(rawScore) && Number.isInteger(rawScore) && rawScore >= 1 && rawScore <= 5) {
+      taskSuccessScore = rawScore;
+    } else {
+      res.status(400).json({ error: "taskSuccessScore must be an integer between 1 and 5" });
+      return;
+    }
+  }
+
+  // Find the most recent session_skills activation to know which skills were active
+  const [latestActivation] = await db
+    .select({ activatedSkillsJson: sessionSkillsTable.activatedSkillsJson })
+    .from(sessionSkillsTable)
+    .where(eq(sessionSkillsTable.sessionId, sessionId))
+    .orderBy(desc(sessionSkillsTable.activatedAt))
+    .limit(1);
+
+  if (!latestActivation) {
+    res.status(404).json({ error: "No skill activation found for this session" });
+    return;
+  }
+
+  const activeManifests = (latestActivation.activatedSkillsJson as Array<{ id: string }>) || [];
+  const recorded: Array<{ skillSlug: string; helpful: boolean; signal: string }> = [];
+
+  for (const manifest of activeManifests) {
+    if (!manifest.id) continue;
+
+    // Determine implicit signal for this skill.
+    // Only record a signal when we have real data — no signal is better than a wrong signal.
+    let helpful = true;
+    let notes: string | null = null;
+
+    // context-shield-core gets a signal based on bytesAvoided, but only when we have
+    // a non-trivial measurement (>0). Without routing stats we skip this skill entirely
+    // to avoid poisoning the score with a false negative.
+    if (manifest.id === "context-shield-core") {
+      if (!bytesAvoided || bytesAvoided <= 0) {
+        // No routing data available — skip to avoid recording a misleading negative signal
+        continue;
+      }
+      helpful = bytesAvoided > 1000;
+      notes = `implicit signal: bytesAvoided=${bytesAvoided}`;
+    } else if (taskSuccessScore !== undefined) {
+      // Other skills get a signal based on overall task success
+      helpful = taskSuccessScore >= 3;
+      notes = `implicit signal: taskSuccessScore=${taskSuccessScore}`;
+    } else {
+      // No signal for other skills without explicit task success
+      continue;
+    }
+
+    // Look up the skill DB id by manifest.id.
+    // For native skills: slug === manifest.id (direct match).
+    // For imported skills: slug = "imported-{sourceId}-{manifestId}" (LIKE match on tail).
+    // Order by id DESC to deterministically pick the most-recently-imported skill
+    // if multiple rows match (e.g., same manifest imported from two sources).
+    const [skill] = await db
+      .select({ id: skillsTable.id })
+      .from(skillsTable)
+      .where(or(
+        eq(skillsTable.slug, manifest.id),
+        like(skillsTable.slug, `imported-%-${manifest.id}`),
+      ))
+      .orderBy(desc(skillsTable.id))
+      .limit(1);
+
+    if (!skill) continue;
+
+    // Atomic idempotency: onConflictDoNothing on the (session_id, skill_id) unique index
+    // prevents duplicate rows even under concurrent calls, without a read-then-write race.
+    const [inserted] = await db.insert(skillFeedbackTable).values({
+      sessionId,
+      skillId: skill.id,
+      helpful,
+      notes,
+      tokenDelta: manifest.id === "context-shield-core" ? -Math.floor(bytesAvoided / 4) : null,
+      taskSuccessScore: taskSuccessScore ?? null,
+    })
+    .onConflictDoNothing({ target: [skillFeedbackTable.sessionId, skillFeedbackTable.skillId] })
+    .returning();
+
+    // Only record in response if a row was actually inserted (not skipped due to conflict)
+    if (inserted) recorded.push({ skillSlug: manifest.id, helpful, signal: notes ?? "implicit" });
+  }
+
+  logger.info({ sessionId, bytesAvoided, taskSuccessScore, recordedCount: recorded.length }, "Implicit skill feedback recorded on session completion");
+  res.status(201).json({ recorded });
 });
 
 router.post("/skills/compile-preview", async (req, res) => {

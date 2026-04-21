@@ -58,6 +58,55 @@ function incrementStats(delta) {
   } catch {}
 }
 
+// Derive the routing-stats callback URL from OMNIQL_CALLBACK_URL.
+// OMNIQL_CALLBACK_URL is "${base}/api/sessions/${id}/status" — replace the last
+// path segment to get the routing-stats endpoint.
+const _rawCallbackUrl = process.env.OMNIQL_CALLBACK_URL || '';
+const ROUTING_STATS_URL = _rawCallbackUrl
+  ? _rawCallbackUrl.replace(/\/status$/, '/routing-stats')
+  : '';
+// Same bearer token used by /status callbacks — required by the routing-stats endpoint.
+const CALLBACK_BEARER_TOKEN = process.env.OMNIQL_MEM_AUTH_TOKEN || '';
+
+// pushRoutingStats: fire-and-forget POST of current routing stats to the API server.
+// Reads the current aggregate stats from context-shield and POSTs them to the
+// /sessions/:id/routing-stats endpoint so the dashboard can read bytesAvoided.
+function pushRoutingStats() {
+  if (!ROUTING_STATS_URL) return;
+  if (!fs.existsSync(SHIELD_SCRIPT)) return;
+  try {
+    const r = spawnSync('node', [SHIELD_SCRIPT, 'stats'], { encoding: 'utf8', timeout: 4000 });
+    if (!r.stdout) return;
+    const stats = JSON.parse(r.stdout);
+    // Map context-shield field names to the API server schema
+    const payload = JSON.stringify({
+      totalBytesAvoided: stats.total_bytes_avoided || 0,
+      totalShielded:     stats.total_shielded     || 0,
+      totalArtifacts:    stats.total_artifacts    || 0,
+      totalBlocked:      stats.total_blocked      || 0,
+      routingFailures:   stats.routing_failures   || 0,
+    });
+    const url = new URL(ROUTING_STATS_URL);
+    const headers = {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload),
+    };
+    if (CALLBACK_BEARER_TOKEN) headers['Authorization'] = `Bearer ${CALLBACK_BEARER_TOKEN}`;
+    const options = {
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname,
+      method: 'POST',
+      headers,
+    };
+    const mod = url.protocol === 'https:' ? require('https') : require('http');
+    const req = mod.request(options);
+    req.on('error', () => {});
+    req.write(payload);
+    req.end();
+  } catch {}
+}
+
 // ── Restore helpers ───────────────────────────────────────────────────────────
 
 function readRestoreData() {
@@ -550,6 +599,10 @@ const server = http.createServer(async (req, res) => {
       event_type: 'tool_result',
       payload:    { tool: 'floatr_batch_execute', ok: parsed.ok, totalBytesAvoided: parsed.totalBytesAvoided },
     });
+
+    // Push updated routing stats back to the API server after every batch execute
+    // that avoided bytes, so the dashboard can read bytesAvoided for feedback.
+    if (parsed.totalBytesAvoided > 0) pushRoutingStats();
 
     return sendJson(res, result.ok ? 200 : 500, parsed);
   }

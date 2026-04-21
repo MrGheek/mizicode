@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { db, skillsTable, skillBundlesTable, skillVersionsTable, skillSourcesTable, sessionSkillsTable, sessionsTable, sessionRepoContextTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { DEFAULT_SKILLS, DEFAULT_BUNDLES } from "./default-skills";
-import { rankSkills, buildRepoIntelligenceContext } from "./skills-ranker";
+import { rankSkills, buildRepoIntelligenceContext, getSkillFeedbackScores, buildHistoryScoresMap } from "./skills-ranker";
 import { TOKEN_MODE_PROFILES } from "./skills-types";
 import type { FloatrSkillManifest, SessionContext, CompiledBundle, TokenMode, RepoIntelligenceContext } from "./skills-types";
 import { logger } from "../lib/logger";
@@ -88,7 +88,20 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
   const maxSkills = Math.min(tokenProfile.activeSkillCountLimit, MAX_SKILLS);
   const maxTokenBudget = Math.floor(tokenProfile.maxContextBudget * 0.05);
 
-  const ranked = rankSkills(allManifests, ctx);
+  // Inject historical feedback scores into context if not already present
+  let ctxWithHistory = ctx;
+  if (!ctx.historyScores) {
+    try {
+      const feedbackScores = await getSkillFeedbackScores();
+      if (feedbackScores.length > 0) {
+        ctxWithHistory = { ...ctx, historyScores: buildHistoryScoresMap(feedbackScores) };
+      }
+    } catch (err) {
+      logger.warn({ err }, "Failed to load feedback scores for ranking — continuing without them");
+    }
+  }
+
+  const ranked = rankSkills(allManifests, ctxWithHistory);
 
   // ── Step 1: Reserve mandatory slots for doctrine + workflow coverage ──
   const mandatory: FloatrSkillManifest[] = [];
@@ -130,14 +143,14 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
   const selectedIds = () => new Set(selected.map(s => s.id));
 
   if (!selected.some(s => s.class === "doctrine")) {
-    const ranked = rankSkills(DEFAULT_SKILLS.filter(s => s.class === "doctrine"), ctx);
+    const ranked = rankSkills(DEFAULT_SKILLS.filter(s => s.class === "doctrine"), ctxWithHistory);
     const ids = selectedIds();
     const fallback = ranked.find(r => !ids.has(r.manifest.id));
     if (fallback) selected.push(fallback.manifest);
   }
 
   if (!selected.some(s => s.class === "workflow")) {
-    const ranked = rankSkills(DEFAULT_SKILLS.filter(s => s.class === "workflow"), ctx);
+    const ranked = rankSkills(DEFAULT_SKILLS.filter(s => s.class === "workflow"), ctxWithHistory);
     const ids = selectedIds();
     const fallback = ranked.find(r => !ids.has(r.manifest.id));
     if (fallback) selected.push(fallback.manifest);
@@ -145,7 +158,7 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
 
   // ── Step 4: If still below minimum, add from all default skills regardless of requestedIds ──
   if (selected.length < MIN_SKILLS) {
-    const fallbackRanked = rankSkills(DEFAULT_SKILLS, ctx);
+    const fallbackRanked = rankSkills(DEFAULT_SKILLS, ctxWithHistory);
     const ids = selectedIds();
     for (const { manifest } of fallbackRanked) {
       if (selected.length >= MIN_SKILLS) break;

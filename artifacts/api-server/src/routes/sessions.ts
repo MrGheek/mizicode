@@ -6,7 +6,7 @@ import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
 import { listObservations, listSessions, searchMemory, subscribeToObservations } from "../services/memory";
-import type { TeamMemberRecord } from "@workspace/db";
+import type { TeamMemberRecord, SessionRoutingStats } from "@workspace/db";
 import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles, getRepoIntelligenceForSession } from "../services/skills-bundler";
 import type { SessionContext } from "../services/skills-types";
 
@@ -842,6 +842,93 @@ router.get("/memory/sessions", (_req, res) => {
   } catch (err) {
     logger.error(err, "Failed to list all memory sessions for dashboard");
     res.status(500).json({ error: "Failed to list sessions" });
+  }
+});
+
+// ── Routing stats endpoints ──────────────────────────────────────────────────
+// POST /sessions/:sessionId/routing-stats
+// Called by the claw-runner (via callbackBaseUrl) when context-shield stats are
+// available. Stores the latest routing stats on the session row so the dashboard
+// can read them and pass bytesAvoided to the complete-feedback endpoint.
+router.post("/sessions/:sessionId/routing-stats", async (req, res) => {
+  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid sessionId" });
+    return;
+  }
+
+  // Require the same Bearer token as the /status callback to prevent forged signals.
+  if (CALLBACK_TOKEN) {
+    const auth = req.headers["authorization"] || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    if (token !== CALLBACK_TOKEN) {
+      logger.warn({ sessionId }, "Routing-stats callback: invalid token");
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+  }
+
+  const { totalBytesAvoided, totalShielded, totalArtifacts, totalBlocked, routingFailures } = req.body as Partial<SessionRoutingStats>;
+
+  const safeInt = (v: unknown) => {
+    const n = Number(v ?? 0);
+    return Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0;
+  };
+
+  const stats: SessionRoutingStats = {
+    totalBytesAvoided: safeInt(totalBytesAvoided),
+    totalShielded: safeInt(totalShielded),
+    totalArtifacts: safeInt(totalArtifacts),
+    totalBlocked: safeInt(totalBlocked),
+    routingFailures: safeInt(routingFailures),
+    recordedAt: new Date().toISOString(),
+  };
+
+  try {
+    const result = await db
+      .update(sessionsTable)
+      .set({ routingStatsJson: stats, updatedAt: new Date() })
+      .where(eq(sessionsTable.id, sessionId))
+      .returning({ id: sessionsTable.id });
+
+    if (!result.length) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    logger.info({ sessionId, bytesAvoided: stats.totalBytesAvoided }, "Routing stats recorded for session");
+    res.json({ ok: true, stats });
+  } catch (err) {
+    logger.error(err, "Failed to store routing stats");
+    res.status(500).json({ error: "Failed to store routing stats" });
+  }
+});
+
+// GET /sessions/:sessionId/routing-stats
+// Returns the latest stored routing stats for a session (if any).
+// The dashboard uses this to read bytesAvoided for the complete-feedback call.
+router.get("/sessions/:sessionId/routing-stats", async (req, res) => {
+  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid sessionId" });
+    return;
+  }
+
+  try {
+    const [session] = await db
+      .select({ routingStatsJson: sessionsTable.routingStatsJson })
+      .from(sessionsTable)
+      .where(eq(sessionsTable.id, sessionId));
+
+    if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    res.json({ stats: session.routingStatsJson ?? null });
+  } catch (err) {
+    logger.error(err, "Failed to fetch routing stats");
+    res.status(500).json({ error: "Failed to fetch routing stats" });
   }
 });
 

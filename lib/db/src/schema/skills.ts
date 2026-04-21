@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, boolean, timestamp, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -75,7 +75,10 @@ export const skillFeedbackTable = pgTable("skill_feedback", {
   tokenDelta: integer("token_delta"),
   taskSuccessScore: integer("task_success_score"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  sessionSkillUnique: uniqueIndex("skill_feedback_session_skill_unique")
+    .on(table.sessionId, table.skillId),
+}));
 
 export const repoGraphJobsTable = pgTable("repo_graph_jobs", {
   id: serial("id").primaryKey(),

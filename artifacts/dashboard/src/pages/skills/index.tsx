@@ -8,6 +8,7 @@ import {
   useListSkillBundles,
   useGetSkill,
   getListSkillsQueryKey,
+  useGetSkillFeedbackScores,
 } from "@workspace/api-client-react";
 import type { SkillRecord, SkillBundle } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -25,7 +26,7 @@ import {
 } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
-import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
+import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge, SkillEffectivenessBadge } from "@/components/skill-badges";
 
 type LibTab = "installed" | "pending" | "disabled" | "bundles";
 
@@ -155,6 +156,7 @@ function SkillCard({
   onReject,
   onToggle,
   isActioning,
+  feedbackScores,
 }: {
   skill: SkillRecord;
   showProvenance?: boolean;
@@ -163,6 +165,7 @@ function SkillCard({
   onReject?: () => void;
   onToggle?: () => void;
   isActioning?: boolean;
+  feedbackScores?: Record<string, { helpfulRate: number; totalCount: number }>;
 }) {
   const isHighRisk = skill.installRisk === "hooked" || skill.installRisk === "binary";
 
@@ -177,6 +180,9 @@ function SkillCard({
               <InstallRiskBadge installRisk={skill.installRisk} />
               {skill.tokenOverheadEstimate != null && (
                 <TokenCostBadge tokens={skill.tokenOverheadEstimate} />
+              )}
+              {feedbackScores && (
+                <SkillEffectivenessBadge slug={skill.slug} feedbackScores={feedbackScores} />
               )}
             </div>
             <h3 className="font-semibold text-sm mt-1">{skill.name}</h3>
@@ -502,9 +508,15 @@ export default function SkillsLibrary() {
   });
   const skillsLoading = tab === "pending" ? pendingLoading : approvedLoading;
   const { data: bundlesData, isLoading: bundlesLoading } = useListSkillBundles();
+  const { data: feedbackScoresData } = useGetSkillFeedbackScores();
   const reviewSkill = useReviewSkill();
   const enableSkill = useEnableSkill();
   const disableSkill = useDisableSkill();
+
+  const feedbackScoresMap: Record<string, { helpfulRate: number; totalCount: number }> = {};
+  for (const s of feedbackScoresData?.scores ?? []) {
+    feedbackScoresMap[s.slug] = { helpfulRate: s.helpfulRate, totalCount: s.totalCount };
+  }
 
   const invalidateSkills = () => {
     queryClient.invalidateQueries({ queryKey: getListSkillsQueryKey() });
@@ -653,6 +665,7 @@ export default function SkillsLibrary() {
                         showActions="toggle"
                         onToggle={() => handleToggle(skill)}
                         isActioning={actioningId === skill.id}
+                        feedbackScores={feedbackScoresMap}
                       />
                     ))}
                   </div>
@@ -689,6 +702,7 @@ export default function SkillsLibrary() {
                   onApprove={() => handleApprove(skill)}
                   onReject={() => handleReject(skill)}
                   isActioning={actioningId === skill.id}
+                  feedbackScores={feedbackScoresMap}
                 />
               ))}
             </div>

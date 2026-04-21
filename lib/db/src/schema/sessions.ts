@@ -11,6 +11,15 @@ export interface TeamMemberRecord {
   ideUrl: string | null;
 }
 
+export interface SessionRoutingStats {
+  totalBytesAvoided: number;
+  totalShielded: number;
+  totalArtifacts: number;
+  totalBlocked: number;
+  routingFailures: number;
+  recordedAt: string;
+}
+
 export const sessionsTable = pgTable("sessions", {
   id: serial("id").primaryKey(),
   profileId: integer("profile_id").notNull().references(() => gpuProfilesTable.id),
@@ -36,6 +45,7 @@ export const sessionsTable = pgTable("sessions", {
   tokenMode: text("token_mode"),
   activeBundleId: integer("active_bundle_id").references(() => skillBundlesTable.id),
   repoFingerprintJson: jsonb("repo_fingerprint_json"),
+  routingStatsJson: jsonb("routing_stats_json").$type<SessionRoutingStats>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

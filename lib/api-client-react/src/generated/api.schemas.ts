@@ -454,6 +454,53 @@ export interface SkillFeedbackResponse {
   feedback: SkillFeedbackResponseFeedback;
 }
 
+export interface SkillFeedbackScore {
+  skillId: number;
+  slug: string;
+  totalCount: number;
+  helpfulCount: number;
+  unhelpfulCount: number;
+  /** Rate from 0.0 to 1.0 */
+  helpfulRate: number;
+  /** Normalized to [-1.0, +1.0] centered at 0.5 helpfulRate */
+  normalizedScore: number;
+  avgTaskSuccessScore: number | null;
+}
+
+export interface SkillFeedbackScoresResponse {
+  scores: SkillFeedbackScore[];
+}
+
+export interface SessionCompleteFeedbackRequest {
+  /** Bytes avoided by context-shield routing, used as implicit signal for context-shield-core */
+  bytesAvoided?: number;
+  /** Overall task success score (1-5) for implicit skill signals */
+  taskSuccessScore?: number;
+}
+
+export interface SessionCompleteFeedbackRecordedItem {
+  skillSlug: string;
+  helpful: boolean;
+  signal: string;
+}
+
+export interface SessionCompleteFeedbackResponse {
+  recorded: SessionCompleteFeedbackRecordedItem[];
+}
+
+export interface SessionRoutingStats {
+  totalBytesAvoided: number;
+  totalShielded: number;
+  totalArtifacts: number;
+  totalBlocked: number;
+  routingFailures: number;
+  recordedAt: string;
+}
+
+export interface SessionRoutingStatsResponse {
+  stats: SessionRoutingStats | null;
+}
+
 export interface RepoIndexRequest {
   /** Absolute path to the repo on the instance. Defaults to /workspace/projects for team-owner sessions. */
   repoPath?: string | null;

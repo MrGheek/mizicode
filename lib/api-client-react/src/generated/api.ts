@@ -23,6 +23,10 @@ import type {
   BundleListResponse,
   BundleResponse,
   CompileBundleRequest,
+  SkillFeedbackScoresResponse,
+  SessionCompleteFeedbackRequest,
+  SessionCompleteFeedbackResponse,
+  SessionRoutingStatsResponse,
   CompilePreviewRequest,
   CompilePreviewResponse,
   CompiledBundleResult,
@@ -4054,5 +4058,191 @@ export function useGetRepoJob<
     queryKey: QueryKey;
   };
 
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+// ─── Skill Feedback Scores ────────────────────────────────────────────────────
+
+export const getSkillFeedbackScoresUrl = () => `/api/skills/feedback-scores`;
+
+export const getSkillFeedbackScores = async (
+  options?: RequestInit,
+): Promise<SkillFeedbackScoresResponse> => {
+  return customFetch<SkillFeedbackScoresResponse>(getSkillFeedbackScoresUrl(), options);
+};
+
+export const getGetSkillFeedbackScoresQueryKey = () => ["skill-feedback-scores"] as const;
+
+export const getGetSkillFeedbackScoresQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSkillFeedbackScores>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof getSkillFeedbackScores>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetSkillFeedbackScoresQueryKey();
+  return {
+    queryKey,
+    queryFn: () => getSkillFeedbackScores(requestOptions),
+    staleTime: 60_000,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getSkillFeedbackScores>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetSkillFeedbackScoresQueryResult = NonNullable<Awaited<ReturnType<typeof getSkillFeedbackScores>>>;
+export type GetSkillFeedbackScoresQueryError = ErrorType<ErrorResponse>;
+
+export function useGetSkillFeedbackScores<
+  TData = Awaited<ReturnType<typeof getSkillFeedbackScores>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<Awaited<ReturnType<typeof getSkillFeedbackScores>>, TError, TData>;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSkillFeedbackScoresQueryOptions(options);
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+// ─── Session Complete Feedback (implicit) ─────────────────────────────────────
+
+export const getSessionCompleteFeedbackUrl = (sessionId: number) =>
+  `/api/sessions/${sessionId}/skills/complete-feedback`;
+
+export const sessionCompleteFeedback = async (
+  sessionId: number,
+  sessionCompleteFeedbackRequest: SessionCompleteFeedbackRequest,
+  options?: RequestInit,
+): Promise<SessionCompleteFeedbackResponse> => {
+  return customFetch<SessionCompleteFeedbackResponse>(
+    getSessionCompleteFeedbackUrl(sessionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sessionCompleteFeedbackRequest),
+    },
+  );
+};
+
+export const getSessionCompleteFeedbackMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+    TError,
+    { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+  TError,
+  { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> },
+  TContext
+> => {
+  const mutationKey = ["sessionCompleteFeedback"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+    { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> }
+  > = (props) => {
+    const { sessionId, data } = props ?? {};
+    return sessionCompleteFeedback(sessionId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SessionCompleteFeedbackMutationResult = NonNullable<Awaited<ReturnType<typeof sessionCompleteFeedback>>>;
+export type SessionCompleteFeedbackMutationBody = BodyType<SessionCompleteFeedbackRequest>;
+export type SessionCompleteFeedbackMutationError = ErrorType<ErrorResponse>;
+
+export const useSessionCompleteFeedback = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+    TError,
+    { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+  TError,
+  { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> },
+  TContext
+> => {
+  return useMutation(getSessionCompleteFeedbackMutationOptions(options));
+};
+
+// ─── Session Routing Stats ────────────────────────────────────────────────────
+
+export const getSessionRoutingStatsUrl = (sessionId: number) =>
+  `/api/sessions/${sessionId}/routing-stats`;
+
+export const getSessionRoutingStats = async (
+  sessionId: number,
+  options?: RequestInit,
+): Promise<SessionRoutingStatsResponse> => {
+  return customFetch<SessionRoutingStatsResponse>(
+    getSessionRoutingStatsUrl(sessionId),
+    { ...options },
+  );
+};
+
+export const getGetSessionRoutingStatsQueryKey = (sessionId: number) =>
+  [`/api/sessions/${sessionId}/routing-stats`] as const;
+
+export const getGetSessionRoutingStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSessionRoutingStats>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getSessionRoutingStats>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetSessionRoutingStatsQueryKey(sessionId);
+  return {
+    queryKey,
+    queryFn: () => getSessionRoutingStats(sessionId, requestOptions),
+    enabled: !!sessionId,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getSessionRoutingStats>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetSessionRoutingStatsQueryResult = NonNullable<Awaited<ReturnType<typeof getSessionRoutingStats>>>;
+export type GetSessionRoutingStatsQueryError = ErrorType<ErrorResponse>;
+
+export function useGetSessionRoutingStats<
+  TData = Awaited<ReturnType<typeof getSessionRoutingStats>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getSessionRoutingStats>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSessionRoutingStatsQueryOptions(sessionId, options);
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
   return { ...query, queryKey: queryOptions.queryKey };
 }
