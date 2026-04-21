@@ -1071,7 +1071,7 @@ export default function SessionDetail() {
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
   const [seenConflictFingerprint, setSeenConflictFingerprint] = useState<string>("");
-  const [conflictBannerDismissed, setConflictBannerDismissed] = useState(false);
+  const [dismissedConflictFingerprint, setDismissedConflictFingerprint] = useState<string>("");
   const [bootLog, setBootLog] = useState<string[]>([]);
   const lastBootMsgRef = useRef<string>("");
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -1145,15 +1145,28 @@ export default function SessionDetail() {
     [activeConflicts]
   );
 
+  const blockingConflictFingerprint = useMemo(
+    () =>
+      activeConflicts
+        .filter((c) => c.recommendation === "block")
+        .map((c) => {
+          const [a, b] = [c.laneIdA, c.laneIdB].sort((x, y) => x - y);
+          return `${a}:${b}`;
+        })
+        .sort()
+        .join("|"),
+    [activeConflicts]
+  );
+
   useEffect(() => {
     setSeenConflictFingerprint("");
-    setConflictBannerDismissed(false);
+    setDismissedConflictFingerprint("");
   }, [sessionId]);
 
   useEffect(() => {
     if (!hasAnyConflict) {
       setSeenConflictFingerprint("");
-      setConflictBannerDismissed(false);
+      setDismissedConflictFingerprint("");
     }
   }, [hasAnyConflict]);
 
@@ -1423,7 +1436,7 @@ export default function SessionDetail() {
       {activeTab === "overview" && (
         <>
           {/* Blocking conflict banner */}
-          {hasBlockingConflict && !conflictBannerDismissed && (
+          {hasBlockingConflict && dismissedConflictFingerprint !== blockingConflictFingerprint && (
             <div className="flex items-start gap-3 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm">
               <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
               <span className="flex-1 text-red-300">
@@ -1441,7 +1454,7 @@ export default function SessionDetail() {
               <button
                 aria-label="Dismiss conflict banner"
                 className="text-red-400 hover:text-red-200 transition-colors ml-1 shrink-0"
-                onClick={() => setConflictBannerDismissed(true)}
+                onClick={() => setDismissedConflictFingerprint(blockingConflictFingerprint)}
               >
                 <X className="w-4 h-4" />
               </button>
