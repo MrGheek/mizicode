@@ -591,9 +591,9 @@ function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?:
                 )}
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-                {(taskMode ?? latestActivation?.activationMode) && (
+                {taskMode && (
                   <Badge variant="outline" className="text-[10px] capitalize">
-                    Task: {taskMode ?? latestActivation?.activationMode}
+                    Task: {taskMode}
                   </Badge>
                 )}
                 {latestActivation?.tokenMode && (
@@ -1251,7 +1251,7 @@ export default function SessionDetail() {
       </div>
 
       {activeTab === "smart-skills" && (
-        <SmartSkillsTab sessionId={sessionId} taskMode={(session as unknown as Record<string, unknown>).taskMode as string | null} />
+        <SmartSkillsTab sessionId={sessionId} taskMode={session.taskMode ?? null} />
       )}
 
     </div>

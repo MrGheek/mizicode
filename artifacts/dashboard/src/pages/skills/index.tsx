@@ -454,7 +454,7 @@ export default function SkillsLibrary() {
   const disableSkill = useDisableSkill();
 
   const invalidateSkills = () => {
-    queryClient.invalidateQueries({ queryKey: ["listSkills"] });
+    queryClient.invalidateQueries({ queryKey: getListSkillsQueryKey() });
   };
 
   const allApproved = skillsData?.skills ?? [];
@@ -710,9 +710,25 @@ export default function SkillsLibrary() {
 }
 
 function BundleCard({ bundle, onClick }: { bundle: SkillBundle; onClick: () => void }) {
-  type BundleJsonType = { skillIds?: number[] };
-  const bj = (bundle.bundleJson ?? {}) as BundleJsonType;
-  const skillCount = (bj.skillIds ?? []).length;
+  const { data: compiled } = useQuery({
+    queryKey: ["compile-bundle-card", bundle.id, bundle.taskMode, bundle.tokenMode],
+    staleTime: Infinity,
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/skill-bundles/compile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bundleId: bundle.id,
+          taskMode: bundle.taskMode ?? "build",
+          tokenMode: bundle.tokenMode ?? "core",
+        }),
+      });
+      if (!res.ok) throw new Error("Compile failed");
+      return res.json() as Promise<{ skills: CompiledSkill[] }>;
+    },
+  });
+
+  const skills = compiled?.skills ?? [];
 
   return (
     <Card
@@ -721,8 +737,8 @@ function BundleCard({ bundle, onClick }: { bundle: SkillBundle; onClick: () => v
     >
       <CardContent className="pt-4 pb-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
-          <div>
-            <div className="flex items-center gap-1.5 mb-1">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
               {bundle.isDefault && (
                 <Badge variant="outline" className="text-[10px] bg-emerald-500/20 text-emerald-400 border-emerald-500/30 py-0">
                   Native
@@ -739,13 +755,15 @@ function BundleCard({ bundle, onClick }: { bundle: SkillBundle; onClick: () => v
             <p className="text-[10px] text-muted-foreground font-mono mt-0.5">{bundle.slug}</p>
           </div>
           <Badge variant="outline" className="text-[10px] text-muted-foreground shrink-0">
-            click to preview
+            {skills.length > 0 ? `${skills.length} skills` : "…"}
           </Badge>
         </div>
-        {skillCount > 0 && (
-          <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-            <Package className="w-3 h-3" /> {skillCount} skill{skillCount !== 1 ? "s" : ""} · click to view details
-          </p>
+        {skills.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {skills.map((s, i) => (
+              s.class && <SkillClassBadge key={s.id ?? i} skillClass={s.class} />
+            ))}
+          </div>
         )}
       </CardContent>
     </Card>
