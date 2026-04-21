@@ -619,21 +619,31 @@ const server = http.createServer(async (req, res) => {
       tokenMode:        body.tokenMode        || 'core',
     };
 
-    const ok = writeSnapshot(snapshot);
+    const snapshotWritten = writeSnapshot(snapshot);
     compactionPending = true; // Signal: next runTask will force-inject restore block
 
     appendEvent({
       actor_type: 'claw-runner',
       task_id:    currentTaskId || '',
       event_type: 'compaction_signal',
-      payload:    { activeTask: snapshot.activeTask, snapshotWritten: ok },
+      payload:    { activeTask: snapshot.activeTask, snapshotWritten },
     });
 
+    // Return 500 + ok:false if persistence failed so callers can detect and retry
+    if (!snapshotWritten) {
+      return sendJson(res, 500, {
+        ok:               false,
+        snapshotWritten:  false,
+        compactionPending: true,
+        error:            'Snapshot write failed — session-state.mjs may be unavailable. compactionPending is still set; restore may use last good snapshot.',
+      });
+    }
+
     return sendJson(res, 200, {
-      ok: true,
-      snapshotWritten: ok,
+      ok:               true,
+      snapshotWritten:  true,
       compactionPending: true,
-      message: 'Compaction signal received. Next task start will inject restore block from this snapshot.',
+      message:          'Compaction signal received. Next task start will inject restore block from this snapshot.',
     });
   }
 
