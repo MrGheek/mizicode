@@ -1,0 +1,713 @@
+Here’s a detailed product spec for FLOATR Smart Skills that builds directly on FLOATR’s current architecture: rented GPU sessions, local model serving through vLLM + LiteLLM, browser IDEs, Claw Runner, SQLite FTS5 memory, team sessions, and boot-time environment control.
+
+FLOATR Smart Skills — Detailed Product Spec
+1. Product summary
+
+FLOATR Smart Skills is a capability layer that automatically selects, installs, and activates the best skill bundle for a coding session based on:
+
+the repo
+the task
+the model/profile
+the user/team mode
+the token budget
+past session outcomes
+
+The goal is to make FLOATR feel like a self-assembling coding cockpit, not just a GPU-hosted IDE. FLOATR already controls session launch, model selection, persistent memory, and startup orchestration, which makes it the right place to compile and inject skill bundles at session boot.
+
+2. Why this fits FLOATR
+
+FLOATR already has the exact primitives Smart Skills needs:
+
+local inference on the rented instance via vLLM and LiteLLM
+a controlled boot pipeline via onstart.sh
+persistent cross-session memory using SQLite FTS5
+Claw Runner for longer-lived agent workflows
+team sessions with isolated workspaces and shared context
+an API server that already manages profiles, sessions, templates, scheduler, and memory routes
+
+That means Smart Skills does not need to be a loose plugin directory. It can be a ranked runtime system with provenance, policy, performance measurement, and session-specific assembly.
+
+3. Product goal
+
+Make FLOATR automatically answer this question at launch:
+
+“Given this repo, this task, this model, and this team setup, what is the smallest set of skills that will produce the best result?”
+
+Not “what skills exist?”
+Not “what is popular on GitHub?”
+But “what should be active right now?”
+
+4. What Smart Skills should borrow
+Doctrine layer
+
+The Andrej/Karpathy skill repo is strongest as a behavior contract: think before coding, prefer simplicity, make surgical changes, and define verifiable success criteria. That is ideal as FLOATR’s default doctrine bundle for coding sessions.
+
+Workflow layer
+
+claude-flow is strongest as a routing system: one /flow entry point, a routing table for overlapping tools, built-in plan/TDD/checkpoint/build-fix flows, and continuous discovery/update of new tools. FLOATR should borrow the routing discipline, not just the command name.
+
+Memory layer
+
+CatchMe is strongest as a hierarchical memory model: local/offline SQLite + FTS5, a top-down retrieval path, and one-file agent integration. FLOATR already has persistent memory; the upgrade is to make it tree-structured, summarized, and selectively traversed.
+
+Compression layer
+
+Caveman is strongest as a response compression system with installable hooks/status behavior and published token reduction claims. FLOATR should offer compression profiles rather than copying the persona literally.
+
+Structural code-context layer
+
+code-review-graph is strongest as a repo intelligence system: Tree-sitter parsing, graph storage, blast-radius analysis, and minimal review-set generation. That should become FLOATR’s repo-context engine.
+
+Token governance layer
+
+token-savior is strongest as a budgeted context system: progressive disclosure, contradiction detection, TTL/decay, symbol staleness, ROI scoring, and profile-based tool slimming. FLOATR should adopt these ideas to stop Smart Skills from bloating the prompt and tool surface.
+
+5. Product principles
+Normalized, not copied
+FLOATR should ingest external skills into a FLOATR manifest format rather than running arbitrary third-party instructions directly.
+Bundle-first, not marketplace-first
+The key unit is the session bundle, not the individual skill.
+Minimal active set
+A typical session should activate 3–7 skills, not dozens.
+Measured lift
+A skill only becomes “best in class” if it improves outcomes in FLOATR.
+Private by default
+All activation, ranking, memory, and repo analysis should work inside the user’s rented environment or FLOATR control plane.
+6. Scope for v1
+
+Smart Skills v1 should support:
+
+importing skill sources from GitHub repos/URLs
+parsing SKILL.md, CLAUDE.md, AGENTS.md, command docs, hook docs, and repo metadata
+normalizing them into a FLOATR manifest
+classifying skills into doctrine/workflow/context/efficiency
+generating a recommended session bundle
+activating the bundle at session launch
+showing active skills and rationale in the cockpit
+collecting feedback and outcome metrics
+Out of scope for v1
+autonomous installation of arbitrary shell hooks from untrusted repos
+full weekly GitHub crawling with no review gate
+auto-merging upstream changes into active bundles without approval
+general-purpose MCP marketplace management
+7. User experience
+Launch flow
+
+At session launch, the user sees:
+
+selected GPU/model profile
+repo fingerprint summary
+task mode: build / review / debug / refactor / explore / team
+recommended skill bundle
+token mode: Full / Core / Lean / Ultra
+an “Explain why” panel
+First-run behavior
+
+FLOATR inspects:
+
+repo language/framework
+monorepo/package manager
+test tooling
+repo size/complexity
+current task type
+whether the session is solo or team
+selected model profile
+
+Then it compiles a bundle such as:
+
+Default Build Bundle
+
+Karpathy doctrine
+Flow director
+Repo graph
+Memory compact
+Compression lean
+Cockpit additions
+
+Add a Smart Skills tab on /sessions/:id with:
+
+active bundle
+active skills
+source repo + pinned commit
+why each skill was chosen
+estimated token overhead
+toggles: disable / replace / pin
+“This helped / didn’t help”
+logs of activations and overrides
+8. Skill taxonomy
+
+Every imported skill must map into one of four classes:
+
+A. Doctrine
+
+Behavior and guardrails.
+
+Examples:
+
+think before coding
+simplicity first
+surgical changes
+define success criteria
+B. Workflow
+
+Task staging and orchestration.
+
+Examples:
+
+plan → build → verify
+debug routing
+checkpoint/resume
+release flow
+C. Context
+
+How the agent finds the right information.
+
+Examples:
+
+repo graph
+blast radius
+symbol-linked memory
+diff-focused review context
+D. Efficiency
+
+How the system reduces waste.
+
+Examples:
+
+response compression
+tool manifest slimming
+progressive disclosure
+token-budget profiles
+9. FLOATR skill manifest format
+
+Every imported asset should be converted into a FLOATR-native manifest.
+
+Example:
+
+schemaVersion: 1
+id: karpathy-doctrine
+name: Karpathy Doctrine
+class: doctrine
+source:
+  repoUrl: https://github.com/forrestchang/andrej-karpathy-skills
+  commitSha: abc123
+  license: MIT
+  trust: reviewed
+summary: |
+  Coding doctrine favoring explicit assumptions, simplicity, surgical edits,
+  and verifiable success criteria.
+triggers:
+  tasks: [build, debug, refactor, review]
+  repoKinds: [any]
+  sessionModes: [solo, team]
+compatibility:
+  models: [kimi, qwen, glm, deepseek, minimax]
+  interfaces: [claw, vscode, bolt, api]
+instructions:
+  system:
+    - State assumptions explicitly when uncertain.
+    - Prefer smallest possible change.
+    - Avoid unrelated edits.
+    - Define success checks before implementation.
+install:
+  type: virtual
+  outputs:
+    - system_prompt_fragment
+    - cockpit_badge
+cost:
+  tokenOverheadEstimate: 180
+rankingHints:
+  taskFitWeight: 0.9
+  repoFitWeight: 0.5
+  measuredLiftWeight: 1.0
+safety:
+  shellExecution: none
+  networkAccess: none
+10. Import pipeline
+Step 1: fetch and pin
+
+FLOATR imports from a repo URL and records:
+
+repo URL
+branch/tag
+resolved commit SHA
+license
+imported files
+import timestamp
+
+This matters because the referenced repos do not all use the same license. Several are MIT, while CatchMe is Apache-2.0, so FLOATR needs source provenance and license-aware policy from day one.
+
+Step 2: detect artifacts
+
+Parser looks for:
+
+SKILL.md
+skills/*
+CLAUDE.md
+AGENTS.md
+commands/*
+hooks/*
+install docs
+benchmark/eval docs
+config files
+statusline/hook integrations
+Step 3: classify
+
+Normalize each artifact into one or more manifest entries.
+
+Examples:
+
+Karpathy repo → doctrine skill
+claude-flow → workflow skill + flow router
+CatchMe → memory strategy skill
+caveman → compression profile skill
+code-review-graph → repo intelligence skill
+token-savior → budget/governance skill
+Step 4: risk grade
+
+Every skill gets a trust level:
+
+virtual — text instructions only
+config — writes local config files
+hooked — adds hooks/status integration
+binary — installs runtime/program
+networked — requires network access
+unsafe — arbitrary execution, blocked by default
+Step 5: human review
+
+Default policy:
+
+doctrine/workflow/context text skills can be approved quickly
+anything that writes hooks or runs binaries requires explicit review
+11. Bundle compiler
+Inputs
+repo fingerprint
+task intent
+selected model/profile
+solo vs team
+token mode
+historical success data
+user-pinned preferences
+Output
+
+A bundle object:
+
+{
+  "bundleId": "build-ts-monorepo-kimi-core-v3",
+  "skills": [
+    "karpathy-doctrine",
+    "flow-director",
+    "repo-graph-core",
+    "memory-compact",
+    "compression-lean"
+  ],
+  "reasoning": {
+    "task": "build",
+    "repo": "large-typescript-monorepo",
+    "model": "kimi-k2.5-standard",
+    "tokenMode": "core"
+  }
+}
+Selection logic
+
+Use a ranking score like:
+
+score = task_fit + repo_fit + model_fit + measured_lift + trust + freshness - token_cost - conflict_risk - install_risk
+
+Examples
+
+For a large TypeScript monorepo review:
+
+repo graph gets boosted
+compression gets boosted
+full memory gets reduced unless prior context matters
+
+For a small bugfix:
+
+doctrine + simple workflow + lean memory
+no heavyweight graph boot unless repo complexity justifies it
+
+For a team session:
+
+shared memory and role-specific overlays get boosted
+12. Default FLOATR bundles
+FLOATR Core Build
+Karpathy doctrine
+Flow director
+Lean compression
+Compact memory
+FLOATR Review Pro
+Karpathy doctrine
+Repo graph
+Blast radius
+One-line review mode
+Progressive disclosure memory
+FLOATR Debug Ops
+Flow director
+Build-fix/debug router
+Symbol-linked memory
+Checkpointing
+Compression core
+FLOATR Team Architect
+Shared memory tree
+Role overlays: architect / builder / reviewer
+Repo graph
+Decision log
+Checkpoint/resume
+13. Runtime architecture changes
+
+FLOATR’s current API server and session boot design make this straightforward: the API already seeds profiles, launches sessions, tracks status, and injects environment variables into the wrapper that calls /opt/onstart.sh. The boot sequence already has an immediate tools phase and a background model-loading phase.
+
+New services
+
+Add:
+
+services/skills-discovery.ts
+services/skills-import.ts
+services/skills-normalizer.ts
+services/skills-ranker.ts
+services/skills-bundler.ts
+services/skills-evals.ts
+services/repo-intelligence.ts
+New worker responsibilities
+
+Use Claw Runner for:
+
+repo scan jobs
+graph indexing jobs
+manifest extraction
+benchmark/eval runs
+update checks on pinned skill sources
+New boot behavior
+
+Extend the generated wrapper and onstart.sh with:
+
+Phase 1.5: Smart Skills bootstrap
+
+write active bundle manifest to /workspace/.floatr/skills/active-bundle.json
+write prompt fragments to /workspace/.floatr/prompts/
+write tool profile config
+optionally install safe repo-context helpers
+optionally start repo graph indexer in background
+report status skills_ready
+New session status states
+
+Add:
+
+skills_compiling
+skills_installing
+skills_ready
+indexing_repo
+bundle_degraded (if a selected skill failed and fallback bundle activated)
+14. Repo Intelligence subsystem
+
+This is Smart Skills v1.5 and should be designed now even if shipped later.
+
+What it does
+parse repo into AST/graph
+link files, symbols, imports, callers, tests
+compute minimal review sets
+compute blast radius
+attach memory to symbols/files
+generate repo summaries at multiple depths
+
+This design is directly inspired by code-review-graph’s Tree-sitter-to-graph pipeline and minimal review-set idea.
+
+Storage
+
+Use a repo-local SQLite database on the instance:
+
+/workspace/.floatr/repo-graph.db
+
+Mirror durable summaries back to FLOATR control plane if desired:
+
+architectural summary
+symbol summaries
+notable hotspots
+risk edges
+15. Memory 2.0 for Smart Skills
+
+FLOATR already stores cross-session observations and summaries in SQLite FTS5 and exposes them through dashboard and per-session routes. Smart Skills should upgrade this from a flat searchable log into a tiered, structured memory system.
+
+Memory improvements
+
+Add:
+
+hierarchical rollups: workspace → repo → branch → session → task → symbol
+top-down retrieval
+contradiction detection
+per-type TTL
+ROI scoring
+symbol staleness invalidation
+progressive disclosure lookup
+
+These patterns are strongly supported by CatchMe’s hierarchical retrieval model and token-savior’s TTL, contradiction, ROI, and layered retrieval ideas.
+
+Retrieval contract
+
+Layer 1: summary index
+Layer 2: compact search hits
+Layer 3: full observation/materialization
+
+That keeps context cheap and predictable.
+
+16. Token modes
+
+Borrow the idea of profile-based capability slimming and expose it as a FLOATR feature.
+
+Modes
+Full — all active skills, richer memory, verbose reasoning
+Core — default for daily development
+Lean — limited tools, compact memory, shorter responses
+Ultra — hot-path tools only, progressive discovery
+
+This follows the spirit of token-savior’s profiles and caveman’s compression gains, but FLOATR should present it as a first-class session control.
+
+17. API surface
+
+Add:
+
+Skills
+GET /api/skills
+POST /api/skills/import
+POST /api/skills/discover
+GET /api/skills/:id
+POST /api/skills/:id/review
+POST /api/skills/:id/enable
+POST /api/skills/:id/disable
+Bundles
+GET /api/skill-bundles
+POST /api/skill-bundles/compile
+POST /api/skill-bundles/:id/activate
+GET /api/sessions/:id/skills
+Evals
+POST /api/skills/evals/run
+GET /api/skills/evals
+GET /api/skills/leaderboard
+Repo intelligence
+POST /api/sessions/:id/repo/index
+GET /api/sessions/:id/repo/summary
+GET /api/sessions/:id/repo/blast-radius
+GET /api/sessions/:id/repo/symbol/:name
+18. Database additions
+
+Add these tables:
+
+skill_sources
+id
+repo_url
+source_type
+default_branch
+pinned_commit_sha
+license
+trust_level
+imported_at
+skills
+id
+slug
+name
+class
+description
+source_id
+install_type
+token_overhead_estimate
+enabled
+skill_versions
+id
+skill_id
+manifest_json
+extracted_rules_json
+source_files_json
+version_hash
+created_at
+skill_bundles
+id
+slug
+name
+bundle_json
+session_mode
+task_mode
+repo_kind
+model_family
+token_mode
+session_skills
+id
+session_id
+bundle_id
+activated_skills_json
+rationale_json
+token_mode
+activated_at
+skill_feedback
+id
+session_id
+skill_id
+helpful
+notes
+token_delta
+task_success_score
+repo_graph_jobs
+id
+session_id
+status
+graph_path
+indexed_symbols
+last_run_at
+19. UI additions
+New page: /skills
+
+Sections:
+
+Installed
+Imported
+Reviewed
+Disabled
+Leaderboard
+Recommended bundles
+Session cockpit additions
+
+New tabs:
+
+Smart Skills
+Repo Graph
+Bundle Metrics
+UI components
+skill badge
+trust badge
+token cost badge
+source repo card
+activation rationale card
+bundle diff viewer
+“replace this skill” modal
+20. Security and trust model
+
+This is critical.
+
+Rules
+never execute arbitrary third-party code by default
+import text/config first, runtime/hook logic second
+require review for shell hooks and installers
+pin commit SHAs for every imported skill
+record source license and trust level
+maintain a FLOATR allowlist for first-party safe skills
+sandbox repo indexing to the user’s instance
+make every bundle explainable
+Trust tiers
+Tier 0: FLOATR-native
+Tier 1: reviewed external
+Tier 2: user-approved external
+Tier 3: experimental/manual only
+21. Evaluation framework
+
+A skill should only become “best in class” in FLOATR if it wins on measurable outcomes.
+
+Metrics
+time to first useful answer
+total tokens consumed
+number of files opened/read
+success rate on task completion
+human helpfulness score
+rollback/override rate
+session cost impact
+bundle conflict rate
+Eval types
+offline replay tasks
+benchmark repos
+A/B session bundle tests
+user thumbs-up/down
+task-specific scorecards
+What to compare
+baseline FLOATR session
+FLOATR + single skill
+FLOATR + default bundle
+FLOATR + optimized bundle
+22. Recommended implementation order
+Phase 0 — foundation
+
+Ship first.
+
+FLOATR manifest schema
+importer/parser
+manual review flow
+source pinning and license capture
+cockpit visibility
+Phase 1 — bundle compiler
+
+Ship second.
+
+repo fingerprinting
+task classification
+bundle recommendation
+token modes
+session activation
+Phase 2 — repo intelligence
+
+Ship third.
+
+Tree-sitter graph
+blast radius
+symbol summaries
+minimal read-set generation
+Phase 3 — memory governance
+
+Ship fourth.
+
+progressive disclosure
+contradiction detection
+TTL/decay
+ROI promotion
+symbol-linked invalidation
+Phase 4 — self-improving leaderboard
+
+Ship fifth.
+
+eval harness
+measured lift
+auto-suggested upgrades
+FLOATR-native curated bundles
+23. Suggested first-party launch bundles
+Bundle 1: FLOATR Builder
+Karpathy doctrine
+basic plan/verify flow
+core memory
+lean compression
+Bundle 2: FLOATR Reviewer
+Karpathy doctrine
+repo graph
+blast radius
+one-line review mode
+Bundle 3: FLOATR Debugger
+flow/debug routing
+checkpoints
+focused memory
+compact response mode
+Bundle 4: FLOATR Team Studio
+shared workspace memory
+role overlays
+repo graph
+decision log
+24. What to build immediately
+
+The best immediate move is:
+
+Build the manifest + importer + manual review + bundle compiler first.
+
+Why:
+
+it turns ecosystem repos into FLOATR-native assets
+it avoids unsafe direct execution
+it gives you something demoable fast
+it creates the foundation for ranking, evals, and future automation
+
+Without that layer, Smart Skills is just “support for random prompt files.”
+With it, Smart Skills becomes a real product system.
+
+25. Product positioning
+
+The best positioning line is:
+
+FLOATR automatically assembles the best coding brain for each repo, task, and model — privately, on your own GPU session.
+
+And the moat is:
+
+not the imported repos themselves, but FLOATR’s ability to normalize, rank, bundle, measure, and improve them over time.

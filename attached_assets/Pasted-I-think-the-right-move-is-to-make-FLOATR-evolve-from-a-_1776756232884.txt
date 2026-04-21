@@ -1,0 +1,248 @@
+I think the right move is to make FLOATR evolve from a GPU session launcher into a self-assembling agent workspace.
+
+Your spec already gives you the hard foundation: local model serving with vLLM + LiteLLM, browser IDE, Bolt.diy, Claw Runner, team workspaces, cross-session memory, scheduler control, and a boot pipeline you fully own. That means Smart Skills can sit above the model layer and become a first-class control plane instead of a bolt-on plugin system.
+
+The biggest opportunity is this:
+
+FLOATR should not just host models. It should compose the best operating behavior for each coding session.
+
+Here is the product direction I would take.
+
+The product vision
+
+Position Smart Skills as:
+
+“FLOATR reads the repo, task, model, and team setup, then auto-loads the best workflow, memory, graph, and response skills for that session.”
+
+That is more powerful than a static skills marketplace. It makes FLOATR the layer that:
+
+discovers skills
+normalizes them
+ranks them
+activates only the useful subset
+measures whether they actually improved the session
+
+That fits your spec extremely well because FLOATR already controls session launch, session metadata, memory injection, and onstart.sh.
+
+What to borrow from each repo
+
+From andrej-karpathy-skills, take the behavioral doctrine layer: explicit assumptions, simplicity-first, surgical changes, and verifiable success criteria. Those are ideal as default guardrails for coding sessions, especially because they are compact and portable as a SKILL.md.
+
+From hgahlot/claude-flow, take the workflow router layer: one unified flow command, a tool-routing matrix, health-check hooks, discovery/integration commands, and an evolving system that scans for new tools and merges best practices into the local operating manual.
+
+From CatchMe, take the hierarchical memory model and privacy posture: always-on local capture, tree-based retrieval, one-file agent integration, and top-down navigation through summarized branches instead of dumping raw history.
+
+From caveman, take the response compression layer: terse output modes as a deliberate token-control feature, not just a novelty. FLOATR should let users choose “Normal / Lean / Caveman / Ultra” response styles per session or per task.
+
+From code-review-graph, take the structural code-context layer: Tree-sitter graphing, incremental updates, blast-radius analysis, and platform-aware context injection so the model reads only what matters.
+
+From token-savior, take the memory governance and tool-budget layer: symbol-level navigation, progressive disclosure, contradiction detection, TTL/decay, ROI scoring, and profile-based shrinking of the tool manifest. That is the most important pattern for keeping Smart Skills from becoming bloated.
+
+The key product insight
+
+Do not treat all skills as the same thing.
+
+Split Smart Skills into four classes:
+
+Doctrine skills
+How the agent should behave.
+Example: Karpathy guardrails.
+Workflow skills
+How the work should be staged.
+Example: /flow, plan/build/test/review/ship routing.
+Context skills
+How the agent finds the right information.
+Example: code graph, repo map, memory search, blast radius.
+Efficiency skills
+How the agent minimizes waste.
+Example: caveman compression, progressive disclosure, profile slimming.
+
+That classification will make FLOATR much easier to explain and much easier to rank automatically.
+
+What Smart Skills v1 should do
+
+The first version should be narrow and excellent.
+
+When a user launches a FLOATR session, Smart Skills should:
+
+inspect the repo
+detect language/framework/monorepo/test setup
+detect session type: solo, team, greenfield, maintenance, review, bugfix
+detect model profile
+compile a session bundle of 3 to 7 skills
+inject those into the environment before work begins
+
+A good default bundle might be:
+
+Karpathy doctrine
+Flow router
+Repo graph
+Memory profile
+Compression profile
+
+Not 25 skills. Not 80 tools. Just the minimum high-impact stack.
+
+That matters because too many active skills will create prompt pollution and conflicting behaviors.
+
+How to fit this into FLOATR’s current architecture
+
+You already have the perfect insertion points:
+
+the API server can own discovery, ranking, provenance, and bundle compilation
+Postgres can store skill metadata, source URLs, bundles, activation history, and eval results
+your SQLite memory layer can store skill observations and outcomes
+onstart.sh can install the selected bundle into the instance before or just after services_ready
+Claw Runner can execute longer skill setup jobs in the background
+the cockpit can expose which skills were active, why they were chosen, and what they changed
+
+I would add these internal services:
+
+skills-discovery.ts
+skills-normalizer.ts
+skills-ranker.ts
+skills-bundler.ts
+skills-evals.ts
+
+And these API routes:
+
+GET /skills
+POST /skills/import
+POST /skills/discover
+GET /skills/recommendations
+POST /skills/bundles
+POST /sessions/:id/skills/activate
+GET /sessions/:id/skills
+POST /skills/evals/run
+The data model I’d add
+
+You do not need a giant schema at first. Start with:
+
+skill_sources
+repo URL, commit SHA, license, trust level, source type
+skills
+name, class, description, trigger conditions, model compatibility, token cost estimate, install strategy
+skill_versions
+normalized content, manifest, extracted rules, pinned source hash
+skill_bundles
+bundle name, included skills, session type, repo type, model targets
+session_skills
+which bundle/skills were activated, why, and with what outcome
+skill_observations
+token delta, task success, overrides, failures, user thumbs up/down
+skill_evals
+benchmark task, baseline result, skill result, improvement metrics
+The hardest part: ranking
+
+This is where FLOATR can become genuinely differentiated.
+
+Do not rank skills by stars alone.
+
+Use a ranking formula like:
+
+task fit + repo fit + model fit + measured lift + recency + trust - token overhead - conflict risk
+
+Examples:
+
+If it is a review task in a large TS monorepo, prioritize graph/context skills.
+If it is a bugfix on a small repo, prioritize Karpathy + lean compression.
+If it is a long multi-step delivery task, add flow routing and checkpointing.
+If it is a team session, add shared memory and role-specific bundles.
+
+That makes FLOATR smarter than “install this cool repo.”
+
+What not to do
+
+A few traps to avoid:
+
+Do not auto-execute arbitrary third-party shell hooks from imported repos without review.
+
+Do not ingest full repos blindly into active sessions. Normalize them first into a FLOATR manifest.
+
+Do not expose every discovered skill to every session.
+
+Do not let Smart Skills become a popularity contest. Make it an eval-driven system.
+
+The best v2 feature after Smart Skills
+
+After bundle selection, the next killer feature is:
+
+Repo Intelligence
+
+This is where you combine your existing memory system with code-review-graph and token-savior ideas.
+
+The flow becomes:
+
+build a structural repo graph on first session boot
+incrementally update on changes
+store architectural summaries
+attach memory observations to symbols/files/services
+inject only the smallest relevant context into the model
+
+Your current memory system already stores tool observations and summaries across sessions. Extending that into symbol-linked memory and progressive disclosure would be a major upgrade.
+
+The best v3 feature after that
+
+Flow Director
+
+This is the FLOATR-native version of the best part of claude-flow.
+
+The user should be able to say:
+
+“Start a new feature”
+“Review this PR”
+“Stabilize this codebase”
+“Ship this tonight”
+
+And FLOATR should pick the right bundle, workspace mode, graph mode, compression mode, and work phases automatically. The claude-flow repo’s value is not just its commands; it is its routing discipline.
+
+A concrete 3-phase roadmap
+Phase 1: Smart Skills MVP
+
+Build in the next step.
+
+Import skills from GitHub URLs or repos
+Normalize SKILL.md, CLAUDE.md, AGENTS.md, commands, and hooks into one FLOATR manifest
+Manual approval before activation
+Session bundle compiler
+Cockpit panel showing active skills and rationale
+Karpathy + caveman + flow-style routing as first-party starter bundles
+Phase 2: Smart Context
+
+Build next.
+
+Tree-sitter repo graph
+Incremental indexing
+Symbol-linked observations
+Progressive disclosure memory retrieval
+Token budget modes: Full / Core / Lean / Ultra
+Benchmarks dashboard: tokens saved, task success, time to first useful answer
+Phase 3: Autonomous FLOATR Workspace
+
+Build after the core works.
+
+Auto-discovery of new skill repos
+Weekly recommendation feed
+Team-role bundles: architect, builder, reviewer, QA
+Session replay / timeline / architectural journal
+Self-optimizing bundles based on measured lift
+My strongest recommendation
+
+Make Smart Skills the center of the product story, but make FLOATR-native bundles the actual moat.
+
+In other words:
+
+ingest the open ecosystem
+learn from it
+normalize it
+evaluate it
+then offer curated FLOATR bundles that reliably outperform raw imports
+
+That is how you avoid becoming a wrapper around GitHub repos.
+
+A strong message would be:
+
+“FLOATR automatically assembles the best coding brain for each repo, model, and task — privately, locally, on your own rented GPU.”
+
+That feels very ownable.
+
+The one thing I would prioritize immediately is a manifest format for imported skills. Once you have that, everything else becomes composable.
