@@ -29,7 +29,7 @@ import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@
 
 type LibTab = "installed" | "pending" | "disabled" | "bundles";
 
-const DEFAULT_BUNDLE_SLUGS = ["floatr-builder", "floatr-reviewer", "floatr-debugger", "floatr-team-studio"];
+const FALLBACK_DEFAULT_SLUGS = ["floatr-builder", "floatr-reviewer", "floatr-debugger", "floatr-team-studio"];
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 
 type ManifestSource = { repoUrl?: string; commitSha?: string; license?: string; trust?: string };
@@ -355,9 +355,24 @@ function BundleSheet({
                 Task: {bundle.taskMode}
               </Badge>
             )}
+            {bundle.sessionMode && (
+              <Badge variant="outline" className="text-[10px] text-muted-foreground capitalize">
+                Session: {bundle.sessionMode}
+              </Badge>
+            )}
             {bundle.tokenMode && (
               <Badge variant="outline" className="text-[10px] text-muted-foreground capitalize">
                 Tokens: {bundle.tokenMode}
+              </Badge>
+            )}
+            {bundle.modelFamily && (
+              <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                Model: {bundle.modelFamily}
+              </Badge>
+            )}
+            {bundle.repoKind && (
+              <Badge variant="outline" className="text-[10px] text-muted-foreground capitalize">
+                Repo: {bundle.repoKind}
               </Badge>
             )}
             <Badge variant="outline" className="text-[10px] text-muted-foreground">
@@ -469,8 +484,9 @@ export default function SkillsLibrary() {
     [];
 
   const bundles = bundlesData?.bundles ?? [];
-  const defaultBundles = bundles.filter(b => DEFAULT_BUNDLE_SLUGS.includes(b.slug));
-  const customBundles = bundles.filter(b => !DEFAULT_BUNDLE_SLUGS.includes(b.slug));
+  const isDefaultBundle = (b: SkillBundle) => b.isDefault || FALLBACK_DEFAULT_SLUGS.includes(b.slug);
+  const defaultBundles = bundles.filter(isDefaultBundle);
+  const customBundles = bundles.filter(b => !isDefaultBundle(b));
 
   const handleApprove = (skill: SkillRecord) => {
     setActioningId(skill.id);
@@ -738,17 +754,23 @@ function BundleCard({ bundle, onClick }: { bundle: SkillBundle; onClick: () => v
       <CardContent className="pt-4 pb-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+            <div className="flex items-center gap-1 mb-1 flex-wrap">
               {bundle.isDefault && (
                 <Badge variant="outline" className="text-[10px] bg-emerald-500/20 text-emerald-400 border-emerald-500/30 py-0">
                   Native
                 </Badge>
               )}
               {bundle.taskMode && (
-                <Badge variant="outline" className="text-[10px] text-muted-foreground py-0 capitalize">Task: {bundle.taskMode}</Badge>
+                <Badge variant="outline" className="text-[10px] text-muted-foreground py-0 capitalize">{bundle.taskMode}</Badge>
+              )}
+              {bundle.sessionMode && (
+                <Badge variant="outline" className="text-[10px] text-muted-foreground py-0 capitalize">{bundle.sessionMode}</Badge>
               )}
               {bundle.tokenMode && (
-                <Badge variant="outline" className="text-[10px] text-muted-foreground py-0 capitalize">Tokens: {bundle.tokenMode}</Badge>
+                <Badge variant="outline" className="text-[10px] text-muted-foreground py-0 capitalize">{bundle.tokenMode}</Badge>
+              )}
+              {bundle.modelFamily && (
+                <Badge variant="outline" className="text-[10px] text-muted-foreground py-0">{bundle.modelFamily}</Badge>
               )}
             </div>
             <h3 className="font-semibold text-sm">{bundle.name}</h3>
