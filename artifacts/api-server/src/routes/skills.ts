@@ -294,7 +294,9 @@ router.post("/skill-bundles/compile", async (req, res) => {
     // Auto-select default bundle from context if none specified
     let resolvedBundleId = bundleId;
     if (!resolvedBundleId) {
-      const defaultBundle = await getDefaultBundleForContext(ctx);
+      // hasRepoContext=true when repoLangs were supplied, enabling context-scored selection
+      const hasRepoCtx = Array.isArray(repoLangs) && repoLangs.length > 0;
+      const defaultBundle = await getDefaultBundleForContext(ctx, hasRepoCtx);
       if (!defaultBundle) {
         res.status(400).json({ error: "No bundle found for provided context" });
         return;

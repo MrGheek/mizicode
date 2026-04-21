@@ -40,11 +40,42 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
   if (!bundle) throw new Error(`Bundle ${bundleId} not found`);
 
   const bundleData = bundle.bundleJson as { skillIds?: string[] };
-  const requestedIds = bundleData.skillIds || [];
+  const rawRequestedIds = bundleData.skillIds || [];
+
+  // Normalize: map any DB slugs in skillIds to their manifest IDs.
+  // Bundles may be created with DB slugs (e.g. "imported-{source}-{name}") rather than manifest IDs.
+  // We fetch the latest manifest for each slug-keyed skill and resolve to manifest.id.
+  const dbSkillsBySlug = rawRequestedIds.length > 0
+    ? await db
+        .select({ slug: skillsTable.slug })
+        .from(skillsTable)
+        .leftJoin(skillVersionsTable, eq(skillVersionsTable.skillId, skillsTable.id))
+        .where(inArray(skillsTable.slug, rawRequestedIds))
+    : [];
+
+  // Build a resolved manifest-ID set: start with raw IDs, then replace DB slugs with manifest IDs
+  const resolvedManifests = await getAllEnabledManifests();
+  const manifestIdBySlug = new Map<string, string>(
+    resolvedManifests.map(m => [
+      // Map both manifest.id and DB slug (if the skill was imported with a derived slug)
+      m.id, m.id,
+    ])
+  );
+  // Also map DB slug → manifest.id for imported skills (slug = "imported-{src}-{manifestId}")
+  for (const row of dbSkillsBySlug) {
+    if (row.slug && !manifestIdBySlug.has(row.slug)) {
+      // Try to find a manifest whose ID matches the tail portion of the slug
+      const tail = row.slug.replace(/^imported-\d+-/, "");
+      const matched = resolvedManifests.find(m => m.id === tail || m.id === row.slug);
+      if (matched) manifestIdBySlug.set(row.slug, matched.id);
+    }
+  }
+
+  const requestedIds = rawRequestedIds.map(rid => manifestIdBySlug.get(rid) ?? rid);
 
   const allManifests = [
     ...DEFAULT_SKILLS.filter(s => requestedIds.includes(s.id)),
-    ...(await getAllEnabledManifests()).filter(s => requestedIds.includes(s.id)),
+    ...resolvedManifests.filter(s => requestedIds.includes(s.id)),
   ];
 
   const tokenProfile = TOKEN_MODE_PROFILES[ctx.tokenMode];
