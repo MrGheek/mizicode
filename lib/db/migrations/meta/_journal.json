@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1776796480339,
+      "tag": "0000_add_lane_claims_active_unique_idx",
+      "breakpoints": true
+    }
+  ]
+}
