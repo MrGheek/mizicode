@@ -70,6 +70,7 @@ router.post("/index", async (req, res) => {
     .where(
       and(
         eq(repoGraphJobsTable.sessionId, sessionId),
+        eq(repoGraphJobsTable.repoPath, repoPath),
         inArray(repoGraphJobsTable.status, ACTIVE_JOB_STATUSES)
       )
     )
@@ -77,7 +78,7 @@ router.post("/index", async (req, res) => {
 
   if (activeJobs.length > 0) {
     const existing = activeJobs[0];
-    logger.info({ sessionId, jobId: existing.id, status: existing.status }, "Repo index: deduplicating — active job exists");
+    logger.info({ sessionId, jobId: existing.id, status: existing.status, repoPath }, "Repo index: deduplicating — active job exists for this repoPath");
     res.status(202).json({
       jobId: existing.id,
       status: existing.status,

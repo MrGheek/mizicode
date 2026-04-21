@@ -76,7 +76,9 @@ RUN mkdir -p /run/sshd /workspace/models /workspace/projects /var/log && \
 COPY onstart.sh /opt/onstart.sh
 COPY claw-runner.js /opt/claw-runner.js
 COPY scripts/ /opt/repo-intelligence/
-RUN cd /opt/repo-intelligence && npm install --production --prefer-offline 2>&1 | tail -5 || true
+RUN cd /opt/repo-intelligence && npm install --production --prefer-offline && \
+    node -e "require('better-sqlite3'); console.log('[repo-intelligence] better-sqlite3 OK')" 2>/dev/null || \
+    echo "[repo-intelligence] WARN: native modules may be missing — indexer will use fallback mode"
 RUN chmod +x /opt/onstart.sh
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
