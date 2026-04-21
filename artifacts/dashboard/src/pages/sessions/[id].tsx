@@ -571,9 +571,12 @@ function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?:
     const data = numericId
       ? { skillId: numericId, helpful }
       : { manifestId, helpful };
+    const voteKey = manifest.id ?? manifest.manifestId;
     submitFeedback.mutate({ sessionId, data }, {
       onSuccess: () => {
-        setVotedSkills(prev => ({ ...prev, [manifest.id!]: (helpful ? "up" : "down") as "up" | "down" }));
+        if (voteKey !== undefined) {
+          setVotedSkills(prev => ({ ...prev, [voteKey]: (helpful ? "up" : "down") as "up" | "down" }));
+        }
         queryClient.invalidateQueries({ queryKey: getGetSessionSkillsQueryKey(sessionId) });
         toast({ title: helpful ? "Thumbs up recorded" : "Thumbs down recorded" });
       },
@@ -618,7 +621,7 @@ function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?:
       {/* Skill accordions */}
       <div className="space-y-2">
         {manifests.map((manifest, i) => {
-          const skillId = manifest.id ?? i;
+          const skillId = manifest.id ?? manifest.manifestId ?? i;
           const isExpanded = expandedSkills.has(skillId);
           const vote = votedSkills[skillId];
           const rawSystem = manifest.instructions?.system;
