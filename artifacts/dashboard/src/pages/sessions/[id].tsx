@@ -561,7 +561,9 @@ function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?:
 
   const handleFeedback = (manifest: ManifestItem, helpful: boolean) => {
     const numericId = typeof manifest.id === "number" ? manifest.id : NaN;
-    const manifestId = typeof manifest.id === "string" ? manifest.id : undefined;
+    const manifestId = typeof manifest.id === "string"
+      ? manifest.id
+      : (manifest.manifestId ?? undefined);
     if (!numericId && !manifestId) {
       toast({ title: "Cannot submit feedback — skill ID missing", variant: "destructive" });
       return;

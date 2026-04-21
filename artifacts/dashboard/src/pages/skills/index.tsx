@@ -112,30 +112,33 @@ function SkillSourceBlock({ skillId, alwaysOpen }: { skillId: number; alwaysOpen
                 <span className="text-muted-foreground">License:</span>
                 <span className="font-mono text-primary/80">{src?.license ?? "—"}</span>
               </div>
-              {(manifest?.instructions?.length || manifest?.triggers?.length) ? (
-                <details className="border-t border-border/30 pt-2 mt-1">
-                  <summary className="cursor-pointer select-none text-[10px] font-semibold text-foreground/50 uppercase tracking-wide hover:text-foreground/80 transition-colors">
-                    Manifest Details
-                  </summary>
-                  <div className="mt-1.5 space-y-1.5">
-                    {manifest?.instructions && manifest.instructions.length > 0 && (
-                      <ul className="space-y-0.5 list-disc list-inside text-muted-foreground">
-                        {manifest.instructions.map((line, i) => (
-                          <li key={i} className="text-[10px] leading-relaxed">{line}</li>
-                        ))}
-                      </ul>
-                    )}
-                    {manifest?.triggers && manifest.triggers.length > 0 && (
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] text-muted-foreground">Triggers:</span>
-                        {manifest.triggers.map(t => (
-                          <Badge key={t} variant="outline" className="text-[9px] py-0 h-4">{t}</Badge>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </details>
-              ) : null}
+              <details className="border-t border-border/30 pt-2 mt-1">
+                <summary className="cursor-pointer select-none text-[10px] font-semibold text-foreground/50 uppercase tracking-wide hover:text-foreground/80 transition-colors">
+                  Manifest Details
+                </summary>
+                <div className="mt-1.5 space-y-1.5">
+                  {manifest?.instructions && manifest.instructions.length > 0 && (
+                    <ul className="space-y-0.5 list-disc list-inside text-muted-foreground">
+                      {manifest.instructions.map((line, i) => (
+                        <li key={i} className="text-[10px] leading-relaxed">{line}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {manifest?.triggers && manifest.triggers.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] text-muted-foreground">Triggers:</span>
+                      {manifest.triggers.map(t => (
+                        <Badge key={t} variant="outline" className="text-[9px] py-0 h-4">{t}</Badge>
+                      ))}
+                    </div>
+                  )}
+                  {!manifest?.instructions?.length && !manifest?.triggers?.length && (
+                    <pre className="bg-secondary/40 rounded p-2 overflow-x-auto text-[10px] font-mono leading-relaxed whitespace-pre-wrap break-all">
+                      {manifest ? JSON.stringify(manifest, null, 2) : "No manifest data available."}
+                    </pre>
+                  )}
+                </div>
+              </details>
             </>
           )}
         </div>
