@@ -2,7 +2,7 @@
 
 ## Overview
 
-OmniQL Cloud Coding Platform — a full-stack app that lets users spin up GPU-powered AI coding sessions on Vast.ai. The system provisions remote GPU machines running Bolt.diy (coding UI), llama.cpp with Kimi K2.5 GGUF models, code-server (VS Code), and nginx preview proxy.
+OmniQL Cloud Coding Platform — a full-stack app that lets users spin up GPU-powered AI coding sessions on Vast.ai. The system provisions remote GPU machines running Bolt.diy (coding UI), llama.cpp with Kimi K2.6 GGUF models (default; K2.5 kept as legacy option), code-server (VS Code), and nginx preview proxy.
 
 Built as a pnpm workspace monorepo using TypeScript.
 
@@ -125,7 +125,7 @@ Docker images are tagged by GPU architecture:
 - `omniqlabs/coding-env:h100` — H100 GPUs
 
 Each instance runs:
-- llama.cpp server (port 8081) — Kimi K2.5 GGUF model inference
+- llama.cpp server (port 8081) — Kimi K2.6 GGUF model inference (default; K2.5 legacy profiles still available)
 - Bolt.diy (port 5173) — AI coding UI
 - code-server (port 8080) — VS Code in browser
 - nginx preview proxy (port 3000) — Proxies app previews

@@ -1357,7 +1357,7 @@ export default function SessionDetail() {
                 <div>
                   <h2 className="text-lg font-semibold mb-1">Your coding environment is ready</h2>
                   <p className="text-sm text-muted-foreground">
-                    Bolt.diy with Kimi K2.5 AI — editor, terminal, and live preview all in one.
+                    Bolt.diy with Kimi K2.6 AI — editor, terminal, and live preview all in one.
                   </p>
                 </div>
                 <Button

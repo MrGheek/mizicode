@@ -324,7 +324,7 @@ pre{background:#07090f;border:1px solid #1a2035;border-radius:8px;padding:14px 1
   <div class="logo">⚡</div>
   <div class="logo-text">
     <h1>Claw Task Runner</h1>
-    <p>Agentic coding powered by Kimi K2.5 + Context Shield</p>
+    <p>Agentic coding powered by Kimi K2.6 + Context Shield</p>
   </div>
 </header>
 

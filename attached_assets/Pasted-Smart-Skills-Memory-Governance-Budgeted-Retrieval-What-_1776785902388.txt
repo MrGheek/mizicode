@@ -1,0 +1,267 @@
+Smart Skills: Memory Governance + Budgeted Retrieval
+
+What & Why
+
+Repo Intelligence (#40) improves code discovery. Context Shield (#41) improves bounded-output execution and in-session continuity. This task adds the next missing control layer: memory governance + budgeted retrieval.
+
+The goal is to make FLOATR’s persistent memory cheaper, safer, and more useful on a shared, hourly GPU session where latency, throughput, and context pollution matter just as much as raw token count. FLOATR already runs one rented GPU session that can host multiple isolated/team workspaces, keeps persistent cross-session memory in SQLite FTS5, and injects context into future sessions, so this task is about governing that memory rather than reinventing it.
+
+The most relevant ideas to absorb from token-savior are:
+
+the 3-layer progressive disclosure contract: memory_index → memory_search → memory_get
+contradiction detection at save time
+per-type TTL/decay
+symbol-linked staleness invalidation
+ROI tracking + auto-promotion
+profile-based budget modes for tool/retrieval slimming. The repo describes these explicitly in its memory engine design, alongside hybrid FTS + vector search and content-hash-linked staleness for symbol-attached observations.
+Done looks like
+Progressive disclosure retrieval
+
+Memory retrieval is split into 3 explicit layers:
+
+memory_index — tiny shortlist only
+memory_search — richer candidate set when needed
+memory_get — full item retrieval only when justified
+
+Layer escalation is policy-driven. The model never jumps straight to full memory dumps by default. This mirrors the progressive-disclosure contract described in token-savior.
+
+Contradiction detection
+
+When a new memory item is saved:
+
+FLOATR checks for conflicting prior memories in the same or nearby scope
+possible contradictions are flagged immediately
+both old and new items remain inspectable
+conflict metadata is stored rather than silently overwriting
+
+This follows the save-time contradiction detection pattern described by token-savior.
+
+TTL / decay / freshness scoring
+
+Memory items get freshness rules by type, such as:
+
+command/result observation
+research note
+session summary
+convention
+warning / guardrail
+
+Older low-value items decay, while frequently reused items remain prominent. token-savior explicitly describes per-type TTL and decay/LRU-style scoring for observations.
+
+Symbol-linked staleness invalidation
+
+If a memory is linked to a file or symbol and that symbol’s content hash changes:
+
+the memory is marked stale
+stale items are not injected as trusted context by default
+stale items remain searchable for review/debugging
+
+This directly complements the repo graph work from #40 and matches the symbol-staleness mechanism described in token-savior.
+
+ROI tracking + promotion
+
+Each memory item tracks:
+
+access count
+retrieval count
+injection count
+last used
+usefulness / adoption signal
+ROI score
+
+High-value items can be promoted:
+
+note → convention
+warning → guardrail
+
+token-savior describes ROI tracking and auto-promotion of repeatedly useful items into stronger memory forms.
+
+Team-aware memory scopes
+
+FLOATR supports scoped memory retrieval for:
+
+task
+session
+repo
+shared workspace
+user/operator
+global
+
+This matters for FLOATR because one GPU session can serve multiple isolated IDEs plus a shared workspace, so team memory should be reusable without over-injecting unrelated history.
+
+Budgeted retrieval profiles
+
+Existing token modes gain explicit memory behavior:
+
+Full — broader retrieval, more layers available by default
+Core — balanced shortlist + search
+Lean — tight shortlist, limited search
+Ultra — smallest shortlist, strongest suppression of stale/low-ROI memories
+
+These profiles control:
+
+how many memory candidates are returned
+whether Layer 2/3 retrieval is allowed by default
+how much metadata is surfaced
+whether certain memory tools are advertised to the runtime
+Observability
+
+Memory governance exposes:
+
+stale item count
+contradiction count
+promotion count
+retrieval layer usage
+average memory tokens injected
+memory hit rate
+memory budget by token mode
+Out of scope
+Full Memory 2.0 semantic redesign beyond governance
+Visual memory graph UI
+Automatic cross-project memory sharing
+ML-based truth arbitration
+Fully autonomous promotion with no thresholds or review
+Fine-grained per-team-member role memory policy
+Replacing the existing memory system entirely
+Huge MCP-style tool expansion from token-savior
+Steps
+1. Extend the memory schema
+
+Add memory-governance fields/tables for:
+
+memory_type
+scope
+validity_status
+stale_status
+ttl_expires_at
+access_count
+retrieval_count
+injection_count
+roi_score
+symbol_ref
+content_hash_at_save
+promoted_from
+promotion_status
+conflict_group_id
+last_used_at
+
+Keep existing primary key types unchanged.
+
+2. Implement the 3-layer retrieval contract
+
+Upgrade memory.ts so retrieval is explicitly split into:
+
+memory_index
+memory_search
+memory_get
+
+Define hard defaults:
+
+Layer 1 is cheapest and always available
+Layer 2 is bounded and filtered
+Layer 3 requires explicit escalation or policy allowance
+3. Add contradiction detection on save
+
+When writing a new memory item:
+
+search same scope + nearby scopes
+compare lexical/semantic overlap
+flag possible contradictions
+create/update a conflict_group
+do not silently replace prior memory
+4. Add per-type TTL / decay policies
+
+Define default TTL and decay behavior by memory type. For MVP:
+
+observations decay fastest
+research notes medium
+conventions/guardrails slowest
+session summaries medium unless repeatedly referenced
+5. Add symbol-linked staleness
+
+Use repo graph data from #40:
+
+attach memory items to file/symbol refs when available
+store content hash at save time
+mark item stale when the linked symbol/file hash changes
+stale items stay searchable but are demoted for injection
+6. Add ROI scoring + promotion
+
+Track actual usage and define promotion thresholds:
+
+repeated access + repeated injection + positive usefulness signal raises ROI
+high-ROI notes can be promoted to conventions
+high-ROI warnings can be promoted to guardrails
+
+Promotion should be threshold-based and reversible, not fully autonomous.
+
+7. Add team-aware scope policy
+
+Define retrieval precedence:
+
+current task
+current session
+shared workspace
+repo
+user/operator
+global
+
+This should work naturally with FLOATR’s team/session model and shared workspace behavior.
+
+8. Wire budget profiles into token mode
+
+Tie memory behavior to existing token modes:
+
+candidate count
+layer availability
+stale-memory suppression
+contradiction surfacing depth
+amount of metadata returned
+9. Add memory health + governance APIs
+
+Add or extend APIs/tools for:
+
+memory_index
+memory_search
+memory_get
+save with contradiction check
+list conflicts
+mark reviewed/resolved
+list stale items
+promotion history
+memory budget stats
+10. Add Smart Skills integration
+
+Add first-party skills such as:
+
+memory-governance-core
+budgeted-retrieval
+
+These should rank high for:
+
+long-running sessions
+debug
+review
+large monorepos
+team/shared workspace sessions
+11. OpenAPI + codegen
+
+Add all request/response schemas to lib/api-spec/openapi.yaml and regenerate Zod/client code.
+
+Relevant files
+artifacts/api-server/src/services/memory.ts
+artifacts/api-server/src/services/skills-ranker.ts
+artifacts/api-server/src/services/skills-bundler.ts
+artifacts/api-server/src/routes/memory.ts
+artifacts/api-server/src/routes/sessions.ts
+lib/db/src/schema/
+lib/api-spec/openapi.yaml
+docker/onstart.sh
+Dependencies
+Smart Skills: Backend Foundation
+Smart Skills: Dashboard UI
+Smart Skills: Repo Intelligence + Hybrid Retrieval
+Smart Skills: Context Shield + Working State Continuity
+Design note
+
+Do not import token-savior wholesale as a massive tool surface. The useful fit for FLOATR is its memory governance pattern — progressive disclosure, contradiction checks, TTL/decay, symbol staleness, ROI, and promotion — not the entire MCP/tool catalog. token-savior explicitly presents those governance features as part of its persistent memory engine, alongside hybrid FTS/vector search and progressive-disclosure lookup.

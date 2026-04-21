@@ -13,7 +13,7 @@ const DEFAULT_ONSTART = `#!/bin/bash
 `;
 
 const DEFAULT_ENV_VARS = [
-  "MODEL_REPO=unsloth/Kimi-K2.5-GGUF",
+  "MODEL_REPO=unsloth/Kimi-K2.6-GGUF",
   "MODEL_QUANT=UD-TQ1_0",
   "LLAMA_CTX_SIZE=32768",
   "LLAMA_BATCH_SIZE=512",
@@ -40,7 +40,7 @@ export async function registerDefaultTemplate(): Promise<void> {
       onstart: DEFAULT_ONSTART,
       env: DEFAULT_ENV_VARS,
       disk_space: 400,
-      readme: "OmniQL Cloud Coding environment with llama.cpp (Kimi K2.5), code-server, and Bolt.diy",
+      readme: "OmniQL Cloud Coding environment with llama.cpp (Kimi K2.6), code-server, and Bolt.diy",
     });
 
     const templateHash = vastResult.template?.hash_id || vastResult.template_hash || vastResult.hash_id || "";
