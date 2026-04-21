@@ -820,3 +820,23 @@ export const GetRepoSymbolKind = {
   import: "import",
   export: "export",
 } as const;
+
+export interface SkillFeedbackHistoryEntry {
+  id: number;
+  sessionId: number;
+  skillId: number;
+  helpful: boolean;
+  notes: string | null;
+  tokenDelta: number | null;
+  taskSuccessScore: number | null;
+  createdAt: string;
+}
+
+export interface SkillFeedbackHistoryResponse {
+  helpfulRate: number;
+  totalCount: number;
+  helpfulCount: number;
+  unhelpfulCount: number;
+  history: SkillFeedbackHistoryEntry[];
+  pagination: { limit: number; offset: number; count: number };
+}

@@ -23,6 +23,7 @@ import type {
   BundleListResponse,
   BundleResponse,
   CompileBundleRequest,
+  SkillFeedbackHistoryResponse,
   SkillFeedbackScoresResponse,
   SessionCompleteFeedbackRequest,
   SessionCompleteFeedbackResponse,
@@ -4246,3 +4247,102 @@ export function useGetSessionRoutingStats<
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+// ─── Skill Feedback History ────────────────────────────────────────────────────
+
+export const getSkillFeedbackHistoryUrl = (skillId: number) =>
+  `/api/skills/${skillId}/feedback`;
+
+export const getSkillFeedbackHistory = async (
+  skillId: number,
+  params?: { limit?: number; offset?: number },
+  options?: RequestInit,
+): Promise<SkillFeedbackHistoryResponse> => {
+  const url = new URL(getSkillFeedbackHistoryUrl(skillId), "http://placeholder");
+  if (params?.limit != null) url.searchParams.set("limit", String(params.limit));
+  if (params?.offset != null) url.searchParams.set("offset", String(params.offset));
+  return customFetch<SkillFeedbackHistoryResponse>(
+    getSkillFeedbackHistoryUrl(skillId) + (url.search || ""),
+    options,
+  );
+};
+
+export const getGetSkillFeedbackHistoryQueryKey = (skillId: number) =>
+  ["skill-feedback-history", skillId] as const;
+
+export const getGetSkillFeedbackHistoryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSkillFeedbackHistory>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  skillId: number,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getSkillFeedbackHistory>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetSkillFeedbackHistoryQueryKey(skillId);
+  return {
+    queryKey,
+    queryFn: () => getSkillFeedbackHistory(skillId, undefined, requestOptions),
+    enabled: skillId > 0,
+    staleTime: 30_000,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getSkillFeedbackHistory>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetSkillFeedbackHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getSkillFeedbackHistory>>>;
+export type GetSkillFeedbackHistoryQueryError = ErrorType<ErrorResponse>;
+
+export function useGetSkillFeedbackHistory<
+  TData = Awaited<ReturnType<typeof getSkillFeedbackHistory>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  skillId: number,
+  options?: {
+    query?: UseQueryOptions<Awaited<ReturnType<typeof getSkillFeedbackHistory>>, TError, TData>;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSkillFeedbackHistoryQueryOptions(skillId, options);
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const deleteSkillFeedbackEntry = async (
+  skillId: number,
+  feedbackId: number,
+  options?: RequestInit,
+): Promise<{ success: boolean }> => {
+  return customFetch<{ success: boolean }>(
+    `/api/skills/${skillId}/feedback/${feedbackId}`,
+    { ...options, method: "DELETE" },
+  );
+};
+
+export const useDeleteSkillFeedbackEntry = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteSkillFeedbackEntry>>,
+    TError,
+    { skillId: number; feedbackId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteSkillFeedbackEntry>>,
+  TError,
+  { skillId: number; feedbackId: number },
+  TContext
+> => {
+  const { mutation: mutationOptions, request: requestOptions } = options ?? {};
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteSkillFeedbackEntry>>,
+    { skillId: number; feedbackId: number }
+  > = ({ skillId, feedbackId }) => deleteSkillFeedbackEntry(skillId, feedbackId, requestOptions);
+  return useMutation({ mutationFn, ...mutationOptions });
+};

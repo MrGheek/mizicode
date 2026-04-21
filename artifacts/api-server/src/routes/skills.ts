@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { Router } from "express";
 import { db, skillsTable, skillBundlesTable, skillSourcesTable, skillVersionsTable, skillFeedbackTable, sessionSkillsTable, sessionsTable } from "@workspace/db";
-import { eq, and, desc, or, like } from "drizzle-orm";
+import { eq, and, desc, or, like, sql } from "drizzle-orm";
 import { importSkillFromUrl } from "../services/skills-import";
 import { seedDefaultBundles, compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext } from "../services/skills-bundler";
 import { DEFAULT_SKILLS } from "../services/default-skills";
@@ -137,6 +137,78 @@ router.get("/skills/evals", (_req, res) => {
 
 router.post("/skills/evals/run", (_req, res) => {
   res.status(501).json(NOT_IMPLEMENTED("skill eval runner"));
+});
+
+router.get("/skills/:skillId/feedback", async (req, res) => {
+  const id = parseInt(req.params.skillId);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid skill ID" });
+    return;
+  }
+
+  const limitStr = (req.query.limit as string | undefined) ?? "50";
+  const offsetStr = (req.query.offset as string | undefined) ?? "0";
+  const limit = Math.min(parseInt(limitStr) || 50, 200);
+  const offset = parseInt(offsetStr) || 0;
+
+  const [skill] = await db.select({ id: skillsTable.id }).from(skillsTable).where(eq(skillsTable.id, id));
+  if (!skill) {
+    res.status(404).json({ error: "Skill not found" });
+    return;
+  }
+
+  const [history, [agg]] = await Promise.all([
+    db
+      .select()
+      .from(skillFeedbackTable)
+      .where(eq(skillFeedbackTable.skillId, id))
+      .orderBy(desc(skillFeedbackTable.createdAt))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({
+        totalCount: sql<number>`count(*)::int`,
+        helpfulCount: sql<number>`sum(case when helpful then 1 else 0 end)::int`,
+      })
+      .from(skillFeedbackTable)
+      .where(eq(skillFeedbackTable.skillId, id)),
+  ]);
+
+  const totalAll = agg?.totalCount ?? 0;
+  const helpfulAll = agg?.helpfulCount ?? 0;
+  const helpfulRate = totalAll > 0 ? helpfulAll / totalAll : 0;
+
+  res.json({
+    helpfulRate,
+    totalCount: totalAll,
+    helpfulCount: helpfulAll,
+    unhelpfulCount: totalAll - helpfulAll,
+    history,
+    pagination: { limit, offset, count: history.length },
+  });
+});
+
+router.delete("/skills/:skillId/feedback/:feedbackId", async (req, res) => {
+  const skillId = parseInt(req.params.skillId);
+  const feedbackId = parseInt(req.params.feedbackId);
+  if (isNaN(skillId) || isNaN(feedbackId)) {
+    res.status(400).json({ error: "Invalid skill ID or feedback ID" });
+    return;
+  }
+
+  const [existing] = await db
+    .select({ id: skillFeedbackTable.id })
+    .from(skillFeedbackTable)
+    .where(and(eq(skillFeedbackTable.id, feedbackId), eq(skillFeedbackTable.skillId, skillId)));
+
+  if (!existing) {
+    res.status(404).json({ error: "Feedback entry not found" });
+    return;
+  }
+
+  await db.delete(skillFeedbackTable).where(eq(skillFeedbackTable.id, feedbackId));
+  logger.info({ skillId, feedbackId }, "Skill feedback entry deleted");
+  res.json({ success: true });
 });
 
 router.get("/skills/:skillId", async (req, res) => {

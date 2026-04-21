@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import {
   useListSkills,
   useImportSkill,
@@ -9,12 +9,17 @@ import {
   useGetSkill,
   getListSkillsQueryKey,
   useGetSkillFeedbackScores,
+  useGetSkillFeedbackHistory,
+  useDeleteSkillFeedbackEntry,
+  getGetSkillFeedbackHistoryQueryKey,
+  getGetSkillFeedbackScoresQueryKey,
 } from "@workspace/api-client-react";
-import type { SkillRecord, SkillBundle } from "@workspace/api-client-react";
+import type { SkillRecord, SkillBundle, SkillFeedbackHistoryEntry } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   Wand2, Plus, ExternalLink, AlertTriangle, ChevronDown, ChevronRight,
   Loader2, CheckCircle, XCircle, Package, GitBranch, Key, Scale,
+  ThumbsUp, ThumbsDown, Trash2, MessageSquare,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -157,6 +162,7 @@ function SkillCard({
   onToggle,
   isActioning,
   feedbackScores,
+  onClick,
 }: {
   skill: SkillRecord;
   showProvenance?: boolean;
@@ -166,11 +172,15 @@ function SkillCard({
   onToggle?: () => void;
   isActioning?: boolean;
   feedbackScores?: Record<string, { helpfulRate: number; totalCount: number }>;
+  onClick?: () => void;
 }) {
   const isHighRisk = skill.installRisk === "hooked" || skill.installRisk === "binary";
 
   return (
-    <Card className="bg-card/50 border-border/50">
+    <Card
+      className={`bg-card/50 border-border/50 ${onClick ? "cursor-pointer hover:border-primary/50 transition-colors" : ""}`}
+      onClick={onClick}
+    >
       <CardContent className="pt-4 pb-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
@@ -196,7 +206,7 @@ function SkillCard({
                 size="sm"
                 variant="outline"
                 className="h-7 text-xs"
-                onClick={onToggle}
+                onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
                 disabled={isActioning}
               >
                 {isActioning ? <Loader2 className="w-3 h-3 animate-spin" /> : (skill.enabled ? "Disable" : "Enable")}
@@ -226,7 +236,7 @@ function SkillCard({
                 size="sm"
                 className="flex-1 h-8 text-xs bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border-emerald-600/30"
                 variant="outline"
-                onClick={onApprove}
+                onClick={(e) => { e.stopPropagation(); onApprove?.(); }}
                 disabled={isActioning}
               >
                 {isActioning ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" /> : <CheckCircle className="w-3 h-3 mr-1.5" />}
@@ -236,7 +246,7 @@ function SkillCard({
                 size="sm"
                 className="flex-1 h-8 text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 border-red-600/30"
                 variant="outline"
-                onClick={onReject}
+                onClick={(e) => { e.stopPropagation(); onReject?.(); }}
                 disabled={isActioning}
               >
                 <XCircle className="w-3 h-3 mr-1.5" />
@@ -341,6 +351,209 @@ function BundleSkillAccordion({ skill, index }: { skill: CompiledSkill; index: n
         </div>
       )}
     </div>
+  );
+}
+
+function FeedbackHistoryPanel({ skillId }: { skillId: number }) {
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError } = useGetSkillFeedbackHistory(skillId);
+  const deleteMutation = useDeleteSkillFeedbackEntry();
+  const { toast } = useToast();
+
+  const handleDelete = (entry: SkillFeedbackHistoryEntry) => {
+    deleteMutation.mutate({ skillId, feedbackId: entry.id }, {
+      onSuccess: () => {
+        toast({ title: "Feedback entry removed" });
+        queryClient.invalidateQueries({ queryKey: getGetSkillFeedbackHistoryQueryKey(skillId) });
+        queryClient.invalidateQueries({ queryKey: getGetSkillFeedbackScoresQueryKey() });
+      },
+      onError: () => toast({ title: "Failed to remove entry", variant: "destructive" }),
+    });
+  };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-2">
+        {[1, 2, 3].map(i => <Skeleton key={i} className="h-10 w-full" />)}
+      </div>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <p className="text-xs text-muted-foreground text-center py-4">
+        Could not load feedback history.
+      </p>
+    );
+  }
+
+  const { helpfulRate, totalCount, helpfulCount, unhelpfulCount, history } = data;
+
+  return (
+    <div className="space-y-4">
+      {/* Aggregate stats */}
+      {totalCount > 0 ? (
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 text-center">
+            <p className="text-xs text-muted-foreground mb-0.5">Helpful Rate</p>
+            <p className={`text-xl font-bold ${helpfulRate >= 0.7 ? "text-emerald-400" : helpfulRate >= 0.4 ? "text-amber-400" : "text-red-400"}`}>
+              {Math.round(helpfulRate * 100)}%
+            </p>
+          </div>
+          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 text-center">
+            <p className="text-xs text-muted-foreground mb-0.5">Helpful</p>
+            <p className="text-xl font-bold text-emerald-400 flex items-center justify-center gap-1">
+              <ThumbsUp className="w-4 h-4" /> {helpfulCount}
+            </p>
+          </div>
+          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 text-center">
+            <p className="text-xs text-muted-foreground mb-0.5">Not Helpful</p>
+            <p className="text-xl font-bold text-red-400 flex items-center justify-center gap-1">
+              <ThumbsDown className="w-4 h-4" /> {unhelpfulCount}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border/40 bg-secondary/20 p-4 text-center text-muted-foreground text-xs">
+          <MessageSquare className="w-6 h-6 mx-auto mb-2 opacity-30" />
+          No feedback recorded yet. Feedback is collected during and after coding sessions.
+        </div>
+      )}
+
+      {/* History list */}
+      {history.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Recent Events ({totalCount} total)
+          </p>
+          <div className="space-y-1">
+            {history.map(entry => (
+              <div
+                key={entry.id}
+                className="flex items-center gap-2 px-2.5 py-2 rounded-lg border border-border/30 bg-secondary/10 text-xs"
+              >
+                {entry.helpful ? (
+                  <ThumbsUp className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                ) : (
+                  <ThumbsDown className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <span className="text-muted-foreground">Session </span>
+                  <span className="font-mono text-primary/80">#{entry.sessionId}</span>
+                  {entry.notes && (
+                    <span className="text-muted-foreground ml-2 truncate italic">— {entry.notes}</span>
+                  )}
+                  {entry.taskSuccessScore != null && (
+                    <Badge variant="outline" className="ml-2 text-[9px] py-0 h-4">
+                      Score {entry.taskSuccessScore}/5
+                    </Badge>
+                  )}
+                  {entry.tokenDelta != null && entry.tokenDelta !== 0 && (
+                    <Badge variant="outline" className={`ml-1 text-[9px] py-0 h-4 ${entry.tokenDelta > 0 ? "text-emerald-400 border-emerald-500/30" : "text-red-400 border-red-500/30"}`}>
+                      {entry.tokenDelta > 0 ? "+" : ""}{entry.tokenDelta} tok
+                    </Badge>
+                  )}
+                </div>
+                <span className="text-muted-foreground/60 text-[10px] shrink-0">
+                  {new Date(entry.createdAt).toLocaleDateString()}
+                </span>
+                <button
+                  className="text-muted-foreground/40 hover:text-red-400 transition-colors shrink-0"
+                  onClick={() => handleDelete(entry)}
+                  disabled={deleteMutation.isPending}
+                  title="Remove this feedback entry"
+                >
+                  {deleteMutation.isPending ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3 h-3" />
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SkillDetailSheet({
+  skill,
+  onClose,
+  feedbackScores,
+  onToggle,
+  isActioning,
+}: {
+  skill: SkillRecord | null;
+  onClose: () => void;
+  feedbackScores?: Record<string, { helpfulRate: number; totalCount: number }>;
+  onToggle?: () => void;
+  isActioning?: boolean;
+}) {
+  if (!skill) return null;
+
+  return (
+    <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <SheetContent className="w-[480px] sm:w-[540px] overflow-y-auto">
+        <SheetHeader className="pb-4">
+          <SheetTitle className="flex items-center gap-2">
+            <Wand2 className="w-4 h-4 text-primary" />
+            {skill.name}
+          </SheetTitle>
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            <SkillClassBadge skillClass={skill.class} />
+            <TrustBadge trustTier={skill.trustTier} />
+            <InstallRiskBadge installRisk={skill.installRisk} />
+            {skill.tokenOverheadEstimate != null && (
+              <TokenCostBadge tokens={skill.tokenOverheadEstimate} />
+            )}
+            {feedbackScores && (
+              <SkillEffectivenessBadge slug={skill.slug} feedbackScores={feedbackScores} />
+            )}
+          </div>
+          {skill.description && (
+            <p className="text-sm text-muted-foreground mt-1">{skill.description}</p>
+          )}
+        </SheetHeader>
+
+        <div className="space-y-6">
+          {/* Toggle action */}
+          {onToggle && (
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">
+                Status: <span className={skill.enabled ? "text-emerald-400" : "text-muted-foreground"}>{skill.enabled ? "Enabled" : "Disabled"}</span>
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={onToggle}
+                disabled={isActioning}
+              >
+                {isActioning ? <Loader2 className="w-3 h-3 animate-spin" /> : (skill.enabled ? "Disable" : "Enable")}
+              </Button>
+            </div>
+          )}
+
+          {/* Provenance */}
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+              Provenance
+            </p>
+            <SkillSourceBlock skillId={skill.id} alwaysOpen />
+          </div>
+
+          {/* Feedback history */}
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+              Feedback History
+            </p>
+            <FeedbackHistoryPanel skillId={skill.id} />
+          </div>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -494,6 +707,7 @@ export default function SkillsLibrary() {
   const [tab, setTab] = useState<LibTab>("installed");
   const [importOpen, setImportOpen] = useState(false);
   const [selectedBundle, setSelectedBundle] = useState<SkillBundle | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<SkillRecord | null>(null);
   const [actioningId, setActioningId] = useState<number | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -666,6 +880,7 @@ export default function SkillsLibrary() {
                         onToggle={() => handleToggle(skill)}
                         isActioning={actioningId === skill.id}
                         feedbackScores={feedbackScoresMap}
+                        onClick={() => setSelectedSkill(skill)}
                       />
                     ))}
                   </div>
@@ -703,6 +918,7 @@ export default function SkillsLibrary() {
                   onReject={() => handleReject(skill)}
                   isActioning={actioningId === skill.id}
                   feedbackScores={feedbackScoresMap}
+                  onClick={() => setSelectedSkill(skill)}
                 />
               ))}
             </div>
@@ -772,6 +988,19 @@ export default function SkillsLibrary() {
 
       {selectedBundle && (
         <BundleSheet bundle={selectedBundle} onClose={() => setSelectedBundle(null)} />
+      )}
+
+      {selectedSkill && (
+        <SkillDetailSheet
+          skill={selectedSkill}
+          onClose={() => setSelectedSkill(null)}
+          feedbackScores={feedbackScoresMap}
+          onToggle={selectedSkill.reviewStatus === "approved" ? () => {
+            handleToggle(selectedSkill);
+            setSelectedSkill(prev => prev ? { ...prev, enabled: !prev.enabled } : null);
+          } : undefined}
+          isActioning={actioningId === selectedSkill.id}
+        />
       )}
     </div>
   );
