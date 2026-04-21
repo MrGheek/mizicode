@@ -1823,6 +1823,160 @@ export const useCompileSkillPreview = <
 };
 
 /**
+ * @summary List skill evaluation results (not yet available)
+ */
+export const getListSkillEvalsUrl = () => {
+  return `/api/skills/evals`;
+};
+
+export const listSkillEvals = async (
+  options?: RequestInit,
+): Promise<unknown> => {
+  return customFetch<unknown>(getListSkillEvalsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListSkillEvalsQueryKey = () => {
+  return [`/api/skills/evals`] as const;
+};
+
+export const getListSkillEvalsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listSkillEvals>>,
+  TError = ErrorType<NotImplementedResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listSkillEvals>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListSkillEvalsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listSkillEvals>>> = ({
+    signal,
+  }) => listSkillEvals({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listSkillEvals>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListSkillEvalsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listSkillEvals>>
+>;
+export type ListSkillEvalsQueryError = ErrorType<NotImplementedResponse>;
+
+/**
+ * @summary List skill evaluation results (not yet available)
+ */
+
+export function useListSkillEvals<
+  TData = Awaited<ReturnType<typeof listSkillEvals>>,
+  TError = ErrorType<NotImplementedResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listSkillEvals>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListSkillEvalsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Run a skill evaluation harness (not yet available)
+ */
+export const getRunSkillEvalUrl = () => {
+  return `/api/skills/evals/run`;
+};
+
+export const runSkillEval = async (options?: RequestInit): Promise<unknown> => {
+  return customFetch<unknown>(getRunSkillEvalUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getRunSkillEvalMutationOptions = <
+  TError = ErrorType<NotImplementedResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runSkillEval>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof runSkillEval>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["runSkillEval"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof runSkillEval>>,
+    void
+  > = () => {
+    return runSkillEval(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RunSkillEvalMutationResult = NonNullable<
+  Awaited<ReturnType<typeof runSkillEval>>
+>;
+
+export type RunSkillEvalMutationError = ErrorType<NotImplementedResponse>;
+
+/**
+ * @summary Run a skill evaluation harness (not yet available)
+ */
+export const useRunSkillEval = <
+  TError = ErrorType<NotImplementedResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runSkillEval>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof runSkillEval>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getRunSkillEvalMutationOptions(options));
+};
+
+/**
  * @summary Discover skills from external registries (not yet available)
  */
 export const getDiscoverSkillsUrl = () => {

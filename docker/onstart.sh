@@ -345,7 +345,8 @@ if [ -n "${FLOATR_ACTIVE_BUNDLE_B64:-}" ]; then
     set_status "skills_compiling"
     report_status "skills_compiling" "Activating Smart Skills bundle..."
 
-    SKILLS_DIR="/workspace/.floatr/skills"
+    FLOATR_DIR="/workspace/.floatr"
+    SKILLS_DIR="$FLOATR_DIR/skills"
     PROMPTS_DIR="/workspace/.floatr/prompts"
     mkdir -p "$SKILLS_DIR" "$PROMPTS_DIR"
 
@@ -362,11 +363,11 @@ if [ -n "${FLOATR_ACTIVE_BUNDLE_B64:-}" ]; then
             SKILL_COUNT=$(jq '.skills | length' "$SKILLS_DIR/active-bundle.json" 2>/dev/null || echo "0")
             log "Smart Skills: bundle=$BUNDLE_SLUG tokenMode=$TOKEN_MODE skillCount=$SKILL_COUNT"
 
-            # Write token-mode.json for runtime inspection
+            # Write token-mode.json to floatr root (not skills/) for runtime layer inspection
             printf '{"tokenMode":"%s","bundleSlug":"%s","skillCount":%s,"activatedAt":"%s"}\n' \
                 "$TOKEN_MODE" "$BUNDLE_SLUG" "$SKILL_COUNT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                > "$SKILLS_DIR/token-mode.json"
-            log "Smart Skills: token-mode.json written"
+                > "$FLOATR_DIR/token-mode.json"
+            log "Smart Skills: token-mode.json written to $FLOATR_DIR/token-mode.json"
 
             # Write the combined system prompt fragment
             PROMPT_FRAGMENT=$(jq -r '.systemPromptFragment // empty' "$SKILLS_DIR/active-bundle.json" 2>/dev/null)

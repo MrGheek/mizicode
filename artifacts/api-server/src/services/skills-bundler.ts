@@ -88,15 +88,33 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
     tokenBudget += manifest.cost.tokenOverheadEstimate;
   }
 
-  // ── Step 3: If still below minimum, add from all default skills regardless of requestedIds ──
+  // ── Step 3: Guarantee mandatory class coverage (doctrine + workflow) ──
+  // The bundle's requestedIds may not include a doctrine or workflow; inject from defaults.
+  const selectedIds = () => new Set(selected.map(s => s.id));
+
+  if (!selected.some(s => s.class === "doctrine")) {
+    const ranked = rankSkills(DEFAULT_SKILLS.filter(s => s.class === "doctrine"), ctx);
+    const ids = selectedIds();
+    const fallback = ranked.find(r => !ids.has(r.manifest.id));
+    if (fallback) selected.push(fallback.manifest);
+  }
+
+  if (!selected.some(s => s.class === "workflow")) {
+    const ranked = rankSkills(DEFAULT_SKILLS.filter(s => s.class === "workflow"), ctx);
+    const ids = selectedIds();
+    const fallback = ranked.find(r => !ids.has(r.manifest.id));
+    if (fallback) selected.push(fallback.manifest);
+  }
+
+  // ── Step 4: If still below minimum, add from all default skills regardless of requestedIds ──
   if (selected.length < MIN_SKILLS) {
     const fallbackRanked = rankSkills(DEFAULT_SKILLS, ctx);
-    const selectedIds = new Set(selected.map(s => s.id));
+    const ids = selectedIds();
     for (const { manifest } of fallbackRanked) {
       if (selected.length >= MIN_SKILLS) break;
-      if (!selectedIds.has(manifest.id)) {
+      if (!ids.has(manifest.id)) {
         selected.push(manifest);
-        selectedIds.add(manifest.id);
+        ids.add(manifest.id);
         tokenBudget += manifest.cost.tokenOverheadEstimate;
       }
     }

@@ -373,18 +373,43 @@ router.post("/sessions", async (req, res) => {
     const resolvedTokenMode = tokenMode || "core";
     const sessionType = teamMemberRecords.length > 0 ? "team" : "solo";
 
-    // Build repo fingerprint from provided data or derive a simple hash from repoUrl
+    // Build repo fingerprint from provided data or derive from repoUrl
     let repoFingerprintJson: Record<string, unknown> | null = null;
     if (repoFingerprint && typeof repoFingerprint === "object") {
       repoFingerprintJson = repoFingerprint as Record<string, unknown>;
     } else if (repoUrl && typeof repoUrl === "string") {
       const { createHash } = await import("crypto");
-      const urlHash = createHash("sha256").update(repoUrl.trim().toLowerCase()).digest("hex").slice(0, 16);
+      const trimmedUrl = repoUrl.trim();
+      const urlHash = createHash("sha256").update(trimmedUrl.toLowerCase()).digest("hex").slice(0, 16);
+      let langs: string[] = [];
+      let frameworks: string[] = [];
+
+      // For GitHub repos, attempt to derive language fingerprint via public API (no auth required for public repos)
+      const ghMatch = trimmedUrl.match(/github\.com\/([^/]+)\/([^/.\s]+)/);
+      if (ghMatch) {
+        try {
+          const apiUrl = `https://api.github.com/repos/${ghMatch[1]}/${ghMatch[2]}/languages`;
+          const resp = await fetch(apiUrl, {
+            headers: { "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+            signal: AbortSignal.timeout(5000),
+          });
+          if (resp.ok) {
+            const data = await resp.json() as Record<string, number>;
+            langs = Object.keys(data).map(l => l.toLowerCase());
+          }
+        } catch {
+          // Non-blocking: ignore if GitHub API is unreachable
+        }
+      }
+
       repoFingerprintJson = {
-        url: repoUrl.trim(),
+        url: trimmedUrl,
         branch: repoBranch || "main",
         urlHash,
+        langs,
+        frameworks,
         derivedAt: new Date().toISOString(),
+        langSource: langs.length > 0 ? "github_api" : "none",
       };
     }
 

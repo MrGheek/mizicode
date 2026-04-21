@@ -1,5 +1,9 @@
+import { exec } from "child_process";
+import { writeFile, unlink } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import { Router } from "express";
-import { db, skillsTable, skillBundlesTable, skillSourcesTable, skillVersionsTable, skillFeedbackTable, sessionSkillsTable } from "@workspace/db";
+import { db, skillsTable, skillBundlesTable, skillSourcesTable, skillVersionsTable, skillFeedbackTable, sessionSkillsTable, sessionsTable } from "@workspace/db";
 import { eq, and, desc } from "drizzle-orm";
 import { importSkillFromUrl } from "../services/skills-import";
 import { seedDefaultBundles, compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext } from "../services/skills-bundler";
@@ -8,6 +12,49 @@ import { logger } from "../lib/logger";
 import type { SessionContext } from "../services/skills-types";
 
 const router = Router();
+
+/**
+ * Best-effort: write active-bundle.json to a running instance via SSH.
+ * Falls back silently if SSH key is not configured or the instance is unreachable.
+ */
+async function tryWriteActiveBundleViaSSH(
+  sshHost: string,
+  sshPort: number,
+  payload: string,
+): Promise<void> {
+  const privateKey = process.env["FLOATR_SSH_PRIVATE_KEY"];
+  if (!privateKey) return; // SSH key not configured — skip
+
+  // Write key to temp file
+  const keyFile = join(tmpdir(), `floatr-ssh-${Date.now()}.pem`);
+  await writeFile(keyFile, privateKey, { mode: 0o600 });
+
+  const remoteDir = "/workspace/.floatr/skills";
+  const remoteFile = `${remoteDir}/active-bundle.json`;
+  const escaped = payload.replace(/'/g, "'\\''");
+
+  const sshCmd = [
+    "ssh",
+    "-i", keyFile,
+    "-p", String(sshPort),
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "ConnectTimeout=5",
+    `root@${sshHost}`,
+    `mkdir -p ${remoteDir} && printf '%s' '${escaped}' > ${remoteFile}`,
+  ].join(" ");
+
+  await new Promise<void>((resolve) => {
+    exec(sshCmd, { timeout: 8000 }, async (err) => {
+      await unlink(keyFile).catch(() => {});
+      if (err) {
+        logger.warn({ sshHost, sshPort, errMsg: err.message }, "SSH active-bundle.json write failed (instance may be starting)");
+      } else {
+        logger.info({ sshHost, sshPort }, "SSH active-bundle.json write succeeded");
+      }
+      resolve();
+    });
+  });
+}
 
 const NOT_IMPLEMENTED = (feature: string) => ({
   error: "not implemented",
@@ -59,7 +106,7 @@ router.get("/skills/evals", (_req, res) => {
 });
 
 router.post("/skills/evals/run", (_req, res) => {
-  res.status(501).json(NOT_IMPLEMENTED("skill evals"));
+  res.status(501).json(NOT_IMPLEMENTED("skill eval runner"));
 });
 
 router.get("/skills/:skillId", async (req, res) => {
@@ -284,21 +331,30 @@ router.post("/skill-bundles/:bundleId/activate", async (req, res) => {
   const { sessionId, taskMode, tokenMode } = req.body as { sessionId?: number; taskMode?: string; tokenMode?: string };
   let sessionSkillsRecord: (typeof sessionSkillsTable.$inferSelect) | null = null;
 
+  let activationMode: "live" | "next-launch" = "next-launch";
+  let sshWriteAttempted = false;
+
   if (sessionId) {
-    const { sessionsTable } = await import("@workspace/db");
     await db
       .update(sessionsTable)
       .set({ activeBundleId: id, updatedAt: new Date() })
       .where(eq(sessionsTable.id, sessionId));
 
-    // Compile bundle and record pending session_skills for next-launch
+    // Compile bundle and record session_skills
     try {
+      // Fetch session to get context and SSH info
+      const [session] = await db
+        .select({ status: sessionsTable.status, sshHost: sessionsTable.sshHost, sshPort: sessionsTable.sshPort, tokenMode: sessionsTable.tokenMode })
+        .from(sessionsTable)
+        .where(eq(sessionsTable.id, sessionId));
+
+      const effectiveTokenMode = (tokenMode || session?.tokenMode || bundle.tokenMode || "core") as SessionContext["tokenMode"];
       const ctx: SessionContext = {
         sessionType: "solo",
         taskMode: (taskMode || bundle.taskMode || "build") as SessionContext["taskMode"],
         modelProfile: "kimi",
         repoLangs: [],
-        tokenMode: (tokenMode || bundle.tokenMode || "core") as SessionContext["tokenMode"],
+        tokenMode: effectiveTokenMode,
       };
       const compiled = await compileBundle(id, ctx);
       const [record] = await db.insert(sessionSkillsTable).values({
@@ -310,18 +366,30 @@ router.post("/skill-bundles/:bundleId/activate", async (req, res) => {
         activationMode: "next-launch",
       }).returning();
       sessionSkillsRecord = record;
+
+      // If instance is running and has SSH, attempt live write (best-effort, non-blocking)
+      if (session?.status === "running" && session.sshHost && session.sshPort) {
+        activationMode = "live";
+        sshWriteAttempted = true;
+        const b64 = buildActiveBundleEnvPayload(compiled, effectiveTokenMode);
+        const payload = Buffer.from(b64, "base64").toString("utf8");
+        tryWriteActiveBundleViaSSH(session.sshHost, session.sshPort, payload).catch(() => {});
+      }
     } catch (err) {
       logger.warn({ err, sessionId, bundleId: id }, "Could not compile bundle for session_skills during activate");
     }
 
-    logger.info({ bundleId: id, sessionId }, "Bundle set as active for session (next-launch)");
+    logger.info({ bundleId: id, sessionId, activationMode }, "Bundle set as active for session");
   }
 
   res.json({
     bundle,
     sessionSkills: sessionSkillsRecord,
-    activationMode: "next-launch",
-    message: "Bundle will be activated on the next session launch.",
+    activationMode,
+    sshWriteAttempted,
+    message: activationMode === "live"
+      ? "Bundle activated live on running instance (SSH write attempted)."
+      : "Bundle will be activated on the next session launch.",
   });
 });
 

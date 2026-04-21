@@ -517,6 +517,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /skills/evals:
+    get:
+      operationId: listSkillEvals
+      tags: [skills]
+      summary: List skill evaluation results (not yet available)
+      responses:
+        "501":
+          description: Not implemented
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotImplementedResponse"
+
+  /skills/evals/run:
+    post:
+      operationId: runSkillEval
+      tags: [skills]
+      summary: Run a skill evaluation harness (not yet available)
+      responses:
+        "501":
+          description: Not implemented
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotImplementedResponse"
+
   /skills/discover:
     post:
       operationId: discoverSkills
