@@ -441,7 +441,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [builtin, user_approved, community]
+            enum: [floatr_native, reviewed, user_approved, experimental]
         - name: reviewStatus
           in: query
           schema:
@@ -518,10 +518,10 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /skills/discover:
-    get:
+    post:
       operationId: discoverSkills
       tags: [skills]
-      summary: Discover skills (not yet available)
+      summary: Discover skills from external registries (not yet available)
       responses:
         "501":
           description: Not implemented
@@ -716,7 +716,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CompilePreviewResponse"
+                $ref: "#/components/schemas/CompiledBundleResult"
         "400":
           description: Invalid request or no bundle available
           content:
@@ -1112,6 +1112,19 @@ components:
           type: integer
           nullable: true
           description: Specific skill bundle ID to activate on launch (auto-selects default if not provided)
+        repoUrl:
+          type: string
+          nullable: true
+          description: URL of the git repository to clone on session start (used for Smart Skills context)
+        repoBranch:
+          type: string
+          nullable: true
+          description: Branch to check out (defaults to main)
+        repoFingerprint:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Pre-computed repo fingerprint (langs, frameworks, etc.) for Smart Skills ranking. Derived from repoUrl if absent.
       required:
         - profileId
 
@@ -1685,6 +1698,30 @@ components:
         modelProfile:
           type: string
           nullable: true
+
+    CompiledBundleResult:
+      type: object
+      properties:
+        bundleId:
+          type: integer
+        slug:
+          type: string
+        name:
+          type: string
+        skills:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        reasoning:
+          type: object
+          additionalProperties: true
+      required:
+        - bundleId
+        - slug
+        - name
+        - skills
+        - reasoning
 
     CompilePreviewResponse:
       type: object

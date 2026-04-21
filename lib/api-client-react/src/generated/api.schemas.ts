@@ -105,6 +105,13 @@ export interface ActiveSessionResponse {
   session: Session | null;
 }
 
+/**
+ * Pre-computed repo fingerprint (langs, frameworks, etc.) for Smart Skills ranking. Derived from repoUrl if absent.
+ */
+export type CreateSessionRequestRepoFingerprint = {
+  [key: string]: unknown;
+} | null;
+
 export interface CreateSessionRequest {
   profileId: number;
   /** Specific Vast.ai offer ID to use (optional, auto-selects best if not provided) */
@@ -117,6 +124,12 @@ export interface CreateSessionRequest {
   tokenMode?: string | null;
   /** Specific skill bundle ID to activate on launch (auto-selects default if not provided) */
   bundleId?: number | null;
+  /** URL of the git repository to clone on session start (used for Smart Skills context) */
+  repoUrl?: string | null;
+  /** Branch to check out (defaults to main) */
+  repoBranch?: string | null;
+  /** Pre-computed repo fingerprint (langs, frameworks, etc.) for Smart Skills ranking. Derived from repoUrl if absent. */
+  repoFingerprint?: CreateSessionRequestRepoFingerprint;
 }
 
 export interface Template {
@@ -376,6 +389,18 @@ export interface CompileBundleRequest {
   modelProfile?: string | null;
 }
 
+export type CompiledBundleResultSkillsItem = { [key: string]: unknown };
+
+export type CompiledBundleResultReasoning = { [key: string]: unknown };
+
+export interface CompiledBundleResult {
+  bundleId: number;
+  slug: string;
+  name: string;
+  skills: CompiledBundleResultSkillsItem[];
+  reasoning: CompiledBundleResultReasoning;
+}
+
 export type CompilePreviewResponseCompiled = { [key: string]: unknown };
 
 export interface CompilePreviewResponse {
@@ -474,9 +499,10 @@ export type ListSkillsTrustTier =
   (typeof ListSkillsTrustTier)[keyof typeof ListSkillsTrustTier];
 
 export const ListSkillsTrustTier = {
-  builtin: "builtin",
+  floatr_native: "floatr_native",
+  reviewed: "reviewed",
   user_approved: "user_approved",
-  community: "community",
+  experimental: "experimental",
 } as const;
 
 export type ListSkillsReviewStatus =

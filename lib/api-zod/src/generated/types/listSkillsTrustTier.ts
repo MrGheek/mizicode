@@ -10,7 +10,8 @@ export type ListSkillsTrustTier =
   (typeof ListSkillsTrustTier)[keyof typeof ListSkillsTrustTier];
 
 export const ListSkillsTrustTier = {
-  builtin: "builtin",
+  floatr_native: "floatr_native",
+  reviewed: "reviewed",
   user_approved: "user_approved",
-  community: "community",
+  experimental: "experimental",
 } as const;

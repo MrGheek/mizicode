@@ -5,6 +5,7 @@
  * Cloud Coding Platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { CreateSessionRequestRepoFingerprint } from "./createSessionRequestRepoFingerprint";
 
 export interface CreateSessionRequest {
   profileId: number;
@@ -18,4 +19,10 @@ export interface CreateSessionRequest {
   tokenMode?: string | null;
   /** Specific skill bundle ID to activate on launch (auto-selects default if not provided) */
   bundleId?: number | null;
+  /** URL of the git repository to clone on session start (used for Smart Skills context) */
+  repoUrl?: string | null;
+  /** Branch to check out (defaults to main) */
+  repoBranch?: string | null;
+  /** Pre-computed repo fingerprint (langs, frameworks, etc.) for Smart Skills ranking. Derived from repoUrl if absent. */
+  repoFingerprint?: CreateSessionRequestRepoFingerprint;
 }

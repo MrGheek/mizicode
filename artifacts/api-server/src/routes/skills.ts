@@ -46,7 +46,7 @@ router.get("/skills", async (req, res) => {
   });
 });
 
-router.get("/skills/discover", (_req, res) => {
+router.post("/skills/discover", (_req, res) => {
   res.status(501).json(NOT_IMPLEMENTED("skill discovery"));
 });
 
@@ -152,6 +152,12 @@ router.post("/skills/:skillId/enable", async (req, res) => {
     return;
   }
 
+  // Review is the single gate: must be approved before enabling
+  if (skill.reviewStatus !== "approved") {
+    res.status(403).json({ error: "Skill must be approved before it can be enabled. Use POST /skills/:id/review first." });
+    return;
+  }
+
   const [updated] = await db
     .update(skillsTable)
     .set({ enabled: true, updatedAt: new Date() })
@@ -232,8 +238,14 @@ router.post("/skill-bundles/compile", async (req, res) => {
     }
 
     const compiled = await compileBundle(resolvedBundleId, ctx);
-    const b64 = buildActiveBundleEnvPayload(compiled, ctx.tokenMode);
-    res.json({ compiled, activeBundleB64: b64, byteLength: Buffer.from(b64, "base64").length });
+    // Return compiled bundle shape directly (not the b64-encoded payload)
+    res.json({
+      bundleId: compiled.bundleId,
+      slug: compiled.slug,
+      name: compiled.name,
+      skills: compiled.skills,
+      reasoning: compiled.reasoning,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Compile failed";
     res.status(500).json({ error: message });

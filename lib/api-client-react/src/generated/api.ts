@@ -25,6 +25,7 @@ import type {
   CompileBundleRequest,
   CompilePreviewRequest,
   CompilePreviewResponse,
+  CompiledBundleResult,
   CreateBundleRequest,
   CreateSessionRequest,
   CreateTemplateRequest,
@@ -1822,7 +1823,7 @@ export const useCompileSkillPreview = <
 };
 
 /**
- * @summary Discover skills (not yet available)
+ * @summary Discover skills from external registries (not yet available)
  */
 export const getDiscoverSkillsUrl = () => {
   return `/api/skills/discover`;
@@ -1833,68 +1834,74 @@ export const discoverSkills = async (
 ): Promise<unknown> => {
   return customFetch<unknown>(getDiscoverSkillsUrl(), {
     ...options,
-    method: "GET",
+    method: "POST",
   });
 };
 
-export const getDiscoverSkillsQueryKey = () => {
-  return [`/api/skills/discover`] as const;
-};
-
-export const getDiscoverSkillsQueryOptions = <
-  TData = Awaited<ReturnType<typeof discoverSkills>>,
+export const getDiscoverSkillsMutationOptions = <
   TError = ErrorType<NotImplementedResponse>,
+  TContext = unknown,
 >(options?: {
-  query?: UseQueryOptions<
+  mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof discoverSkills>>,
     TError,
-    TData
+    void,
+    TContext
   >;
   request?: SecondParameter<typeof customFetch>;
-}) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof discoverSkills>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["discoverSkills"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
 
-  const queryKey = queryOptions?.queryKey ?? getDiscoverSkillsQueryKey();
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof discoverSkills>>> = ({
-    signal,
-  }) => discoverSkills({ signal, ...requestOptions });
-
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+  const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof discoverSkills>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type DiscoverSkillsQueryResult = NonNullable<
-  Awaited<ReturnType<typeof discoverSkills>>
->;
-export type DiscoverSkillsQueryError = ErrorType<NotImplementedResponse>;
-
-/**
- * @summary Discover skills (not yet available)
- */
-
-export function useDiscoverSkills<
-  TData = Awaited<ReturnType<typeof discoverSkills>>,
-  TError = ErrorType<NotImplementedResponse>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof discoverSkills>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getDiscoverSkillsQueryOptions(options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
+    void
+  > = () => {
+    return discoverSkills(requestOptions);
   };
 
-  return { ...query, queryKey: queryOptions.queryKey };
-}
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DiscoverSkillsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof discoverSkills>>
+>;
+
+export type DiscoverSkillsMutationError = ErrorType<NotImplementedResponse>;
+
+/**
+ * @summary Discover skills from external registries (not yet available)
+ */
+export const useDiscoverSkills = <
+  TError = ErrorType<NotImplementedResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof discoverSkills>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof discoverSkills>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getDiscoverSkillsMutationOptions(options));
+};
 
 /**
  * @summary Skill leaderboard (not yet available)
@@ -2565,8 +2572,8 @@ export const getCompileBundleUrl = () => {
 export const compileBundle = async (
   compileBundleRequest: CompileBundleRequest,
   options?: RequestInit,
-): Promise<CompilePreviewResponse> => {
-  return customFetch<CompilePreviewResponse>(getCompileBundleUrl(), {
+): Promise<CompiledBundleResult> => {
+  return customFetch<CompiledBundleResult>(getCompileBundleUrl(), {
     ...options,
     method: "POST",
     headers: { "Content-Type": "application/json", ...options?.headers },

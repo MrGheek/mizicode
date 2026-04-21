@@ -199,6 +199,22 @@ export const CreateSessionBody = zod.object({
     .describe(
       "Specific skill bundle ID to activate on launch (auto-selects default if not provided)",
     ),
+  repoUrl: zod
+    .string()
+    .nullish()
+    .describe(
+      "URL of the git repository to clone on session start (used for Smart Skills context)",
+    ),
+  repoBranch: zod
+    .string()
+    .nullish()
+    .describe("Branch to check out (defaults to main)"),
+  repoFingerprint: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe(
+      "Pre-computed repo fingerprint (langs, frameworks, etc.) for Smart Skills ranking. Derived from repoUrl if absent.",
+    ),
 });
 
 /**
@@ -735,7 +751,9 @@ export const ListSkillsQueryParams = zod.object({
   class: zod
     .enum(["doctrine", "workflow", "context", "efficiency", "team", "repo"])
     .optional(),
-  trustTier: zod.enum(["builtin", "user_approved", "community"]).optional(),
+  trustTier: zod
+    .enum(["floatr_native", "reviewed", "user_approved", "experimental"])
+    .optional(),
   reviewStatus: zod.enum(["pending", "approved", "rejected"]).optional(),
   limit: zod.coerce
     .number()
@@ -1012,9 +1030,11 @@ export const CompileBundleBody = zod.object({
 });
 
 export const CompileBundleResponse = zod.object({
-  compiled: zod.record(zod.string(), zod.unknown()),
-  activeBundleB64: zod.string(),
-  byteLength: zod.number(),
+  bundleId: zod.number(),
+  slug: zod.string(),
+  name: zod.string(),
+  skills: zod.array(zod.record(zod.string(), zod.unknown())),
+  reasoning: zod.record(zod.string(), zod.unknown()),
 });
 
 /**

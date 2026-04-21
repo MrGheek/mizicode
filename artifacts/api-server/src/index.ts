@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { seedProfiles } from "./services/profiles";
 import { registerDefaultTemplate } from "./services/templates";
 import { startScheduler } from "./services/scheduler";
+import { seedDefaultBundles } from "./services/skills-bundler";
 
 const rawPort = process.env["PORT"];
 
@@ -37,6 +38,13 @@ app.listen(port, async (err) => {
     await registerDefaultTemplate();
   } catch (e) {
     logger.error(e, "Failed to register default template");
+  }
+
+  try {
+    await seedDefaultBundles();
+    logger.info("Default skill bundles seeded");
+  } catch (e) {
+    logger.error(e, "Failed to seed default skill bundles");
   }
 
   startScheduler();

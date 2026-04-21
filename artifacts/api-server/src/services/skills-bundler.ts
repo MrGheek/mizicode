@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { db, skillsTable, skillBundlesTable, skillVersionsTable, sessionSkillsTable, sessionsTable } from "@workspace/db";
+import { db, skillsTable, skillBundlesTable, skillVersionsTable, skillSourcesTable, sessionSkillsTable, sessionsTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { DEFAULT_SKILLS, DEFAULT_BUNDLES } from "./default-skills";
 import { rankSkills } from "./skills-ranker";
@@ -70,13 +70,20 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
     }
   }
 
-  // ── Step 2: Fill remaining slots up to maxSkills ──
+  // ── Step 2: Fill remaining slots up to maxSkills, enforcing conflict resolution ──
   const selected: FloatrSkillManifest[] = [...mandatory];
   let tokenBudget = selected.reduce((sum, s) => sum + s.cost.tokenOverheadEstimate, 0);
 
   for (const manifest of remaining) {
     if (selected.length >= maxSkills) break;
     if (tokenBudget + manifest.cost.tokenOverheadEstimate > maxTokenBudget) continue;
+    // Conflict check: same class + overlapping triggers → skip (higher-scored mandatory already present)
+    const hasConflict = selected.some(
+      s => s.class === manifest.class &&
+           s.id !== manifest.id &&
+           s.triggers.tasks.some(t => manifest.triggers.tasks.includes(t))
+    );
+    if (hasConflict) continue;
     selected.push(manifest);
     tokenBudget += manifest.cost.tokenOverheadEstimate;
   }
@@ -146,14 +153,74 @@ export async function recordSessionActivation(sessionId: number, compiled: Compi
   await db.insert(sessionSkillsTable).values({
     sessionId,
     bundleId: compiled.bundleId,
-    activatedSkillsJson: compiled.skills.map(s => s.id) as unknown as Record<string, unknown>,
+    activatedSkillsJson: compiled.skills as unknown as Record<string, unknown>[],
     rationaleJson: compiled.reasoning as unknown as Record<string, unknown>,
     tokenMode,
     activationMode: "boot",
   });
 }
 
+export async function seedDefaultSkills(): Promise<void> {
+  // Ensure floatr-native skill source exists
+  let [nativeSource] = await db
+    .select({ id: skillSourcesTable.id })
+    .from(skillSourcesTable)
+    .where(eq(skillSourcesTable.repoUrl, "https://github.com/floatr/skills"));
+
+  if (!nativeSource) {
+    [nativeSource] = await db
+      .insert(skillSourcesTable)
+      .values({
+        repoUrl: "https://github.com/floatr/skills",
+        sourceType: "builtin",
+        trustLevel: "floatr_native",
+      })
+      .returning({ id: skillSourcesTable.id });
+  }
+
+  const existing = await db.select({ slug: skillsTable.slug }).from(skillsTable);
+  const existingSlugs = new Set(existing.map(s => s.slug));
+
+  for (const manifest of DEFAULT_SKILLS) {
+    if (existingSlugs.has(manifest.id)) continue;
+
+    const [skill] = await db
+      .insert(skillsTable)
+      .values({
+        slug: manifest.id,
+        name: manifest.name,
+        class: manifest.class,
+        description: manifest.summary,
+        sourceId: nativeSource.id,
+        trustTier: manifest.source.trust,
+        installRisk: manifest.install.type,
+        tokenOverheadEstimate: manifest.cost.tokenOverheadEstimate,
+        enabled: true,
+        reviewStatus: "approved",
+        reviewedAt: new Date(),
+      })
+      .returning();
+
+    const versionHash = crypto
+      .createHash("sha256")
+      .update(JSON.stringify(manifest))
+      .digest("hex")
+      .slice(0, 16);
+
+    await db.insert(skillVersionsTable).values({
+      skillId: skill.id,
+      manifestJson: manifest as unknown as Record<string, unknown>,
+      versionHash,
+    });
+
+    logger.info({ slug: manifest.id, skillId: skill.id }, "Seeded default skill");
+  }
+}
+
 export async function seedDefaultBundles(): Promise<void> {
+  // Seed skills first so bundles can reference them
+  await seedDefaultSkills();
+
   const existing = await db.select({ slug: skillBundlesTable.slug }).from(skillBundlesTable);
   const existingSlugs = new Set(existing.map(b => b.slug));
 

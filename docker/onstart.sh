@@ -377,10 +377,11 @@ if [ -n "${FLOATR_ACTIVE_BUNDLE_B64:-}" ]; then
             fi
 
             # Write individual per-skill prompt files: prompts/skills/<skill-id>.md
+            # Payload stores skills[].instructions as a flat string array (not {system:[...]})
             SKILL_IDS=$(jq -r '.skills[].id' "$SKILLS_DIR/active-bundle.json" 2>/dev/null || true)
             for SKILL_ID in $SKILL_IDS; do
                 SKILL_BULLETS=$(jq -r --arg sid "$SKILL_ID" \
-                    '.skills[] | select(.id==$sid) | .instructions.system // "" | if type=="array" then .[] else . end' \
+                    '.skills[] | select(.id==$sid) | .instructions // [] | if type=="array" then .[] else . end' \
                     "$SKILLS_DIR/active-bundle.json" 2>/dev/null || true)
                 if [ -n "$SKILL_BULLETS" ]; then
                     printf '%s\n' "$SKILL_BULLETS" > "$SKILL_PROMPTS_DIR/${SKILL_ID}.md"
