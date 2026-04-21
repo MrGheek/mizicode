@@ -1071,6 +1071,8 @@ export default function SessionDetail() {
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
   const [seenConflictFingerprint, setSeenConflictFingerprint] = useState<string>("");
+  const [conflictBadgePulseKey, setConflictBadgePulseKey] = useState(0);
+  const prevConflictFingerprintRef = useRef<string>("");
   const [dismissedConflictFingerprint, setDismissedConflictFingerprint] = useState<string>("");
   const [bootLog, setBootLog] = useState<string[]>([]);
   const lastBootMsgRef = useRef<string>("");
@@ -1177,6 +1179,21 @@ export default function SessionDetail() {
   }, [activeTab, conflictFingerprint, hasAnyConflict]);
 
   const showConflictBadge = hasAnyConflict && conflictFingerprint !== seenConflictFingerprint;
+
+  useEffect(() => {
+    const prev = prevConflictFingerprintRef.current;
+    prevConflictFingerprintRef.current = conflictFingerprint;
+    if (showConflictBadge && prev !== "" && prev !== conflictFingerprint) {
+      setConflictBadgePulseKey((k) => k + 1);
+    }
+  }, [conflictFingerprint, showConflictBadge]);
+
+  useEffect(() => {
+    if (!showConflictBadge) {
+      setConflictBadgePulseKey(0);
+      prevConflictFingerprintRef.current = "";
+    }
+  }, [showConflictBadge]);
 
   const doStop = (taskSuccessScore?: number) => {
     if (taskSuccessScore !== undefined) {
@@ -1421,7 +1438,8 @@ export default function SessionDetail() {
           Team
           {showConflictBadge && (
             <span
-              className={`ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-semibold leading-none animate-badge-pop ${
+              key={conflictBadgePulseKey}
+              className={`ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-semibold leading-none ${conflictBadgePulseKey === 0 ? "animate-badge-pop" : "animate-badge-pulse"} ${
                 hasBlockingConflict
                   ? "bg-red-500 text-white"
                   : "bg-yellow-500 text-black"
