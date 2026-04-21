@@ -100,9 +100,9 @@ export function LaunchSessionDialog({
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(compileRecommendation, 400);
+    debounceRef.current = setTimeout(compileRecommendation, 600);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [taskMode, tokenMode, profile.id]);
+  }, [taskMode, tokenMode, profile.id, repoUrl]);
 
   const addMember = () => {
     if (memberNames.length < 4) setMemberNames(prev => [...prev, ""]);
