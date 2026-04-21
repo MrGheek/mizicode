@@ -1,5 +1,5 @@
 import { db, skillsTable, skillFeedbackTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { FloatrSkillManifest, SessionContext, TrustTier, RepoIntelligenceContext } from "./skills-types";
 
 const INSTALL_RISK_PENALTY: Record<string, number> = {
@@ -136,50 +136,129 @@ export function rankSkills(
   return ranked.sort((a, b) => b.score - a.score);
 }
 
+/** Exponential decay half-life in days (older signals fade toward zero). */
+const DECAY_HALF_LIFE_DAYS = 90;
+/** Feedback this many days old or newer receives full weight (no decay). */
+const FULL_WEIGHT_DAYS = 30;
+
+/**
+ * Compute a recency weight in (0, 1] for a feedback row.
+ * - Age ≤ 30 days → weight 1.0 (full weight)
+ * - Age > 30 days → exponential decay with a 90-day half-life starting from day 30
+ *   weight = 2^(-(age_days - 30) / 90)
+ *   e.g. 120 days old → 0.5, 210 days old → 0.25, 390 days old → 0.125
+ */
+function computeDecayWeight(createdAt: Date): number {
+  const ageDays = (Date.now() - createdAt.getTime()) / 86_400_000;
+  if (ageDays <= FULL_WEIGHT_DAYS) return 1.0;
+  return Math.pow(2, -(ageDays - FULL_WEIGHT_DAYS) / DECAY_HALF_LIFE_DAYS);
+}
+
 export interface SkillFeedbackScore {
   skillId: number;
   slug: string;
   totalCount: number;
   helpfulCount: number;
   unhelpfulCount: number;
+  /** Recency-weighted helpful rate in [0, 1] (recent feedback counts more) */
   helpfulRate: number;
-  /** Normalized to [-1.0, 1.0] centered at 0.5 helpfulRate */
+  /** Raw (unweighted) helpful rate in [0, 1] — for observability only */
+  rawHelpfulRate: number;
+  /** Normalized to [-1.0, 1.0] centered at 0.5 helpfulRate — recency-weighted */
   normalizedScore: number;
+  /** Average task success score — raw (unweighted) arithmetic mean for direct interpretability */
   avgTaskSuccessScore: number | null;
+  /** Sum of decay weights (effective sample size) */
+  decayedTotalWeight: number;
+  /** Sum of decay weights for helpful rows */
+  decayedHelpfulWeight: number;
 }
 
 /**
- * Load aggregate feedback scores for all skills from the DB.
- * Returns a map of manifest slug → normalizedScore for use as historyScores in SessionContext.
+ * Load aggregate feedback scores for all skills from the DB, applying
+ * time-based decay so that outdated signals do not dominate ranking forever.
+ *
+ * Each feedback row is weighted by computeDecayWeight(createdAt):
+ *   - Last 30 days: full weight (1.0)
+ *   - Older: exponential decay with 90-day half-life
+ *
+ * helpfulRate and normalizedScore reflect recency-weighted averages.
  */
 export async function getSkillFeedbackScores(): Promise<SkillFeedbackScore[]> {
   const rows = await db
     .select({
       skillId: skillFeedbackTable.skillId,
       slug: skillsTable.slug,
-      totalCount: sql<number>`COUNT(*)::int`,
-      helpfulCount: sql<number>`SUM(CASE WHEN ${skillFeedbackTable.helpful} THEN 1 ELSE 0 END)::int`,
-      unhelpfulCount: sql<number>`SUM(CASE WHEN NOT ${skillFeedbackTable.helpful} THEN 1 ELSE 0 END)::int`,
-      avgTaskSuccessScore: sql<number | null>`AVG(${skillFeedbackTable.taskSuccessScore})`,
+      helpful: skillFeedbackTable.helpful,
+      taskSuccessScore: skillFeedbackTable.taskSuccessScore,
+      createdAt: skillFeedbackTable.createdAt,
     })
     .from(skillFeedbackTable)
-    .innerJoin(skillsTable, eq(skillFeedbackTable.skillId, skillsTable.id))
-    .groupBy(skillFeedbackTable.skillId, skillsTable.slug);
+    .innerJoin(skillsTable, eq(skillFeedbackTable.skillId, skillsTable.id));
 
-  return rows.map(r => {
-    const total = r.totalCount || 0;
-    const helpful = r.helpfulCount || 0;
-    const helpfulRate = total > 0 ? helpful / total : 0.5;
+  type AccEntry = {
+    skillId: number;
+    slug: string;
+    totalCount: number;
+    helpfulCount: number;
+    unhelpfulCount: number;
+    decayedTotalWeight: number;
+    decayedHelpfulWeight: number;
+    taskSuccessSum: number;
+    taskSuccessCount: number;
+  };
+
+  const bySkill = new Map<number, AccEntry>();
+
+  for (const row of rows) {
+    const weight = computeDecayWeight(row.createdAt);
+    let entry = bySkill.get(row.skillId);
+    if (!entry) {
+      entry = {
+        skillId: row.skillId,
+        slug: row.slug,
+        totalCount: 0,
+        helpfulCount: 0,
+        unhelpfulCount: 0,
+        decayedTotalWeight: 0,
+        decayedHelpfulWeight: 0,
+        taskSuccessSum: 0,
+        taskSuccessCount: 0,
+      };
+      bySkill.set(row.skillId, entry);
+    }
+    entry.totalCount += 1;
+    entry.decayedTotalWeight += weight;
+    if (row.helpful) {
+      entry.helpfulCount += 1;
+      entry.decayedHelpfulWeight += weight;
+    } else {
+      entry.unhelpfulCount += 1;
+    }
+    if (row.taskSuccessScore !== null && row.taskSuccessScore !== undefined) {
+      entry.taskSuccessSum += row.taskSuccessScore;
+      entry.taskSuccessCount += 1;
+    }
+  }
+
+  return Array.from(bySkill.values()).map(e => {
+    const rawHelpfulRate = e.totalCount > 0 ? e.helpfulCount / e.totalCount : 0.5;
+    const helpfulRate = e.decayedTotalWeight > 0
+      ? e.decayedHelpfulWeight / e.decayedTotalWeight
+      : 0.5;
     const normalizedScore = (helpfulRate - 0.5) * 2; // maps [0,1] → [-1,+1]
     return {
-      skillId: r.skillId,
-      slug: r.slug,
-      totalCount: total,
-      helpfulCount: helpful,
-      unhelpfulCount: r.unhelpfulCount || 0,
+      skillId: e.skillId,
+      slug: e.slug,
+      totalCount: e.totalCount,
+      helpfulCount: e.helpfulCount,
+      unhelpfulCount: e.unhelpfulCount,
       helpfulRate,
+      rawHelpfulRate,
       normalizedScore,
-      avgTaskSuccessScore: r.avgTaskSuccessScore ?? null,
+      avgTaskSuccessScore: e.taskSuccessCount > 0 ? e.taskSuccessSum / e.taskSuccessCount : null,
+      decayedTotalWeight: e.decayedTotalWeight,
+      decayedHelpfulWeight: e.decayedHelpfulWeight,
     };
   });
 }
@@ -195,16 +274,21 @@ export async function getSkillFeedbackScores(): Promise<SkillFeedbackScore[]> {
  * deterministic normalized score rather than letting last-in-iteration win.
  */
 export function buildHistoryScoresMap(scores: SkillFeedbackScore[]): Record<string, number> {
-  // First pass: accumulate per-manifestId totals across all matching rows
-  const accumulator = new Map<string, { helpful: number; total: number }>();
+  // Accumulate decay-weighted totals per manifest key so that the final
+  // normalizedScore preserves recency weighting even when multiple imported
+  // skill slugs share the same manifest.id tail.
+  const accumulator = new Map<string, { helpfulWeight: number; totalWeight: number }>();
 
   const accumulate = (key: string, s: SkillFeedbackScore) => {
     const existing = accumulator.get(key);
     if (existing) {
-      existing.helpful += s.helpfulCount;
-      existing.total += s.totalCount;
+      existing.helpfulWeight += s.decayedHelpfulWeight;
+      existing.totalWeight += s.decayedTotalWeight;
     } else {
-      accumulator.set(key, { helpful: s.helpfulCount, total: s.totalCount });
+      accumulator.set(key, {
+        helpfulWeight: s.decayedHelpfulWeight,
+        totalWeight: s.decayedTotalWeight,
+      });
     }
   };
 
@@ -221,10 +305,10 @@ export function buildHistoryScoresMap(scores: SkillFeedbackScore[]): Record<stri
     }
   }
 
-  // Second pass: compute normalizedScore from aggregated counts
+  // Compute decay-weighted normalizedScore for each key
   const map: Record<string, number> = {};
-  for (const [key, { helpful, total }] of accumulator) {
-    const helpfulRate = total > 0 ? helpful / total : 0.5;
+  for (const [key, { helpfulWeight, totalWeight }] of accumulator) {
+    const helpfulRate = totalWeight > 0 ? helpfulWeight / totalWeight : 0.5;
     map[key] = (helpfulRate - 0.5) * 2; // maps [0,1] → [-1,+1]
   }
   return map;
