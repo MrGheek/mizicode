@@ -73,10 +73,16 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
 
   const requestedIds = rawRequestedIds.map(rid => manifestIdBySlug.get(rid) ?? rid);
 
-  const allManifests = [
-    ...DEFAULT_SKILLS.filter(s => requestedIds.includes(s.id)),
-    ...resolvedManifests.filter(s => requestedIds.includes(s.id)),
-  ];
+  // Deduplicate by manifest.id: DB manifests take precedence over built-in defaults
+  // (allows updated seeded skills to override the embedded DEFAULT_SKILLS copy)
+  const manifestsById = new Map<string, FloatrSkillManifest>();
+  for (const s of DEFAULT_SKILLS.filter(s => requestedIds.includes(s.id))) {
+    manifestsById.set(s.id, s);
+  }
+  for (const s of resolvedManifests.filter(s => requestedIds.includes(s.id))) {
+    manifestsById.set(s.id, s); // DB version wins if duplicate
+  }
+  const allManifests = Array.from(manifestsById.values());
 
   const tokenProfile = TOKEN_MODE_PROFILES[ctx.tokenMode];
   const maxSkills = Math.min(tokenProfile.activeSkillCountLimit, MAX_SKILLS);
