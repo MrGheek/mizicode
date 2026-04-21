@@ -2551,3 +2551,413 @@ export const GetMemoryGovernanceStatsResponse = zod.object({
       "True only when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1 and a real embedding backend is wired. Always false while semantic path is a stub.",
     ),
 });
+
+/**
+ * @summary List all lanes for a session
+ */
+export const ListSessionLanesParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ListSessionLanesResponse = zod.object({
+  sessionId: zod.number(),
+  lanes: zod.array(
+    zod
+      .object({
+        id: zod.number(),
+        sessionId: zod.number(),
+        memberIdentifier: zod.string(),
+        laneType: zod.string(),
+        status: zod.enum([
+          "active",
+          "blocked",
+          "review-needed",
+          "ready-to-merge",
+        ]),
+        currentTask: zod.string().nullish(),
+        tokenMode: zod.string().nullish(),
+        createdAt: zod.coerce.date(),
+        updatedAt: zod.coerce.date(),
+      })
+      .and(
+        zod.object({
+          policy: zod.object({
+            laneType: zod.enum(["ux", "debug", "backend", "review", "general"]),
+            defaultTaskMode: zod.string(),
+            defaultTokenMode: zod.string(),
+            allowedClaimTypes: zod.array(zod.string()),
+            limits: zod.object({
+              maxConcurrentClaims: zod.number(),
+              heavyJobSlots: zod.number(),
+              maxBlastRadiusFiles: zod.number(),
+              claimTtlSeconds: zod.number(),
+            }),
+            sharedMemoryScopes: zod.array(zod.string()),
+            privateMemoryScopes: zod.array(zod.string()),
+          }),
+          claims: zod.array(
+            zod.object({
+              id: zod.number(),
+              laneId: zod.number(),
+              memberIdentifier: zod.string(),
+              claimType: zod.enum(["file", "module", "symbol", "task"]),
+              resourcePath: zod.string(),
+              symbolName: zod.string().nullish(),
+              taskDescription: zod.string().nullish(),
+              strength: zod.number().describe("Claim strength 0.0–1.0"),
+              expiresAt: zod.coerce.date().nullish(),
+              createdAt: zod.coerce.date(),
+            }),
+          ),
+        }),
+      ),
+  ),
+  total: zod.number(),
+});
+
+/**
+ * @summary Create a new lane for a team member
+ */
+export const CreateSessionLaneParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const createSessionLaneBodyLaneTypeDefault = `general`;
+
+export const CreateSessionLaneBody = zod.object({
+  memberIdentifier: zod
+    .string()
+    .describe(
+      "Stable identifier for the team member (e.g. user slug or operator ID)",
+    ),
+  laneType: zod
+    .enum(["ux", "debug", "backend", "review", "general"])
+    .default(createSessionLaneBodyLaneTypeDefault),
+  currentTask: zod.string().nullish(),
+  tokenMode: zod.enum(["full", "core", "lean", "ultra"]).nullish(),
+});
+
+/**
+ * @summary Update a lane's status, type, or task
+ */
+export const UpdateSessionLaneParams = zod.object({
+  id: zod.coerce.number(),
+  laneId: zod.coerce.number(),
+});
+
+export const UpdateSessionLaneBody = zod.object({
+  status: zod
+    .enum(["active", "blocked", "review-needed", "ready-to-merge"])
+    .optional(),
+  laneType: zod
+    .enum(["ux", "debug", "backend", "review", "general"])
+    .optional(),
+  currentTask: zod.string().nullish(),
+  tokenMode: zod.enum(["full", "core", "lean", "ultra"]).nullish(),
+});
+
+export const UpdateSessionLaneResponse = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  memberIdentifier: zod.string(),
+  laneType: zod.string(),
+  status: zod.enum(["active", "blocked", "review-needed", "ready-to-merge"]),
+  currentTask: zod.string().nullish(),
+  tokenMode: zod.string().nullish(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * @summary Softly claim a file, module, symbol, or task for a lane
+ */
+export const CreateLaneClaimParams = zod.object({
+  id: zod.coerce.number(),
+  laneId: zod.coerce.number(),
+});
+
+export const createLaneClaimBodyStrengthDefault = 0.7;
+export const createLaneClaimBodyStrengthMin = 0;
+export const createLaneClaimBodyStrengthMax = 1;
+
+export const createLaneClaimBodyTtlSecondsDefault = 300;
+
+export const CreateLaneClaimBody = zod.object({
+  claimType: zod.enum(["file", "module", "symbol", "task"]),
+  resourcePath: zod.string(),
+  symbolName: zod.string().nullish(),
+  taskDescription: zod.string().nullish(),
+  strength: zod
+    .number()
+    .min(createLaneClaimBodyStrengthMin)
+    .max(createLaneClaimBodyStrengthMax)
+    .default(createLaneClaimBodyStrengthDefault),
+  ttlSeconds: zod.number().default(createLaneClaimBodyTtlSecondsDefault),
+});
+
+/**
+ * Without ?heartbeat=true: releases the claim. With ?heartbeat=true: refreshes the claim heartbeat and expiry.
+ * @summary Release a claim or refresh its heartbeat
+ */
+export const ReleaseLaneClaimParams = zod.object({
+  id: zod.coerce.number(),
+  laneId: zod.coerce.number(),
+  claimId: zod.coerce.number(),
+});
+
+export const ReleaseLaneClaimQueryParams = zod.object({
+  heartbeat: zod.coerce
+    .boolean()
+    .optional()
+    .describe("If true, refreshes heartbeat instead of releasing"),
+  ttlSeconds: zod.coerce
+    .number()
+    .optional()
+    .describe("New TTL when doing a heartbeat refresh"),
+});
+
+export const ReleaseLaneClaimResponse = zod.object({
+  claimId: zod.number(),
+  action: zod.enum(["released", "heartbeat_refreshed"]),
+  expiresAt: zod.coerce.date().nullish(),
+});
+
+/**
+ * @summary Signal a handoff state from one lane to others
+ */
+export const CreateLaneHandoffParams = zod.object({
+  id: zod.coerce.number(),
+  laneId: zod.coerce.number(),
+});
+
+export const createLaneHandoffBodyHandoffTypeDefault = `related_lane`;
+export const createLaneHandoffBodyResourcePathsDefault = [];
+export const createLaneHandoffBodyTtlSecondsDefault = 600;
+
+export const CreateLaneHandoffBody = zod.object({
+  toLaneIds: zod
+    .array(zod.number())
+    .optional()
+    .describe("Target lane IDs (empty = broadcast to all session lanes)"),
+  handoffType: zod
+    .enum([
+      "blocked",
+      "needs_review",
+      "safe_to_merge",
+      "watch_files",
+      "related_lane",
+    ])
+    .default(createLaneHandoffBodyHandoffTypeDefault),
+  resourcePaths: zod
+    .array(zod.string())
+    .default(createLaneHandoffBodyResourcePathsDefault),
+  message: zod.string().nullish(),
+  ttlSeconds: zod.number().default(createLaneHandoffBodyTtlSecondsDefault),
+});
+
+/**
+ * Returns all active lanes, current tasks, claims, and recent handoffs
+ * @summary Get full coordination state for a session
+ */
+export const GetSessionCoordinationParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetSessionCoordinationResponse = zod.object({
+  sessionId: zod.number(),
+  lanes: zod.array(
+    zod.object({
+      lane: zod.object({
+        id: zod.number(),
+        sessionId: zod.number(),
+        memberIdentifier: zod.string(),
+        laneType: zod.string(),
+        status: zod.enum([
+          "active",
+          "blocked",
+          "review-needed",
+          "ready-to-merge",
+        ]),
+        currentTask: zod.string().nullish(),
+        tokenMode: zod.string().nullish(),
+        createdAt: zod.coerce.date(),
+        updatedAt: zod.coerce.date(),
+      }),
+      activeClaims: zod.number(),
+      pendingHandoffs: zod.number(),
+      queuedJobs: zod.number(),
+    }),
+  ),
+  totalActiveClaims: zod.number(),
+  totalQueuedJobs: zod.number(),
+  pendingHandoffs: zod.number(),
+  recentHandoffs: zod.array(
+    zod.object({
+      id: zod.number(),
+      fromLaneId: zod.number(),
+      toLaneIds: zod.array(zod.number()),
+      handoffType: zod.enum([
+        "blocked",
+        "needs_review",
+        "safe_to_merge",
+        "watch_files",
+        "related_lane",
+      ]),
+      resourcePaths: zod.array(zod.string()),
+      message: zod.string().nullish(),
+      status: zod.enum(["pending", "acknowledged", "expired"]),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Detect overlap and blast-radius conflicts across active lanes
+ */
+export const GetSessionConflictsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetSessionConflictsResponse = zod.object({
+  sessionId: zod.number(),
+  conflicts: zod.array(
+    zod.object({
+      laneIdA: zod.number(),
+      laneIdB: zod.number(),
+      memberA: zod.string(),
+      memberB: zod.string(),
+      overlapScore: zod.number(),
+      blastRadiusOverlap: zod.number(),
+      conflictingResources: zod.array(zod.string()),
+      recommendation: zod.enum(["no_conflict", "warn", "block"]),
+      detail: zod.string().nullish(),
+    }),
+  ),
+  totalConflicts: zod.number(),
+  highSeverity: zod.number(),
+});
+
+/**
+ * @summary Schedule a GPU-expensive coordination job in the weighted fair queue
+ */
+export const EnqueueHeavyJobParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const enqueueHeavyJobBodyJobClassDefault = `other`;
+export const enqueueHeavyJobBodyPriorityDefault = 5;
+export const enqueueHeavyJobBodyPriorityMax = 10;
+
+export const EnqueueHeavyJobBody = zod.object({
+  laneId: zod.number().nullish(),
+  memberIdentifier: zod.string().nullish(),
+  jobClass: zod
+    .enum(["indexing", "embedding", "eval", "blast_radius", "compile", "other"])
+    .default(enqueueHeavyJobBodyJobClassDefault),
+  priority: zod
+    .number()
+    .min(1)
+    .max(enqueueHeavyJobBodyPriorityMax)
+    .default(enqueueHeavyJobBodyPriorityDefault),
+  payload: zod.record(zod.string(), zod.unknown()).nullish(),
+});
+
+/**
+ * @summary List heavy jobs for a session
+ */
+export const ListHeavyJobsParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const ListHeavyJobsQueryParams = zod.object({
+  status: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Comma-separated status filter: queued, running, deferred, completed, failed",
+    ),
+});
+
+export const ListHeavyJobsResponse = zod.object({
+  sessionId: zod.number(),
+  jobs: zod.array(
+    zod.object({
+      id: zod.number(),
+      sessionId: zod.number(),
+      laneId: zod.number().nullish(),
+      memberIdentifier: zod.string().nullish(),
+      jobClass: zod.enum([
+        "indexing",
+        "embedding",
+        "eval",
+        "blast_radius",
+        "compile",
+        "other",
+      ]),
+      status: zod.enum([
+        "queued",
+        "running",
+        "deferred",
+        "completed",
+        "failed",
+      ]),
+      priority: zod.number(),
+      ageWeight: zod.number(),
+      laneFairnessWeight: zod.number(),
+      score: zod.number().describe("Current scheduler priority score"),
+      payload: zod.record(zod.string(), zod.unknown()).nullish(),
+      result: zod.record(zod.string(), zod.unknown()).nullish(),
+      errorMessage: zod.string().nullish(),
+      enqueuedAt: zod.coerce.date(),
+      startedAt: zod.coerce.date().nullish(),
+      completedAt: zod.coerce.date().nullish(),
+      deferUntil: zod.coerce.date().nullish(),
+    }),
+  ),
+  total: zod.number(),
+});
+
+/**
+ * @summary Update a heavy job status (running / completed / failed / deferred)
+ */
+export const UpdateHeavyJobStatusParams = zod.object({
+  id: zod.coerce.number(),
+  jobId: zod.coerce.number(),
+});
+
+export const UpdateHeavyJobStatusBody = zod.object({
+  status: zod.enum(["running", "completed", "failed", "deferred"]),
+  result: zod.record(zod.string(), zod.unknown()).nullish(),
+  errorMessage: zod.string().nullish(),
+  deferUntilSeconds: zod
+    .number()
+    .nullish()
+    .describe("Seconds from now to defer the job (used when status=deferred)"),
+});
+
+export const UpdateHeavyJobStatusResponse = zod.object({
+  id: zod.number(),
+  sessionId: zod.number(),
+  laneId: zod.number().nullish(),
+  memberIdentifier: zod.string().nullish(),
+  jobClass: zod.enum([
+    "indexing",
+    "embedding",
+    "eval",
+    "blast_radius",
+    "compile",
+    "other",
+  ]),
+  status: zod.enum(["queued", "running", "deferred", "completed", "failed"]),
+  priority: zod.number(),
+  ageWeight: zod.number(),
+  laneFairnessWeight: zod.number(),
+  score: zod.number().describe("Current scheduler priority score"),
+  payload: zod.record(zod.string(), zod.unknown()).nullish(),
+  result: zod.record(zod.string(), zod.unknown()).nullish(),
+  errorMessage: zod.string().nullish(),
+  enqueuedAt: zod.coerce.date(),
+  startedAt: zod.coerce.date().nullish(),
+  completedAt: zod.coerce.date().nullish(),
+  deferUntil: zod.coerce.date().nullish(),
+});

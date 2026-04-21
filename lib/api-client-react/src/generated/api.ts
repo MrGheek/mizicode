@@ -22,15 +22,23 @@ import type {
   ActiveSessionResponse,
   BundleListResponse,
   BundleResponse,
+  ClaimReleaseResponse,
+  ClaimResponse,
   CompileBundleRequest,
   CompilePreviewRequest,
   CompilePreviewResponse,
   CompiledBundleResult,
+  ConflictListResponse,
   ConflictStatusUpdateResponse,
+  CoordinationStateResponse,
   CreateBundleRequest,
+  CreateClaimRequest,
+  CreateHandoffRequest,
+  CreateLaneRequest,
   CreateSessionRequest,
   CreateTemplateRequest,
   DashboardSummary,
+  EnqueueHeavyJobRequest,
   ErrorResponse,
   GetMemoryGovernanceStatsParams,
   GetMemoryItemParams,
@@ -40,9 +48,16 @@ import type {
   GetSkillFeedbackHistoryParams,
   GpuOffer,
   GpuProfile,
+  HandoffResponse,
   HealthStatus,
+  HeavyJobListResponse,
+  HeavyJobResponse,
   ImportSkillRequest,
   ImportSkillResponse,
+  LaneListResponse,
+  LaneResponse,
+  LaneWithPolicy,
+  ListHeavyJobsParams,
   ListMemoryConflictsParams,
   ListMemoryItemsParams,
   ListSkillsParams,
@@ -62,6 +77,7 @@ import type {
   MemoryStaleResponse,
   NotImplementedResponse,
   PromotionUpdateResponse,
+  ReleaseLaneClaimParams,
   RepoBlastRadiusResponse,
   RepoFingerprintResponse,
   RepoIndexRequest,
@@ -93,6 +109,8 @@ import type {
   SuccessResponse,
   Template,
   UpdateBundleRequest,
+  UpdateHeavyJobRequest,
+  UpdateLaneRequest,
   UpdateMemoryConflictStatusBody,
   UpdateMemoryConflictStatusParams,
   UpdateSchedulerRequest,
@@ -5896,3 +5914,1040 @@ export function useGetMemoryGovernanceStats<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List all lanes for a session
+ */
+export const getListSessionLanesUrl = (id: number) => {
+  return `/api/sessions/${id}/lanes`;
+};
+
+export const listSessionLanes = async (
+  id: number,
+  options?: RequestInit,
+): Promise<LaneListResponse> => {
+  return customFetch<LaneListResponse>(getListSessionLanesUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListSessionLanesQueryKey = (id: number) => {
+  return [`/api/sessions/${id}/lanes`] as const;
+};
+
+export const getListSessionLanesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listSessionLanes>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSessionLanes>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListSessionLanesQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listSessionLanes>>
+  > = ({ signal }) => listSessionLanes(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listSessionLanes>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListSessionLanesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listSessionLanes>>
+>;
+export type ListSessionLanesQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary List all lanes for a session
+ */
+
+export function useListSessionLanes<
+  TData = Awaited<ReturnType<typeof listSessionLanes>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSessionLanes>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListSessionLanesQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a new lane for a team member
+ */
+export const getCreateSessionLaneUrl = (id: number) => {
+  return `/api/sessions/${id}/lanes`;
+};
+
+export const createSessionLane = async (
+  id: number,
+  createLaneRequest: CreateLaneRequest,
+  options?: RequestInit,
+): Promise<LaneWithPolicy> => {
+  return customFetch<LaneWithPolicy>(getCreateSessionLaneUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createLaneRequest),
+  });
+};
+
+export const getCreateSessionLaneMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSessionLane>>,
+    TError,
+    { id: number; data: BodyType<CreateLaneRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createSessionLane>>,
+  TError,
+  { id: number; data: BodyType<CreateLaneRequest> },
+  TContext
+> => {
+  const mutationKey = ["createSessionLane"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createSessionLane>>,
+    { id: number; data: BodyType<CreateLaneRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return createSessionLane(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateSessionLaneMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createSessionLane>>
+>;
+export type CreateSessionLaneMutationBody = BodyType<CreateLaneRequest>;
+export type CreateSessionLaneMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Create a new lane for a team member
+ */
+export const useCreateSessionLane = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSessionLane>>,
+    TError,
+    { id: number; data: BodyType<CreateLaneRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createSessionLane>>,
+  TError,
+  { id: number; data: BodyType<CreateLaneRequest> },
+  TContext
+> => {
+  return useMutation(getCreateSessionLaneMutationOptions(options));
+};
+
+/**
+ * @summary Update a lane's status, type, or task
+ */
+export const getUpdateSessionLaneUrl = (id: number, laneId: number) => {
+  return `/api/sessions/${id}/lanes/${laneId}`;
+};
+
+export const updateSessionLane = async (
+  id: number,
+  laneId: number,
+  updateLaneRequest: UpdateLaneRequest,
+  options?: RequestInit,
+): Promise<LaneResponse> => {
+  return customFetch<LaneResponse>(getUpdateSessionLaneUrl(id, laneId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateLaneRequest),
+  });
+};
+
+export const getUpdateSessionLaneMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSessionLane>>,
+    TError,
+    { id: number; laneId: number; data: BodyType<UpdateLaneRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateSessionLane>>,
+  TError,
+  { id: number; laneId: number; data: BodyType<UpdateLaneRequest> },
+  TContext
+> => {
+  const mutationKey = ["updateSessionLane"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateSessionLane>>,
+    { id: number; laneId: number; data: BodyType<UpdateLaneRequest> }
+  > = (props) => {
+    const { id, laneId, data } = props ?? {};
+
+    return updateSessionLane(id, laneId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateSessionLaneMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateSessionLane>>
+>;
+export type UpdateSessionLaneMutationBody = BodyType<UpdateLaneRequest>;
+export type UpdateSessionLaneMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Update a lane's status, type, or task
+ */
+export const useUpdateSessionLane = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSessionLane>>,
+    TError,
+    { id: number; laneId: number; data: BodyType<UpdateLaneRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateSessionLane>>,
+  TError,
+  { id: number; laneId: number; data: BodyType<UpdateLaneRequest> },
+  TContext
+> => {
+  return useMutation(getUpdateSessionLaneMutationOptions(options));
+};
+
+/**
+ * @summary Softly claim a file, module, symbol, or task for a lane
+ */
+export const getCreateLaneClaimUrl = (id: number, laneId: number) => {
+  return `/api/sessions/${id}/lanes/${laneId}/claim`;
+};
+
+export const createLaneClaim = async (
+  id: number,
+  laneId: number,
+  createClaimRequest: CreateClaimRequest,
+  options?: RequestInit,
+): Promise<ClaimResponse> => {
+  return customFetch<ClaimResponse>(getCreateLaneClaimUrl(id, laneId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createClaimRequest),
+  });
+};
+
+export const getCreateLaneClaimMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createLaneClaim>>,
+    TError,
+    { id: number; laneId: number; data: BodyType<CreateClaimRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createLaneClaim>>,
+  TError,
+  { id: number; laneId: number; data: BodyType<CreateClaimRequest> },
+  TContext
+> => {
+  const mutationKey = ["createLaneClaim"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createLaneClaim>>,
+    { id: number; laneId: number; data: BodyType<CreateClaimRequest> }
+  > = (props) => {
+    const { id, laneId, data } = props ?? {};
+
+    return createLaneClaim(id, laneId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateLaneClaimMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createLaneClaim>>
+>;
+export type CreateLaneClaimMutationBody = BodyType<CreateClaimRequest>;
+export type CreateLaneClaimMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Softly claim a file, module, symbol, or task for a lane
+ */
+export const useCreateLaneClaim = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createLaneClaim>>,
+    TError,
+    { id: number; laneId: number; data: BodyType<CreateClaimRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createLaneClaim>>,
+  TError,
+  { id: number; laneId: number; data: BodyType<CreateClaimRequest> },
+  TContext
+> => {
+  return useMutation(getCreateLaneClaimMutationOptions(options));
+};
+
+/**
+ * Without ?heartbeat=true: releases the claim. With ?heartbeat=true: refreshes the claim heartbeat and expiry.
+ * @summary Release a claim or refresh its heartbeat
+ */
+export const getReleaseLaneClaimUrl = (
+  id: number,
+  laneId: number,
+  claimId: number,
+  params?: ReleaseLaneClaimParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sessions/${id}/lanes/${laneId}/claim/${claimId}?${stringifiedParams}`
+    : `/api/sessions/${id}/lanes/${laneId}/claim/${claimId}`;
+};
+
+export const releaseLaneClaim = async (
+  id: number,
+  laneId: number,
+  claimId: number,
+  params?: ReleaseLaneClaimParams,
+  options?: RequestInit,
+): Promise<ClaimReleaseResponse> => {
+  return customFetch<ClaimReleaseResponse>(
+    getReleaseLaneClaimUrl(id, laneId, claimId, params),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export const getReleaseLaneClaimMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof releaseLaneClaim>>,
+    TError,
+    {
+      id: number;
+      laneId: number;
+      claimId: number;
+      params?: ReleaseLaneClaimParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof releaseLaneClaim>>,
+  TError,
+  {
+    id: number;
+    laneId: number;
+    claimId: number;
+    params?: ReleaseLaneClaimParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["releaseLaneClaim"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof releaseLaneClaim>>,
+    {
+      id: number;
+      laneId: number;
+      claimId: number;
+      params?: ReleaseLaneClaimParams;
+    }
+  > = (props) => {
+    const { id, laneId, claimId, params } = props ?? {};
+
+    return releaseLaneClaim(id, laneId, claimId, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReleaseLaneClaimMutationResult = NonNullable<
+  Awaited<ReturnType<typeof releaseLaneClaim>>
+>;
+
+export type ReleaseLaneClaimMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Release a claim or refresh its heartbeat
+ */
+export const useReleaseLaneClaim = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof releaseLaneClaim>>,
+    TError,
+    {
+      id: number;
+      laneId: number;
+      claimId: number;
+      params?: ReleaseLaneClaimParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof releaseLaneClaim>>,
+  TError,
+  {
+    id: number;
+    laneId: number;
+    claimId: number;
+    params?: ReleaseLaneClaimParams;
+  },
+  TContext
+> => {
+  return useMutation(getReleaseLaneClaimMutationOptions(options));
+};
+
+/**
+ * @summary Signal a handoff state from one lane to others
+ */
+export const getCreateLaneHandoffUrl = (id: number, laneId: number) => {
+  return `/api/sessions/${id}/lanes/${laneId}/handoff`;
+};
+
+export const createLaneHandoff = async (
+  id: number,
+  laneId: number,
+  createHandoffRequest: CreateHandoffRequest,
+  options?: RequestInit,
+): Promise<HandoffResponse> => {
+  return customFetch<HandoffResponse>(getCreateLaneHandoffUrl(id, laneId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createHandoffRequest),
+  });
+};
+
+export const getCreateLaneHandoffMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createLaneHandoff>>,
+    TError,
+    { id: number; laneId: number; data: BodyType<CreateHandoffRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createLaneHandoff>>,
+  TError,
+  { id: number; laneId: number; data: BodyType<CreateHandoffRequest> },
+  TContext
+> => {
+  const mutationKey = ["createLaneHandoff"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createLaneHandoff>>,
+    { id: number; laneId: number; data: BodyType<CreateHandoffRequest> }
+  > = (props) => {
+    const { id, laneId, data } = props ?? {};
+
+    return createLaneHandoff(id, laneId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateLaneHandoffMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createLaneHandoff>>
+>;
+export type CreateLaneHandoffMutationBody = BodyType<CreateHandoffRequest>;
+export type CreateLaneHandoffMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Signal a handoff state from one lane to others
+ */
+export const useCreateLaneHandoff = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createLaneHandoff>>,
+    TError,
+    { id: number; laneId: number; data: BodyType<CreateHandoffRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createLaneHandoff>>,
+  TError,
+  { id: number; laneId: number; data: BodyType<CreateHandoffRequest> },
+  TContext
+> => {
+  return useMutation(getCreateLaneHandoffMutationOptions(options));
+};
+
+/**
+ * Returns all active lanes, current tasks, claims, and recent handoffs
+ * @summary Get full coordination state for a session
+ */
+export const getGetSessionCoordinationUrl = (id: number) => {
+  return `/api/sessions/${id}/coordination`;
+};
+
+export const getSessionCoordination = async (
+  id: number,
+  options?: RequestInit,
+): Promise<CoordinationStateResponse> => {
+  return customFetch<CoordinationStateResponse>(
+    getGetSessionCoordinationUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSessionCoordinationQueryKey = (id: number) => {
+  return [`/api/sessions/${id}/coordination`] as const;
+};
+
+export const getGetSessionCoordinationQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSessionCoordination>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSessionCoordination>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSessionCoordinationQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSessionCoordination>>
+  > = ({ signal }) => getSessionCoordination(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSessionCoordination>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSessionCoordinationQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSessionCoordination>>
+>;
+export type GetSessionCoordinationQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get full coordination state for a session
+ */
+
+export function useGetSessionCoordination<
+  TData = Awaited<ReturnType<typeof getSessionCoordination>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSessionCoordination>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSessionCoordinationQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Detect overlap and blast-radius conflicts across active lanes
+ */
+export const getGetSessionConflictsUrl = (id: number) => {
+  return `/api/sessions/${id}/conflicts`;
+};
+
+export const getSessionConflicts = async (
+  id: number,
+  options?: RequestInit,
+): Promise<ConflictListResponse> => {
+  return customFetch<ConflictListResponse>(getGetSessionConflictsUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetSessionConflictsQueryKey = (id: number) => {
+  return [`/api/sessions/${id}/conflicts`] as const;
+};
+
+export const getGetSessionConflictsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSessionConflicts>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSessionConflicts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetSessionConflictsQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSessionConflicts>>
+  > = ({ signal }) => getSessionConflicts(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSessionConflicts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSessionConflictsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSessionConflicts>>
+>;
+export type GetSessionConflictsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Detect overlap and blast-radius conflicts across active lanes
+ */
+
+export function useGetSessionConflicts<
+  TData = Awaited<ReturnType<typeof getSessionConflicts>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSessionConflicts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSessionConflictsQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Schedule a GPU-expensive coordination job in the weighted fair queue
+ */
+export const getEnqueueHeavyJobUrl = (id: number) => {
+  return `/api/sessions/${id}/heavy-jobs`;
+};
+
+export const enqueueHeavyJob = async (
+  id: number,
+  enqueueHeavyJobRequest: EnqueueHeavyJobRequest,
+  options?: RequestInit,
+): Promise<HeavyJobResponse> => {
+  return customFetch<HeavyJobResponse>(getEnqueueHeavyJobUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(enqueueHeavyJobRequest),
+  });
+};
+
+export const getEnqueueHeavyJobMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof enqueueHeavyJob>>,
+    TError,
+    { id: number; data: BodyType<EnqueueHeavyJobRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof enqueueHeavyJob>>,
+  TError,
+  { id: number; data: BodyType<EnqueueHeavyJobRequest> },
+  TContext
+> => {
+  const mutationKey = ["enqueueHeavyJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof enqueueHeavyJob>>,
+    { id: number; data: BodyType<EnqueueHeavyJobRequest> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return enqueueHeavyJob(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type EnqueueHeavyJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof enqueueHeavyJob>>
+>;
+export type EnqueueHeavyJobMutationBody = BodyType<EnqueueHeavyJobRequest>;
+export type EnqueueHeavyJobMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Schedule a GPU-expensive coordination job in the weighted fair queue
+ */
+export const useEnqueueHeavyJob = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof enqueueHeavyJob>>,
+    TError,
+    { id: number; data: BodyType<EnqueueHeavyJobRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof enqueueHeavyJob>>,
+  TError,
+  { id: number; data: BodyType<EnqueueHeavyJobRequest> },
+  TContext
+> => {
+  return useMutation(getEnqueueHeavyJobMutationOptions(options));
+};
+
+/**
+ * @summary List heavy jobs for a session
+ */
+export const getListHeavyJobsUrl = (
+  id: number,
+  params?: ListHeavyJobsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sessions/${id}/heavy-jobs?${stringifiedParams}`
+    : `/api/sessions/${id}/heavy-jobs`;
+};
+
+export const listHeavyJobs = async (
+  id: number,
+  params?: ListHeavyJobsParams,
+  options?: RequestInit,
+): Promise<HeavyJobListResponse> => {
+  return customFetch<HeavyJobListResponse>(getListHeavyJobsUrl(id, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListHeavyJobsQueryKey = (
+  id: number,
+  params?: ListHeavyJobsParams,
+) => {
+  return [
+    `/api/sessions/${id}/heavy-jobs`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListHeavyJobsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listHeavyJobs>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  params?: ListHeavyJobsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listHeavyJobs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListHeavyJobsQueryKey(id, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listHeavyJobs>>> = ({
+    signal,
+  }) => listHeavyJobs(id, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listHeavyJobs>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListHeavyJobsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listHeavyJobs>>
+>;
+export type ListHeavyJobsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List heavy jobs for a session
+ */
+
+export function useListHeavyJobs<
+  TData = Awaited<ReturnType<typeof listHeavyJobs>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  params?: ListHeavyJobsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listHeavyJobs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListHeavyJobsQueryOptions(id, params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update a heavy job status (running / completed / failed / deferred)
+ */
+export const getUpdateHeavyJobStatusUrl = (id: number, jobId: number) => {
+  return `/api/sessions/${id}/heavy-jobs/${jobId}`;
+};
+
+export const updateHeavyJobStatus = async (
+  id: number,
+  jobId: number,
+  updateHeavyJobRequest: UpdateHeavyJobRequest,
+  options?: RequestInit,
+): Promise<HeavyJobResponse> => {
+  return customFetch<HeavyJobResponse>(getUpdateHeavyJobStatusUrl(id, jobId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateHeavyJobRequest),
+  });
+};
+
+export const getUpdateHeavyJobStatusMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateHeavyJobStatus>>,
+    TError,
+    { id: number; jobId: number; data: BodyType<UpdateHeavyJobRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateHeavyJobStatus>>,
+  TError,
+  { id: number; jobId: number; data: BodyType<UpdateHeavyJobRequest> },
+  TContext
+> => {
+  const mutationKey = ["updateHeavyJobStatus"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateHeavyJobStatus>>,
+    { id: number; jobId: number; data: BodyType<UpdateHeavyJobRequest> }
+  > = (props) => {
+    const { id, jobId, data } = props ?? {};
+
+    return updateHeavyJobStatus(id, jobId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateHeavyJobStatusMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateHeavyJobStatus>>
+>;
+export type UpdateHeavyJobStatusMutationBody = BodyType<UpdateHeavyJobRequest>;
+export type UpdateHeavyJobStatusMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Update a heavy job status (running / completed / failed / deferred)
+ */
+export const useUpdateHeavyJobStatus = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateHeavyJobStatus>>,
+    TError,
+    { id: number; jobId: number; data: BodyType<UpdateHeavyJobRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateHeavyJobStatus>>,
+  TError,
+  { id: number; jobId: number; data: BodyType<UpdateHeavyJobRequest> },
+  TContext
+> => {
+  return useMutation(getUpdateHeavyJobStatusMutationOptions(options));
+};

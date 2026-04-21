@@ -1,4 +1,4 @@
-export type SkillClass = "doctrine" | "workflow" | "context" | "efficiency";
+export type SkillClass = "doctrine" | "workflow" | "context" | "efficiency" | "team" | "repo";
 export type TrustTier = "floatr_native" | "reviewed" | "user_approved" | "experimental";
 export type InstallRisk = "virtual" | "config" | "hooked" | "binary" | "networked";
 export type ReviewStatus = "pending" | "approved" | "rejected";

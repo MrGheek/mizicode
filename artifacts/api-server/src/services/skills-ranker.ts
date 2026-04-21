@@ -84,6 +84,10 @@ function tokenCostPenalty(manifest: FloatrSkillManifest): number {
 }
 
 function conflictRisk(manifest: FloatrSkillManifest, selected: FloatrSkillManifest[]): number {
+  // "team" and "repo" class skills are complementary — they do not conflict with each other.
+  // Coordination and repo skills are designed to coexist in the same bundle.
+  if (manifest.class === "team" || manifest.class === "repo") return 0.0;
+
   for (const existing of selected) {
     if (
       existing.class === manifest.class &&

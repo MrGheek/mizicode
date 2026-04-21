@@ -9,6 +9,7 @@ import schedulerRouter from "./scheduler";
 import memoryRouter from "./memory";
 import skillsRouter from "./skills";
 import repoRouter from "./repo";
+import coordinationRouter from "./coordination";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,6 @@ router.use(schedulerRouter);
 router.use(memoryRouter);
 router.use(skillsRouter);
 router.use("/sessions/:sessionId/repo", repoRouter);
+router.use(coordinationRouter);
 
 export default router;

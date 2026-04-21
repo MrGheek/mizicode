@@ -55,6 +55,10 @@ artifacts-monorepo/
 - **session_skills** — Records which skills were activated for each session (bundle, token mode, activation mode)
 - **skill_feedback** — Per-session helpful/unhelpful feedback on skills, with token delta and task success score
 - **repo_graph_jobs** — Tracks repo indexing jobs for context-aware skill ranking (Phase 2)
+- **session_lanes** — Per-member lane overlays for team sessions (laneType, status, currentTask, tokenMode)
+- **lane_claims** — Soft ownership claims on files/modules/symbols/tasks with TTL-expiry and heartbeat refresh
+- **lane_handoffs** — Handoff signals between lanes (task_complete, blocking, file_ready, review_ready, info)
+- **lane_heavy_jobs** — GPU-expensive job queue with weighted fair scheduler (priority + age weight + lane fairness + job class floor)
 
 ## GPU Profiles
 
@@ -101,6 +105,24 @@ artifacts-monorepo/
 - `GET /api/skills/discover` — (501, Phase 4) Discovery feed
 - `GET /api/skills/leaderboard` — (501, Phase 4) Skill leaderboard
 - `POST /api/skills/evals/run` — (501, Phase 4) Run skill eval harness
+
+### Coordination API (Team Lane Intelligence)
+
+- `GET /api/sessions/:id/lanes` — List all lanes with claims and policies
+- `POST /api/sessions/:id/lanes` — Create a new member lane (laneType: ux/debug/backend/review/general)
+- `PUT /api/sessions/:id/lanes/:laneId` — Update lane status, type, or current task
+- `POST /api/sessions/:id/lanes/:laneId/claim` — Softly claim a file/module/symbol/task with overlap detection
+- `DELETE /api/sessions/:id/lanes/:laneId/claim/:claimId` — Release a claim or refresh heartbeat (?heartbeat=true)
+- `POST /api/sessions/:id/lanes/:laneId/handoff` — Signal a handoff state (task_complete/blocking/file_ready/review_ready/info)
+- `GET /api/sessions/:id/coordination` — Full coordination state (lanes, claims, handoffs, job counts)
+- `GET /api/sessions/:id/conflicts` — Pairwise overlap + blast-radius conflict detection across active lanes
+- `POST /api/sessions/:id/heavy-jobs` — Enqueue a GPU-expensive job in the weighted fair queue
+- `GET /api/sessions/:id/heavy-jobs` — List heavy jobs (filterable by status)
+- `PATCH /api/sessions/:id/heavy-jobs/:jobId` — Update job status (running/completed/failed/deferred)
+
+**Lane types**: `ux`, `debug`, `backend`, `review`, `general` — each with its own policy (maxConcurrentClaims, heavyJobSlots, maxBlastRadiusFiles, claimTtlSeconds, allowed claim types, shared/private memory scopes).
+
+**Heavy-job scheduler**: Weighted fair queue scoring `priority + ageWeight + laneFairnessWeight + jobClassFloor` — `indexing` class gets +0.5 floor, `embedding` +0.3, `eval` +0.2, others 0.0.
 
 ### Memory API (SQLite FTS5 — no external deps)
 

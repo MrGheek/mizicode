@@ -329,6 +329,116 @@ export async function seedDefaultBundles(): Promise<void> {
   }
 }
 
+/**
+ * Lane-aware bundle compilation — compiles three tiers per session:
+ *   1. session-core bundle (shared across ALL lanes — mandatory)
+ *   2. shared-repo bundle (repo graph, architecture summary, conventions — shared)
+ *   3. overlay bundle per lane (injected ONLY into that lane's prompt/runtime path)
+ *
+ * Lane overlays do not override or pollute the session core.
+ * The session core is the only layer that crosses lane boundaries.
+ */
+export interface LaneBundleCompileResult {
+  /** Mandatory session-core bundle — shared across ALL lanes. Always compiled first. */
+  sessionCoreBundleId: number | null;
+  sessionCoreCompiled: CompiledBundle | null;
+  /** Shared repo-awareness bundle — injected into every lane as a read-only layer. */
+  sharedRepoBundleId: number | null;
+  sharedRepoCompiled: CompiledBundle | null;
+  /** Per-lane overlay bundles — injected ONLY into their lane's prompt path. */
+  laneOverlays: Array<{
+    laneId: number;
+    memberIdentifier: string;
+    laneType: string;
+    overlayBundleId: number | null;
+    compiled: CompiledBundle | null;
+  }>;
+}
+
+export async function compileLaneBundles(
+  sessionId: number,
+  ctx: SessionContext,
+  lanes: Array<{ laneId: number; memberIdentifier: string; laneType: string; taskMode?: string; tokenMode?: string }>,
+): Promise<LaneBundleCompileResult> {
+  const { getLanePolicy } = await import("./lane-policy");
+
+  // Ensure bundles are seeded
+  await seedDefaultBundles();
+
+  const all = await db.select().from(skillBundlesTable).where(eq(skillBundlesTable.isDefault, true));
+
+  // 1. Session core — always the team coordination bundle (mandatory, shared across ALL lanes)
+  const sessionCoreBundle = all.find(b => b.slug === "floatr-team-coordination")
+    ?? all.find(b => b.taskMode === "team" && b.sessionMode === "team")
+    ?? null;
+
+  // 2. Shared repo bundle — builder bundle as shared read-only baseline
+  const sharedRepoBundle = all.find(b => b.slug === "floatr-builder") ?? null;
+
+  // Compile session-core and shared-repo bundles upfront (required by all lanes)
+  let sessionCoreCompiled: CompiledBundle | null = null;
+  if (sessionCoreBundle) {
+    try {
+      sessionCoreCompiled = await compileBundle(sessionCoreBundle.id, ctx);
+    } catch (err) {
+      logger.warn({ err, bundleId: sessionCoreBundle.id }, "Failed to compile session-core bundle");
+    }
+  }
+
+  let sharedRepoCompiled: CompiledBundle | null = null;
+  if (sharedRepoBundle) {
+    try {
+      sharedRepoCompiled = await compileBundle(sharedRepoBundle.id, ctx);
+    } catch (err) {
+      logger.warn({ err, bundleId: sharedRepoBundle.id }, "Failed to compile shared-repo bundle");
+    }
+  }
+
+  const laneOverlays: LaneBundleCompileResult["laneOverlays"] = [];
+
+  for (const lane of lanes) {
+    const policy = getLanePolicy(lane.laneType);
+    const laneTokenMode = (lane.tokenMode ?? policy.defaultTokenMode) as SessionContext["tokenMode"];
+    const laneTaskMode = (lane.taskMode ?? policy.defaultTaskMode) as SessionContext["taskMode"];
+
+    const laneCtx: SessionContext = {
+      ...ctx,
+      taskMode: laneTaskMode,
+      tokenMode: laneTokenMode,
+    };
+
+    // Find the best overlay bundle for this lane type
+    const overlayBundle = all.find(b => b.taskMode === laneTaskMode && b.sessionMode === "solo")
+      ?? all.find(b => b.taskMode === laneTaskMode)
+      ?? sharedRepoBundle;
+
+    let compiled: CompiledBundle | null = null;
+    if (overlayBundle) {
+      try {
+        compiled = await compileBundle(overlayBundle.id, laneCtx);
+      } catch (err) {
+        logger.warn({ err, laneId: lane.laneId, bundleId: overlayBundle.id }, "Failed to compile lane overlay bundle");
+      }
+    }
+
+    laneOverlays.push({
+      laneId: lane.laneId,
+      memberIdentifier: lane.memberIdentifier,
+      laneType: lane.laneType,
+      overlayBundleId: overlayBundle?.id ?? null,
+      compiled,
+    });
+  }
+
+  return {
+    sessionCoreBundleId: sessionCoreBundle?.id ?? null,
+    sessionCoreCompiled,
+    sharedRepoBundleId: sharedRepoBundle?.id ?? null,
+    sharedRepoCompiled,
+    laneOverlays,
+  };
+}
+
 export async function getDefaultBundleForContext(
   ctx: SessionContext,
   hasRepoContext = false,

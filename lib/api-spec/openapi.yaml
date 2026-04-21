@@ -26,6 +26,8 @@ tags:
     description: Repository intelligence — indexing, search, fingerprint, and blast radius
   - name: memory
     description: Cross-session memory governance — progressive-disclosure retrieval, contradiction detection, TTL/decay, ROI promotion, and budgeted retrieval profiles
+  - name: coordination
+    description: Team lane coordination — per-member lane overlays, ownership claims, conflict detection, handoff signals, and heavy-job scheduling
 
 paths:
   /healthz:
@@ -1855,6 +1857,387 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MemoryGovernanceStatsResponse"
+
+  /sessions/{id}/lanes:
+    get:
+      operationId: listSessionLanes
+      tags: [coordination]
+      summary: List all lanes for a session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Lanes list with claims and policies
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LaneListResponse"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createSessionLane
+      tags: [coordination]
+      summary: Create a new lane for a team member
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLaneRequest"
+      responses:
+        "201":
+          description: Lane created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LaneWithPolicy"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/lanes/{laneId}:
+    put:
+      operationId: updateSessionLane
+      tags: [coordination]
+      summary: Update a lane's status, type, or task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: laneId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateLaneRequest"
+      responses:
+        "200":
+          description: Lane updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LaneResponse"
+        "404":
+          description: Lane not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/lanes/{laneId}/claim:
+    post:
+      operationId: createLaneClaim
+      tags: [coordination]
+      summary: Softly claim a file, module, symbol, or task for a lane
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: laneId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClaimRequest"
+      responses:
+        "201":
+          description: Claim created with any overlap warnings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Lane not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/lanes/{laneId}/claim/{claimId}:
+    delete:
+      operationId: releaseLaneClaim
+      tags: [coordination]
+      summary: Release a claim or refresh its heartbeat
+      description: "Without ?heartbeat=true: releases the claim. With ?heartbeat=true: refreshes the claim heartbeat and expiry."
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: laneId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: claimId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: heartbeat
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: If true, refreshes heartbeat instead of releasing
+        - name: ttlSeconds
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: New TTL when doing a heartbeat refresh
+      responses:
+        "200":
+          description: Claim released or heartbeat refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimReleaseResponse"
+        "404":
+          description: Claim not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/lanes/{laneId}/handoff:
+    post:
+      operationId: createLaneHandoff
+      tags: [coordination]
+      summary: Signal a handoff state from one lane to others
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: laneId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateHandoffRequest"
+      responses:
+        "201":
+          description: Handoff signal created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Lane not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/coordination:
+    get:
+      operationId: getSessionCoordination
+      tags: [coordination]
+      summary: Get full coordination state for a session
+      description: Returns all active lanes, current tasks, claims, and recent handoffs
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Session coordination state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CoordinationStateResponse"
+        "400":
+          description: Invalid session ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/conflicts:
+    get:
+      operationId: getSessionConflicts
+      tags: [coordination]
+      summary: Detect overlap and blast-radius conflicts across active lanes
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Conflict analysis results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConflictListResponse"
+        "400":
+          description: Invalid session ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/heavy-jobs:
+    post:
+      operationId: enqueueHeavyJob
+      tags: [coordination]
+      summary: Schedule a GPU-expensive coordination job in the weighted fair queue
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnqueueHeavyJobRequest"
+      responses:
+        "201":
+          description: Job enqueued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeavyJobResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      operationId: listHeavyJobs
+      tags: [coordination]
+      summary: List heavy jobs for a session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "Comma-separated status filter: queued, running, deferred, completed, failed"
+      responses:
+        "200":
+          description: Heavy jobs list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeavyJobListResponse"
+
+  /sessions/{id}/heavy-jobs/{jobId}:
+    patch:
+      operationId: updateHeavyJobStatus
+      tags: [coordination]
+      summary: Update a heavy job status (running / completed / failed / deferred)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateHeavyJobRequest"
+      responses:
+        "200":
+          description: Job updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeavyJobResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   schemas:
@@ -3992,3 +4375,476 @@ components:
         - jobId
         - status
         - repoPath
+
+    # ── Coordination Schemas ──────────────────────────────────────────────────
+
+    LanePolicyLimits:
+      type: object
+      properties:
+        maxConcurrentClaims:
+          type: integer
+        heavyJobSlots:
+          type: integer
+        maxBlastRadiusFiles:
+          type: integer
+        claimTtlSeconds:
+          type: integer
+      required: [maxConcurrentClaims, heavyJobSlots, maxBlastRadiusFiles, claimTtlSeconds]
+
+    LanePolicy:
+      type: object
+      properties:
+        laneType:
+          type: string
+          enum: [ux, debug, backend, review, general]
+        defaultTaskMode:
+          type: string
+        defaultTokenMode:
+          type: string
+        allowedClaimTypes:
+          type: array
+          items:
+            type: string
+        limits:
+          $ref: "#/components/schemas/LanePolicyLimits"
+        sharedMemoryScopes:
+          type: array
+          items:
+            type: string
+        privateMemoryScopes:
+          type: array
+          items:
+            type: string
+      required: [laneType, defaultTaskMode, defaultTokenMode, allowedClaimTypes, limits, sharedMemoryScopes, privateMemoryScopes]
+
+    LaneResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        sessionId:
+          type: integer
+        memberIdentifier:
+          type: string
+        laneType:
+          type: string
+        status:
+          type: string
+          enum: [active, blocked, review-needed, ready-to-merge]
+        currentTask:
+          type: string
+          nullable: true
+        tokenMode:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, sessionId, memberIdentifier, laneType, status, createdAt, updatedAt]
+
+    LaneClaimItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        laneId:
+          type: integer
+        memberIdentifier:
+          type: string
+        claimType:
+          type: string
+          enum: [file, module, symbol, task]
+        resourcePath:
+          type: string
+        symbolName:
+          type: string
+          nullable: true
+        taskDescription:
+          type: string
+          nullable: true
+        strength:
+          type: number
+          description: Claim strength 0.0–1.0
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, laneId, memberIdentifier, claimType, resourcePath, strength, createdAt]
+
+    LaneWithPolicy:
+      allOf:
+        - $ref: "#/components/schemas/LaneResponse"
+        - type: object
+          properties:
+            policy:
+              $ref: "#/components/schemas/LanePolicy"
+            claims:
+              type: array
+              items:
+                $ref: "#/components/schemas/LaneClaimItem"
+          required: [policy, claims]
+
+    LaneListResponse:
+      type: object
+      properties:
+        sessionId:
+          type: integer
+        lanes:
+          type: array
+          items:
+            $ref: "#/components/schemas/LaneWithPolicy"
+        total:
+          type: integer
+      required: [sessionId, lanes, total]
+
+    CreateLaneRequest:
+      type: object
+      properties:
+        memberIdentifier:
+          type: string
+          description: Stable identifier for the team member (e.g. user slug or operator ID)
+        laneType:
+          type: string
+          enum: [ux, debug, backend, review, general]
+          default: general
+        currentTask:
+          type: string
+          nullable: true
+        tokenMode:
+          type: string
+          enum: [full, core, lean, ultra]
+          nullable: true
+      required: [memberIdentifier]
+
+    UpdateLaneRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [active, blocked, review-needed, ready-to-merge]
+        laneType:
+          type: string
+          enum: [ux, debug, backend, review, general]
+        currentTask:
+          type: string
+          nullable: true
+        tokenMode:
+          type: string
+          enum: [full, core, lean, ultra]
+          nullable: true
+
+    ClaimOverlapItem:
+      type: object
+      properties:
+        conflictingLaneId:
+          type: integer
+        conflictingMember:
+          type: string
+        overlapScore:
+          type: number
+        blastRadiusOverlap:
+          type: number
+        recommendation:
+          type: string
+          enum: [no_conflict, warn, block]
+      required: [conflictingLaneId, conflictingMember, overlapScore, blastRadiusOverlap, recommendation]
+
+    ClaimResponse:
+      type: object
+      properties:
+        claim:
+          $ref: "#/components/schemas/LaneClaimItem"
+        overlaps:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimOverlapItem"
+        overallRecommendation:
+          type: string
+          enum: [no_conflict, warn, block]
+      required: [claim, overlaps, overallRecommendation]
+
+    ClaimReleaseResponse:
+      type: object
+      properties:
+        claimId:
+          type: integer
+        action:
+          type: string
+          enum: [released, heartbeat_refreshed]
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+      required: [claimId, action]
+
+    CreateClaimRequest:
+      type: object
+      properties:
+        claimType:
+          type: string
+          enum: [file, module, symbol, task]
+        resourcePath:
+          type: string
+        symbolName:
+          type: string
+          nullable: true
+        taskDescription:
+          type: string
+          nullable: true
+        strength:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.7
+        ttlSeconds:
+          type: integer
+          default: 300
+      required: [claimType, resourcePath]
+
+    HandoffResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        fromLaneId:
+          type: integer
+        toLaneIds:
+          type: array
+          items:
+            type: integer
+        handoffType:
+          type: string
+          enum: [blocked, needs_review, safe_to_merge, watch_files, related_lane]
+        resourcePaths:
+          type: array
+          items:
+            type: string
+        message:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, acknowledged, expired]
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, fromLaneId, toLaneIds, handoffType, resourcePaths, status, createdAt]
+
+    CreateHandoffRequest:
+      type: object
+      properties:
+        toLaneIds:
+          type: array
+          items:
+            type: integer
+          description: Target lane IDs (empty = broadcast to all session lanes)
+        handoffType:
+          type: string
+          enum: [blocked, needs_review, safe_to_merge, watch_files, related_lane]
+          default: related_lane
+        resourcePaths:
+          type: array
+          items:
+            type: string
+          default: []
+        message:
+          type: string
+          nullable: true
+        ttlSeconds:
+          type: integer
+          default: 600
+      required: [handoffType]
+
+    CoordinationLaneSummary:
+      type: object
+      properties:
+        lane:
+          $ref: "#/components/schemas/LaneResponse"
+        activeClaims:
+          type: integer
+        pendingHandoffs:
+          type: integer
+        queuedJobs:
+          type: integer
+      required: [lane, activeClaims, pendingHandoffs, queuedJobs]
+
+    CoordinationStateResponse:
+      type: object
+      properties:
+        sessionId:
+          type: integer
+        lanes:
+          type: array
+          items:
+            $ref: "#/components/schemas/CoordinationLaneSummary"
+        totalActiveClaims:
+          type: integer
+        totalQueuedJobs:
+          type: integer
+        pendingHandoffs:
+          type: integer
+        recentHandoffs:
+          type: array
+          items:
+            $ref: "#/components/schemas/HandoffResponse"
+      required: [sessionId, lanes, totalActiveClaims, totalQueuedJobs, pendingHandoffs, recentHandoffs]
+
+    ConflictItem:
+      type: object
+      properties:
+        laneIdA:
+          type: integer
+        laneIdB:
+          type: integer
+        memberA:
+          type: string
+        memberB:
+          type: string
+        overlapScore:
+          type: number
+        blastRadiusOverlap:
+          type: number
+        conflictingResources:
+          type: array
+          items:
+            type: string
+        recommendation:
+          type: string
+          enum: [no_conflict, warn, block]
+        detail:
+          type: string
+          nullable: true
+      required: [laneIdA, laneIdB, memberA, memberB, overlapScore, blastRadiusOverlap, conflictingResources, recommendation]
+
+    ConflictListResponse:
+      type: object
+      properties:
+        sessionId:
+          type: integer
+        conflicts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConflictItem"
+        totalConflicts:
+          type: integer
+        highSeverity:
+          type: integer
+      required: [sessionId, conflicts, totalConflicts, highSeverity]
+
+    HeavyJobResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        sessionId:
+          type: integer
+        laneId:
+          type: integer
+          nullable: true
+        memberIdentifier:
+          type: string
+          nullable: true
+        jobClass:
+          type: string
+          enum: [indexing, embedding, eval, blast_radius, compile, other]
+        status:
+          type: string
+          enum: [queued, running, deferred, completed, failed]
+        priority:
+          type: integer
+        ageWeight:
+          type: number
+        laneFairnessWeight:
+          type: number
+        score:
+          type: number
+          description: Current scheduler priority score
+        payload:
+          type: object
+          additionalProperties: true
+          nullable: true
+        result:
+          type: object
+          additionalProperties: true
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+        enqueuedAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        deferUntil:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, sessionId, jobClass, status, priority, ageWeight, laneFairnessWeight, score, enqueuedAt]
+
+    HeavyJobListResponse:
+      type: object
+      properties:
+        sessionId:
+          type: integer
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/HeavyJobResponse"
+        total:
+          type: integer
+      required: [sessionId, jobs, total]
+
+    EnqueueHeavyJobRequest:
+      type: object
+      properties:
+        laneId:
+          type: integer
+          nullable: true
+        memberIdentifier:
+          type: string
+          nullable: true
+        jobClass:
+          type: string
+          enum: [indexing, embedding, eval, blast_radius, compile, other]
+          default: other
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+        payload:
+          type: object
+          additionalProperties: true
+          nullable: true
+      required: [jobClass]
+
+    UpdateHeavyJobRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [running, completed, failed, deferred]
+        result:
+          type: object
+          additionalProperties: true
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+        deferUntilSeconds:
+          type: integer
+          description: Seconds from now to defer the job (used when status=deferred)
+          nullable: true
+      required: [status]

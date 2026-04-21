@@ -1075,6 +1075,424 @@ export interface RepoSyncRequest {
   errorDetails?: string | null;
 }
 
+export interface LanePolicyLimits {
+  maxConcurrentClaims: number;
+  heavyJobSlots: number;
+  maxBlastRadiusFiles: number;
+  claimTtlSeconds: number;
+}
+
+export type LanePolicyLaneType =
+  (typeof LanePolicyLaneType)[keyof typeof LanePolicyLaneType];
+
+export const LanePolicyLaneType = {
+  ux: "ux",
+  debug: "debug",
+  backend: "backend",
+  review: "review",
+  general: "general",
+} as const;
+
+export interface LanePolicy {
+  laneType: LanePolicyLaneType;
+  defaultTaskMode: string;
+  defaultTokenMode: string;
+  allowedClaimTypes: string[];
+  limits: LanePolicyLimits;
+  sharedMemoryScopes: string[];
+  privateMemoryScopes: string[];
+}
+
+export type LaneResponseStatus =
+  (typeof LaneResponseStatus)[keyof typeof LaneResponseStatus];
+
+export const LaneResponseStatus = {
+  active: "active",
+  blocked: "blocked",
+  "review-needed": "review-needed",
+  "ready-to-merge": "ready-to-merge",
+} as const;
+
+export interface LaneResponse {
+  id: number;
+  sessionId: number;
+  memberIdentifier: string;
+  laneType: string;
+  status: LaneResponseStatus;
+  currentTask?: string | null;
+  tokenMode?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type LaneClaimItemClaimType =
+  (typeof LaneClaimItemClaimType)[keyof typeof LaneClaimItemClaimType];
+
+export const LaneClaimItemClaimType = {
+  file: "file",
+  module: "module",
+  symbol: "symbol",
+  task: "task",
+} as const;
+
+export interface LaneClaimItem {
+  id: number;
+  laneId: number;
+  memberIdentifier: string;
+  claimType: LaneClaimItemClaimType;
+  resourcePath: string;
+  symbolName?: string | null;
+  taskDescription?: string | null;
+  /** Claim strength 0.0–1.0 */
+  strength: number;
+  expiresAt?: string | null;
+  createdAt: string;
+}
+
+export type LaneWithPolicy = LaneResponse & {
+  policy: LanePolicy;
+  claims: LaneClaimItem[];
+};
+
+export interface LaneListResponse {
+  sessionId: number;
+  lanes: LaneWithPolicy[];
+  total: number;
+}
+
+export type CreateLaneRequestLaneType =
+  (typeof CreateLaneRequestLaneType)[keyof typeof CreateLaneRequestLaneType];
+
+export const CreateLaneRequestLaneType = {
+  ux: "ux",
+  debug: "debug",
+  backend: "backend",
+  review: "review",
+  general: "general",
+} as const;
+
+export type CreateLaneRequestTokenMode =
+  | (typeof CreateLaneRequestTokenMode)[keyof typeof CreateLaneRequestTokenMode]
+  | null;
+
+export const CreateLaneRequestTokenMode = {
+  full: "full",
+  core: "core",
+  lean: "lean",
+  ultra: "ultra",
+} as const;
+
+export interface CreateLaneRequest {
+  /** Stable identifier for the team member (e.g. user slug or operator ID) */
+  memberIdentifier: string;
+  laneType?: CreateLaneRequestLaneType;
+  currentTask?: string | null;
+  tokenMode?: CreateLaneRequestTokenMode;
+}
+
+export type UpdateLaneRequestStatus =
+  (typeof UpdateLaneRequestStatus)[keyof typeof UpdateLaneRequestStatus];
+
+export const UpdateLaneRequestStatus = {
+  active: "active",
+  blocked: "blocked",
+  "review-needed": "review-needed",
+  "ready-to-merge": "ready-to-merge",
+} as const;
+
+export type UpdateLaneRequestLaneType =
+  (typeof UpdateLaneRequestLaneType)[keyof typeof UpdateLaneRequestLaneType];
+
+export const UpdateLaneRequestLaneType = {
+  ux: "ux",
+  debug: "debug",
+  backend: "backend",
+  review: "review",
+  general: "general",
+} as const;
+
+export type UpdateLaneRequestTokenMode =
+  | (typeof UpdateLaneRequestTokenMode)[keyof typeof UpdateLaneRequestTokenMode]
+  | null;
+
+export const UpdateLaneRequestTokenMode = {
+  full: "full",
+  core: "core",
+  lean: "lean",
+  ultra: "ultra",
+} as const;
+
+export interface UpdateLaneRequest {
+  status?: UpdateLaneRequestStatus;
+  laneType?: UpdateLaneRequestLaneType;
+  currentTask?: string | null;
+  tokenMode?: UpdateLaneRequestTokenMode;
+}
+
+export type ClaimOverlapItemRecommendation =
+  (typeof ClaimOverlapItemRecommendation)[keyof typeof ClaimOverlapItemRecommendation];
+
+export const ClaimOverlapItemRecommendation = {
+  no_conflict: "no_conflict",
+  warn: "warn",
+  block: "block",
+} as const;
+
+export interface ClaimOverlapItem {
+  conflictingLaneId: number;
+  conflictingMember: string;
+  overlapScore: number;
+  blastRadiusOverlap: number;
+  recommendation: ClaimOverlapItemRecommendation;
+}
+
+export type ClaimResponseOverallRecommendation =
+  (typeof ClaimResponseOverallRecommendation)[keyof typeof ClaimResponseOverallRecommendation];
+
+export const ClaimResponseOverallRecommendation = {
+  no_conflict: "no_conflict",
+  warn: "warn",
+  block: "block",
+} as const;
+
+export interface ClaimResponse {
+  claim: LaneClaimItem;
+  overlaps: ClaimOverlapItem[];
+  overallRecommendation: ClaimResponseOverallRecommendation;
+}
+
+export type ClaimReleaseResponseAction =
+  (typeof ClaimReleaseResponseAction)[keyof typeof ClaimReleaseResponseAction];
+
+export const ClaimReleaseResponseAction = {
+  released: "released",
+  heartbeat_refreshed: "heartbeat_refreshed",
+} as const;
+
+export interface ClaimReleaseResponse {
+  claimId: number;
+  action: ClaimReleaseResponseAction;
+  expiresAt?: string | null;
+}
+
+export type CreateClaimRequestClaimType =
+  (typeof CreateClaimRequestClaimType)[keyof typeof CreateClaimRequestClaimType];
+
+export const CreateClaimRequestClaimType = {
+  file: "file",
+  module: "module",
+  symbol: "symbol",
+  task: "task",
+} as const;
+
+export interface CreateClaimRequest {
+  claimType: CreateClaimRequestClaimType;
+  resourcePath: string;
+  symbolName?: string | null;
+  taskDescription?: string | null;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  strength?: number;
+  ttlSeconds?: number;
+}
+
+export type HandoffResponseHandoffType =
+  (typeof HandoffResponseHandoffType)[keyof typeof HandoffResponseHandoffType];
+
+export const HandoffResponseHandoffType = {
+  blocked: "blocked",
+  needs_review: "needs_review",
+  safe_to_merge: "safe_to_merge",
+  watch_files: "watch_files",
+  related_lane: "related_lane",
+} as const;
+
+export type HandoffResponseStatus =
+  (typeof HandoffResponseStatus)[keyof typeof HandoffResponseStatus];
+
+export const HandoffResponseStatus = {
+  pending: "pending",
+  acknowledged: "acknowledged",
+  expired: "expired",
+} as const;
+
+export interface HandoffResponse {
+  id: number;
+  fromLaneId: number;
+  toLaneIds: number[];
+  handoffType: HandoffResponseHandoffType;
+  resourcePaths: string[];
+  message?: string | null;
+  status: HandoffResponseStatus;
+  createdAt: string;
+}
+
+export type CreateHandoffRequestHandoffType =
+  (typeof CreateHandoffRequestHandoffType)[keyof typeof CreateHandoffRequestHandoffType];
+
+export const CreateHandoffRequestHandoffType = {
+  blocked: "blocked",
+  needs_review: "needs_review",
+  safe_to_merge: "safe_to_merge",
+  watch_files: "watch_files",
+  related_lane: "related_lane",
+} as const;
+
+export interface CreateHandoffRequest {
+  /** Target lane IDs (empty = broadcast to all session lanes) */
+  toLaneIds?: number[];
+  handoffType: CreateHandoffRequestHandoffType;
+  resourcePaths?: string[];
+  message?: string | null;
+  ttlSeconds?: number;
+}
+
+export interface CoordinationLaneSummary {
+  lane: LaneResponse;
+  activeClaims: number;
+  pendingHandoffs: number;
+  queuedJobs: number;
+}
+
+export interface CoordinationStateResponse {
+  sessionId: number;
+  lanes: CoordinationLaneSummary[];
+  totalActiveClaims: number;
+  totalQueuedJobs: number;
+  pendingHandoffs: number;
+  recentHandoffs: HandoffResponse[];
+}
+
+export type ConflictItemRecommendation =
+  (typeof ConflictItemRecommendation)[keyof typeof ConflictItemRecommendation];
+
+export const ConflictItemRecommendation = {
+  no_conflict: "no_conflict",
+  warn: "warn",
+  block: "block",
+} as const;
+
+export interface ConflictItem {
+  laneIdA: number;
+  laneIdB: number;
+  memberA: string;
+  memberB: string;
+  overlapScore: number;
+  blastRadiusOverlap: number;
+  conflictingResources: string[];
+  recommendation: ConflictItemRecommendation;
+  detail?: string | null;
+}
+
+export interface ConflictListResponse {
+  sessionId: number;
+  conflicts: ConflictItem[];
+  totalConflicts: number;
+  highSeverity: number;
+}
+
+export type HeavyJobResponseJobClass =
+  (typeof HeavyJobResponseJobClass)[keyof typeof HeavyJobResponseJobClass];
+
+export const HeavyJobResponseJobClass = {
+  indexing: "indexing",
+  embedding: "embedding",
+  eval: "eval",
+  blast_radius: "blast_radius",
+  compile: "compile",
+  other: "other",
+} as const;
+
+export type HeavyJobResponseStatus =
+  (typeof HeavyJobResponseStatus)[keyof typeof HeavyJobResponseStatus];
+
+export const HeavyJobResponseStatus = {
+  queued: "queued",
+  running: "running",
+  deferred: "deferred",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export type HeavyJobResponsePayload = { [key: string]: unknown } | null;
+
+export type HeavyJobResponseResult = { [key: string]: unknown } | null;
+
+export interface HeavyJobResponse {
+  id: number;
+  sessionId: number;
+  laneId?: number | null;
+  memberIdentifier?: string | null;
+  jobClass: HeavyJobResponseJobClass;
+  status: HeavyJobResponseStatus;
+  priority: number;
+  ageWeight: number;
+  laneFairnessWeight: number;
+  /** Current scheduler priority score */
+  score: number;
+  payload?: HeavyJobResponsePayload;
+  result?: HeavyJobResponseResult;
+  errorMessage?: string | null;
+  enqueuedAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  deferUntil?: string | null;
+}
+
+export interface HeavyJobListResponse {
+  sessionId: number;
+  jobs: HeavyJobResponse[];
+  total: number;
+}
+
+export type EnqueueHeavyJobRequestJobClass =
+  (typeof EnqueueHeavyJobRequestJobClass)[keyof typeof EnqueueHeavyJobRequestJobClass];
+
+export const EnqueueHeavyJobRequestJobClass = {
+  indexing: "indexing",
+  embedding: "embedding",
+  eval: "eval",
+  blast_radius: "blast_radius",
+  compile: "compile",
+  other: "other",
+} as const;
+
+export type EnqueueHeavyJobRequestPayload = { [key: string]: unknown } | null;
+
+export interface EnqueueHeavyJobRequest {
+  laneId?: number | null;
+  memberIdentifier?: string | null;
+  jobClass: EnqueueHeavyJobRequestJobClass;
+  /**
+   * @minimum 1
+   * @maximum 10
+   */
+  priority?: number;
+  payload?: EnqueueHeavyJobRequestPayload;
+}
+
+export type UpdateHeavyJobRequestStatus =
+  (typeof UpdateHeavyJobRequestStatus)[keyof typeof UpdateHeavyJobRequestStatus];
+
+export const UpdateHeavyJobRequestStatus = {
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+  deferred: "deferred",
+} as const;
+
+export type UpdateHeavyJobRequestResult = { [key: string]: unknown } | null;
+
+export interface UpdateHeavyJobRequest {
+  status: UpdateHeavyJobRequestStatus;
+  result?: UpdateHeavyJobRequestResult;
+  errorMessage?: string | null;
+  /** Seconds from now to defer the job (used when status=deferred) */
+  deferUntilSeconds?: number | null;
+}
+
 export type SearchOffersParams = {
   /**
    * Filter offers by GPU profile
@@ -1352,3 +1770,21 @@ export const GetMemoryGovernanceStatsTokenMode = {
   lean: "lean",
   ultra: "ultra",
 } as const;
+
+export type ReleaseLaneClaimParams = {
+  /**
+   * If true, refreshes heartbeat instead of releasing
+   */
+  heartbeat?: boolean;
+  /**
+   * New TTL when doing a heartbeat refresh
+   */
+  ttlSeconds?: number;
+};
+
+export type ListHeavyJobsParams = {
+  /**
+   * Comma-separated status filter: queued, running, deferred, completed, failed
+   */
+  status?: string;
+};
