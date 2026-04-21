@@ -9,10 +9,12 @@ import {
   useSessionCompleteFeedback,
   useGetSessionRoutingStats,
   useGetSessionConflicts,
+  useGetSessionCoordination,
   getGetSessionQueryKey,
   getGetActiveSessionQueryKey,
   getGetSessionSkillsQueryKey,
   getGetSessionConflictsQueryKey,
+  getGetSessionCoordinationQueryKey,
   useEnqueueRepoIndex,
   getGetRepoSummaryQueryKey,
 } from "@workspace/api-client-react";
@@ -1076,6 +1078,7 @@ export default function SessionDetail() {
   const [dismissedConflictFingerprint, setDismissedConflictFingerprint] = useState<string>(() =>
     sessionId ? (sessionStorage.getItem(`conflict-dismissed:${sessionId}`) ?? "") : ""
   );
+  const [seenHandoffCount, setSeenHandoffCount] = useState(0);
   const [bootLog, setBootLog] = useState<string[]>([]);
   const lastBootMsgRef = useRef<string>("");
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -1129,6 +1132,16 @@ export default function SessionDetail() {
       refetchInterval: 20000,
     },
   });
+
+  // Background coordination polling for the handoff notification badge
+  const { data: bgCoordData } = useGetSessionCoordination(sessionId, {
+    query: {
+      enabled: !!sessionId,
+      queryKey: getGetSessionCoordinationQueryKey(sessionId),
+      refetchInterval: 20000,
+    },
+  });
+  const bgPendingHandoffs = bgCoordData?.pendingHandoffs ?? 0;
 
   const activeConflicts = (bgConflictsData?.conflicts ?? []).filter(
     (c) => c.recommendation !== "no_conflict"
@@ -1198,6 +1211,30 @@ export default function SessionDetail() {
       prevConflictFingerprintRef.current = "";
     }
   }, [showConflictBadge]);
+
+  // When the Team tab is opened, mark current pending handoffs as seen.
+  // When handoffs are all resolved (count hits 0), reset seen count too.
+  useEffect(() => {
+    if (activeTab === "team") {
+      setSeenHandoffCount(bgPendingHandoffs);
+    }
+  }, [activeTab, bgPendingHandoffs]);
+
+  useEffect(() => {
+    if (bgPendingHandoffs === 0) {
+      setSeenHandoffCount(0);
+    }
+  }, [bgPendingHandoffs]);
+
+  // Reset on session change
+  useEffect(() => {
+    setSeenHandoffCount(0);
+  }, [sessionId]);
+
+  const pendingHandoffBadgeCount = bgPendingHandoffs > seenHandoffCount
+    ? bgPendingHandoffs - seenHandoffCount
+    : 0;
+  const showHandoffBadge = pendingHandoffBadgeCount > 0 && activeTab !== "team";
 
   const doStop = (taskSuccessScore?: number) => {
     if (taskSuccessScore !== undefined) {
@@ -1431,7 +1468,7 @@ export default function SessionDetail() {
           Repo Index
         </button>
         <button
-          onClick={() => { setActiveTab("team"); setSeenConflictFingerprint(conflictFingerprint); }}
+          onClick={() => { setActiveTab("team"); setSeenConflictFingerprint(conflictFingerprint); setSeenHandoffCount(bgPendingHandoffs); }}
           className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
             activeTab === "team"
               ? "border-primary text-foreground"
@@ -1450,6 +1487,11 @@ export default function SessionDetail() {
               }`}
             >
               {hasBlockingConflict ? activeConflicts.filter(c => c.recommendation === "block").length : activeConflicts.length}
+            </span>
+          )}
+          {showHandoffBadge && (
+            <span className="ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none animate-badge-pop">
+              {pendingHandoffBadgeCount > 99 ? "99+" : pendingHandoffBadgeCount}
             </span>
           )}
         </button>
