@@ -432,6 +432,92 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PHASE 1.7: Context Shield + Working State Continuity provisioning
+# Provisions the per-session SQLite event journal, creates the artifacts
+# directory, installs floatr_execute CLI wrapper, and runs artifact cleanup.
+# Non-blocking: failures are logged but do not abort startup.
+# ─────────────────────────────────────────────────────────────────────────────
+log "=== Phase 1.7: Context Shield + Working State Continuity ==="
+
+FLOATR_DIR="/workspace/.floatr"
+ARTIFACTS_DIR="$FLOATR_DIR/artifacts"
+STATE_DB="$FLOATR_DIR/session-state.db"
+STATE_SCRIPT="${REPO_INTEL_DIR}/session-state.mjs"
+SHIELD_SCRIPT="${REPO_INTEL_DIR}/context-shield.mjs"
+
+mkdir -p "$ARTIFACTS_DIR"
+log "Context Shield: artifacts directory ready at $ARTIFACTS_DIR"
+
+# Provision the session-state.db (creates tables if not present)
+if [ -f "$STATE_SCRIPT" ]; then
+    if node "$STATE_SCRIPT" provision >> "$LOG_FILE" 2>&1; then
+        log "Context Shield: session journal provisioned at $STATE_DB"
+    else
+        log "WARNING: session journal provisioning failed — event capture will be unavailable"
+    fi
+else
+    log "Context Shield: session-state.mjs not found at $STATE_SCRIPT — skipping journal provisioning"
+fi
+
+# Install floatr_execute / floatr_execute_file / floatr_batch_execute wrappers
+# These are callable by the claw model via its bash tool.
+if [ -f "$SHIELD_SCRIPT" ]; then
+    cat > /usr/local/bin/floatr_execute << WRAPPER
+#!/bin/bash
+# floatr_execute — shielded command execution (Context Shield)
+# Usage: floatr_execute <command and args...>
+exec node "${SHIELD_SCRIPT}" exec "\$@"
+WRAPPER
+    chmod +x /usr/local/bin/floatr_execute
+
+    cat > /usr/local/bin/floatr_execute_file << WRAPPER
+#!/bin/bash
+# floatr_execute_file — shielded file read (Context Shield)
+# Usage: floatr_execute_file <path>
+exec node "${SHIELD_SCRIPT}" exec-file "\$@"
+WRAPPER
+    chmod +x /usr/local/bin/floatr_execute_file
+
+    cat > /usr/local/bin/floatr_batch_execute << WRAPPER
+#!/bin/bash
+# floatr_batch_execute — shielded batch execution (Context Shield)
+# Usage: floatr_batch_execute '<json commands array>'
+exec node "${SHIELD_SCRIPT}" batch "\$@"
+WRAPPER
+    chmod +x /usr/local/bin/floatr_batch_execute
+
+    cat > /usr/local/bin/floatr_stats << WRAPPER
+#!/bin/bash
+# floatr_stats — shielded execution statistics
+exec node "${SHIELD_SCRIPT}" stats
+WRAPPER
+    chmod +x /usr/local/bin/floatr_stats
+
+    cat > /usr/local/bin/floatr_doctor << WRAPPER
+#!/bin/bash
+# floatr_doctor — shield health diagnostics
+exec node "${SHIELD_SCRIPT}" doctor
+WRAPPER
+    chmod +x /usr/local/bin/floatr_doctor
+
+    log "Context Shield: floatr_execute / floatr_execute_file / floatr_batch_execute / floatr_stats / floatr_doctor installed to /usr/local/bin/"
+
+    # Run artifact cleanup in background (remove stale artifacts from prior runs)
+    node "$SHIELD_SCRIPT" cleanup >> "$LOG_FILE" 2>&1 &
+    log "Context Shield: background artifact cleanup started"
+else
+    log "Context Shield: context-shield.mjs not found at $SHIELD_SCRIPT — CLI wrappers not installed"
+fi
+
+# Write boot event to the journal
+if [ -f "$STATE_SCRIPT" ]; then
+    _BOOT_EVENT="{\"actor_type\":\"onstart\",\"event_type\":\"session_boot\",\"payload\":{\"sessionId\":\"${OMNIQL_SESSION_ID:-unknown}\"}}"
+    node "$STATE_SCRIPT" append-event "$_BOOT_EVENT" >> "$LOG_FILE" 2>&1 || true
+fi
+
+log "=== Phase 1.7 done — Context Shield provisioned ==="
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PHASE 2: Model download + vLLM + litellm in background
 # ─────────────────────────────────────────────────────────────────────────────
 log "Starting LLM backend in background..."
