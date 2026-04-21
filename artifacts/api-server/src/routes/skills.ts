@@ -15,16 +15,38 @@ const NOT_IMPLEMENTED = (feature: string) => ({
   availableIn: "Phase 4",
 });
 
-router.get("/skills", async (_req, res) => {
-  const skills = await db
-    .select()
-    .from(skillsTable)
-    .orderBy(desc(skillsTable.createdAt));
+router.get("/skills", async (req, res) => {
+  const { class: classFilter, trustTier, reviewStatus, limit: limitStr, offset: offsetStr } = req.query as {
+    class?: string;
+    trustTier?: string;
+    reviewStatus?: string;
+    limit?: string;
+    offset?: string;
+  };
 
-  res.json({ skills, builtins: DEFAULT_SKILLS.map(s => ({ id: s.id, name: s.name, class: s.class, summary: s.summary })) });
+  const limit = Math.min(parseInt(limitStr || "50") || 50, 200);
+  const offset = parseInt(offsetStr || "0") || 0;
+
+  let query = db.select().from(skillsTable).$dynamic();
+
+  const filters = [];
+  if (classFilter) filters.push(eq(skillsTable.class, classFilter));
+  if (trustTier) filters.push(eq(skillsTable.trustTier, trustTier));
+  if (reviewStatus) filters.push(eq(skillsTable.reviewStatus, reviewStatus));
+  if (filters.length) {
+    query = query.where(and(...filters));
+  }
+
+  const skills = await query.orderBy(desc(skillsTable.createdAt)).limit(limit).offset(offset);
+
+  res.json({
+    skills,
+    builtins: DEFAULT_SKILLS.map(s => ({ id: s.id, name: s.name, class: s.class, summary: s.summary })),
+    pagination: { limit, offset, count: skills.length },
+  });
 });
 
-router.post("/skills/discover", (_req, res) => {
+router.get("/skills/discover", (_req, res) => {
   res.status(501).json(NOT_IMPLEMENTED("skill discovery"));
 });
 
@@ -53,13 +75,15 @@ router.get("/skills/:skillId", async (req, res) => {
     return;
   }
 
-  const versions = await db
+  // Return only the latest version manifest
+  const [latestVersion] = await db
     .select()
     .from(skillVersionsTable)
     .where(eq(skillVersionsTable.skillId, id))
-    .orderBy(desc(skillVersionsTable.createdAt));
+    .orderBy(desc(skillVersionsTable.createdAt))
+    .limit(1);
 
-  res.json({ skill, versions });
+  res.json({ skill, latestManifest: latestVersion?.manifestJson || null });
 });
 
 router.post("/skills/import", async (req, res) => {
@@ -178,21 +202,17 @@ router.post("/skill-bundles/seed", async (_req, res) => {
 });
 
 router.post("/skill-bundles/compile", async (req, res) => {
-  const { bundleId, taskMode, tokenMode, repoLangs, modelProfile } = req.body as {
+  const { bundleId, sessionType, taskMode, tokenMode, repoLangs, modelProfile } = req.body as {
     bundleId?: number;
+    sessionType?: string;
     taskMode?: string;
     tokenMode?: string;
     repoLangs?: string[];
     modelProfile?: string;
   };
 
-  if (!bundleId) {
-    res.status(400).json({ error: "bundleId is required" });
-    return;
-  }
-
   const ctx: SessionContext = {
-    sessionType: "solo",
+    sessionType: (sessionType || "solo") as SessionContext["sessionType"],
     taskMode: (taskMode || "build") as SessionContext["taskMode"],
     modelProfile: modelProfile || "kimi",
     repoLangs: repoLangs || [],
@@ -200,7 +220,18 @@ router.post("/skill-bundles/compile", async (req, res) => {
   };
 
   try {
-    const compiled = await compileBundle(bundleId, ctx);
+    // Auto-select default bundle from context if none specified
+    let resolvedBundleId = bundleId;
+    if (!resolvedBundleId) {
+      const defaultBundle = await getDefaultBundleForContext(ctx);
+      if (!defaultBundle) {
+        res.status(400).json({ error: "No bundle found for provided context" });
+        return;
+      }
+      resolvedBundleId = defaultBundle.id;
+    }
+
+    const compiled = await compileBundle(resolvedBundleId, ctx);
     const b64 = buildActiveBundleEnvPayload(compiled, ctx.tokenMode);
     res.json({ compiled, activeBundleB64: b64, byteLength: Buffer.from(b64, "base64").length });
   } catch (err) {
@@ -361,7 +392,18 @@ router.get("/sessions/:sessionId/skills", async (req, res) => {
     .where(eq(sessionSkillsTable.sessionId, sessionId))
     .orderBy(desc(sessionSkillsTable.activatedAt));
 
-  res.json({ activations });
+  // Fetch the latest activation's bundle details if available
+  const latest = activations[0] || null;
+  let activeBundle: (typeof skillBundlesTable.$inferSelect) | null = null;
+  if (latest?.bundleId) {
+    const [bundle] = await db.select().from(skillBundlesTable).where(eq(skillBundlesTable.id, latest.bundleId));
+    activeBundle = bundle || null;
+  }
+
+  // Active skill manifests from the latest activation
+  const activeManifests = (latest?.activatedSkillsJson as unknown as Array<{ id: string }>) || [];
+
+  res.json({ activations, activeBundle, activeManifests });
 });
 
 router.post("/sessions/:sessionId/skills/feedback", async (req, res) => {

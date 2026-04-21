@@ -5,10 +5,11 @@
  * Cloud Coding Platform API
  * OpenAPI spec version: 0.1.0
  */
-import type { SkillDetailResponseVersionsItem } from "./skillDetailResponseVersionsItem";
+import type { SkillDetailResponseLatestManifest } from "./skillDetailResponseLatestManifest";
 import type { SkillRecord } from "./skillRecord";
 
 export interface SkillDetailResponse {
   skill: SkillRecord;
-  versions?: SkillDetailResponseVersionsItem[];
+  /** The latest version manifest JSON for this skill */
+  latestManifest?: SkillDetailResponseLatestManifest;
 }

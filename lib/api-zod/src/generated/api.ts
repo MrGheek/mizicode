@@ -726,6 +726,24 @@ export const GetDashboardSummaryResponse = zod.object({
  * Returns imported skills and built-in skill metadata
  * @summary List all skills
  */
+export const listSkillsQueryLimitDefault = 50;
+export const listSkillsQueryLimitMax = 200;
+
+export const listSkillsQueryOffsetDefault = 0;
+
+export const ListSkillsQueryParams = zod.object({
+  class: zod
+    .enum(["doctrine", "workflow", "context", "efficiency", "team", "repo"])
+    .optional(),
+  trustTier: zod.enum(["builtin", "user_approved", "community"]).optional(),
+  reviewStatus: zod.enum(["pending", "approved", "rejected"]).optional(),
+  limit: zod.coerce
+    .number()
+    .max(listSkillsQueryLimitMax)
+    .default(listSkillsQueryLimitDefault),
+  offset: zod.coerce.number().default(listSkillsQueryOffsetDefault),
+});
+
 export const ListSkillsResponse = zod.object({
   skills: zod.array(
     zod.object({
@@ -753,6 +771,13 @@ export const ListSkillsResponse = zod.object({
       summary: zod.string(),
     }),
   ),
+  pagination: zod
+    .object({
+      limit: zod.number(),
+      offset: zod.number(),
+      count: zod.number(),
+    })
+    .optional(),
 });
 
 /**
@@ -767,7 +792,11 @@ export const ImportSkillBody = zod.object({
  * @summary Preview bundle compilation
  */
 export const CompileSkillPreviewBody = zod.object({
-  bundleId: zod.number(),
+  bundleId: zod
+    .number()
+    .describe(
+      "Required for compile-preview; optional for compile (auto-selects from context)",
+    ),
   taskMode: zod.string().nullish(),
   tokenMode: zod.string().nullish(),
   repoLangs: zod.array(zod.string()).nullish(),
@@ -804,18 +833,23 @@ export const GetSkillResponse = zod.object({
     createdAt: zod.coerce.date(),
     updatedAt: zod.coerce.date(),
   }),
-  versions: zod.array(zod.record(zod.string(), zod.unknown())).optional(),
+  latestManifest: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe("The latest version manifest JSON for this skill"),
 });
 
 /**
- * @summary Approve, reject, or disable a skill
+ * @summary Approve or reject a skill
  */
 export const ReviewSkillParams = zod.object({
   skillId: zod.coerce.number(),
 });
 
 export const ReviewSkillBody = zod.object({
-  action: zod.enum(["approve", "reject", "disable"]),
+  approved: zod
+    .boolean()
+    .describe("true to approve and enable, false to reject and disable"),
   reason: zod.string().nullish(),
 });
 
@@ -836,7 +870,70 @@ export const ReviewSkillResponse = zod.object({
     createdAt: zod.coerce.date(),
     updatedAt: zod.coerce.date(),
   }),
-  versions: zod.array(zod.record(zod.string(), zod.unknown())).optional(),
+  latestManifest: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe("The latest version manifest JSON for this skill"),
+});
+
+/**
+ * @summary Enable a skill
+ */
+export const EnableSkillParams = zod.object({
+  skillId: zod.coerce.number(),
+});
+
+export const EnableSkillResponse = zod.object({
+  skill: zod.object({
+    id: zod.number(),
+    slug: zod.string(),
+    name: zod.string(),
+    class: zod.string(),
+    description: zod.string().optional(),
+    sourceId: zod.number().nullish(),
+    trustTier: zod.string(),
+    installRisk: zod.string(),
+    tokenOverheadEstimate: zod.number().optional(),
+    enabled: zod.boolean(),
+    reviewStatus: zod.string(),
+    reviewedAt: zod.coerce.date().nullish(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  latestManifest: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe("The latest version manifest JSON for this skill"),
+});
+
+/**
+ * @summary Disable a skill
+ */
+export const DisableSkillParams = zod.object({
+  skillId: zod.coerce.number(),
+});
+
+export const DisableSkillResponse = zod.object({
+  skill: zod.object({
+    id: zod.number(),
+    slug: zod.string(),
+    name: zod.string(),
+    class: zod.string(),
+    description: zod.string().optional(),
+    sourceId: zod.number().nullish(),
+    trustTier: zod.string(),
+    installRisk: zod.string(),
+    tokenOverheadEstimate: zod.number().optional(),
+    enabled: zod.boolean(),
+    reviewStatus: zod.string(),
+    reviewedAt: zod.coerce.date().nullish(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  latestManifest: zod
+    .record(zod.string(), zod.unknown())
+    .nullish()
+    .describe("The latest version manifest JSON for this skill"),
 });
 
 /**
@@ -894,6 +991,30 @@ export const SeedDefaultBundlesResponse = zod.object({
       updatedAt: zod.coerce.date(),
     }),
   ),
+});
+
+/**
+ * Auto-selects the best bundle from context and compiles it. Pass bundleId to override.
+ * @summary Compile a bundle from context
+ */
+export const CompileBundleBody = zod.object({
+  bundleId: zod
+    .number()
+    .nullish()
+    .describe(
+      "Optional. If absent, the best bundle is auto-selected from context.",
+    ),
+  sessionType: zod.enum(["solo", "team"]).nullish(),
+  taskMode: zod.string().nullish(),
+  tokenMode: zod.string().nullish(),
+  repoLangs: zod.array(zod.string()).nullish(),
+  modelProfile: zod.string().nullish(),
+});
+
+export const CompileBundleResponse = zod.object({
+  compiled: zod.record(zod.string(), zod.unknown()),
+  activeBundleB64: zod.string(),
+  byteLength: zod.number(),
 });
 
 /**
@@ -1011,6 +1132,26 @@ export const GetSessionSkillsResponse = zod.object({
       activatedAt: zod.coerce.date(),
     }),
   ),
+  activeBundle: zod
+    .object({
+      id: zod.number(),
+      slug: zod.string(),
+      name: zod.string(),
+      bundleJson: zod.record(zod.string(), zod.unknown()),
+      sessionMode: zod.string().nullish(),
+      taskMode: zod.string().nullish(),
+      repoKind: zod.string().nullish(),
+      modelFamily: zod.string().nullish(),
+      tokenMode: zod.string(),
+      isDefault: zod.boolean(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    })
+    .nullish(),
+  activeManifests: zod
+    .array(zod.record(zod.string(), zod.unknown()))
+    .optional()
+    .describe("Full skill manifests from the latest activation"),
 });
 
 /**

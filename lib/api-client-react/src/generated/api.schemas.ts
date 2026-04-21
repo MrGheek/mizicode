@@ -248,16 +248,29 @@ export interface SkillRecord {
   updatedAt: string;
 }
 
+export type SkillsListResponsePagination = {
+  limit: number;
+  offset: number;
+  count: number;
+};
+
 export interface SkillsListResponse {
   skills: SkillRecord[];
   builtins: SkillSummary[];
+  pagination?: SkillsListResponsePagination;
 }
 
-export type SkillDetailResponseVersionsItem = { [key: string]: unknown };
+/**
+ * The latest version manifest JSON for this skill
+ */
+export type SkillDetailResponseLatestManifest = {
+  [key: string]: unknown;
+} | null;
 
 export interface SkillDetailResponse {
   skill: SkillRecord;
-  versions?: SkillDetailResponseVersionsItem[];
+  /** The latest version manifest JSON for this skill */
+  latestManifest?: SkillDetailResponseLatestManifest;
 }
 
 export interface ImportSkillRequest {
@@ -273,17 +286,9 @@ export interface ImportSkillResponse {
   count: number;
 }
 
-export type ReviewSkillRequestAction =
-  (typeof ReviewSkillRequestAction)[keyof typeof ReviewSkillRequestAction];
-
-export const ReviewSkillRequestAction = {
-  approve: "approve",
-  reject: "reject",
-  disable: "disable",
-} as const;
-
 export interface ReviewSkillRequest {
-  action: ReviewSkillRequestAction;
+  /** true to approve and enable, false to reject and disable */
+  approved: boolean;
   reason?: string | null;
 }
 
@@ -344,7 +349,27 @@ export interface ActivateBundleResponse {
 }
 
 export interface CompilePreviewRequest {
+  /** Required for compile-preview; optional for compile (auto-selects from context) */
   bundleId: number;
+  taskMode?: string | null;
+  tokenMode?: string | null;
+  repoLangs?: string[] | null;
+  modelProfile?: string | null;
+}
+
+export type CompileBundleRequestSessionType =
+  | (typeof CompileBundleRequestSessionType)[keyof typeof CompileBundleRequestSessionType]
+  | null;
+
+export const CompileBundleRequestSessionType = {
+  solo: "solo",
+  team: "team",
+} as const;
+
+export interface CompileBundleRequest {
+  /** Optional. If absent, the best bundle is auto-selected from context. */
+  bundleId?: number | null;
+  sessionType?: CompileBundleRequestSessionType;
   taskMode?: string | null;
   tokenMode?: string | null;
   repoLangs?: string[] | null;
@@ -374,8 +399,15 @@ export interface SessionSkillActivation {
   activatedAt: string;
 }
 
+export type SessionSkillsResponseActiveManifestsItem = {
+  [key: string]: unknown;
+};
+
 export interface SessionSkillsResponse {
   activations: SessionSkillActivation[];
+  activeBundle?: SkillBundle | null;
+  /** Full skill manifests from the latest activation */
+  activeManifests?: SessionSkillsResponseActiveManifestsItem[];
 }
 
 export interface SkillFeedbackRequest {
@@ -414,3 +446,44 @@ export type SearchOffersParams = {
    */
   limit?: number;
 };
+
+export type ListSkillsParams = {
+  class?: ListSkillsClass;
+  trustTier?: ListSkillsTrustTier;
+  reviewStatus?: ListSkillsReviewStatus;
+  /**
+   * @maximum 200
+   */
+  limit?: number;
+  offset?: number;
+};
+
+export type ListSkillsClass =
+  (typeof ListSkillsClass)[keyof typeof ListSkillsClass];
+
+export const ListSkillsClass = {
+  doctrine: "doctrine",
+  workflow: "workflow",
+  context: "context",
+  efficiency: "efficiency",
+  team: "team",
+  repo: "repo",
+} as const;
+
+export type ListSkillsTrustTier =
+  (typeof ListSkillsTrustTier)[keyof typeof ListSkillsTrustTier];
+
+export const ListSkillsTrustTier = {
+  builtin: "builtin",
+  user_approved: "user_approved",
+  community: "community",
+} as const;
+
+export type ListSkillsReviewStatus =
+  (typeof ListSkillsReviewStatus)[keyof typeof ListSkillsReviewStatus];
+
+export const ListSkillsReviewStatus = {
+  pending: "pending",
+  approved: "approved",
+  rejected: "rejected",
+} as const;

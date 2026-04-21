@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { db, skillsTable, skillBundlesTable, skillVersionsTable, sessionSkillsTable, sessionsTable } from "@workspace/db";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, desc } from "drizzle-orm";
 import { DEFAULT_SKILLS, DEFAULT_BUNDLES } from "./default-skills";
 import { rankSkills } from "./skills-ranker";
 import { TOKEN_MODE_PROFILES } from "./skills-types";
@@ -18,8 +18,10 @@ async function getAllEnabledManifests(): Promise<FloatrSkillManifest[]> {
   const versions = await db
     .select()
     .from(skillVersionsTable)
-    .where(inArray(skillVersionsTable.skillId, enabledSkills.map(s => s.id)));
+    .where(inArray(skillVersionsTable.skillId, enabledSkills.map(s => s.id)))
+    .orderBy(desc(skillVersionsTable.createdAt));
 
+  // Keep only the latest version per skill (first encountered after DESC sort)
   const bySkillId = new Map<number, typeof versions[0]>();
   for (const v of versions) {
     if (!bySkillId.has(v.skillId)) bySkillId.set(v.skillId, v);

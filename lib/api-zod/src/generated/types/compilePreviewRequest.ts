@@ -7,6 +7,7 @@
  */
 
 export interface CompilePreviewRequest {
+  /** Required for compile-preview; optional for compile (auto-selects from context) */
   bundleId: number;
   taskMode?: string | null;
   tokenMode?: string | null;

@@ -6,7 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { SessionSkillActivation } from "./sessionSkillActivation";
+import type { SessionSkillsResponseActiveManifestsItem } from "./sessionSkillsResponseActiveManifestsItem";
+import type { SkillBundle } from "./skillBundle";
 
 export interface SessionSkillsResponse {
   activations: SessionSkillActivation[];
+  activeBundle?: SkillBundle | null;
+  /** Full skill manifests from the latest activation */
+  activeManifests?: SessionSkillsResponseActiveManifestsItem[];
 }

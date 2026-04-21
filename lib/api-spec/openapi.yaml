@@ -431,6 +431,33 @@ paths:
       tags: [skills]
       summary: List all skills
       description: Returns imported skills and built-in skill metadata
+      parameters:
+        - name: class
+          in: query
+          schema:
+            type: string
+            enum: [doctrine, workflow, context, efficiency, team, repo]
+        - name: trustTier
+          in: query
+          schema:
+            type: string
+            enum: [builtin, user_approved, community]
+        - name: reviewStatus
+          in: query
+          schema:
+            type: string
+            enum: [pending, approved, rejected]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
       responses:
         "200":
           description: Skills list
@@ -542,10 +569,10 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /skills/{skillId}/review:
-    put:
+    post:
       operationId: reviewSkill
       tags: [skills]
-      summary: Approve, reject, or disable a skill
+      summary: Approve or reject a skill
       parameters:
         - name: skillId
           in: path
@@ -558,6 +585,56 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ReviewSkillRequest"
+      responses:
+        "200":
+          description: Updated skill
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillDetailResponse"
+        "404":
+          description: Skill not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/{skillId}/enable:
+    post:
+      operationId: enableSkill
+      tags: [skills]
+      summary: Enable a skill
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Updated skill
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillDetailResponse"
+        "404":
+          description: Skill not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/{skillId}/disable:
+    post:
+      operationId: disableSkill
+      tags: [skills]
+      summary: Disable a skill
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         "200":
           description: Updated skill
@@ -621,6 +698,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BundleListResponse"
+
+  /skill-bundles/compile:
+    post:
+      operationId: compileBundle
+      tags: [skills]
+      summary: Compile a bundle from context
+      description: Auto-selects the best bundle from context and compiles it. Pass bundleId to override.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompileBundleRequest"
+      responses:
+        "200":
+          description: Compiled bundle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompilePreviewResponse"
+        "400":
+          description: Invalid request or no bundle available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /skill-bundles/{bundleId}:
     get:
@@ -1331,6 +1433,19 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SkillSummary"
+        pagination:
+          type: object
+          properties:
+            limit:
+              type: integer
+            offset:
+              type: integer
+            count:
+              type: integer
+          required:
+            - limit
+            - offset
+            - count
       required:
         - skills
         - builtins
@@ -1340,11 +1455,11 @@ components:
       properties:
         skill:
           $ref: "#/components/schemas/SkillRecord"
-        versions:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
+        latestManifest:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: The latest version manifest JSON for this skill
       required:
         - skill
 
@@ -1377,14 +1492,14 @@ components:
     ReviewSkillRequest:
       type: object
       properties:
-        action:
-          type: string
-          enum: [approve, reject, disable]
+        approved:
+          type: boolean
+          description: true to approve and enable, false to reject and disable
         reason:
           type: string
           nullable: true
       required:
-        - action
+        - approved
 
     SkillBundle:
       type: object
@@ -1527,6 +1642,7 @@ components:
       properties:
         bundleId:
           type: integer
+          description: Required for compile-preview; optional for compile (auto-selects from context)
         taskMode:
           type: string
           nullable: true
@@ -1543,6 +1659,32 @@ components:
           nullable: true
       required:
         - bundleId
+
+    CompileBundleRequest:
+      type: object
+      properties:
+        bundleId:
+          type: integer
+          nullable: true
+          description: Optional. If absent, the best bundle is auto-selected from context.
+        sessionType:
+          type: string
+          nullable: true
+          enum: [solo, team]
+        taskMode:
+          type: string
+          nullable: true
+        tokenMode:
+          type: string
+          nullable: true
+        repoLangs:
+          type: array
+          nullable: true
+          items:
+            type: string
+        modelProfile:
+          type: string
+          nullable: true
 
     CompilePreviewResponse:
       type: object
@@ -1598,6 +1740,15 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SessionSkillActivation"
+        activeBundle:
+          $ref: "#/components/schemas/SkillBundle"
+          nullable: true
+        activeManifests:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          description: Full skill manifests from the latest activation
       required:
         - activations
 

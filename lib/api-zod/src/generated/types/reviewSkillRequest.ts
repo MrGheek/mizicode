@@ -5,9 +5,9 @@
  * Cloud Coding Platform API
  * OpenAPI spec version: 0.1.0
  */
-import type { ReviewSkillRequestAction } from "./reviewSkillRequestAction";
 
 export interface ReviewSkillRequest {
-  action: ReviewSkillRequestAction;
+  /** true to approve and enable, false to reject and disable */
+  approved: boolean;
   reason?: string | null;
 }

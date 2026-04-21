@@ -6,9 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { SkillRecord } from "./skillRecord";
+import type { SkillsListResponsePagination } from "./skillsListResponsePagination";
 import type { SkillSummary } from "./skillSummary";
 
 export interface SkillsListResponse {
   skills: SkillRecord[];
   builtins: SkillSummary[];
+  pagination?: SkillsListResponsePagination;
 }
