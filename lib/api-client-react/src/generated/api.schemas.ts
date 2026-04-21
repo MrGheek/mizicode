@@ -629,6 +629,17 @@ export type RepoSyncRequestFilesItem = { [key: string]: unknown };
 
 export type RepoSyncRequestEdgesItem = { [key: string]: unknown };
 
+export type RepoSyncRequestChunksItem = {
+  path?: string;
+  lang?: string | null;
+  /** Code snippet (capped at 1500 chars) */
+  content?: string;
+  startLine?: number;
+  endLine?: number;
+  symbolName?: string | null;
+  symbolKind?: string | null;
+};
+
 export interface RepoSyncRequest {
   jobId: number;
   status: string;
@@ -642,6 +653,8 @@ export interface RepoSyncRequest {
   files?: RepoSyncRequestFilesItem[] | null;
   /** Import/caller edges for blast-radius approximation (max 2000) */
   edges?: RepoSyncRequestEdgesItem[] | null;
+  /** Code chunks (function/class bodies) for semantic retrieval (max 500) */
+  chunks?: RepoSyncRequestChunksItem[] | null;
   indexedSymbols?: number | null;
   edgeCount?: number | null;
   durationMs?: number | null;

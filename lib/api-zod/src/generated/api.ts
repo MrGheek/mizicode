@@ -1472,6 +1472,25 @@ export const SyncRepoIndexBody = zod.object({
     .array(zod.record(zod.string(), zod.unknown()))
     .nullish()
     .describe("Import\/caller edges for blast-radius approximation (max 2000)"),
+  chunks: zod
+    .array(
+      zod.object({
+        path: zod.string().optional(),
+        lang: zod.string().nullish(),
+        content: zod
+          .string()
+          .optional()
+          .describe("Code snippet (capped at 1500 chars)"),
+        startLine: zod.number().optional(),
+        endLine: zod.number().optional(),
+        symbolName: zod.string().nullish(),
+        symbolKind: zod.string().nullish(),
+      }),
+    )
+    .nullish()
+    .describe(
+      "Code chunks (function\/class bodies) for semantic retrieval (max 500)",
+    ),
   indexedSymbols: zod.number().nullish(),
   edgeCount: zod.number().nullish(),
   durationMs: zod.number().nullish(),

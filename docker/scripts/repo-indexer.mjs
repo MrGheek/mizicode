@@ -36,11 +36,12 @@ import { buildSummary } from './repo-summary.mjs';
 import {
   openDb, closeDb, setMeta, getMeta,
   upsertFile, insertSymbols, deleteSymbolsForFile, insertEdge,
-  rebuildFts, searchFts, searchFtsFiles,
-  getAllFiles, getAllSymbols, getAllEdges, getStats,
+  rebuildFts,
+  getAllSymbols, getAllEdges, getStats,
   storeEmbedding,
 } from './repo-db.mjs';
 import { extractSymbols } from './repo-parse.mjs';
+import { embed, embedBatch, EMBEDDING_DIM } from './repo-embeddings.mjs';
 import { readFileSync, statSync, readdirSync } from 'fs';
 import { createHash } from 'crypto';
 import { join, extname, relative } from 'path';
@@ -57,33 +58,43 @@ const MAX_FILES = parseInt(process.env.REPO_INDEX_MAX_FILES || '2000', 10);
 const MAX_EDGES = parseInt(process.env.REPO_INDEX_MAX_EDGES || '5000', 10);
 const POLL_INTERVAL_SECS = parseInt(process.env.REPO_INDEX_POLL_INTERVAL_SECS || '30', 10);
 
-// ─── Embeddings: character n-gram TF-IDF (no model required) ─────────────────
-
-const NGRAM_DIM = 512;
-
-function charNgrams(text, n = 3) {
-  const t = text.toLowerCase().replace(/[^a-z0-9_]/g, ' ').trim();
-  const grams = [];
-  for (let i = 0; i <= t.length - n; i++) grams.push(t.slice(i, i + n));
-  return grams;
-}
-
-function ngramVector(text) {
-  const vec = new Float32Array(NGRAM_DIM);
-  for (const g of charNgrams(text)) {
-    let h = 0;
-    for (let i = 0; i < g.length; i++) h = (Math.imul(31, h) + g.charCodeAt(i)) | 0;
-    vec[Math.abs(h) % NGRAM_DIM] += 1;
-  }
-  const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
-  return Array.from(vec).map(v => v / mag);
-}
+// ─── Cosine similarity helper ─────────────────────────────────────────────────
 
 function cosineSim(a, b) {
   if (!a || !b || a.length !== b.length) return 0;
   let dot = 0;
   for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
   return Math.max(0, dot);
+}
+
+// ─── Chunk extraction (function/class bodies for semantic retrieval) ───────────
+
+const MAX_CHUNK_CONTENT = 1500; // chars
+
+function extractChunks(code, relPath, lang, symbols) {
+  const lines = code.split('\n');
+  const chunks = [];
+  const seen = new Set();
+  for (const sym of symbols) {
+    if (!sym.name || !sym.line) continue;
+    const key = `${sym.name}:${sym.line}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const startLine = Math.max(0, sym.line - 1);
+    // Estimate end: take up to 40 lines from symbol start
+    const endLine = Math.min(lines.length - 1, startLine + 40);
+    const content = lines.slice(startLine, endLine + 1).join('\n').slice(0, MAX_CHUNK_CONTENT);
+    chunks.push({
+      path: relPath,
+      lang,
+      content,
+      startLine: startLine + 1,
+      endLine: endLine + 1,
+      symbolName: sym.name,
+      symbolKind: sym.kind,
+    });
+  }
+  return chunks;
 }
 
 // ─── API callbacks ────────────────────────────────────────────────────────────
@@ -220,6 +231,9 @@ async function runJob({ jobId, repoPath }) {
   let fp = null;
   let fingerprintHash = null;
   let fallbackMode = 'full';
+  let symbolCount = 0;
+  const allEdges = [];
+  const allChunks = [];
 
   try {
     await postSync({ jobId, status: 'scanning', repoPath });
@@ -245,9 +259,6 @@ async function runJob({ jobId, repoPath }) {
 
     const sourceFiles = walkSourceFiles(repoPath, repoPath, MAX_FILES);
     tlog(`Found ${sourceFiles.length} source files`);
-
-    let symbolCount = 0;
-    const allEdges = [];
 
     for (const { absPath, relPath, lang } of sourceFiles) {
       if (timedOut()) { fallbackMode = 'graph-lite'; break; }
@@ -280,6 +291,10 @@ async function runJob({ jobId, repoPath }) {
         symbolCount += syms.length;
       }
 
+      // Extract code chunks (function/class bodies for semantic retrieval)
+      const fileChunks = extractChunks(code, relPath, lang, syms);
+      allChunks.push(...fileChunks);
+
       // Extract import edges
       const edges = extractEdges(code, relPath, lang, repoPath);
       for (const e of edges) {
@@ -288,7 +303,7 @@ async function runJob({ jobId, repoPath }) {
       }
     }
 
-    tlog(`Graph: ${symbolCount} symbols, ${allEdges.length} edges`);
+    tlog(`Graph: ${symbolCount} symbols, ${allEdges.length} edges, ${allChunks.length} chunks`);
 
     // ── Phase: indexing_fts ─────────────────────────────────────────────────
     await postSync({ jobId, status: 'indexing_fts', repoPath });
@@ -301,19 +316,30 @@ async function runJob({ jobId, repoPath }) {
     if (timedOut()) { fallbackMode = 'lexical-only'; throw Object.assign(new Error('TIME_LIMIT'), { phase: 'fts' }); }
 
     // ── Phase: indexing_vectors ─────────────────────────────────────────────
+    // Uses @xenova/transformers all-MiniLM-L6-v2 (quantized) via repo-embeddings.mjs.
+    // Falls back to remote HTTP API if local ONNX fails, then to character n-gram TF-IDF.
     await postSync({ jobId, status: 'indexing_vectors', repoPath });
     if (db) {
-      tlog('Computing character n-gram embeddings...');
-      const embBatch = db ? getAllSymbols(db, 1000) : [];
-      let embCount = 0;
-      for (const sym of embBatch) {
-        if (timedOut()) break;
-        const text = [sym.name, sym.kind, sym.path, sym.signature].filter(Boolean).join(' ');
-        const vec = ngramVector(text);
-        storeEmbedding(db, `sym:${sym.name}:${sym.path}`, 'symbol', vec);
-        embCount++;
+      tlog(`Computing embeddings (strategy=${process.env.FLOATR_EMBEDDINGS || 'local'})...`);
+      const embSymbols = getAllSymbols(db, 500); // cap at 500 to limit embedding time
+      const embTexts = embSymbols.map(s => [s.name, s.kind, s.path, s.signature].filter(Boolean).join(' '));
+      try {
+        const vecs = await embedBatch(embTexts, {
+          maxBatch: 16,
+          onProgress: (done, total) => {
+            if (done % 64 === 0) tlog(`  Embeddings: ${done}/${total}`);
+          },
+        });
+        const insertEmbedding = db.transaction((items) => {
+          for (const { sym, vec } of items) {
+            if (vec && vec.length > 0) storeEmbedding(db, `sym:${sym.name}:${sym.path}`, 'symbol', vec);
+          }
+        });
+        insertEmbedding(embSymbols.map((sym, i) => ({ sym, vec: vecs[i] })));
+        tlog(`Embeddings: ${vecs.length} vectors stored (dim=${EMBEDDING_DIM})`);
+      } catch (embErr) {
+        tlog(`Embeddings error (non-fatal): ${embErr.message}`);
       }
-      tlog(`Embeddings: ${embCount} n-gram vectors stored`);
     } else {
       tlog('Vector indexing skipped (no SQLite)');
     }
@@ -353,10 +379,14 @@ async function runJob({ jobId, repoPath }) {
       kind: e.kind || 'import',
     }));
 
+    // Cap chunks: top 500 by symbol relevance (already ordered by file scan order)
+    const MAX_CHUNKS = parseInt(process.env.REPO_INDEX_MAX_CHUNKS || '500', 10);
+    const finalChunks = allChunks.slice(0, MAX_CHUNKS);
+
     await postSync({
       jobId, status: 'ready', repoPath,
       fingerprintHash, fingerprint: fp, summary,
-      symbols: finalSymbols, files: finalFiles, edges: finalEdges,
+      symbols: finalSymbols, files: finalFiles, edges: finalEdges, chunks: finalChunks,
       indexedSymbols: dbStats?.symbols ?? symbolCount,
       edgeCount: dbStats?.edges ?? allEdges.length,
       durationMs: elapsed(),
@@ -367,14 +397,21 @@ async function runJob({ jobId, repoPath }) {
   } catch (err) {
     if (err.message === 'TIME_LIMIT') {
       tlog(`Time limit reached in phase ${err.phase} — reporting partial sync (mode: ${fallbackMode})`);
-      const partialStatus = fallbackMode === 'fingerprint-only' ? 'ready' : 'ready';
+      // Report as 'ready' if we have at least a fingerprint; otherwise 'error'
+      const partialStatus = fingerprintHash ? 'ready' : 'error';
       const dbStats = db ? getStats(db) : null;
+      const partialSymbols = db ? getAllSymbols(db, MAX_SYMBOLS).slice(0, MAX_SYMBOLS) : [];
+      const partialEdges = db ? getAllEdges(db, MAX_EDGES).slice(0, MAX_EDGES) : [];
+      const partialChunks = allChunks.slice(0, 200);
       await postSync({
         jobId, status: partialStatus, repoPath,
         fingerprintHash, fingerprint: fp,
+        symbols: partialSymbols.length > 0 ? partialSymbols.map(s => ({ ...s, callers: [], callees: [] })) : undefined,
+        edges: partialEdges.length > 0 ? partialEdges.map(e => ({ from: e.from_path || e.from, to: e.to_path || e.to, kind: e.kind })) : undefined,
+        chunks: partialChunks.length > 0 ? partialChunks : undefined,
         durationMs: elapsed(),
-        indexedSymbols: dbStats?.symbols ?? 0,
-        edgeCount: dbStats?.edges ?? 0,
+        indexedSymbols: dbStats?.symbols ?? symbolCount,
+        edgeCount: dbStats?.edges ?? allEdges.length,
       });
     } else {
       tlog(`Failed: ${err.stack || err.message}`);

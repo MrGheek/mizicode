@@ -2599,6 +2599,31 @@ components:
             additionalProperties: true
           nullable: true
           description: Import/caller edges for blast-radius approximation (max 2000)
+        chunks:
+          type: array
+          items:
+            type: object
+            properties:
+              path:
+                type: string
+              lang:
+                type: string
+                nullable: true
+              content:
+                type: string
+                description: Code snippet (capped at 1500 chars)
+              startLine:
+                type: integer
+              endLine:
+                type: integer
+              symbolName:
+                type: string
+                nullable: true
+              symbolKind:
+                type: string
+                nullable: true
+          nullable: true
+          description: Code chunks (function/class bodies) for semantic retrieval (max 500)
         indexedSymbols:
           type: integer
           nullable: true

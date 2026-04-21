@@ -7,18 +7,29 @@ const router = Router({ mergeParams: true });
 
 const ACTIVE_JOB_STATUSES = ["queued", "scanning", "fingerprinting", "indexing_graph", "indexing_fts", "indexing_vectors", "summarizing"];
 
-const CALLBACK_TOKEN = process.env["OMNIQL_MEM_TOKEN"] || "";
+// Canonical token: server reads OMNIQL_MEM_TOKEN; instances receive it as OMNIQL_MEM_AUTH_TOKEN.
+// Accept both to handle both server-side and direct instance-callback auth.
+const CALLBACK_TOKEN = process.env["OMNIQL_MEM_TOKEN"] || process.env["OMNIQL_MEM_AUTH_TOKEN"] || "";
 
 const DEFAULT_REPO_PATH = "/workspace/projects";
+const IS_DEV = process.env.NODE_ENV === "development";
 
 function getParam(req: import("express").Request, key: string): string {
   return (req.params as Record<string, string>)[key] ?? "";
 }
 
+/**
+ * Validate Bearer token for internal callback endpoints (/sync, /jobs/pending).
+ * Fail-closed: if CALLBACK_TOKEN is not configured, only allow in development mode.
+ * This prevents unauthenticated access to callback endpoints in production.
+ */
 function validateAuth(req: import("express").Request): boolean {
-  if (!CALLBACK_TOKEN) return true;
   const auth = req.headers["authorization"] || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (!CALLBACK_TOKEN) {
+    // Fail-closed: no token configured → only allow in dev mode
+    return IS_DEV;
+  }
   return token === CALLBACK_TOKEN;
 }
 
@@ -233,6 +244,7 @@ router.get("/search", async (req, res) => {
     pathPrefix,
     symbolsJson: ctx.symbolsJson as RepoSymbolRaw[] | null,
     filesJson: ctx.filesJson as RepoFileRaw[] | null,
+    chunksJson: ctx.chunksJson as RepoChunkRaw[] | null,
   });
 
   res.json({
@@ -444,7 +456,7 @@ router.post("/sync", async (req, res) => {
   }
 
   const body = req.body as RepoSyncPayload;
-  const { jobId, status, repoPath, fingerprintHash, fingerprint, summary, symbols, files, edges, indexedSymbols, edgeCount, durationMs, errorDetails } = body;
+  const { jobId, status, repoPath, fingerprintHash, fingerprint, summary, symbols, files, edges, chunks, indexedSymbols, edgeCount, durationMs, errorDetails } = body;
 
   if (!jobId || !status || !repoPath) {
     res.status(400).json({ error: "jobId, status, and repoPath are required" });
@@ -481,41 +493,50 @@ router.post("/sync", async (req, res) => {
 
   const ctx = await getRepoContext(sessionId);
 
-  // Staleness: compare incoming fingerprintHash against stored hash.
-  // If hashes differ (or no stored hash yet), the repo content changed — index is fresh.
-  // If hashes are the same, the re-index was redundant (content unchanged).
+  // Staleness detection based on fingerprint hash divergence:
+  // - If the fingerprinting phase reports a hash different from the stored hash, the repo
+  //   content has changed since last index — mark isStale=true so callers know the data is stale.
+  // - When the index reaches 'ready', the new data is authoritative — always clear stale flag.
+  // - For intermediate phases (scanning, indexing_*), preserve existing stale state.
   const prevHash = ctx?.fingerprintHash ?? null;
   const incomingHash = fingerprintHash ?? null;
   const contentChanged = incomingHash !== null && prevHash !== null && incomingHash !== prevHash;
-  // Always mark isStale=false on sync completion — the new index reflects the current repo state.
-  // contentChanged is informational: the hash update itself is the authoritative staleness signal.
 
-  const ctxUpdate = {
+  let newIsStale: boolean;
+  if (normalizedStatus === "ready") {
+    newIsStale = false; // fresh index, no longer stale
+  } else if (normalizedStatus === "error") {
+    newIsStale = ctx?.isStale ?? false; // preserve existing stale state on error
+  } else if (normalizedStatus === "fingerprinting" && contentChanged) {
+    newIsStale = true; // hash diverged — current stored data does not reflect current repo
+  } else {
+    newIsStale = ctx?.isStale ?? false; // preserve for all other intermediate phases
+  }
+
+  const baseUpdate = {
     repoPath,
-    fingerprintHash: incomingHash,
+    indexStatus: normalizedStatus,
+    isStale: newIsStale,
+    confidenceLevel,
+    updatedAt: new Date(),
+    fingerprintHash: incomingHash ?? undefined,
     fingerprintJson: fingerprint ? (fingerprint as Record<string, unknown>) : undefined,
     summaryJson: summary ? (summary as Record<string, unknown>) : undefined,
     symbolsJson: symbols ? (symbols as Record<string, unknown>[]) : undefined,
     filesJson: files ? (files as Record<string, unknown>[]) : undefined,
     edgesJson: edges ? (edges as Record<string, unknown>[]) : undefined,
-    indexStatus: normalizedStatus,
-    isStale: false,
-    confidenceLevel,
+    chunksJson: chunks ? (chunks as Record<string, unknown>[]) : undefined,
     indexedAt: isTerminal ? new Date() : undefined,
-    updatedAt: new Date(),
   };
 
   if (ctx) {
-    await db.update(sessionRepoContextTable).set(ctxUpdate).where(eq(sessionRepoContextTable.id, ctx.id));
+    await db.update(sessionRepoContextTable).set(baseUpdate).where(eq(sessionRepoContextTable.id, ctx.id));
   } else {
-    await db.insert(sessionRepoContextTable).values({
-      sessionId,
-      ...ctxUpdate,
-    });
+    await db.insert(sessionRepoContextTable).values({ sessionId, ...baseUpdate });
   }
 
-  logger.info({ sessionId, jobId, status: normalizedStatus, confidenceLevel, symbolCount: indexedSymbols, contentChanged, prevHash, newHash: incomingHash }, "Repo sync received");
-  res.json({ success: true });
+  logger.info({ sessionId, jobId, status: normalizedStatus, confidenceLevel, symbolCount: indexedSymbols, contentChanged, isStale: newIsStale, prevHash, newHash: incomingHash }, "Repo sync received");
+  res.json({ success: true, contentChanged, isStale: newIsStale });
 });
 
 function normalizeStatus(raw: string): string {
@@ -565,6 +586,7 @@ interface HybridSearchOptions {
   pathPrefix?: string;
   symbolsJson: RepoSymbolRaw[] | null;
   filesJson: RepoFileRaw[] | null;
+  chunksJson: RepoChunkRaw[] | null;
 }
 
 type SearchResult = {
@@ -625,7 +647,7 @@ function lexicalBm25(doc: string, query: string): number {
 }
 
 function hybridSearch(opts: HybridSearchOptions) {
-  const { q, typeFilter, limit, offset, langFilter, pathPrefix, symbolsJson, filesJson } = opts;
+  const { q, typeFilter, limit, offset, langFilter, pathPrefix, symbolsJson, filesJson, chunksJson } = opts;
 
   const qVec = charNgramVec(q);
   const results: SearchResult[] = [];
@@ -697,6 +719,35 @@ function hybridSearch(opts: HybridSearchOptions) {
     }
   }
 
+  // ── Chunk retrieval ──────────────────────────────────────────────────────────
+  // Chunks are code snippets (function/class bodies) extracted during indexing.
+  // They are indexed by path, symbolName, symbolKind, and raw content.
+  if (!typeFilter || typeFilter === "chunk") {
+    for (const chunk of chunksJson || []) {
+      if (langFilter && chunk.lang?.toLowerCase() !== langFilter.toLowerCase()) continue;
+      if (pathPrefix && !chunk.path?.startsWith(pathPrefix)) continue;
+
+      const chunkDoc = [chunk.symbolName, chunk.symbolKind, chunk.path, chunk.content?.slice(0, 500)].filter(Boolean).join(" ");
+      const lexical = lexicalBm25(chunkDoc, q);
+      if (lexical < 0.02) continue;
+
+      const docVec = charNgramVec(chunkDoc);
+      const semantic = cosineSim(qVec, docVec);
+      const combined = lexical * 0.50 + semantic * 0.40 + 0.10; // chunks score higher on semantic
+
+      results.push({
+        type: "chunk",
+        path: chunk.path || "",
+        name: chunk.symbolName || null,
+        lang: chunk.lang || null,
+        kind: chunk.symbolKind || null,
+        snippet: chunk.content?.slice(0, 300) || null,
+        line: chunk.startLine || null,
+        scores: { combined, lexical, semantic, graph: 0, confidence: 0.75 },
+      });
+    }
+  }
+
   results.sort((a, b) => b.scores.combined - a.scores.combined);
   return { total: results.length, items: results.slice(offset, offset + limit) };
 }
@@ -752,6 +803,16 @@ function computeBlastRadius(opts: { file: string; edgesJson: RepoEdgeRaw[] | nul
   };
 }
 
+interface RepoChunkRaw {
+  path?: string;
+  lang?: string;
+  content?: string;
+  startLine?: number;
+  endLine?: number;
+  symbolName?: string;
+  symbolKind?: string;
+}
+
 interface RepoSyncPayload {
   jobId: number;
   status: string;
@@ -762,6 +823,7 @@ interface RepoSyncPayload {
   symbols?: RepoSymbolRaw[];
   files?: RepoFileRaw[];
   edges?: RepoEdgeRaw[];
+  chunks?: RepoChunkRaw[];
   indexedSymbols?: number;
   edgeCount?: number;
   durationMs?: number;

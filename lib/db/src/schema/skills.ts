@@ -106,6 +106,7 @@ export const sessionRepoContextTable = pgTable("session_repo_context", {
   symbolsJson: jsonb("symbols_json"),
   filesJson: jsonb("files_json"),
   edgesJson: jsonb("edges_json"),
+  chunksJson: jsonb("chunks_json"),
   indexStatus: text("index_status").notNull().default("queued"),
   isStale: boolean("is_stale").notNull().default(false),
   confidenceLevel: text("confidence_level").notNull().default("none"),
