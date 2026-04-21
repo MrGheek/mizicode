@@ -495,8 +495,8 @@ paths:
     post:
       operationId: compileSkillPreview
       tags: [skills]
-      summary: Preview bundle compilation
-      description: Compile a bundle against a context and return the result without persisting
+      summary: Preview bundle compilation (internal helper, non-contractual)
+      description: "Internal helper: compile a bundle against a context and return the raw base64 payload + byte size. Not part of the public API contract; use /skill-bundles/compile for the standard compile endpoint."
       requestBody:
         required: true
         content:
@@ -715,8 +715,8 @@ paths:
     post:
       operationId: seedDefaultBundles
       tags: [skills]
-      summary: Seed default bundles
-      description: Seeds the four default bundles if they do not exist
+      summary: Seed default bundles (internal helper, non-contractual)
+      description: "Internal helper: idempotently seeds the four default skill bundles (floatr-builder/reviewer/debugger/team-studio) if they do not exist. Called automatically on server startup. Not part of the public API contract."
       responses:
         "200":
           description: Seed result

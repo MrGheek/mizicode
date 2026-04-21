@@ -388,15 +388,45 @@ router.post("/sessions", async (req, res) => {
       const ghMatch = trimmedUrl.match(/github\.com\/([^/]+)\/([^/.\s]+)/);
       if (ghMatch) {
         try {
-          const apiUrl = `https://api.github.com/repos/${ghMatch[1]}/${ghMatch[2]}/languages`;
-          const resp = await fetch(apiUrl, {
-            headers: { "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+          const [owner, repo] = [ghMatch[1], ghMatch[2]];
+          const ghHeaders = { "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+
+          // Detect languages
+          const langResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/languages`, {
+            headers: ghHeaders,
             signal: AbortSignal.timeout(5000),
           });
-          if (resp.ok) {
-            const data = await resp.json() as Record<string, number>;
+          if (langResp.ok) {
+            const data = await langResp.json() as Record<string, number>;
             langs = Object.keys(data).map(l => l.toLowerCase());
           }
+
+          // Detect frameworks from common marker files (GitHub contents API, non-blocking)
+          const frameworkMarkers: Record<string, string> = {
+            "package.json": "node",
+            "requirements.txt": "python",
+            "pyproject.toml": "python",
+            "go.mod": "go",
+            "Cargo.toml": "rust",
+            "pom.xml": "java",
+            "build.gradle": "java",
+            "composer.json": "php",
+            "Gemfile": "ruby",
+          };
+          const markerChecks = Object.keys(frameworkMarkers).map(async (file) => {
+            try {
+              const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${file}`, {
+                headers: ghHeaders,
+                signal: AbortSignal.timeout(3000),
+              });
+              if (r.ok) frameworks.push(frameworkMarkers[file]);
+            } catch {
+              // Ignore per-file failures
+            }
+          });
+          await Promise.all(markerChecks);
+          // Deduplicate frameworks
+          frameworks = [...new Set(frameworks)];
         } catch {
           // Non-blocking: ignore if GitHub API is unreachable
         }
@@ -449,6 +479,7 @@ router.post("/sessions", async (req, res) => {
     // ── Smart Skills: compile the active bundle and encode it for the onstart script ──
     let activeBundleB64: string | undefined;
     let resolvedBundleId: number | undefined;
+    let pendingCompiled: Awaited<ReturnType<typeof compileBundle>> | undefined;
     try {
       await seedDefaultBundles();
       const repoLangs: string[] = Array.isArray((repoFingerprintJson as Record<string, unknown> | null)?.langs)
@@ -477,7 +508,9 @@ router.post("/sessions", async (req, res) => {
         resolvedBundleId = bundle.id;
         const compiled = await compileBundle(bundle.id, sessionCtx);
         activeBundleB64 = buildActiveBundleEnvPayload(compiled, resolvedTokenMode as SessionContext["tokenMode"]);
-        await recordSessionActivation(session.id, compiled, resolvedTokenMode as SessionContext["tokenMode"]);
+        // NOTE: recordSessionActivation is deferred to after createInstance succeeds
+        // to avoid orphaned activation records on failed instance launches.
+        pendingCompiled = compiled;
         logger.info({ sessionId: session.id, bundleId: bundle.id, bundleSlug: bundle.slug }, "Smart Skills bundle compiled for session");
       }
     } catch (skillsErr) {
@@ -522,6 +555,15 @@ router.post("/sessions", async (req, res) => {
     });
 
     const instanceId = result.new_contract;
+
+    // Record Skills activation now that instance creation succeeded (deferred from compile step)
+    if (pendingCompiled) {
+      try {
+        await recordSessionActivation(session.id, pendingCompiled, resolvedTokenMode as SessionContext["tokenMode"]);
+      } catch (activationErr) {
+        logger.warn({ err: activationErr, sessionId: session.id }, "Failed to record session activation (non-fatal)");
+      }
+    }
 
     const [updated] = await db
       .update(sessionsTable)

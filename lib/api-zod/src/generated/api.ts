@@ -806,8 +806,8 @@ export const ImportSkillBody = zod.object({
 });
 
 /**
- * Compile a bundle against a context and return the result without persisting
- * @summary Preview bundle compilation
+ * Internal helper: compile a bundle against a context and return the raw base64 payload + byte size. Not part of the public API contract; use /skill-bundles/compile for the standard compile endpoint.
+ * @summary Preview bundle compilation (internal helper, non-contractual)
  */
 export const CompileSkillPreviewBody = zod.object({
   bundleId: zod
@@ -989,8 +989,8 @@ export const CreateSkillBundleBody = zod.object({
 });
 
 /**
- * Seeds the four default bundles if they do not exist
- * @summary Seed default bundles
+ * Internal helper: idempotently seeds the four default skill bundles (floatr-builder/reviewer/debugger/team-studio) if they do not exist. Called automatically on server startup. Not part of the public API contract.
+ * @summary Seed default bundles (internal helper, non-contractual)
  */
 export const SeedDefaultBundlesResponse = zod.object({
   bundles: zod.array(
