@@ -8,9 +8,11 @@ import {
   useSubmitSkillFeedback,
   useSessionCompleteFeedback,
   useGetSessionRoutingStats,
+  useGetSessionConflicts,
   getGetSessionQueryKey,
   getGetActiveSessionQueryKey,
   getGetSessionSkillsQueryKey,
+  getGetSessionConflictsQueryKey,
   useEnqueueRepoIndex,
   getGetRepoSummaryQueryKey,
 } from "@workspace/api-client-react";
@@ -30,7 +32,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { TeamTab } from "@/components/team-tab";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
@@ -1068,6 +1070,7 @@ export default function SessionDetail() {
   const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "team">("overview");
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
+  const [seenConflictFingerprint, setSeenConflictFingerprint] = useState<string>("");
   const [bootLog, setBootLog] = useState<string[]>([]);
   const lastBootMsgRef = useRef<string>("");
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -1112,6 +1115,51 @@ export default function SessionDetail() {
   // bytesAvoided is passed to complete-feedback to signal context-shield-core effectiveness.
   const { data: routingStatsData } = useGetSessionRoutingStats(sessionId);
   const bytesAvoided = routingStatsData?.stats?.totalBytesAvoided;
+
+  // Background conflict polling for the Team tab badge
+  const { data: bgConflictsData } = useGetSessionConflicts(sessionId, {
+    query: {
+      enabled: !!sessionId,
+      queryKey: getGetSessionConflictsQueryKey(sessionId),
+      refetchInterval: 20000,
+    },
+  });
+
+  const activeConflicts = (bgConflictsData?.conflicts ?? []).filter(
+    (c) => c.recommendation !== "no_conflict"
+  );
+  const hasBlockingConflict = activeConflicts.some((c) => c.recommendation === "block");
+  const hasAnyConflict = activeConflicts.length > 0;
+
+  const conflictFingerprint = useMemo(
+    () =>
+      activeConflicts
+        .map((c) => {
+          const [a, b] = [c.laneIdA, c.laneIdB].sort((x, y) => x - y);
+          return `${a}:${b}:${c.recommendation}`;
+        })
+        .sort()
+        .join("|"),
+    [activeConflicts]
+  );
+
+  useEffect(() => {
+    setSeenConflictFingerprint("");
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!hasAnyConflict) {
+      setSeenConflictFingerprint("");
+    }
+  }, [hasAnyConflict]);
+
+  useEffect(() => {
+    if (activeTab === "team" && hasAnyConflict) {
+      setSeenConflictFingerprint(conflictFingerprint);
+    }
+  }, [activeTab, conflictFingerprint, hasAnyConflict]);
+
+  const showConflictBadge = hasAnyConflict && conflictFingerprint !== seenConflictFingerprint;
 
   const doStop = (taskSuccessScore?: number) => {
     if (taskSuccessScore !== undefined) {
@@ -1345,7 +1393,7 @@ export default function SessionDetail() {
           Repo Index
         </button>
         <button
-          onClick={() => setActiveTab("team")}
+          onClick={() => { setActiveTab("team"); setSeenConflictFingerprint(conflictFingerprint); }}
           className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
             activeTab === "team"
               ? "border-primary text-foreground"
@@ -1354,6 +1402,17 @@ export default function SessionDetail() {
         >
           <Users className="w-3.5 h-3.5" />
           Team
+          {showConflictBadge && (
+            <span
+              className={`ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-semibold leading-none ${
+                hasBlockingConflict
+                  ? "bg-red-500 text-white"
+                  : "bg-yellow-500 text-black"
+              }`}
+            >
+              {hasBlockingConflict ? activeConflicts.filter(c => c.recommendation === "block").length : activeConflicts.length}
+            </span>
+          )}
         </button>
       </div>
 
