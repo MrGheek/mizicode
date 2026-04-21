@@ -33,6 +33,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { TeamTab } from "@/components/team-tab";
@@ -1079,6 +1080,8 @@ export default function SessionDetail() {
     sessionId ? (sessionStorage.getItem(`conflict-dismissed:${sessionId}`) ?? "") : ""
   );
   const [seenHandoffCount, setSeenHandoffCount] = useState(0);
+  const toastedHandoffIdsRef = useRef<Set<number>>(new Set());
+  const handoffDataInitializedRef = useRef(false);
   const [bootLog, setBootLog] = useState<string[]>([]);
   const lastBootMsgRef = useRef<string>("");
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -1229,7 +1232,59 @@ export default function SessionDetail() {
   // Reset on session change
   useEffect(() => {
     setSeenHandoffCount(0);
+    toastedHandoffIdsRef.current = new Set();
+    handoffDataInitializedRef.current = false;
   }, [sessionId]);
+
+  // Fire a toast when new pending handoffs arrive and the Team tab is not active.
+  // On first data load, we seed the seen-set without toasting (avoid false positives
+  // for handoffs that were already pending before the user opened this session page).
+  useEffect(() => {
+    const handoffs = bgCoordData?.recentHandoffs ?? [];
+    if (!handoffDataInitializedRef.current) {
+      handoffs.forEach((h) => toastedHandoffIdsRef.current.add(h.id));
+      handoffDataInitializedRef.current = true;
+      return;
+    }
+    const newHandoffs = handoffs.filter(
+      (h) => h.status === "pending" && !toastedHandoffIdsRef.current.has(h.id)
+    );
+    if (newHandoffs.length === 0) return;
+    newHandoffs.forEach((h) => toastedHandoffIdsRef.current.add(h.id));
+    if (activeTab === "team") return;
+    const typeLabels: Record<string, string> = {
+      blocked: "Blocked",
+      needs_review: "Needs Review",
+      safe_to_merge: "Safe to Merge",
+      watch_files: "Watch Files",
+      related_lane: "Related Lane",
+    };
+    if (newHandoffs.length === 1) {
+      const h = newHandoffs[0];
+      const label = typeLabels[h.handoffType] ?? h.handoffType;
+      toast({
+        title: `Handoff: ${label}`,
+        description: h.message ?? "A teammate sent a handoff signal.",
+        action: (
+          <ToastAction altText="Open Team tab" onClick={() => setActiveTab("team")}>
+            View
+          </ToastAction>
+        ),
+      });
+    } else {
+      toast({
+        title: `${newHandoffs.length} new handoff signals`,
+        description: newHandoffs
+          .map((h) => typeLabels[h.handoffType] ?? h.handoffType)
+          .join(", "),
+        action: (
+          <ToastAction altText="Open Team tab" onClick={() => setActiveTab("team")}>
+            View
+          </ToastAction>
+        ),
+      });
+    }
+  }, [bgCoordData?.recentHandoffs, activeTab, toast]);
 
   const pendingHandoffBadgeCount = bgPendingHandoffs > seenHandoffCount
     ? bgPendingHandoffs - seenHandoffCount
