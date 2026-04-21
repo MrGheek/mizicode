@@ -31,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
 import { useState, useEffect, useRef } from "react";
+import { TeamTab } from "@/components/team-tab";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 
@@ -1064,7 +1065,7 @@ export default function SessionDetail() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "team">("overview");
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
   const [bootLog, setBootLog] = useState<string[]>([]);
@@ -1342,6 +1343,17 @@ export default function SessionDetail() {
         >
           <GitBranch className="w-3.5 h-3.5" />
           Repo Index
+        </button>
+        <button
+          onClick={() => setActiveTab("team")}
+          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
+            activeTab === "team"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          Team
         </button>
       </div>
 
@@ -1625,6 +1637,10 @@ export default function SessionDetail() {
 
       {activeTab === "repo" && (
         <RepoIndexTab sessionId={sessionId} />
+      )}
+
+      {activeTab === "team" && (
+        <TeamTab sessionId={sessionId} />
       )}
 
       {stopRatingOpen && (
