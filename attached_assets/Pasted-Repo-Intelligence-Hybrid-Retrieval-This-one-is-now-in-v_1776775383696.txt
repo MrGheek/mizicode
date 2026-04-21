@@ -1,0 +1,88 @@
+Repo Intelligence + Hybrid Retrieval
+
+This one is now in very good shape. The async job model, Claw Runner ownership, graceful fallback path, local-first embeddings, explicit ignore rules, and search filters all fix the earlier gaps.
+
+The only things I’d still tighten:
+
+Pick the embedding strategy now, not later.
+“Instance-local model” is right, but Replit will move faster if you specify the default implementation up front:
+either a small local embedding model running on CPU
+or a lightweight local embedding service on the instance
+Otherwise they may lose time debating architecture mid-build.
+Add reindex + stale-state semantics.
+You have /repo/index, but I’d define:
+what triggers a full rebuild vs incremental refresh
+whether a second index request cancels, dedupes, or queues
+how stale indexes are marked in API responses
+Return score breakdowns in /repo/search.
+Since the ranking is hybrid, expose:
+combined score
+lexical score
+semantic score
+graph score
+confidence
+That will make debugging and tuning much easier.
+Put hard runtime limits on indexing jobs.
+You already added ignore patterns and file caps, which is great. I’d also add:
+max indexing duration
+max chunk count
+max embedding batch size
+fallback to graph-lite / lexical-only mode if exceeded
+Define what “repoPath omitted” means in team sessions.
+You say owner workspace root is default, which is good. I’d make that explicit in the acceptance criteria too, since team sessions already split workspaces.
+
+Verdict: this is now strong enough to send.
+
+Context Shield + Working State Continuity
+
+This is also much better now. The biggest improvements are:
+
+calling it shielded execution rather than sandboxing
+explicitly limiting continuity to in-session
+separating it from Memory 2.0
+defining artifact retention
+defining the restore injection point
+
+That said, I’d still tighten these last things:
+
+Be explicit about where the routing layer lives.
+Right now it says “Claw Runner task init” and “routing layer,” which is close, but I’d state clearly:
+routing is owned by Claw Runner / tool adapter on the instance
+not by the API server
+not by LiteLLM
+Define the threshold config centrally.
+“Defined token threshold” is good, but Replit should know where it lives:
+hardcoded constants first
+env-configurable second
+maybe token-mode overrides
+Otherwise threshold behavior can become inconsistent.
+Add snapshot versioning.
+Your session-state.db should include a snapshot schema version, so future restore logic does not break when the state format evolves.
+Add a hard cap on artifact storage per session.
+You already have retention and max artifact size. I’d also add:
+max total artifact bytes per session
+eviction policy when the cap is exceeded
+Be careful with floatr_index and floatr_search.
+Your wording is good here. I would keep them out by default unless they are clearly different from the Repo Intelligence retrieval stack, otherwise #41 will overlap with #40 and confuse everyone.
+
+Fix the #44 reference.
+This line:
+
+Ensure they are clearly distinct from Repo Intelligence skills added in #44.
+looks like a numbering typo. I assume you mean #40.
+
+Verdict: also close to ready, but I’d make those last clarifications before shipping the brief.
+
+My short take
+
+#40: send it.
+#41: send it after one final cleanup pass.
+
+The only two edits I’d insist on
+
+If you want the shortest possible punch list before handoff, it’s this:
+
+In #40, define reindex/cancel/stale-index behavior
+In #41, define exact routing ownership and threshold config location
+
+Those are the two places most likely to cause avoidable implementation drift.

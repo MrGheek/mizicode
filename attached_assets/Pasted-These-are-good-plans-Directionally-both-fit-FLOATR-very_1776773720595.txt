@@ -1,0 +1,366 @@
+These are good plans. Directionally, both fit FLOATR very well because the product already has the right primitives: controlled boot via onstart.sh, Claw Runner on the instance, LiteLLM/vLLM locally, and persistent memory on the control plane.
+
+My comments are mostly about tightening execution boundaries so Replit builds the right thing the first time.
+
+Overall
+
+I’d say:
+
+#40 is strong and should go ahead
+#41 is also strong, but needs sharper scope boundaries than #40
+
+#40 is mostly an indexing/retrieval problem.
+#41 can quietly turn into “build a whole agent runtime” if you do not constrain it.
+
+Comments on #40 — Repo Intelligence + Hybrid Retrieval
+
+This is the right next task. It is the first thing that makes Smart Skills materially better at coding, not just better at selection.
+
+What I like
+Good API surface
+Nice separation of fingerprint / graph / retrieval / blast radius / summary
+Local-first vector posture is the right call
+Limiting first pass languages is sensible
+Feeding repo shape back into the bundle compiler is exactly right
+What I would tighten
+1. Be explicit about where indexing runs
+
+Right now you say:
+
+POST /api/sessions/:id/repo/index triggers indexing on the instance
+
+Good — but make that explicit everywhere.
+
+Because the graph DB is at /workspace/.floatr/repo-graph.db, the indexer has to run on the rented instance, not on the Replit API server. That matters operationally because FLOATR’s architecture clearly separates the hosted API layer from the GPU instance runtime.
+
+I’d define:
+
+API route enqueues index job
+Claw Runner on the instance performs the work
+job record is updated asynchronously
+
+Not “API endpoint does indexing.”
+
+2. Make /repo/index clearly async
+
+The brief says status is trackable via the job record, which is good, but I would spell out the contract:
+
+POST /repo/index returns immediately with jobId
+status values: queued | scanning | fingerprinting | indexing_graph | indexing_fts | indexing_vectors | summarizing | ready | error
+
+That will save a lot of ambiguity.
+
+3. Define the repo source of truth
+
+You need to specify what exactly is being indexed:
+
+current checked-out repo in /workspace/projects
+one selected root folder
+or a repo explicitly linked to the session
+
+Because team sessions and workspaces already exist, you do not want ambiguity over owner workspace vs shared workspace vs user workspace.
+
+I would add:
+
+repoPath required at index time
+default to owner workspace root if omitted
+shared/team indexing deferred unless explicitly selected
+4. mtime is too weak for incremental indexing
+
+Using file mtimes alone will cause edge cases.
+
+Better:
+
+mtime + size minimum
+ideally content hash
+optionally git HEAD + changed files when available
+
+Otherwise incremental indexing will get flaky fast.
+
+5. Put hard limits around what gets indexed
+
+Replit will otherwise happily index:
+
+node_modules
+.git
+build outputs
+vendor dirs
+generated files
+binaries
+
+You want explicit exclusions and caps:
+
+max file size
+max repo size for first pass
+ignore patterns
+chunk count caps
+fallback “graph-lite mode”
+6. Be clearer about semantic retrieval
+
+This line is still a little too loose:
+
+generate embeddings (instance-local model or API fallback)
+
+I would not make “API fallback” part of the default acceptance criteria. It clashes with FLOATR’s private/local story. Keep it as:
+
+local-first required
+remote fallback optional behind a feature flag
+7. Add pagination and filters to /repo/search
+
+Do not make it just ?q=.
+
+Add:
+
+type=file|symbol|chunk
+limit
+offset
+maybe lang
+maybe pathPrefix
+
+Otherwise this endpoint will become messy quickly.
+
+8. Disambiguate symbols properly
+
+GET /repo/symbol/:name will break on common names.
+
+Better:
+
+GET /repo/symbol
+query params: name, path, lang, maybe kind
+
+Or use a symbol ID returned by search.
+
+9. Bundle compiler should degrade gracefully
+
+If graph/semantic index is missing or stale, skill selection must still work.
+
+Add an explicit fallback:
+
+no index → use fingerprint only
+no fingerprint → use previous metadata path
+partial index → mark confidence lower, do not fail launch
+10. Hotspots need a defined metric
+
+If you say “hotspots,” define whether that means:
+
+centrality
+churn
+fan-in / fan-out
+test failures
+file size
+retrieval frequency
+
+For MVP I would keep it simple:
+
+centrality + dependency degree + file size
+and stop there.
+My recommended additions to #40
+
+Add these acceptance bullets:
+
+indexing runs asynchronously on the instance via Claw Runner
+repo path is explicit
+fallback mode exists when graph/vector index is missing
+ignore/cap rules are defined
+symbol lookup is disambiguated
+search endpoint supports filtering and pagination
+Comments on #41 — Context Shield + Working State Continuity
+
+This is the right feature, but it needs firmer boundaries than #40.
+
+What I like
+Excellent direction
+Strong tool list
+Good use of token mode as routing aggressiveness
+Working-state journal is a very good idea
+Stats/doctor are smart additions
+Great default skills to add
+What I would tighten
+1. “Shield” is not the same as “sandbox”
+
+This is the biggest wording issue.
+
+A subprocess on the user’s rented instance is not a real security sandbox by default. It is a context shield, not a strong isolation boundary.
+
+So I would avoid language that implies hard security guarantees unless you are actually doing real containerization/seccomp/ulimits/FS restrictions.
+
+Rename the mental model to:
+
+shielded execution
+bounded-output subprocess
+artifact-backed analysis
+
+That is more accurate.
+
+2. Decide whether continuity is within-session or cross-session
+
+Right now you store state at:
+
+/workspace/.floatr/session-state.db
+
+That is fine for:
+
+compaction
+reconnect
+long-running active session
+
+But it is not enough if the session is destroyed, because FLOATR sessions are ephemeral by default.
+
+So you need to choose:
+
+Option A
+This task only guarantees continuity within the same live session.
+
+Option B
+Important state snapshots are mirrored back to the API server / memory layer for cross-session restore.
+
+I strongly recommend:
+
+make #41 guarantee in-session continuity
+optionally mirror compact summaries to existing memory later
+
+Do not pretend local SQLite alone gives cross-session persistence.
+
+3. Separate working state from long-term memory
+
+You already have a memory system on the API side.
+
+So define the split clearly:
+
+working state = task-local, volatile, operational
+memory = durable, cross-session, searchable, summarized
+
+Without that separation, Replit may duplicate memory features into the session DB and create confusion.
+
+4. Auto-routing based on “expected output size” is underspecified
+
+Before execution, you often do not know output size.
+
+So define routing in two stages:
+
+pre-routing by operation type and heuristics
+post-routing truncation/artifact persistence if output exceeds thresholds
+
+That is much more realistic.
+
+5. The tool surface is probably too big for first pass
+
+All five tools are good, but for MVP I would prioritize:
+
+floatr_execute
+floatr_execute_file
+floatr_batch_execute
+
+Then add:
+
+floatr_index
+floatr_search
+
+only if they are clearly different from your Repo Intelligence stack. Otherwise you risk overlapping concepts with #40.
+
+6. Define the restore injection point
+
+You say:
+
+a compact restore block is injected before work continues
+
+Good, but where?
+
+Define it precisely:
+
+on Claw Runner task start
+on agent session init
+after compaction event
+on reconnect
+before prompt assembly
+
+That will make the implementation much cleaner.
+
+7. Stats/doctor should be internal/runtime-first
+
+I like them, but I would not make HTTP endpoints the first priority.
+
+For MVP:
+
+make them runtime tools / local commands first
+add API endpoints only if dashboard needs them immediately
+
+Otherwise you are adding observability surface before proving the core loop.
+
+8. Add artifact retention rules
+
+Shielded execution will create files.
+
+You need:
+
+storage path
+retention window
+max artifact size
+cleanup policy
+whether retained artifacts are searchable
+
+Without that, disks will fill up quietly.
+
+9. Namespace actor identity in the event journal
+
+Even if multi-user merge is out of scope, team sessions already exist.
+
+So journal rows should still capture:
+
+actor type (user, agent, system)
+actor id / workspace
+timestamp
+task id if present
+
+That will save pain later.
+
+10. Do not let #41 swallow half of Memory 2.0
+
+The risk here is scope creep.
+
+Keep #41 focused on:
+
+bounded-output execution
+routing
+working-state snapshots
+restore
+
+Do not let it grow into:
+
+contradiction detection
+hierarchical recall
+promotion/decay
+rich memory semantics
+
+Those belong in the later Memory 2.0 phase.
+
+My recommended changes before you send this over
+For #40
+
+Add:
+
+indexing is async and runs on the instance via Claw Runner
+explicit repoPath semantics
+ignore patterns and size caps
+content-hash-based incremental indexing
+search filters/pagination
+symbol disambiguation
+bundle compiler fallback behavior
+For #41
+
+Add:
+
+“shielded execution” wording instead of implying a full sandbox
+continuity guarantee is in-session unless mirrored to control plane
+clear separation of working state vs long-term memory
+defined restore injection point
+artifact retention/cleanup rules
+actor namespacing in journal
+runtime tools first, API endpoints second
+Bottom line
+
+#40 is very close to implementation-ready.
+It mainly needs operational clarity.
+
+#41 is conceptually excellent, but more dangerous from a scope point of view.
+It needs sharper boundaries so it does not turn into an accidental rewrite of your agent runtime and memory architecture.
