@@ -112,24 +112,30 @@ function SkillSourceBlock({ skillId, alwaysOpen }: { skillId: number; alwaysOpen
                 <span className="text-muted-foreground">License:</span>
                 <span className="font-mono text-primary/80">{src?.license ?? "—"}</span>
               </div>
-              {manifest?.instructions && manifest.instructions.length > 0 && (
-                <div className="border-t border-border/30 pt-2 mt-1">
-                  <p className="text-[10px] font-semibold text-foreground/60 mb-1 uppercase tracking-wide">Manifest Instructions</p>
-                  <ul className="space-y-0.5 list-disc list-inside text-muted-foreground">
-                    {manifest.instructions.map((line, i) => (
-                      <li key={i} className="text-[10px] leading-relaxed">{line}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {manifest?.triggers && manifest.triggers.length > 0 && (
-                <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                  <span className="text-[10px] text-muted-foreground">Triggers:</span>
-                  {manifest.triggers.map(t => (
-                    <Badge key={t} variant="outline" className="text-[9px] py-0 h-4">{t}</Badge>
-                  ))}
-                </div>
-              )}
+              {(manifest?.instructions?.length || manifest?.triggers?.length) ? (
+                <details className="border-t border-border/30 pt-2 mt-1">
+                  <summary className="cursor-pointer select-none text-[10px] font-semibold text-foreground/50 uppercase tracking-wide hover:text-foreground/80 transition-colors">
+                    Manifest Details
+                  </summary>
+                  <div className="mt-1.5 space-y-1.5">
+                    {manifest?.instructions && manifest.instructions.length > 0 && (
+                      <ul className="space-y-0.5 list-disc list-inside text-muted-foreground">
+                        {manifest.instructions.map((line, i) => (
+                          <li key={i} className="text-[10px] leading-relaxed">{line}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {manifest?.triggers && manifest.triggers.length > 0 && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] text-muted-foreground">Triggers:</span>
+                        {manifest.triggers.map(t => (
+                          <Badge key={t} variant="outline" className="text-[9px] py-0 h-4">{t}</Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              ) : null}
             </>
           )}
         </div>
@@ -425,7 +431,7 @@ function ImportModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
     importSkill.mutate({ data: { url: url.trim() } }, {
       onSuccess: (result) => {
         toast({ title: `Imported ${result.count} skill${result.count !== 1 ? "s" : ""} — pending review` });
-        onSuccess();
+        setTimeout(() => onSuccess(), 1800);
       },
       onError: (err: Error) => {
         toast({ title: "Import failed", description: err.message || "Check the URL and try again.", variant: "destructive" });
@@ -452,9 +458,14 @@ function ImportModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
             className="font-mono text-sm"
           />
           {importSkill.isSuccess && (
-            <div className="flex items-center gap-2 text-sm text-emerald-400">
-              <CheckCircle className="w-4 h-4" />
-              Imported {importSkill.data?.count} skill(s) — now in Pending Review.
+            <div className="flex flex-col gap-1 text-sm text-emerald-400">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 shrink-0" />
+                Imported {importSkill.data?.count} skill{importSkill.data?.count !== 1 ? "s" : ""} — now in Pending Review.
+              </div>
+              <p className="text-xs text-muted-foreground pl-6">
+                From: <span className="font-mono text-primary/80">{url.replace("https://github.com/", "")}</span>
+              </p>
             </div>
           )}
         </div>
@@ -478,12 +489,15 @@ export default function SkillsLibrary() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const pendingParams = tab === "pending" ? { reviewStatus: "pending" as const } : undefined;
-  const approvedParams = tab !== "pending" && tab !== "bundles" ? { reviewStatus: "approved" as const } : undefined;
-  const activeParams = pendingParams ?? approvedParams;
-  const { data: skillsData, isLoading: skillsLoading } = useListSkills(activeParams, {
-    query: { enabled: tab !== "bundles", queryKey: getListSkillsQueryKey(activeParams) },
+  const approvedParams = { reviewStatus: "approved" as const };
+  const pendingParams = { reviewStatus: "pending" as const };
+  const { data: approvedData, isLoading: approvedLoading } = useListSkills(approvedParams, {
+    query: { queryKey: getListSkillsQueryKey(approvedParams) },
   });
+  const { data: pendingData, isLoading: pendingLoading } = useListSkills(pendingParams, {
+    query: { queryKey: getListSkillsQueryKey(pendingParams) },
+  });
+  const skillsLoading = tab === "pending" ? pendingLoading : approvedLoading;
   const { data: bundlesData, isLoading: bundlesLoading } = useListSkillBundles();
   const reviewSkill = useReviewSkill();
   const enableSkill = useEnableSkill();
@@ -493,10 +507,10 @@ export default function SkillsLibrary() {
     queryClient.invalidateQueries({ queryKey: getListSkillsQueryKey() });
   };
 
-  const allApproved = skillsData?.skills ?? [];
+  const allApproved = approvedData?.skills ?? [];
   const installedSkills = allApproved.filter(s => s.enabled);
   const disabledSkills = allApproved.filter(s => !s.enabled);
-  const pendingSkills = tab === "pending" ? (skillsData?.skills ?? []) : [];
+  const pendingSkills = pendingData?.skills ?? [];
 
   const displayedSkills =
     tab === "installed" ? installedSkills :
