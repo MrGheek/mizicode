@@ -4,19 +4,21 @@
 const http      = require('http');
 const { execSync, spawnSync } = require('child_process');
 const fs        = require('fs');
-const path      = require('path');
 
-const PORT         = 5182;
-const TMUX_SESSION = 'claw-task';
-const OUTPUT_FILE  = '/tmp/claw-output.txt';
+const PORT          = 5182;
+const TMUX_SESSION  = 'claw-task';
+const OUTPUT_FILE   = '/tmp/claw-output.txt';
 const SHIELD_SCRIPT = '/opt/repo-intelligence/context-shield.mjs';
 const STATE_SCRIPT  = '/opt/repo-intelligence/session-state.mjs';
-const SNAPSHOT_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 
-// ── Shared state ─────────────────────────────────────────────────────────────
-let currentTaskId = null;
+// Max age for automatic restore injection (task-start path)
+const RESTORE_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
 
-// ── Tmux helpers ─────────────────────────────────────────────────────────────
+// ── Module-level shared state ─────────────────────────────────────────────────
+let currentTaskId      = null;
+let compactionPending  = false; // Set by /floatr/compact — cleared after restore injection
+
+// ── Tmux helpers ──────────────────────────────────────────────────────────────
 
 function isRunning() {
   try {
@@ -36,7 +38,7 @@ function getOutput() {
   }
 }
 
-// ── Session journal helpers ───────────────────────────────────────────────────
+// ── Journal helpers (fire-and-forget) ────────────────────────────────────────
 
 function appendEvent(event) {
   if (!fs.existsSync(STATE_SCRIPT)) return;
@@ -47,74 +49,126 @@ function appendEvent(event) {
   } catch {}
 }
 
-function readRestore() {
+function incrementStats(delta) {
+  if (!fs.existsSync(STATE_SCRIPT)) return;
+  try {
+    spawnSync('node', [STATE_SCRIPT, 'increment-stats', JSON.stringify(delta)], {
+      timeout: 3000, stdio: 'ignore',
+    });
+  } catch {}
+}
+
+// ── Restore helpers ───────────────────────────────────────────────────────────
+
+function readRestoreData() {
   if (!fs.existsSync(STATE_SCRIPT)) return null;
   try {
     const r = spawnSync('node', [STATE_SCRIPT, 'restore'], { encoding: 'utf8', timeout: 5000 });
     if (r.status !== 0 || !r.stdout) return null;
-    const data = JSON.parse(r.stdout);
-    if (!data.snapshot) return null;
-
-    // Only use snapshot if it is recent
-    const createdAt = data.snapshot._created_at
-      ? new Date(data.snapshot._created_at).getTime()
-      : 0;
-    if (Date.now() - createdAt > SNAPSHOT_MAX_AGE_MS) return null;
-
-    return data;
+    return JSON.parse(r.stdout);
   } catch { return null; }
 }
 
-function buildRestoreBlock(data) {
+function isSnapshotUsable(data, forceCompactionRestore = false) {
+  if (!data?.snapshot) return false;
+  if (forceCompactionRestore) return true; // Compaction path: use any available snapshot
+
+  // Task-start path: only use recent snapshots
+  const createdAt = data.snapshot._created_at
+    ? new Date(data.snapshot._created_at).getTime()
+    : 0;
+  return Date.now() - createdAt < RESTORE_MAX_AGE_MS;
+}
+
+function buildRestoreBlock(data, reason = 'reconnect') {
   const s = data.snapshot;
-  const lines = ['[WORKING STATE RESTORED from previous context]'];
-
-  if (s.activeTask)       lines.push(`Active task   : ${s.activeTask}`);
-  if (s.planCheckpoint)   lines.push(`Plan checkpoint:\n${s.planCheckpoint}`);
-  if (s.activeFiles?.length) lines.push(`Active files  : ${s.activeFiles.slice(0, 5).join(', ')}`);
-  if (s.unresolvedErrors) lines.push(`Unresolved err: ${s.unresolvedErrors}`);
-  if (s.bundleSlug)       lines.push(`Bundle        : ${s.bundleSlug}`);
-  if (s.tokenMode)        lines.push(`Token mode    : ${s.tokenMode}`);
-
-  lines.push('[END RESTORE BLOCK — verify against current filesystem before acting on this context]\n');
+  const lines = [
+    `[WORKING STATE RESTORED — trigger: ${reason}]`,
+    `Snapshot age: ${s._created_at ? Math.round((Date.now() - new Date(s._created_at).getTime()) / 60000) + ' min' : 'unknown'}`,
+  ];
+  if (s.activeTask)         lines.push(`Active task     : ${s.activeTask}`);
+  if (s.planCheckpoint)     lines.push(`Plan checkpoint :\n${s.planCheckpoint}`);
+  if (s.activeFiles?.length) lines.push(`Active files    : ${s.activeFiles.slice(0, 5).join(', ')}`);
+  if (s.unresolvedErrors)   lines.push(`Unresolved err  : ${s.unresolvedErrors}`);
+  if (s.bundleSlug)         lines.push(`Bundle          : ${s.bundleSlug}`);
+  if (s.tokenMode)          lines.push(`Token mode      : ${s.tokenMode}`);
+  lines.push('[END RESTORE — validate fields against current filesystem state before using]\n');
   return lines.join('\n');
+}
+
+// Write a snapshot via the state script
+function writeSnapshot(state) {
+  if (!fs.existsSync(STATE_SCRIPT)) return false;
+  const r = spawnSync('node', [STATE_SCRIPT, 'snapshot', JSON.stringify(state)], {
+    encoding: 'utf8', timeout: 5000,
+  });
+  return r.status === 0;
 }
 
 // ── Task runner ───────────────────────────────────────────────────────────────
 
-function runTask(task, { restoreContext = true } = {}) {
+function runTask(taskText, opts = {}) {
+  const { restoreContext = true } = opts;
+
   try { execSync(`tmux kill-session -t ${TMUX_SESSION} 2>/dev/null`); } catch {}
   fs.writeFileSync(OUTPUT_FILE, '');
 
   currentTaskId = `task-${Date.now()}`;
 
-  // Optionally prepend restore block if a recent snapshot exists
-  let finalTask = task;
+  // ─ Restore block injection ────────────────────────────────────────────────
+  // Two paths: (1) compaction signal — restore regardless of age;
+  //            (2) task-start — restore only if snapshot is recent
+  let finalTask    = taskText;
+  let restoreReason = null;
+
   if (restoreContext) {
-    const restoreData = readRestore();
-    if (restoreData) {
-      const block = buildRestoreBlock(restoreData);
-      finalTask   = block + '\n' + task;
+    const forceRestore = compactionPending; // compaction-signal path
+    compactionPending  = false;             // clear the flag regardless
+
+    const restoreData = readRestoreData();
+    if (restoreData && isSnapshotUsable(restoreData, forceRestore)) {
+      restoreReason = forceRestore ? 'compaction' : 'reconnect';
+      finalTask     = buildRestoreBlock(restoreData, restoreReason) + '\n' + taskText;
+
       appendEvent({
         actor_type: 'claw-runner',
         task_id:    currentTaskId,
         event_type: 'restore_injected',
-        payload:    { snapshot_age_ms: Date.now() - new Date(restoreData.snapshot._created_at).getTime() },
+        payload:    {
+          reason:          restoreReason,
+          snapshotCreated: restoreData.snapshot?._created_at,
+          ageMsSnapshot:   restoreData.snapshot?._created_at
+            ? Date.now() - new Date(restoreData.snapshot._created_at).getTime()
+            : null,
+        },
       });
-      // Track restore success
-      try {
-        spawnSync('node', [STATE_SCRIPT, 'increment-stats', JSON.stringify({ restoreSuccess: 1 })], {
-          timeout: 3000, stdio: 'ignore',
-        });
-      } catch {}
+      incrementStats({ restoreSuccess: 1 });
+    } else if (forceRestore) {
+      // Compaction was signaled but no usable snapshot available
+      appendEvent({
+        actor_type: 'claw-runner',
+        task_id:    currentTaskId,
+        event_type: 'restore_failed',
+        payload:    { reason: 'compaction_no_snapshot', available: !!restoreData?.snapshot },
+      });
+      incrementStats({ restoreFailure: 1 });
     }
   }
 
+  // ─ Event: user_ask ────────────────────────────────────────────────────────
+  appendEvent({
+    actor_type: 'user',
+    task_id:    currentTaskId,
+    event_type: 'user_ask',
+    payload:    { task: taskText.slice(0, 500), restoreContext, restoreReason },
+  });
+
+  // ─ Event: task_start ──────────────────────────────────────────────────────
   appendEvent({
     actor_type: 'claw-runner',
     task_id:    currentTaskId,
     event_type: 'task_start',
-    payload:    { task: task.slice(0, 500), taskId: currentTaskId },
+    payload:    { taskId: currentTaskId, restoreInjected: restoreReason !== null },
   });
 
   const escaped = finalTask.replace(/\\/g, '\\\\').replace(/'/g, "'\\''");
@@ -141,14 +195,13 @@ function stopTask() {
 
 function callShield(subcmd, args = []) {
   if (!fs.existsSync(SHIELD_SCRIPT)) {
-    return { ok: false, error: 'context-shield.mjs not found — repo intelligence not installed' };
+    return { ok: false, error: 'context-shield.mjs not found', exitCode: -1 };
   }
   const r = spawnSync('node', [SHIELD_SCRIPT, subcmd, ...args], {
     encoding: 'utf8',
     timeout:  35_000,
   });
-  if (r.error) return { ok: false, error: r.error.message };
-  // For exec/exec-file the response is text, not JSON — return as-is
+  if (r.error) return { ok: false, error: r.error.message, exitCode: -1 };
   return { ok: r.status === 0, stdout: r.stdout || '', stderr: r.stderr || '', exitCode: r.status };
 }
 
@@ -168,6 +221,11 @@ function sendJson(res, status, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(body);
+}
+
+function sendText(res, status, text) {
+  res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end(text);
 }
 
 // ── HTML UI ───────────────────────────────────────────────────────────────────
@@ -198,6 +256,8 @@ button:disabled{opacity:.4;cursor:not-allowed}
 #stopBtn:hover:not(:disabled){background:#273044}
 #snapshotBtn{background:#1e293b;color:#a78bfa;border:1px solid #2d3748;font-size:0.76rem;padding:7px 14px}
 #snapshotBtn:hover:not(:disabled){background:#1a2035}
+#compactBtn{background:#1e293b;color:#fb923c;border:1px solid #2d3748;font-size:0.76rem;padding:7px 14px}
+#compactBtn:hover:not(:disabled){background:#1a2035}
 .restore-toggle{display:flex;align-items:center;gap:6px;font-size:0.78rem;color:#64748b;cursor:pointer;user-select:none}
 .restore-toggle input{accent-color:#3b82f6}
 .status-bar{display:flex;align-items:center;gap:8px;margin-bottom:8px}
@@ -226,6 +286,7 @@ pre{background:#07090f;border:1px solid #1a2035;border-radius:8px;padding:14px 1
     <button id="runBtn" onclick="runTask()">▶ Run with Claw</button>
     <button id="stopBtn" onclick="stopTask()">■ Stop</button>
     <button id="snapshotBtn" onclick="takeSnapshot()">📸 Snapshot</button>
+    <button id="compactBtn" onclick="signalCompact()">🔄 Signal Compact</button>
     <label class="restore-toggle">
       <input type="checkbox" id="restoreToggle" checked>
       Restore context on start
@@ -277,8 +338,7 @@ pre{background:#07090f;border:1px solid #1a2035;border-radius:8px;padding:14px 1
   async function takeSnapshot() {
     const task = document.getElementById('task').value.trim();
     const btn  = document.getElementById('snapshotBtn');
-    btn.disabled = true;
-    btn.textContent = 'Saving…';
+    btn.disabled = true; btn.textContent = 'Saving…';
     try {
       const r = await fetch('/floatr/snapshot', {
         method: 'POST',
@@ -287,10 +347,24 @@ pre{background:#07090f;border:1px solid #1a2035;border-radius:8px;padding:14px 1
       });
       const data = await r.json();
       btn.textContent = data.ok ? '✓ Saved' : '✗ Failed';
-    } catch {
-      btn.textContent = '✗ Error';
-    }
+    } catch { btn.textContent = '✗ Error'; }
     setTimeout(() => { btn.disabled = false; btn.textContent = '📸 Snapshot'; }, 2000);
+  }
+
+  async function signalCompact() {
+    const task = document.getElementById('task').value.trim();
+    const btn  = document.getElementById('compactBtn');
+    btn.disabled = true; btn.textContent = 'Compacting…';
+    try {
+      const r = await fetch('/floatr/compact', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ activeTask: task.slice(0, 200) || 'unknown', tokenMode: 'core' })
+      });
+      const data = await r.json();
+      btn.textContent = data.ok ? '✓ Snapshot saved' : '✗ Failed';
+    } catch { btn.textContent = '✗ Error'; }
+    setTimeout(() => { btn.disabled = false; btn.textContent = '🔄 Signal Compact'; }, 2500);
   }
 
   function setStatus(state, text) {
@@ -334,7 +408,7 @@ pre{background:#07090f;border:1px solid #1a2035;border-radius:8px;padding:14px 1
 const server = http.createServer(async (req, res) => {
   const { method, url } = req;
 
-  // ── Standard Claw Runner routes ─────────────────────────────────────────────
+  // ── Standard Claw Runner routes ──────────────────────────────────────────
 
   if (method === 'GET' && url === '/') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -355,20 +429,20 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (method === 'GET' && url === '/output') {
-    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end(getOutput());
+    return sendText(res, 200, getOutput());
   }
 
   if (method === 'GET' && url === '/status') {
     const running = isRunning();
-    // Detect task completion and write event
+    // Detect task completion event
     if (!running && currentTaskId) {
-      const output = getOutput();
+      const output  = getOutput();
+      const success = output.includes('[CLAW DONE]');
       appendEvent({
         actor_type: 'claw-runner',
         task_id:    currentTaskId,
         event_type: 'task_complete',
-        payload:    { success: output.includes('[CLAW DONE]'), taskId: currentTaskId },
+        payload:    { success, taskId: currentTaskId },
       });
       currentTaskId = null;
     }
@@ -393,16 +467,31 @@ const server = http.createServer(async (req, res) => {
     appendEvent({
       actor_type: 'tool',
       task_id:    currentTaskId || '',
-      event_type: 'floatr_execute',
-      payload:    { cmd: String(cmd).slice(0, 300), opts: body.opts || {} },
+      event_type: 'tool_use',
+      payload:    { tool: 'floatr_execute', cmd: String(cmd).slice(0, 300) },
     });
 
     const result = callShield('exec', [cmd]);
     const output = result.stdout || '';
 
-    // If output is JSON (unlikely for exec), wrap in text; otherwise return text
-    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end(output + (result.stderr ? `\n[stderr]\n${result.stderr}` : ''));
+    appendEvent({
+      actor_type: 'tool',
+      task_id:    currentTaskId || '',
+      event_type: 'tool_result',
+      payload:    { tool: 'floatr_execute', exitCode: result.exitCode, outputBytes: Buffer.byteLength(output, 'utf8') },
+    });
+
+    // Return correct status codes:
+    // 403 if blocked (dangerous command), 500 if exec error, 200 otherwise
+    if (result.exitCode === 2) {
+      // Exit code 2 = blocked by dangerous pattern
+      return sendText(res, 403, output + (result.stderr ? `\n[stderr]\n${result.stderr}` : ''));
+    }
+    if (result.exitCode !== 0 && result.exitCode !== null) {
+      return sendText(res, 500, output + (result.stderr ? `\n[stderr]\n${result.stderr}` : ''));
+    }
+
+    return sendText(res, 200, output + (result.stderr ? `\n[stderr]\n${result.stderr}` : ''));
   }
 
   if (url === '/floatr/execute-file' && method === 'POST') {
@@ -413,9 +502,26 @@ const server = http.createServer(async (req, res) => {
     const filePath = body.path || body.filePath;
     if (!filePath) return sendJson(res, 400, { error: 'path required' });
 
+    appendEvent({
+      actor_type: 'tool',
+      task_id:    currentTaskId || '',
+      event_type: 'tool_use',
+      payload:    { tool: 'floatr_execute_file', path: filePath },
+    });
+
     const result = callShield('exec-file', [filePath]);
-    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end(result.stdout || '');
+
+    appendEvent({
+      actor_type: 'tool',
+      task_id:    currentTaskId || '',
+      event_type: 'tool_result',
+      payload:    { tool: 'floatr_execute_file', exitCode: result.exitCode },
+    });
+
+    if (!result.ok) {
+      return sendText(res, 500, result.stderr || result.error || 'exec-file failed');
+    }
+    return sendText(res, 200, result.stdout || '');
   }
 
   if (url === '/floatr/batch-execute' && method === 'POST') {
@@ -426,10 +532,24 @@ const server = http.createServer(async (req, res) => {
     const commands = Array.isArray(body) ? body : body.commands;
     if (!Array.isArray(commands)) return sendJson(res, 400, { error: 'commands array required' });
 
+    appendEvent({
+      actor_type: 'tool',
+      task_id:    currentTaskId || '',
+      event_type: 'tool_use',
+      payload:    { tool: 'floatr_batch_execute', count: commands.length },
+    });
+
     const result = callShield('batch', [JSON.stringify(commands)]);
     let parsed;
     try { parsed = JSON.parse(result.stdout || '{}'); }
     catch { parsed = { ok: false, raw: result.stdout }; }
+
+    appendEvent({
+      actor_type: 'tool',
+      task_id:    currentTaskId || '',
+      event_type: 'tool_result',
+      payload:    { tool: 'floatr_batch_execute', ok: parsed.ok, totalBytesAvoided: parsed.totalBytesAvoided },
+    });
 
     return sendJson(res, result.ok ? 200 : 500, parsed);
   }
@@ -468,27 +588,123 @@ const server = http.createServer(async (req, res) => {
       tokenMode:        body.tokenMode        || 'core',
     };
 
-    const r = spawnSync('node', [STATE_SCRIPT, 'snapshot', JSON.stringify(snapshot)], {
-      encoding: 'utf8', timeout: 5000,
-    });
-
+    const ok = writeSnapshot(snapshot);
     appendEvent({
       actor_type: 'claw-runner',
       task_id:    currentTaskId || '',
       event_type: 'snapshot_written',
-      payload:    { activeTask: snapshot.activeTask },
+      payload:    { activeTask: snapshot.activeTask, trigger: 'manual' },
     });
 
-    return sendJson(res, r.status === 0 ? 200 : 500, {
-      ok:  r.status === 0,
-      ...(r.status !== 0 ? { error: r.stderr || 'snapshot failed' } : {}),
+    return sendJson(res, ok ? 200 : 500, {
+      ok,
+      ...(ok ? {} : { error: 'snapshot failed' }),
+    });
+  }
+
+  // /floatr/compact — Compaction signal path:
+  // Writes a snapshot (pre-compaction) and sets the compactionPending flag
+  // so the next task start injects a restore block via the compaction path.
+  if (url === '/floatr/compact' && method === 'POST') {
+    let body;
+    try { body = await parseBody(req); }
+    catch { body = {}; }
+
+    const snapshot = {
+      activeTask:       body.activeTask       || '',
+      planCheckpoint:   body.planCheckpoint   || '',
+      activeFiles:      body.activeFiles      || [],
+      unresolvedErrors: body.unresolvedErrors || '',
+      bundleSlug:       body.bundleSlug       || '',
+      tokenMode:        body.tokenMode        || 'core',
+    };
+
+    const ok = writeSnapshot(snapshot);
+    compactionPending = true; // Signal: next runTask will force-inject restore block
+
+    appendEvent({
+      actor_type: 'claw-runner',
+      task_id:    currentTaskId || '',
+      event_type: 'compaction_signal',
+      payload:    { activeTask: snapshot.activeTask, snapshotWritten: ok },
+    });
+
+    return sendJson(res, 200, {
+      ok: true,
+      snapshotWritten: ok,
+      compactionPending: true,
+      message: 'Compaction signal received. Next task start will inject restore block from this snapshot.',
     });
   }
 
   if (url === '/floatr/restore' && method === 'GET') {
-    const data = readRestore();
-    if (!data) return sendJson(res, 200, { ok: true, snapshot: null, message: 'No recent snapshot found' });
-    return sendJson(res, 200, { ok: true, ...data });
+    const data = readRestoreData();
+    if (!data) return sendJson(res, 200, { ok: true, snapshot: null, message: 'No restore data found' });
+    const usable = isSnapshotUsable(data, false);
+    return sendJson(res, 200, { ok: true, usable, compactionPending, ...data });
+  }
+
+  // /floatr/event — arbitrary event logging from the model or tool adapters
+  // Allows the model to log: plan changes, tool results, errors, decisions
+  if (url === '/floatr/event' && method === 'POST') {
+    let body;
+    try { body = await parseBody(req); }
+    catch { return sendJson(res, 400, { error: 'invalid json' }); }
+
+    if (!body.event_type) return sendJson(res, 400, { error: 'event_type required' });
+
+    // Allowed event_types from external callers (model/tool adapter)
+    const ALLOWED_EXTERNAL_EVENTS = new Set([
+      'tool_use', 'tool_result', 'plan_change', 'plan_checkpoint',
+      'user_note', 'error_observed', 'decision', 'task_progress',
+    ]);
+
+    if (!ALLOWED_EXTERNAL_EVENTS.has(body.event_type)) {
+      return sendJson(res, 400, {
+        error: `event_type '${body.event_type}' not allowed from external callers`,
+        allowed: [...ALLOWED_EXTERNAL_EVENTS],
+      });
+    }
+
+    appendEvent({
+      actor_type: body.actor_type || 'model',
+      actor_id:   body.actor_id   || '',
+      task_id:    body.task_id    || currentTaskId || '',
+      event_type: body.event_type,
+      payload:    body.payload    || {},
+    });
+
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // /floatr/plan — plan checkpoint update (convenience wrapper for /floatr/event)
+  if (url === '/floatr/plan' && method === 'POST') {
+    let body;
+    try { body = await parseBody(req); }
+    catch { return sendJson(res, 400, { error: 'invalid json' }); }
+
+    if (!body.checkpoint) return sendJson(res, 400, { error: 'checkpoint string required' });
+
+    appendEvent({
+      actor_type: 'model',
+      task_id:    currentTaskId || '',
+      event_type: 'plan_change',
+      payload:    {
+        checkpoint:    body.checkpoint,
+        activeFiles:   body.activeFiles   || [],
+        taskSummary:   body.taskSummary   || '',
+      },
+    });
+
+    // Optionally update active_state with the new plan checkpoint
+    if (fs.existsSync(STATE_SCRIPT)) {
+      const currentState = { planCheckpoint: body.checkpoint, activeFiles: body.activeFiles || [] };
+      spawnSync('node', [STATE_SCRIPT, 'update-state', JSON.stringify(currentState)], {
+        timeout: 3000, stdio: 'ignore',
+      });
+    }
+
+    return sendJson(res, 200, { ok: true });
   }
 
   res.writeHead(404);

@@ -78,8 +78,19 @@ export function openDb(dbPath = DB_PATH) {
       total_blocked       INTEGER NOT NULL DEFAULT 0,
       restore_success     INTEGER NOT NULL DEFAULT 0,
       restore_failure     INTEGER NOT NULL DEFAULT 0,
+      routing_failures    INTEGER NOT NULL DEFAULT 0,
       updated_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
     );
+
+    CREATE TABLE IF NOT EXISTS routing_decisions (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+      class     TEXT    NOT NULL,
+      shielded  INTEGER NOT NULL DEFAULT 1,
+      blocked   INTEGER NOT NULL DEFAULT 0,
+      bytes_avoided INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS routing_decisions_class ON routing_decisions (class);
 
     INSERT OR IGNORE INTO active_state  (id, state)  VALUES (1, '{}');
     INSERT OR IGNORE INTO routing_stats (id)          VALUES (1);
@@ -169,6 +180,7 @@ export function incrementRoutingStats(db, {
   blocked = 0,
   restoreSuccess = 0,
   restoreFailure = 0,
+  routingFailures = 0,
 } = {}) {
   if (!db) return;
   db.prepare(`
@@ -179,14 +191,50 @@ export function incrementRoutingStats(db, {
       total_blocked       = total_blocked       + ?,
       restore_success     = restore_success     + ?,
       restore_failure     = restore_failure     + ?,
+      routing_failures    = routing_failures    + ?,
       updated_at          = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
     WHERE id = 1
-  `).run(shielded, bytesAvoided, artifacts, blocked, restoreSuccess, restoreFailure);
+  `).run(shielded, bytesAvoided, artifacts, blocked, restoreSuccess, restoreFailure, routingFailures);
 }
 
 export function readRoutingStats(db) {
   if (!db) return {};
   return db.prepare(`SELECT * FROM routing_stats WHERE id = 1`).get() || {};
+}
+
+// ── Routing decision log ──────────────────────────────────────────────────────
+
+export function appendRoutingDecision(db, { class: cls, shielded = 1, blocked = 0, bytesAvoided = 0 }) {
+  if (!db) return;
+  db.prepare(`
+    INSERT INTO routing_decisions (class, shielded, blocked, bytes_avoided)
+    VALUES (?, ?, ?, ?)
+  `).run(cls, shielded ? 1 : 0, blocked ? 1 : 0, bytesAvoided);
+}
+
+export function readRoutingBreakdown(db) {
+  if (!db) return [];
+  return db.prepare(`
+    SELECT class,
+           COUNT(*)                         AS total,
+           SUM(shielded)                    AS shielded,
+           SUM(blocked)                     AS blocked,
+           SUM(bytes_avoided)               AS bytes_avoided
+    FROM routing_decisions
+    GROUP BY class
+    ORDER BY total DESC
+  `).all();
+}
+
+export function readRecentRoutingFailures(db, limit = 20) {
+  if (!db) return [];
+  const rows = db.prepare(`
+    SELECT * FROM events WHERE event_type IN ('exec_blocked','exec_error','routing_failure')
+    ORDER BY id DESC LIMIT ?
+  `).all(limit);
+  return rows.map(r => {
+    try { return { ...r, payload: JSON.parse(r.payload) }; } catch { return r; }
+  });
 }
 
 // ── CLI entry point ───────────────────────────────────────────────────────────
@@ -249,14 +297,34 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       case 'increment-stats': {
         const delta = JSON.parse(args[0] || '{}');
         incrementRoutingStats(db, {
-          shielded:       delta.shielded       || 0,
-          bytesAvoided:   delta.bytesAvoided   || 0,
-          artifacts:      delta.artifacts      || 0,
-          blocked:        delta.blocked        || 0,
-          restoreSuccess: delta.restoreSuccess || 0,
-          restoreFailure: delta.restoreFailure || 0,
+          shielded:        delta.shielded        || 0,
+          bytesAvoided:    delta.bytesAvoided    || 0,
+          artifacts:       delta.artifacts       || 0,
+          blocked:         delta.blocked         || 0,
+          restoreSuccess:  delta.restoreSuccess  || 0,
+          restoreFailure:  delta.restoreFailure  || 0,
+          routingFailures: delta.routingFailures || 0,
         });
         console.log(JSON.stringify({ ok: true }));
+        break;
+      }
+
+      case 'routing-decision': {
+        const d = JSON.parse(args[0] || '{}');
+        appendRoutingDecision(db, {
+          class:        d.class      || 'unknown',
+          shielded:     d.shielded   || 0,
+          blocked:      d.blocked    || 0,
+          bytesAvoided: d.bytesAvoided || 0,
+        });
+        console.log(JSON.stringify({ ok: true }));
+        break;
+      }
+
+      case 'routing-breakdown': {
+        const breakdown = readRoutingBreakdown(db);
+        const failures  = readRecentRoutingFailures(db, 5);
+        console.log(JSON.stringify({ breakdown, recentFailures: failures }));
         break;
       }
 

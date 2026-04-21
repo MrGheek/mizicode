@@ -201,6 +201,12 @@ export function shieldedExec(cmd, opts = {}) {
   const safetyCheck = checkDangerous(cmd);
   if (safetyCheck.dangerous) {
     _dbIncrement({ blocked: 1 });
+    _dbRoutingDecision({ class: 'dangerous', shielded: 0, blocked: 1 });
+    _dbAppendEvent({
+      actor_type: 'context-shield',
+      event_type: 'exec_blocked',
+      payload:    { cmd: String(cmd).slice(0, 300), pattern: safetyCheck.pattern },
+    });
     return {
       ok: false,
       blocked: true,
@@ -238,6 +244,16 @@ export function shieldedExec(cmd, opts = {}) {
     const summary       = buildSummary({ cmd, exitCode, timedOut, outputBytes, lines, artifactFile, previewLines });
 
     _dbIncrement({ shielded: 1, bytesAvoided, artifacts: 1 });
+    _dbRoutingDecision({ class: routing.class, shielded: 1, blocked: 0, bytesAvoided });
+
+    if (exitCode !== 0) {
+      _dbAppendEvent({
+        actor_type: 'context-shield',
+        event_type: 'exec_error',
+        payload:    { cmd: String(cmd).slice(0, 300), exitCode, timedOut, class: routing.class },
+      });
+      _dbIncrement({ routingFailures: 1 });
+    }
 
     return {
       ok:         exitCode === 0,
@@ -253,6 +269,17 @@ export function shieldedExec(cmd, opts = {}) {
   }
 
   // Output fits inline — return directly (no artifact)
+  _dbRoutingDecision({ class: routing.class, shielded: 0, blocked: 0, bytesAvoided: 0 });
+
+  if (exitCode !== 0) {
+    _dbAppendEvent({
+      actor_type: 'context-shield',
+      event_type: 'exec_error',
+      payload:    { cmd: String(cmd).slice(0, 300), exitCode, timedOut, class: routing.class },
+    });
+    _dbIncrement({ routingFailures: 1 });
+  }
+
   return {
     ok:          exitCode === 0,
     exitCode,
@@ -335,11 +362,24 @@ export function batchExec(commands, opts = {}) {
 
 export function floatr_stats() {
   let dbStats = {};
+  let routingBreakdown = [];
+
+  // Aggregate DB stats
   try {
     const r = spawnSync('node', [STATE_SCRIPT, 'stats'], { encoding: 'utf8', timeout: 5000 });
     if (r.status === 0) dbStats = JSON.parse(r.stdout || '{}');
   } catch {}
 
+  // Routing decision breakdown by class
+  try {
+    const r = spawnSync('node', [STATE_SCRIPT, 'routing-breakdown'], { encoding: 'utf8', timeout: 5000 });
+    if (r.status === 0) {
+      const parsed = JSON.parse(r.stdout || '{}');
+      routingBreakdown = parsed.breakdown || [];
+    }
+  } catch {}
+
+  // Artifact directory stats
   let artifactCount = 0, artifactBytes = 0;
   if (existsSync(ARTIFACTS_DIR)) {
     for (const f of readdirSync(ARTIFACTS_DIR)) {
@@ -347,12 +387,29 @@ export function floatr_stats() {
     }
   }
 
+  const tokenMode     = getTokenMode();
+  const inlineLimit   = getInlineLimit();
+
   return {
-    db:         dbStats,
-    artifacts:  { count: artifactCount, totalBytes: artifactBytes, capBytes: MAX_SESSION_BYTES },
+    db: {
+      totals:            dbStats,
+      routingBreakdown,
+      contextBytesAvoided: dbStats.total_bytes_avoided || 0,
+      shieldedCalls:     dbStats.total_shielded        || 0,
+      blockedCalls:      dbStats.total_blocked         || 0,
+      routingFailures:   dbStats.routing_failures      || 0,
+      restoreSuccesses:  dbStats.restore_success       || 0,
+      restoreFailures:   dbStats.restore_failure       || 0,
+    },
+    artifacts: {
+      count:      artifactCount,
+      totalBytes: artifactBytes,
+      capBytes:   MAX_SESSION_BYTES,
+      capPct:     Math.round((artifactBytes / MAX_SESSION_BYTES) * 100),
+    },
     thresholds: {
-      inlineLimitBytes:  getInlineLimit(),
-      tokenMode:         getTokenMode(),
+      tokenMode,
+      inlineLimitBytes:  inlineLimit,
       maxArtifactBytes:  MAX_ARTIFACT_BYTES,
       execTimeoutMs:     EXEC_TIMEOUT_MS,
       retentionHours:    ARTIFACT_RETENTION_MS / 3_600_000,
@@ -360,24 +417,56 @@ export function floatr_stats() {
   };
 }
 
+const SNAPSHOT_STALE_HOURS = 2;
+
 export function floatr_doctor() {
   const issues = [];
   const checks = {};
 
-  checks.journalExists = existsSync(process.env.FLOATR_STATE_DB || '/workspace/.floatr/session-state.db');
+  // Journal DB check
+  const dbPath = process.env.FLOATR_STATE_DB || '/workspace/.floatr/session-state.db';
+  checks.journalExists = existsSync(dbPath);
   if (!checks.journalExists) issues.push('WARN: Session journal DB not found — event capture unavailable');
 
+  // Stale snapshot check
+  if (checks.journalExists) {
+    try {
+      const r = spawnSync('node', [STATE_SCRIPT, 'restore'], { encoding: 'utf8', timeout: 5000 });
+      if (r.status === 0) {
+        const data = JSON.parse(r.stdout || '{}');
+        if (data.snapshot?._created_at) {
+          const ageMsSnapshot = Date.now() - new Date(data.snapshot._created_at).getTime();
+          const ageHours = ageMsSnapshot / 3_600_000;
+          checks.latestSnapshotAgeHours = Math.round(ageHours * 10) / 10;
+          if (ageHours > SNAPSHOT_STALE_HOURS) {
+            issues.push(`WARN: Latest snapshot is ${checks.latestSnapshotAgeHours}h old — may not reflect current working state`);
+          }
+        } else {
+          checks.latestSnapshotAgeHours = null;
+          issues.push('INFO: No snapshots found — working state will not survive context compaction');
+        }
+
+        // Routing failures check
+        const failures = data.stats?.routing_failures || 0;
+        checks.routingFailures = failures;
+        if (failures > 0) {
+          issues.push(`WARN: ${failures} routing failure(s) recorded — check exec_error events in journal`);
+        }
+      }
+    } catch {}
+  }
+
+  // Artifacts directory
   checks.artifactsDirExists = existsSync(ARTIFACTS_DIR);
   if (!checks.artifactsDirExists) issues.push(`INFO: Artifacts directory not yet created at ${ARTIFACTS_DIR}`);
 
+  // Artifact cap
   const sessionBytes = sessionArtifactBytes();
   checks.artifactCapPct = Math.round((sessionBytes / MAX_SESSION_BYTES) * 100);
   if (checks.artifactCapPct > 80)
     issues.push(`WARN: Artifact storage at ${checks.artifactCapPct}% capacity (${sessionBytes.toLocaleString()}/${MAX_SESSION_BYTES.toLocaleString()} bytes)`);
 
-  checks.tokenModeFile = existsSync('/workspace/.floatr/token-mode.json');
-  checks.tokenMode     = getTokenMode();
-
+  // Stale artifacts
   if (existsSync(ARTIFACTS_DIR)) {
     const cutoff     = Date.now() - ARTIFACT_RETENTION_MS;
     const staleCount = readdirSync(ARTIFACTS_DIR).filter(f => {
@@ -387,6 +476,9 @@ export function floatr_doctor() {
     if (staleCount > 0) issues.push(`INFO: ${staleCount} stale artifact(s) eligible for cleanup`);
   }
 
+  // Token mode and state script
+  checks.tokenModeFile     = existsSync('/workspace/.floatr/token-mode.json');
+  checks.tokenMode         = getTokenMode();
   checks.stateScriptExists = existsSync(STATE_SCRIPT);
   if (!checks.stateScriptExists) issues.push('WARN: session-state.mjs not found — routing stats and snapshots unavailable');
 
@@ -397,12 +489,30 @@ export function floatr_doctor() {
   };
 }
 
-// ── Internal DB helper (fire-and-forget) ──────────────────────────────────────
+// ── Internal DB helpers (fire-and-forget) ─────────────────────────────────────
 
 function _dbIncrement(delta) {
   try {
-    const args = JSON.stringify(delta);
-    spawnSync('node', [STATE_SCRIPT, 'increment-stats', args], { timeout: 3000 });
+    spawnSync('node', [STATE_SCRIPT, 'increment-stats', JSON.stringify(delta)], {
+      timeout: 3000, stdio: 'ignore',
+    });
+  } catch {}
+}
+
+function _dbRoutingDecision({ class: cls, shielded, blocked, bytesAvoided = 0 }) {
+  try {
+    const decision = JSON.stringify({ class: cls, shielded: shielded ? 1 : 0, blocked: blocked ? 1 : 0, bytesAvoided });
+    spawnSync('node', [STATE_SCRIPT, 'routing-decision', decision], {
+      timeout: 3000, stdio: 'ignore',
+    });
+  } catch {}
+}
+
+function _dbAppendEvent(event) {
+  try {
+    spawnSync('node', [STATE_SCRIPT, 'append-event', JSON.stringify(event)], {
+      timeout: 3000, stdio: 'ignore',
+    });
   } catch {}
 }
 
