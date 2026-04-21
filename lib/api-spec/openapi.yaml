@@ -24,6 +24,8 @@ tags:
     description: Smart Skills library and bundle management
   - name: repo
     description: Repository intelligence — indexing, search, fingerprint, and blast radius
+  - name: memory
+    description: Cross-session memory governance — progressive-disclosure retrieval, contradiction detection, TTL/decay, ROI promotion, and budgeted retrieval profiles
 
 paths:
   /healthz:
@@ -571,6 +573,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/NotImplementedResponse"
 
+  /skills/feedback-scores:
+    get:
+      operationId: getSkillFeedbackScores
+      tags: [skills]
+      summary: Get aggregated feedback scores for all skills
+      responses:
+        "200":
+          description: Feedback scores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillFeedbackScoresResponse"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /skills/{skillId}:
     get:
       operationId: getSkill
@@ -670,6 +691,72 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SkillDetailResponse"
+        "404":
+          description: Skill not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/{skillId}/feedback/{feedbackId}:
+    delete:
+      operationId: deleteSkillFeedbackEntry
+      tags: [skills]
+      summary: Delete a specific feedback entry for a skill
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: feedbackId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Entry deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Feedback entry not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/{skillId}/feedback:
+    get:
+      operationId: getSkillFeedbackHistory
+      tags: [skills]
+      summary: Get feedback history for a specific skill
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Feedback history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillFeedbackHistoryResponse"
         "404":
           description: Skill not found
           content:
@@ -888,6 +975,69 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Skill not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{sessionId}/skills/complete-feedback:
+    post:
+      operationId: sessionCompleteFeedback
+      tags: [skills]
+      summary: Record implicit per-skill feedback at session completion
+      description: "Processes bytesAvoided and taskSuccessScore to generate implicit positive/negative signals for all skills active in the session."
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionCompleteFeedbackRequest"
+      responses:
+        "200":
+          description: Feedback recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionCompleteFeedbackResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No skill activation found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{sessionId}/routing-stats:
+    get:
+      operationId: getSessionRoutingStats
+      tags: [sessions]
+      summary: Get stored routing stats for a session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Routing stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionRoutingStatsResponse"
+        "404":
+          description: Session not found
           content:
             application/json:
               schema:
@@ -1182,6 +1332,529 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /mem/index:
+    get:
+      operationId: memoryIndex
+      tags: [memory]
+      summary: "Layer 1 — memory index (tiny high-ROI shortlist)"
+      description: "Returns the top-N highest-ROI memory items for a user. Layer 1 is always available regardless of token mode. Use this first before escalating to search."
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: tokenMode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [full, core, lean, ultra]
+            default: core
+        - name: scope
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MemoryScope"
+        - name: sessionType
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [team, solo]
+          description: "Drives retrieval scope ordering: 'team' prioritises lane_user/repo_shared first."
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Memory index result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryIndexResponse"
+        "400":
+          description: Missing userId
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mem/search:
+    get:
+      operationId: memorySearchItems
+      tags: [memory]
+      summary: "Layer 2 — memory search (richer filtered set)"
+      description: "Full-text search over memory items with scope and type filters. Layer 2 is restricted in lean/ultra token modes."
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: tokenMode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [full, core, lean, ultra]
+            default: core
+        - name: scope
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MemoryScope"
+        - name: sessionType
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [team, solo]
+          description: "Drives retrieval scope ordering: 'team' prioritises lane_user/repo_shared first."
+        - name: memoryType
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MemoryType"
+        - name: includeStale
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemorySearchResponse"
+        "400":
+          description: Missing userId or q
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mem/item:
+    post:
+      operationId: saveMemoryItem
+      tags: [memory]
+      summary: Save a memory item with contradiction check
+      description: "Saves a new memory item and runs automatic lexical contradiction detection against the same scope. Returns conflicting item IDs if any. Saves are never blocked — contradictions are flagged without preventing the write."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveMemoryItemRequest"
+      responses:
+        "201":
+          description: Item saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveMemoryItemResponse"
+        "400":
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mem/item/{itemId}:
+    get:
+      operationId: getMemoryItem
+      tags: [memory]
+      summary: "Layer 3 — get full memory item (escalation required)"
+      description: "Returns the full memory item by ID. Layer 3 requires escalate=true in lean/ultra modes."
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: tokenMode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [full, core, lean, ultra]
+            default: core
+        - name: escalate
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: "Set to true to explicitly escalate to Layer 3. Required in lean/ultra modes."
+      responses:
+        "200":
+          description: Memory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryGetResponse"
+        "403":
+          description: Layer 3 access requires escalation in this token mode
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mem/item/{itemId}/promote:
+    patch:
+      operationId: reverseMemoryPromotion
+      tags: [memory]
+      summary: Promote or demote a memory item
+      description: "Manually set the promotion_status of a memory item. Set to 'promoted' to confirm a candidate, 'demoted' to reverse a promotion (restores original type if promoted_from is set), or 'none' to clear promotion state."
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                promotionStatus:
+                  $ref: "#/components/schemas/PromotionStatus"
+                notes:
+                  type: string
+                  description: Optional note explaining the reason for this promotion status change.
+              required:
+                - promotionStatus
+      responses:
+        "200":
+          description: Promotion status updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromotionUpdateResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mem/items:
+    get:
+      operationId: listMemoryItems
+      tags: [memory]
+      summary: List memory items
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: scope
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MemoryScope"
+        - name: memoryType
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MemoryType"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Memory items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryItemsListResponse"
+
+  /mem/injected:
+    post:
+      operationId: markMemoryInjected
+      tags: [memory]
+      summary: Track memory items injected into context
+      description: "Updates injection_count for the specified items, which feeds ROI scoring and auto-promotion. Call this after injecting memory items into a model context window."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId:
+                  type: string
+                  description: "Owner of the items — used to scope updates and prevent cross-tenant counter manipulation."
+                itemIds:
+                  type: array
+                  items:
+                    type: integer
+              required:
+                - userId
+                - itemIds
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /mem/symbol-stale:
+    post:
+      operationId: markSymbolStale
+      tags: [memory]
+      summary: Mark memory items linked to a symbol as stale
+      description: "Called when a symbol's content hash changes (e.g., after a file edit). Items linked to the symbol via symbol_ref are marked stale and demoted for injection."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId:
+                  type: string
+                  description: "Caller's user ID — scopes staleness to this tenant's items only"
+                symbolRef:
+                  type: string
+                newContentHash:
+                  type: string
+              required:
+                - userId
+                - symbolRef
+                - newContentHash
+      responses:
+        "200":
+          description: Staleness marking result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarkStaleResponse"
+
+  /mem/conflicts:
+    get:
+      operationId: listMemoryConflicts
+      tags: [memory]
+      summary: List contradiction / conflict groups
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: conflictStatus
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ConflictStatus"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Conflict groups with their items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryConflictsResponse"
+
+  /mem/conflicts/{groupId}:
+    patch:
+      operationId: updateMemoryConflictStatus
+      tags: [memory]
+      summary: Update conflict group status
+      description: "Update the resolution status of a conflict group. Setting resolved also updates all member items."
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                conflictStatus:
+                  $ref: "#/components/schemas/ConflictStatus"
+              required:
+                - conflictStatus
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConflictStatusUpdateResponse"
+        "404":
+          description: Conflict group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mem/stale:
+    get:
+      operationId: listStaleMemoryItems
+      tags: [memory]
+      summary: List stale memory items
+      description: "Returns items that are stale by stale_status or TTL expiry. Stale items are searchable but deprioritized for injection."
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Stale items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryStaleResponse"
+
+  /mem/promotions:
+    get:
+      operationId: getMemoryPromotionHistory
+      tags: [memory]
+      summary: Get promotion history
+      description: "Returns auto-promotion audit log entries. Items are promoted from note→convention or warning→guardrail when ROI thresholds are met."
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: itemId
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Promotion history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryPromotionHistoryResponse"
+
+  /mem/stats:
+    get:
+      operationId: getMemoryGovernanceStats
+      tags: [memory]
+      summary: Memory governance observability stats
+      description: "Returns stale count, contradiction count, promotion count, layer usage, average injected tokens, hit rate, and the active budget profile for the given token mode."
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: tokenMode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [full, core, lean, ultra]
+            default: core
+      responses:
+        "200":
+          description: Governance statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryGovernanceStatsResponse"
 
 components:
   schemas:
@@ -2144,6 +2817,685 @@ components:
           additionalProperties: true
       required:
         - feedback
+
+    SessionCompleteFeedbackRequest:
+      type: object
+      properties:
+        bytesAvoided:
+          type: integer
+          description: "Bytes avoided by context-shield routing, used as implicit signal for context-shield-core"
+        taskSuccessScore:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: "Overall task success score (1-5) for implicit skill signals"
+
+    SessionCompleteFeedbackRecordedItem:
+      type: object
+      properties:
+        skillSlug:
+          type: string
+        helpful:
+          type: boolean
+        signal:
+          type: string
+      required:
+        - skillSlug
+        - helpful
+        - signal
+
+    SessionCompleteFeedbackResponse:
+      type: object
+      properties:
+        recorded:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionCompleteFeedbackRecordedItem"
+      required:
+        - recorded
+
+    SkillFeedbackScore:
+      type: object
+      properties:
+        skillId:
+          type: integer
+        slug:
+          type: string
+        totalCount:
+          type: integer
+        helpfulCount:
+          type: integer
+        unhelpfulCount:
+          type: integer
+        helpfulRate:
+          type: number
+          description: "Rate from 0.0 to 1.0"
+        normalizedScore:
+          type: number
+          description: "Normalized to [-1.0, +1.0] centered at 0.5 helpfulRate"
+        avgTaskSuccessScore:
+          type: number
+          nullable: true
+      required:
+        - skillId
+        - slug
+        - totalCount
+        - helpfulCount
+        - unhelpfulCount
+        - helpfulRate
+        - normalizedScore
+
+    SkillFeedbackScoresResponse:
+      type: object
+      properties:
+        scores:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillFeedbackScore"
+      required:
+        - scores
+
+    SkillFeedbackHistoryEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        sessionId:
+          type: integer
+        skillId:
+          type: integer
+        helpful:
+          type: boolean
+        notes:
+          type: string
+          nullable: true
+        tokenDelta:
+          type: integer
+          nullable: true
+        taskSuccessScore:
+          type: number
+          nullable: true
+        createdAt:
+          type: string
+      required:
+        - id
+        - sessionId
+        - skillId
+        - helpful
+        - createdAt
+
+    SkillFeedbackHistoryPagination:
+      type: object
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+        count:
+          type: integer
+      required:
+        - limit
+        - offset
+        - count
+
+    SkillFeedbackHistoryResponse:
+      type: object
+      properties:
+        helpfulRate:
+          type: number
+        totalCount:
+          type: integer
+        helpfulCount:
+          type: integer
+        unhelpfulCount:
+          type: integer
+        history:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillFeedbackHistoryEntry"
+        pagination:
+          $ref: "#/components/schemas/SkillFeedbackHistoryPagination"
+      required:
+        - helpfulRate
+        - totalCount
+        - helpfulCount
+        - unhelpfulCount
+        - history
+        - pagination
+
+    SessionRoutingStats:
+      type: object
+      properties:
+        totalBytesAvoided:
+          type: integer
+        totalShielded:
+          type: integer
+        totalArtifacts:
+          type: integer
+        totalBlocked:
+          type: integer
+        routingFailures:
+          type: integer
+        recordedAt:
+          type: string
+      required:
+        - totalBytesAvoided
+        - totalShielded
+        - totalArtifacts
+        - totalBlocked
+        - routingFailures
+        - recordedAt
+
+    SessionRoutingStatsResponse:
+      type: object
+      properties:
+        stats:
+          oneOf:
+            - $ref: "#/components/schemas/SessionRoutingStats"
+            - type: "null"
+      required:
+        - stats
+
+    MemoryType:
+      type: string
+      enum: [observation, research, session_summary, convention, guardrail, note, warning]
+
+    MemoryScope:
+      type: string
+      enum: [task, lane_user, repo_shared, session_core, user_operator, global]
+      description: "Canonical scope order (most local to most shared): task → lane_user → repo_shared → session_core → user_operator → global"
+
+    ConflictStatus:
+      type: string
+      enum: [none, open, reviewed, resolved, accepted_override]
+
+    StaleStatus:
+      type: string
+      enum: [fresh, stale, invalidated]
+
+    ValidityStatus:
+      type: string
+      enum: [valid, superseded, retracted]
+
+    PromotionStatus:
+      type: string
+      enum: [none, candidate, promoted, demoted]
+
+    MemoryBudgetProfile:
+      type: object
+      properties:
+        memoryCandidateCount:
+          type: integer
+          description: Maximum number of memory candidates to retrieve
+        memoryLayerAccess:
+          type: integer
+          enum: [1, 2, 3]
+          description: "Maximum layer available: 1=index only, 2=index+search, 3=all layers"
+        memoryStaleSuppressionStrength:
+          type: string
+          enum: [strict, moderate, off]
+        memoryMetadataVerbosity:
+          type: string
+          enum: [compact, standard, full]
+        memoryContradictionSurfacing:
+          type: string
+          enum: [off, hint, full]
+      required:
+        - memoryCandidateCount
+        - memoryLayerAccess
+        - memoryStaleSuppressionStrength
+        - memoryMetadataVerbosity
+        - memoryContradictionSurfacing
+
+    MemoryItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: string
+        sessionId:
+          type: string
+          nullable: true
+        memoryType:
+          $ref: "#/components/schemas/MemoryType"
+        scope:
+          $ref: "#/components/schemas/MemoryScope"
+        content:
+          type: string
+        symbolRef:
+          type: string
+          nullable: true
+        contentHashAtSave:
+          type: string
+          nullable: true
+        validityStatus:
+          $ref: "#/components/schemas/ValidityStatus"
+        staleStatus:
+          $ref: "#/components/schemas/StaleStatus"
+        ttlExpiresAt:
+          type: integer
+          nullable: true
+          description: Unix timestamp when this item expires (null = never)
+        accessCount:
+          type: integer
+        retrievalCount:
+          type: integer
+        injectionCount:
+          type: integer
+        roiScore:
+          type: number
+          description: Computed ROI score — higher means more valuable
+        promotedFrom:
+          type: integer
+          nullable: true
+          description: ID of the item this was promoted from
+        promotionStatus:
+          $ref: "#/components/schemas/PromotionStatus"
+        conflictGroupId:
+          type: integer
+          nullable: true
+        conflictStatus:
+          $ref: "#/components/schemas/ConflictStatus"
+        lastUsedAt:
+          type: integer
+          nullable: true
+        createdAt:
+          type: integer
+        updatedAt:
+          type: integer
+        metadataJson:
+          type: object
+          additionalProperties: true
+          nullable: true
+      required:
+        - id
+        - userId
+        - memoryType
+        - scope
+        - content
+        - validityStatus
+        - staleStatus
+        - accessCount
+        - retrievalCount
+        - injectionCount
+        - roiScore
+        - promotionStatus
+        - conflictStatus
+        - createdAt
+        - updatedAt
+
+    MemoryConflictGroup:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: string
+        scope:
+          $ref: "#/components/schemas/MemoryScope"
+        conflictStatus:
+          $ref: "#/components/schemas/ConflictStatus"
+        firstItemId:
+          type: integer
+          nullable: true
+        createdAt:
+          type: integer
+        updatedAt:
+          type: integer
+      required:
+        - id
+        - userId
+        - scope
+        - conflictStatus
+        - createdAt
+        - updatedAt
+
+    MemoryPromotionEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        itemId:
+          type: integer
+        fromType:
+          type: string
+        toType:
+          type: string
+        fromStatus:
+          type: string
+        toStatus:
+          type: string
+        roiScoreAtPromotion:
+          type: number
+          nullable: true
+        promotedAt:
+          type: integer
+        promotedBy:
+          type: string
+          description: "auto | manual"
+        notes:
+          type: string
+          nullable: true
+      required:
+        - id
+        - itemId
+        - fromType
+        - toType
+        - fromStatus
+        - toStatus
+        - promotedAt
+        - promotedBy
+
+    SaveMemoryItemRequest:
+      type: object
+      properties:
+        userId:
+          type: string
+        sessionId:
+          type: string
+          nullable: true
+        sessionType:
+          type: string
+          enum: [team, solo]
+          nullable: true
+          description: "Session type drives default scope resolution: 'team' defaults to lane_user, 'solo' defaults to session_core. Only used when scope is not explicitly provided."
+        memoryType:
+          $ref: "#/components/schemas/MemoryType"
+        scope:
+          $ref: "#/components/schemas/MemoryScope"
+        content:
+          type: string
+        symbolRef:
+          type: string
+          nullable: true
+        symbolContentHash:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+      required:
+        - userId
+        - content
+
+    SaveMemoryItemResponse:
+      type: object
+      properties:
+        itemId:
+          type: integer
+        conflictGroupId:
+          type: integer
+          nullable: true
+        contradictionCount:
+          type: integer
+        contradictionIds:
+          type: array
+          items:
+            type: integer
+        hasConflict:
+          type: boolean
+      required:
+        - itemId
+        - contradictionCount
+        - contradictionIds
+        - hasConflict
+
+    ShapedMemoryItem:
+      description: "A profile-shaped memory item returned by Layer 1 (index) and Layer 2 (search). Fields present depend on the token-mode budget profile: compact returns only the core fields; standard adds status/access fields; full adds all metadata and contradiction details."
+      type: object
+      properties:
+        id:
+          type: integer
+        content:
+          type: string
+        memoryType:
+          $ref: "#/components/schemas/MemoryType"
+        scope:
+          $ref: "#/components/schemas/MemoryScope"
+        roiScore:
+          type: number
+        staleStatus:
+          $ref: "#/components/schemas/StaleStatus"
+        validityStatus:
+          $ref: "#/components/schemas/ValidityStatus"
+        promotionStatus:
+          $ref: "#/components/schemas/PromotionStatus"
+        accessCount:
+          type: integer
+        injectionCount:
+          type: integer
+        ttlExpiresAt:
+          type: integer
+          nullable: true
+        symbolRef:
+          type: string
+          nullable: true
+        createdAt:
+          type: integer
+        lastUsedAt:
+          type: integer
+          nullable: true
+        retrievalCount:
+          type: integer
+        contentHashAtSave:
+          type: string
+          nullable: true
+        metadataJson:
+          type: object
+          nullable: true
+          additionalProperties: true
+        promotedFrom:
+          type: integer
+          nullable: true
+        updatedAt:
+          type: integer
+        hasConflict:
+          type: boolean
+          description: "Present when memoryContradictionSurfacing is hint or full."
+        conflictGroupId:
+          type: integer
+          nullable: true
+          description: "Present when memoryContradictionSurfacing is full."
+        conflictStatus:
+          $ref: "#/components/schemas/ConflictStatus"
+          description: "Present when memoryContradictionSurfacing is full."
+      required:
+        - id
+        - content
+        - memoryType
+        - scope
+        - roiScore
+
+    MemoryIndexResponse:
+      type: object
+      properties:
+        layer:
+          type: integer
+          enum: [1]
+        tokenMode:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShapedMemoryItem"
+        budgetProfile:
+          $ref: "#/components/schemas/MemoryBudgetProfile"
+      required:
+        - layer
+        - tokenMode
+        - items
+        - budgetProfile
+
+    MemorySearchResponse:
+      type: object
+      properties:
+        layer:
+          type: integer
+          enum: [2]
+        tokenMode:
+          type: string
+        query:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShapedMemoryItem"
+        budgetProfile:
+          $ref: "#/components/schemas/MemoryBudgetProfile"
+      required:
+        - layer
+        - tokenMode
+        - query
+        - items
+        - budgetProfile
+
+    MemoryGetResponse:
+      type: object
+      properties:
+        layer:
+          type: integer
+          enum: [3]
+        item:
+          $ref: "#/components/schemas/MemoryItem"
+      required:
+        - layer
+        - item
+
+    MemoryItemsListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemoryItem"
+      required:
+        - items
+
+    MarkStaleResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        markedStale:
+          type: integer
+      required:
+        - ok
+        - markedStale
+
+    MemoryConflictsResponse:
+      type: object
+      properties:
+        conflicts:
+          type: array
+          items:
+            type: object
+            properties:
+              group:
+                $ref: "#/components/schemas/MemoryConflictGroup"
+              items:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MemoryItem"
+            required:
+              - group
+              - items
+      required:
+        - conflicts
+
+    MemoryStaleResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemoryItem"
+        count:
+          type: integer
+      required:
+        - items
+        - count
+
+    MemoryPromotionHistoryResponse:
+      type: object
+      properties:
+        history:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemoryPromotionEntry"
+      required:
+        - history
+
+    ConflictStatusUpdateResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        conflictGroupId:
+          type: integer
+        conflictStatus:
+          $ref: "#/components/schemas/ConflictStatus"
+      required:
+        - success
+        - conflictGroupId
+        - conflictStatus
+
+    PromotionUpdateResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        item:
+          $ref: "#/components/schemas/MemoryItem"
+      required:
+        - success
+        - item
+
+    MemoryGovernanceStatsResponse:
+      type: object
+      properties:
+        totalItems:
+          type: integer
+        staleCount:
+          type: integer
+        contradictionCount:
+          type: integer
+        promotionCount:
+          type: integer
+        byType:
+          type: object
+          additionalProperties:
+            type: integer
+        byScope:
+          type: object
+          additionalProperties:
+            type: integer
+        layerUsage:
+          type: object
+          additionalProperties:
+            type: integer
+        avgInjectedTokensEstimate:
+          type: integer
+        hitRate:
+          type: number
+          description: "Ratio of injections to retrievals in [0,1]"
+        budgetProfile:
+          $ref: "#/components/schemas/MemoryBudgetProfile"
+        semanticContradictionActive:
+          type: boolean
+          description: "True only when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1 and a real embedding backend is wired. Always false while semantic path is a stub."
+      required:
+        - totalItems
+        - staleCount
+        - contradictionCount
+        - promotionCount
+        - byType
+        - byScope
+        - layerUsage
+        - avgInjectedTokensEstimate
+        - hitRate
+        - budgetProfile
 
     RepoIndexRequest:
       type: object

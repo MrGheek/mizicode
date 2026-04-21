@@ -454,27 +454,14 @@ export interface SkillFeedbackResponse {
   feedback: SkillFeedbackResponseFeedback;
 }
 
-export interface SkillFeedbackScore {
-  skillId: number;
-  slug: string;
-  totalCount: number;
-  helpfulCount: number;
-  unhelpfulCount: number;
-  /** Rate from 0.0 to 1.0 */
-  helpfulRate: number;
-  /** Normalized to [-1.0, +1.0] centered at 0.5 helpfulRate */
-  normalizedScore: number;
-  avgTaskSuccessScore: number | null;
-}
-
-export interface SkillFeedbackScoresResponse {
-  scores: SkillFeedbackScore[];
-}
-
 export interface SessionCompleteFeedbackRequest {
   /** Bytes avoided by context-shield routing, used as implicit signal for context-shield-core */
   bytesAvoided?: number;
-  /** Overall task success score (1-5) for implicit skill signals */
+  /**
+   * Overall task success score (1-5) for implicit skill signals
+   * @minimum 1
+   * @maximum 5
+   */
   taskSuccessScore?: number;
 }
 
@@ -488,6 +475,49 @@ export interface SessionCompleteFeedbackResponse {
   recorded: SessionCompleteFeedbackRecordedItem[];
 }
 
+export interface SkillFeedbackScore {
+  skillId: number;
+  slug: string;
+  totalCount: number;
+  helpfulCount: number;
+  unhelpfulCount: number;
+  /** Rate from 0.0 to 1.0 */
+  helpfulRate: number;
+  /** Normalized to [-1.0, +1.0] centered at 0.5 helpfulRate */
+  normalizedScore: number;
+  avgTaskSuccessScore?: number | null;
+}
+
+export interface SkillFeedbackScoresResponse {
+  scores: SkillFeedbackScore[];
+}
+
+export interface SkillFeedbackHistoryEntry {
+  id: number;
+  sessionId: number;
+  skillId: number;
+  helpful: boolean;
+  notes?: string | null;
+  tokenDelta?: number | null;
+  taskSuccessScore?: number | null;
+  createdAt: string;
+}
+
+export interface SkillFeedbackHistoryPagination {
+  limit: number;
+  offset: number;
+  count: number;
+}
+
+export interface SkillFeedbackHistoryResponse {
+  helpfulRate: number;
+  totalCount: number;
+  helpfulCount: number;
+  unhelpfulCount: number;
+  history: SkillFeedbackHistoryEntry[];
+  pagination: SkillFeedbackHistoryPagination;
+}
+
 export interface SessionRoutingStats {
   totalBytesAvoided: number;
   totalShielded: number;
@@ -499,6 +529,343 @@ export interface SessionRoutingStats {
 
 export interface SessionRoutingStatsResponse {
   stats: SessionRoutingStats | null;
+}
+
+export type MemoryType = (typeof MemoryType)[keyof typeof MemoryType];
+
+export const MemoryType = {
+  observation: "observation",
+  research: "research",
+  session_summary: "session_summary",
+  convention: "convention",
+  guardrail: "guardrail",
+  note: "note",
+  warning: "warning",
+} as const;
+
+/**
+ * Canonical scope order (most local to most shared): task → lane_user → repo_shared → session_core → user_operator → global
+ */
+export type MemoryScope = (typeof MemoryScope)[keyof typeof MemoryScope];
+
+export const MemoryScope = {
+  task: "task",
+  lane_user: "lane_user",
+  repo_shared: "repo_shared",
+  session_core: "session_core",
+  user_operator: "user_operator",
+  global: "global",
+} as const;
+
+export type ConflictStatus =
+  (typeof ConflictStatus)[keyof typeof ConflictStatus];
+
+export const ConflictStatus = {
+  none: "none",
+  open: "open",
+  reviewed: "reviewed",
+  resolved: "resolved",
+  accepted_override: "accepted_override",
+} as const;
+
+export type StaleStatus = (typeof StaleStatus)[keyof typeof StaleStatus];
+
+export const StaleStatus = {
+  fresh: "fresh",
+  stale: "stale",
+  invalidated: "invalidated",
+} as const;
+
+export type ValidityStatus =
+  (typeof ValidityStatus)[keyof typeof ValidityStatus];
+
+export const ValidityStatus = {
+  valid: "valid",
+  superseded: "superseded",
+  retracted: "retracted",
+} as const;
+
+export type PromotionStatus =
+  (typeof PromotionStatus)[keyof typeof PromotionStatus];
+
+export const PromotionStatus = {
+  none: "none",
+  candidate: "candidate",
+  promoted: "promoted",
+  demoted: "demoted",
+} as const;
+
+/**
+ * Maximum layer available: 1=index only, 2=index+search, 3=all layers
+ */
+export type MemoryBudgetProfileMemoryLayerAccess =
+  (typeof MemoryBudgetProfileMemoryLayerAccess)[keyof typeof MemoryBudgetProfileMemoryLayerAccess];
+
+export const MemoryBudgetProfileMemoryLayerAccess = {
+  NUMBER_1: 1,
+  NUMBER_2: 2,
+  NUMBER_3: 3,
+} as const;
+
+export type MemoryBudgetProfileMemoryStaleSuppressionStrength =
+  (typeof MemoryBudgetProfileMemoryStaleSuppressionStrength)[keyof typeof MemoryBudgetProfileMemoryStaleSuppressionStrength];
+
+export const MemoryBudgetProfileMemoryStaleSuppressionStrength = {
+  strict: "strict",
+  moderate: "moderate",
+  off: "off",
+} as const;
+
+export type MemoryBudgetProfileMemoryMetadataVerbosity =
+  (typeof MemoryBudgetProfileMemoryMetadataVerbosity)[keyof typeof MemoryBudgetProfileMemoryMetadataVerbosity];
+
+export const MemoryBudgetProfileMemoryMetadataVerbosity = {
+  compact: "compact",
+  standard: "standard",
+  full: "full",
+} as const;
+
+export type MemoryBudgetProfileMemoryContradictionSurfacing =
+  (typeof MemoryBudgetProfileMemoryContradictionSurfacing)[keyof typeof MemoryBudgetProfileMemoryContradictionSurfacing];
+
+export const MemoryBudgetProfileMemoryContradictionSurfacing = {
+  off: "off",
+  hint: "hint",
+  full: "full",
+} as const;
+
+export interface MemoryBudgetProfile {
+  /** Maximum number of memory candidates to retrieve */
+  memoryCandidateCount: number;
+  /** Maximum layer available: 1=index only, 2=index+search, 3=all layers */
+  memoryLayerAccess: MemoryBudgetProfileMemoryLayerAccess;
+  memoryStaleSuppressionStrength: MemoryBudgetProfileMemoryStaleSuppressionStrength;
+  memoryMetadataVerbosity: MemoryBudgetProfileMemoryMetadataVerbosity;
+  memoryContradictionSurfacing: MemoryBudgetProfileMemoryContradictionSurfacing;
+}
+
+export type MemoryItemMetadataJson = { [key: string]: unknown } | null;
+
+export interface MemoryItem {
+  id: number;
+  userId: string;
+  sessionId?: string | null;
+  memoryType: MemoryType;
+  scope: MemoryScope;
+  content: string;
+  symbolRef?: string | null;
+  contentHashAtSave?: string | null;
+  validityStatus: ValidityStatus;
+  staleStatus: StaleStatus;
+  /** Unix timestamp when this item expires (null = never) */
+  ttlExpiresAt?: number | null;
+  accessCount: number;
+  retrievalCount: number;
+  injectionCount: number;
+  /** Computed ROI score — higher means more valuable */
+  roiScore: number;
+  /** ID of the item this was promoted from */
+  promotedFrom?: number | null;
+  promotionStatus: PromotionStatus;
+  conflictGroupId?: number | null;
+  conflictStatus: ConflictStatus;
+  lastUsedAt?: number | null;
+  createdAt: number;
+  updatedAt: number;
+  metadataJson?: MemoryItemMetadataJson;
+}
+
+export interface MemoryConflictGroup {
+  id: number;
+  userId: string;
+  scope: MemoryScope;
+  conflictStatus: ConflictStatus;
+  firstItemId?: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface MemoryPromotionEntry {
+  id: number;
+  itemId: number;
+  fromType: string;
+  toType: string;
+  fromStatus: string;
+  toStatus: string;
+  roiScoreAtPromotion?: number | null;
+  promotedAt: number;
+  /** auto | manual */
+  promotedBy: string;
+  notes?: string | null;
+}
+
+/**
+ * Session type drives default scope resolution: 'team' defaults to lane_user, 'solo' defaults to session_core. Only used when scope is not explicitly provided.
+ */
+export type SaveMemoryItemRequestSessionType =
+  | (typeof SaveMemoryItemRequestSessionType)[keyof typeof SaveMemoryItemRequestSessionType]
+  | null;
+
+export const SaveMemoryItemRequestSessionType = {
+  team: "team",
+  solo: "solo",
+} as const;
+
+export type SaveMemoryItemRequestMetadata = { [key: string]: unknown } | null;
+
+export interface SaveMemoryItemRequest {
+  userId: string;
+  sessionId?: string | null;
+  /** Session type drives default scope resolution: 'team' defaults to lane_user, 'solo' defaults to session_core. Only used when scope is not explicitly provided. */
+  sessionType?: SaveMemoryItemRequestSessionType;
+  memoryType?: MemoryType;
+  scope?: MemoryScope;
+  content: string;
+  symbolRef?: string | null;
+  symbolContentHash?: string | null;
+  metadata?: SaveMemoryItemRequestMetadata;
+}
+
+export interface SaveMemoryItemResponse {
+  itemId: number;
+  conflictGroupId?: number | null;
+  contradictionCount: number;
+  contradictionIds: number[];
+  hasConflict: boolean;
+}
+
+export type ShapedMemoryItemMetadataJson = { [key: string]: unknown } | null;
+
+/**
+ * A profile-shaped memory item returned by Layer 1 (index) and Layer 2 (search). Fields present depend on the token-mode budget profile: compact returns only the core fields; standard adds status/access fields; full adds all metadata and contradiction details.
+ */
+export interface ShapedMemoryItem {
+  id: number;
+  content: string;
+  memoryType: MemoryType;
+  scope: MemoryScope;
+  roiScore: number;
+  staleStatus?: StaleStatus;
+  validityStatus?: ValidityStatus;
+  promotionStatus?: PromotionStatus;
+  accessCount?: number;
+  injectionCount?: number;
+  ttlExpiresAt?: number | null;
+  symbolRef?: string | null;
+  createdAt?: number;
+  lastUsedAt?: number | null;
+  retrievalCount?: number;
+  contentHashAtSave?: string | null;
+  metadataJson?: ShapedMemoryItemMetadataJson;
+  promotedFrom?: number | null;
+  updatedAt?: number;
+  /** Present when memoryContradictionSurfacing is hint or full. */
+  hasConflict?: boolean;
+  /** Present when memoryContradictionSurfacing is full. */
+  conflictGroupId?: number | null;
+  /** Present when memoryContradictionSurfacing is full. */
+  conflictStatus?: ConflictStatus;
+}
+
+export type MemoryIndexResponseLayer =
+  (typeof MemoryIndexResponseLayer)[keyof typeof MemoryIndexResponseLayer];
+
+export const MemoryIndexResponseLayer = {
+  NUMBER_1: 1,
+} as const;
+
+export interface MemoryIndexResponse {
+  layer: MemoryIndexResponseLayer;
+  tokenMode: string;
+  items: ShapedMemoryItem[];
+  budgetProfile: MemoryBudgetProfile;
+}
+
+export type MemorySearchResponseLayer =
+  (typeof MemorySearchResponseLayer)[keyof typeof MemorySearchResponseLayer];
+
+export const MemorySearchResponseLayer = {
+  NUMBER_2: 2,
+} as const;
+
+export interface MemorySearchResponse {
+  layer: MemorySearchResponseLayer;
+  tokenMode: string;
+  query: string;
+  items: ShapedMemoryItem[];
+  budgetProfile: MemoryBudgetProfile;
+}
+
+export type MemoryGetResponseLayer =
+  (typeof MemoryGetResponseLayer)[keyof typeof MemoryGetResponseLayer];
+
+export const MemoryGetResponseLayer = {
+  NUMBER_3: 3,
+} as const;
+
+export interface MemoryGetResponse {
+  layer: MemoryGetResponseLayer;
+  item: MemoryItem;
+}
+
+export interface MemoryItemsListResponse {
+  items: MemoryItem[];
+}
+
+export interface MarkStaleResponse {
+  ok: boolean;
+  markedStale: number;
+}
+
+export type MemoryConflictsResponseConflictsItem = {
+  group: MemoryConflictGroup;
+  items: MemoryItem[];
+};
+
+export interface MemoryConflictsResponse {
+  conflicts: MemoryConflictsResponseConflictsItem[];
+}
+
+export interface MemoryStaleResponse {
+  items: MemoryItem[];
+  count: number;
+}
+
+export interface MemoryPromotionHistoryResponse {
+  history: MemoryPromotionEntry[];
+}
+
+export interface ConflictStatusUpdateResponse {
+  success: boolean;
+  conflictGroupId: number;
+  conflictStatus: ConflictStatus;
+}
+
+export interface PromotionUpdateResponse {
+  success: boolean;
+  item: MemoryItem;
+}
+
+export type MemoryGovernanceStatsResponseByType = { [key: string]: number };
+
+export type MemoryGovernanceStatsResponseByScope = { [key: string]: number };
+
+export type MemoryGovernanceStatsResponseLayerUsage = { [key: string]: number };
+
+export interface MemoryGovernanceStatsResponse {
+  totalItems: number;
+  staleCount: number;
+  contradictionCount: number;
+  promotionCount: number;
+  byType: MemoryGovernanceStatsResponseByType;
+  byScope: MemoryGovernanceStatsResponseByScope;
+  layerUsage: MemoryGovernanceStatsResponseLayerUsage;
+  avgInjectedTokensEstimate: number;
+  /** Ratio of injections to retrievals in [0,1] */
+  hitRate: number;
+  budgetProfile: MemoryBudgetProfile;
+  /** True only when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1 and a real embedding backend is wired. Always false while semantic path is a stub. */
+  semanticContradictionActive?: boolean;
 }
 
 export interface RepoIndexRequest {
@@ -773,6 +1140,14 @@ export const ListSkillsReviewStatus = {
   rejected: "rejected",
 } as const;
 
+export type GetSkillFeedbackHistoryParams = {
+  /**
+   * @maximum 200
+   */
+  limit?: number;
+  offset?: number;
+};
+
 export type SearchRepoParams = {
   q: string;
   type?: SearchRepoType;
@@ -821,22 +1196,159 @@ export const GetRepoSymbolKind = {
   export: "export",
 } as const;
 
-export interface SkillFeedbackHistoryEntry {
-  id: number;
-  sessionId: number;
-  skillId: number;
-  helpful: boolean;
-  notes: string | null;
-  tokenDelta: number | null;
-  taskSuccessScore: number | null;
-  createdAt: string;
-}
+export type MemoryIndexParams = {
+  userId: string;
+  tokenMode?: MemoryIndexTokenMode;
+  scope?: MemoryScope;
+  /**
+   * Drives retrieval scope ordering: 'team' prioritises lane_user/repo_shared first.
+   */
+  sessionType?: MemoryIndexSessionType;
+  limit?: number;
+};
 
-export interface SkillFeedbackHistoryResponse {
-  helpfulRate: number;
-  totalCount: number;
-  helpfulCount: number;
-  unhelpfulCount: number;
-  history: SkillFeedbackHistoryEntry[];
-  pagination: { limit: number; offset: number; count: number };
-}
+export type MemoryIndexTokenMode =
+  (typeof MemoryIndexTokenMode)[keyof typeof MemoryIndexTokenMode];
+
+export const MemoryIndexTokenMode = {
+  full: "full",
+  core: "core",
+  lean: "lean",
+  ultra: "ultra",
+} as const;
+
+export type MemoryIndexSessionType =
+  (typeof MemoryIndexSessionType)[keyof typeof MemoryIndexSessionType];
+
+export const MemoryIndexSessionType = {
+  team: "team",
+  solo: "solo",
+} as const;
+
+export type MemorySearchItemsParams = {
+  userId: string;
+  q: string;
+  tokenMode?: MemorySearchItemsTokenMode;
+  scope?: MemoryScope;
+  /**
+   * Drives retrieval scope ordering: 'team' prioritises lane_user/repo_shared first.
+   */
+  sessionType?: MemorySearchItemsSessionType;
+  memoryType?: MemoryType;
+  includeStale?: boolean;
+  limit?: number;
+};
+
+export type MemorySearchItemsTokenMode =
+  (typeof MemorySearchItemsTokenMode)[keyof typeof MemorySearchItemsTokenMode];
+
+export const MemorySearchItemsTokenMode = {
+  full: "full",
+  core: "core",
+  lean: "lean",
+  ultra: "ultra",
+} as const;
+
+export type MemorySearchItemsSessionType =
+  (typeof MemorySearchItemsSessionType)[keyof typeof MemorySearchItemsSessionType];
+
+export const MemorySearchItemsSessionType = {
+  team: "team",
+  solo: "solo",
+} as const;
+
+export type GetMemoryItemParams = {
+  userId: string;
+  tokenMode?: GetMemoryItemTokenMode;
+  /**
+   * Set to true to explicitly escalate to Layer 3. Required in lean/ultra modes.
+   */
+  escalate?: boolean;
+};
+
+export type GetMemoryItemTokenMode =
+  (typeof GetMemoryItemTokenMode)[keyof typeof GetMemoryItemTokenMode];
+
+export const GetMemoryItemTokenMode = {
+  full: "full",
+  core: "core",
+  lean: "lean",
+  ultra: "ultra",
+} as const;
+
+export type ReverseMemoryPromotionParams = {
+  userId: string;
+};
+
+export type ReverseMemoryPromotionBody = {
+  promotionStatus: PromotionStatus;
+  /** Optional note explaining the reason for this promotion status change. */
+  notes?: string;
+};
+
+export type ListMemoryItemsParams = {
+  userId: string;
+  scope?: MemoryScope;
+  memoryType?: MemoryType;
+  /**
+   * @maximum 200
+   */
+  limit?: number;
+  offset?: number;
+};
+
+export type MarkMemoryInjectedBody = {
+  /** Owner of the items — used to scope updates and prevent cross-tenant counter manipulation. */
+  userId: string;
+  itemIds: number[];
+};
+
+export type MarkSymbolStaleBody = {
+  /** Caller's user ID — scopes staleness to this tenant's items only */
+  userId: string;
+  symbolRef: string;
+  newContentHash: string;
+};
+
+export type ListMemoryConflictsParams = {
+  userId: string;
+  conflictStatus?: ConflictStatus;
+  limit?: number;
+  offset?: number;
+};
+
+export type UpdateMemoryConflictStatusParams = {
+  userId: string;
+};
+
+export type UpdateMemoryConflictStatusBody = {
+  conflictStatus: ConflictStatus;
+};
+
+export type ListStaleMemoryItemsParams = {
+  userId: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type GetMemoryPromotionHistoryParams = {
+  userId: string;
+  itemId?: number;
+  limit?: number;
+  offset?: number;
+};
+
+export type GetMemoryGovernanceStatsParams = {
+  userId: string;
+  tokenMode?: GetMemoryGovernanceStatsTokenMode;
+};
+
+export type GetMemoryGovernanceStatsTokenMode =
+  (typeof GetMemoryGovernanceStatsTokenMode)[keyof typeof GetMemoryGovernanceStatsTokenMode];
+
+export const GetMemoryGovernanceStatsTokenMode = {
+  full: "full",
+  core: "core",
+  lean: "lean",
+  ultra: "ultra",
+} as const;

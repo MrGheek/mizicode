@@ -23,28 +23,45 @@ import type {
   BundleListResponse,
   BundleResponse,
   CompileBundleRequest,
-  SkillFeedbackHistoryResponse,
-  SkillFeedbackScoresResponse,
-  SessionCompleteFeedbackRequest,
-  SessionCompleteFeedbackResponse,
-  SessionRoutingStatsResponse,
   CompilePreviewRequest,
   CompilePreviewResponse,
   CompiledBundleResult,
+  ConflictStatusUpdateResponse,
   CreateBundleRequest,
   CreateSessionRequest,
   CreateTemplateRequest,
   DashboardSummary,
   ErrorResponse,
+  GetMemoryGovernanceStatsParams,
+  GetMemoryItemParams,
+  GetMemoryPromotionHistoryParams,
   GetRepoBlastRadiusParams,
   GetRepoSymbolParams,
+  GetSkillFeedbackHistoryParams,
   GpuOffer,
   GpuProfile,
   HealthStatus,
   ImportSkillRequest,
   ImportSkillResponse,
+  ListMemoryConflictsParams,
+  ListMemoryItemsParams,
   ListSkillsParams,
+  ListStaleMemoryItemsParams,
+  MarkMemoryInjectedBody,
+  MarkStaleResponse,
+  MarkSymbolStaleBody,
+  MemoryConflictsResponse,
+  MemoryGetResponse,
+  MemoryGovernanceStatsResponse,
+  MemoryIndexParams,
+  MemoryIndexResponse,
+  MemoryItemsListResponse,
+  MemoryPromotionHistoryResponse,
+  MemorySearchItemsParams,
+  MemorySearchResponse,
+  MemoryStaleResponse,
   NotImplementedResponse,
+  PromotionUpdateResponse,
   RepoBlastRadiusResponse,
   RepoFingerprintResponse,
   RepoIndexRequest,
@@ -54,19 +71,30 @@ import type {
   RepoSummaryResponse,
   RepoSymbolResponse,
   RepoSyncRequest,
+  ReverseMemoryPromotionBody,
+  ReverseMemoryPromotionParams,
   ReviewSkillRequest,
+  SaveMemoryItemRequest,
+  SaveMemoryItemResponse,
   SchedulerConfig,
   SearchOffersParams,
   SearchRepoParams,
   Session,
+  SessionCompleteFeedbackRequest,
+  SessionCompleteFeedbackResponse,
+  SessionRoutingStatsResponse,
   SessionSkillsResponse,
   SkillDetailResponse,
+  SkillFeedbackHistoryResponse,
   SkillFeedbackRequest,
   SkillFeedbackResponse,
+  SkillFeedbackScoresResponse,
   SkillsListResponse,
   SuccessResponse,
   Template,
   UpdateBundleRequest,
+  UpdateMemoryConflictStatusBody,
+  UpdateMemoryConflictStatusParams,
   UpdateSchedulerRequest,
   UpdateTemplateRequest,
 } from "./api.schemas";
@@ -2150,6 +2178,85 @@ export function useGetSkillLeaderboard<
 }
 
 /**
+ * @summary Get aggregated feedback scores for all skills
+ */
+export const getGetSkillFeedbackScoresUrl = () => {
+  return `/api/skills/feedback-scores`;
+};
+
+export const getSkillFeedbackScores = async (
+  options?: RequestInit,
+): Promise<SkillFeedbackScoresResponse> => {
+  return customFetch<SkillFeedbackScoresResponse>(
+    getGetSkillFeedbackScoresUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSkillFeedbackScoresQueryKey = () => {
+  return [`/api/skills/feedback-scores`] as const;
+};
+
+export const getGetSkillFeedbackScoresQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSkillFeedbackScores>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSkillFeedbackScores>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSkillFeedbackScoresQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSkillFeedbackScores>>
+  > = ({ signal }) => getSkillFeedbackScores({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSkillFeedbackScores>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSkillFeedbackScoresQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSkillFeedbackScores>>
+>;
+export type GetSkillFeedbackScoresQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get aggregated feedback scores for all skills
+ */
+
+export function useGetSkillFeedbackScores<
+  TData = Awaited<ReturnType<typeof getSkillFeedbackScores>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getSkillFeedbackScores>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSkillFeedbackScoresQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * @summary Get skill details and version history
  */
 export const getGetSkillUrl = (skillId: number) => {
@@ -2488,6 +2595,218 @@ export const useDisableSkill = <
 > => {
   return useMutation(getDisableSkillMutationOptions(options));
 };
+
+/**
+ * @summary Delete a specific feedback entry for a skill
+ */
+export const getDeleteSkillFeedbackEntryUrl = (
+  skillId: number,
+  feedbackId: number,
+) => {
+  return `/api/skills/${skillId}/feedback/${feedbackId}`;
+};
+
+export const deleteSkillFeedbackEntry = async (
+  skillId: number,
+  feedbackId: number,
+  options?: RequestInit,
+): Promise<SuccessResponse> => {
+  return customFetch<SuccessResponse>(
+    getDeleteSkillFeedbackEntryUrl(skillId, feedbackId),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export const getDeleteSkillFeedbackEntryMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteSkillFeedbackEntry>>,
+    TError,
+    { skillId: number; feedbackId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteSkillFeedbackEntry>>,
+  TError,
+  { skillId: number; feedbackId: number },
+  TContext
+> => {
+  const mutationKey = ["deleteSkillFeedbackEntry"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteSkillFeedbackEntry>>,
+    { skillId: number; feedbackId: number }
+  > = (props) => {
+    const { skillId, feedbackId } = props ?? {};
+
+    return deleteSkillFeedbackEntry(skillId, feedbackId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteSkillFeedbackEntryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteSkillFeedbackEntry>>
+>;
+
+export type DeleteSkillFeedbackEntryMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Delete a specific feedback entry for a skill
+ */
+export const useDeleteSkillFeedbackEntry = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteSkillFeedbackEntry>>,
+    TError,
+    { skillId: number; feedbackId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteSkillFeedbackEntry>>,
+  TError,
+  { skillId: number; feedbackId: number },
+  TContext
+> => {
+  return useMutation(getDeleteSkillFeedbackEntryMutationOptions(options));
+};
+
+/**
+ * @summary Get feedback history for a specific skill
+ */
+export const getGetSkillFeedbackHistoryUrl = (
+  skillId: number,
+  params?: GetSkillFeedbackHistoryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/skills/${skillId}/feedback?${stringifiedParams}`
+    : `/api/skills/${skillId}/feedback`;
+};
+
+export const getSkillFeedbackHistory = async (
+  skillId: number,
+  params?: GetSkillFeedbackHistoryParams,
+  options?: RequestInit,
+): Promise<SkillFeedbackHistoryResponse> => {
+  return customFetch<SkillFeedbackHistoryResponse>(
+    getGetSkillFeedbackHistoryUrl(skillId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSkillFeedbackHistoryQueryKey = (
+  skillId: number,
+  params?: GetSkillFeedbackHistoryParams,
+) => {
+  return [
+    `/api/skills/${skillId}/feedback`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetSkillFeedbackHistoryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSkillFeedbackHistory>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  skillId: number,
+  params?: GetSkillFeedbackHistoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSkillFeedbackHistory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetSkillFeedbackHistoryQueryKey(skillId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSkillFeedbackHistory>>
+  > = ({ signal }) =>
+    getSkillFeedbackHistory(skillId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!skillId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSkillFeedbackHistory>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSkillFeedbackHistoryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSkillFeedbackHistory>>
+>;
+export type GetSkillFeedbackHistoryQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get feedback history for a specific skill
+ */
+
+export function useGetSkillFeedbackHistory<
+  TData = Awaited<ReturnType<typeof getSkillFeedbackHistory>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  skillId: number,
+  params?: GetSkillFeedbackHistoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSkillFeedbackHistory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSkillFeedbackHistoryQueryOptions(
+    skillId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary List all skill bundles
@@ -3262,6 +3581,193 @@ export const useSubmitSkillFeedback = <
 > => {
   return useMutation(getSubmitSkillFeedbackMutationOptions(options));
 };
+
+/**
+ * Processes bytesAvoided and taskSuccessScore to generate implicit positive/negative signals for all skills active in the session.
+ * @summary Record implicit per-skill feedback at session completion
+ */
+export const getSessionCompleteFeedbackUrl = (sessionId: number) => {
+  return `/api/sessions/${sessionId}/skills/complete-feedback`;
+};
+
+export const sessionCompleteFeedback = async (
+  sessionId: number,
+  sessionCompleteFeedbackRequest: SessionCompleteFeedbackRequest,
+  options?: RequestInit,
+): Promise<SessionCompleteFeedbackResponse> => {
+  return customFetch<SessionCompleteFeedbackResponse>(
+    getSessionCompleteFeedbackUrl(sessionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sessionCompleteFeedbackRequest),
+    },
+  );
+};
+
+export const getSessionCompleteFeedbackMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+    TError,
+    { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+  TError,
+  { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> },
+  TContext
+> => {
+  const mutationKey = ["sessionCompleteFeedback"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+    { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> }
+  > = (props) => {
+    const { sessionId, data } = props ?? {};
+
+    return sessionCompleteFeedback(sessionId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SessionCompleteFeedbackMutationResult = NonNullable<
+  Awaited<ReturnType<typeof sessionCompleteFeedback>>
+>;
+export type SessionCompleteFeedbackMutationBody =
+  BodyType<SessionCompleteFeedbackRequest>;
+export type SessionCompleteFeedbackMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Record implicit per-skill feedback at session completion
+ */
+export const useSessionCompleteFeedback = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+    TError,
+    { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+  TError,
+  { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> },
+  TContext
+> => {
+  return useMutation(getSessionCompleteFeedbackMutationOptions(options));
+};
+
+/**
+ * @summary Get stored routing stats for a session
+ */
+export const getGetSessionRoutingStatsUrl = (sessionId: number) => {
+  return `/api/sessions/${sessionId}/routing-stats`;
+};
+
+export const getSessionRoutingStats = async (
+  sessionId: number,
+  options?: RequestInit,
+): Promise<SessionRoutingStatsResponse> => {
+  return customFetch<SessionRoutingStatsResponse>(
+    getGetSessionRoutingStatsUrl(sessionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSessionRoutingStatsQueryKey = (sessionId: number) => {
+  return [`/api/sessions/${sessionId}/routing-stats`] as const;
+};
+
+export const getGetSessionRoutingStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSessionRoutingStats>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSessionRoutingStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSessionRoutingStatsQueryKey(sessionId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSessionRoutingStats>>
+  > = ({ signal }) =>
+    getSessionRoutingStats(sessionId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sessionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSessionRoutingStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSessionRoutingStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSessionRoutingStats>>
+>;
+export type GetSessionRoutingStatsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get stored routing stats for a session
+ */
+
+export function useGetSessionRoutingStats<
+  TData = Awaited<ReturnType<typeof getSessionRoutingStats>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSessionRoutingStats>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSessionRoutingStatsQueryOptions(
+    sessionId,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * Enqueues an async indexing job for the session's repository. Returns immediately with jobId and status. Deduplicates on active/queued jobs. Completed or error jobs trigger a full rebuild.
@@ -4062,91 +4568,237 @@ export function useGetRepoJob<
   return { ...query, queryKey: queryOptions.queryKey };
 }
 
-// ─── Skill Feedback Scores ────────────────────────────────────────────────────
+/**
+ * Returns the top-N highest-ROI memory items for a user. Layer 1 is always available regardless of token mode. Use this first before escalating to search.
+ * @summary Layer 1 — memory index (tiny high-ROI shortlist)
+ */
+export const getMemoryIndexUrl = (params: MemoryIndexParams) => {
+  const normalizedParams = new URLSearchParams();
 
-export const getSkillFeedbackScoresUrl = () => `/api/skills/feedback-scores`;
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
 
-export const getSkillFeedbackScores = async (
-  options?: RequestInit,
-): Promise<SkillFeedbackScoresResponse> => {
-  return customFetch<SkillFeedbackScoresResponse>(getSkillFeedbackScoresUrl(), options);
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/mem/index?${stringifiedParams}`
+    : `/api/mem/index`;
 };
 
-export const getGetSkillFeedbackScoresQueryKey = () => ["skill-feedback-scores"] as const;
+export const memoryIndex = async (
+  params: MemoryIndexParams,
+  options?: RequestInit,
+): Promise<MemoryIndexResponse> => {
+  return customFetch<MemoryIndexResponse>(getMemoryIndexUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
 
-export const getGetSkillFeedbackScoresQueryOptions = <
-  TData = Awaited<ReturnType<typeof getSkillFeedbackScores>>,
+export const getMemoryIndexQueryKey = (params?: MemoryIndexParams) => {
+  return [`/api/mem/index`, ...(params ? [params] : [])] as const;
+};
+
+export const getMemoryIndexQueryOptions = <
+  TData = Awaited<ReturnType<typeof memoryIndex>>,
   TError = ErrorType<ErrorResponse>,
->(options?: {
-  query?: UseQueryOptions<Awaited<ReturnType<typeof getSkillFeedbackScores>>, TError, TData>;
-  request?: SecondParameter<typeof customFetch>;
-}) => {
+>(
+  params: MemoryIndexParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof memoryIndex>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
-  const queryKey = queryOptions?.queryKey ?? getGetSkillFeedbackScoresQueryKey();
-  return {
-    queryKey,
-    queryFn: () => getSkillFeedbackScores(requestOptions),
-    staleTime: 60_000,
-    ...queryOptions,
-  } as UseQueryOptions<Awaited<ReturnType<typeof getSkillFeedbackScores>>, TError, TData> & {
+
+  const queryKey = queryOptions?.queryKey ?? getMemoryIndexQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof memoryIndex>>> = ({
+    signal,
+  }) => memoryIndex(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof memoryIndex>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type MemoryIndexQueryResult = NonNullable<
+  Awaited<ReturnType<typeof memoryIndex>>
+>;
+export type MemoryIndexQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Layer 1 — memory index (tiny high-ROI shortlist)
+ */
+
+export function useMemoryIndex<
+  TData = Awaited<ReturnType<typeof memoryIndex>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params: MemoryIndexParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof memoryIndex>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getMemoryIndexQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
   };
-};
 
-export type GetSkillFeedbackScoresQueryResult = NonNullable<Awaited<ReturnType<typeof getSkillFeedbackScores>>>;
-export type GetSkillFeedbackScoresQueryError = ErrorType<ErrorResponse>;
-
-export function useGetSkillFeedbackScores<
-  TData = Awaited<ReturnType<typeof getSkillFeedbackScores>>,
-  TError = ErrorType<ErrorResponse>,
->(options?: {
-  query?: UseQueryOptions<Awaited<ReturnType<typeof getSkillFeedbackScores>>, TError, TData>;
-  request?: SecondParameter<typeof customFetch>;
-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetSkillFeedbackScoresQueryOptions(options);
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
   return { ...query, queryKey: queryOptions.queryKey };
 }
 
-// ─── Session Complete Feedback (implicit) ─────────────────────────────────────
+/**
+ * Full-text search over memory items with scope and type filters. Layer 2 is restricted in lean/ultra token modes.
+ * @summary Layer 2 — memory search (richer filtered set)
+ */
+export const getMemorySearchItemsUrl = (params: MemorySearchItemsParams) => {
+  const normalizedParams = new URLSearchParams();
 
-export const getSessionCompleteFeedbackUrl = (sessionId: number) =>
-  `/api/sessions/${sessionId}/skills/complete-feedback`;
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
 
-export const sessionCompleteFeedback = async (
-  sessionId: number,
-  sessionCompleteFeedbackRequest: SessionCompleteFeedbackRequest,
-  options?: RequestInit,
-): Promise<SessionCompleteFeedbackResponse> => {
-  return customFetch<SessionCompleteFeedbackResponse>(
-    getSessionCompleteFeedbackUrl(sessionId),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(sessionCompleteFeedbackRequest),
-    },
-  );
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/mem/search?${stringifiedParams}`
+    : `/api/mem/search`;
 };
 
-export const getSessionCompleteFeedbackMutationOptions = <
+export const memorySearchItems = async (
+  params: MemorySearchItemsParams,
+  options?: RequestInit,
+): Promise<MemorySearchResponse> => {
+  return customFetch<MemorySearchResponse>(getMemorySearchItemsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getMemorySearchItemsQueryKey = (
+  params?: MemorySearchItemsParams,
+) => {
+  return [`/api/mem/search`, ...(params ? [params] : [])] as const;
+};
+
+export const getMemorySearchItemsQueryOptions = <
+  TData = Awaited<ReturnType<typeof memorySearchItems>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params: MemorySearchItemsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof memorySearchItems>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getMemorySearchItemsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof memorySearchItems>>
+  > = ({ signal }) => memorySearchItems(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof memorySearchItems>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type MemorySearchItemsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof memorySearchItems>>
+>;
+export type MemorySearchItemsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Layer 2 — memory search (richer filtered set)
+ */
+
+export function useMemorySearchItems<
+  TData = Awaited<ReturnType<typeof memorySearchItems>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params: MemorySearchItemsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof memorySearchItems>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getMemorySearchItemsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Saves a new memory item and runs automatic lexical contradiction detection against the same scope. Returns conflicting item IDs if any. Saves are never blocked — contradictions are flagged without preventing the write.
+ * @summary Save a memory item with contradiction check
+ */
+export const getSaveMemoryItemUrl = () => {
+  return `/api/mem/item`;
+};
+
+export const saveMemoryItem = async (
+  saveMemoryItemRequest: SaveMemoryItemRequest,
+  options?: RequestInit,
+): Promise<SaveMemoryItemResponse> => {
+  return customFetch<SaveMemoryItemResponse>(getSaveMemoryItemUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(saveMemoryItemRequest),
+  });
+};
+
+export const getSaveMemoryItemMutationOptions = <
   TError = ErrorType<ErrorResponse>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+    Awaited<ReturnType<typeof saveMemoryItem>>,
     TError,
-    { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> },
+    { data: BodyType<SaveMemoryItemRequest> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
-  Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+  Awaited<ReturnType<typeof saveMemoryItem>>,
   TError,
-  { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> },
+  { data: BodyType<SaveMemoryItemRequest> },
   TContext
 > => {
-  const mutationKey = ["sessionCompleteFeedback"];
+  const mutationKey = ["saveMemoryItem"];
   const { mutation: mutationOptions, request: requestOptions } = options
     ? options.mutation &&
       "mutationKey" in options.mutation &&
@@ -4156,193 +4808,1091 @@ export const getSessionCompleteFeedbackMutationOptions = <
     : { mutation: { mutationKey }, request: undefined };
 
   const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof sessionCompleteFeedback>>,
-    { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> }
+    Awaited<ReturnType<typeof saveMemoryItem>>,
+    { data: BodyType<SaveMemoryItemRequest> }
   > = (props) => {
-    const { sessionId, data } = props ?? {};
-    return sessionCompleteFeedback(sessionId, data, requestOptions);
+    const { data } = props ?? {};
+
+    return saveMemoryItem(data, requestOptions);
   };
 
   return { mutationFn, ...mutationOptions };
 };
 
-export type SessionCompleteFeedbackMutationResult = NonNullable<Awaited<ReturnType<typeof sessionCompleteFeedback>>>;
-export type SessionCompleteFeedbackMutationBody = BodyType<SessionCompleteFeedbackRequest>;
-export type SessionCompleteFeedbackMutationError = ErrorType<ErrorResponse>;
+export type SaveMemoryItemMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveMemoryItem>>
+>;
+export type SaveMemoryItemMutationBody = BodyType<SaveMemoryItemRequest>;
+export type SaveMemoryItemMutationError = ErrorType<ErrorResponse>;
 
-export const useSessionCompleteFeedback = <
+/**
+ * @summary Save a memory item with contradiction check
+ */
+export const useSaveMemoryItem = <
   TError = ErrorType<ErrorResponse>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+    Awaited<ReturnType<typeof saveMemoryItem>>,
     TError,
-    { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> },
+    { data: BodyType<SaveMemoryItemRequest> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
-  Awaited<ReturnType<typeof sessionCompleteFeedback>>,
+  Awaited<ReturnType<typeof saveMemoryItem>>,
   TError,
-  { sessionId: number; data: BodyType<SessionCompleteFeedbackRequest> },
+  { data: BodyType<SaveMemoryItemRequest> },
   TContext
 > => {
-  return useMutation(getSessionCompleteFeedbackMutationOptions(options));
+  return useMutation(getSaveMemoryItemMutationOptions(options));
 };
 
-// ─── Session Routing Stats ────────────────────────────────────────────────────
+/**
+ * Returns the full memory item by ID. Layer 3 requires escalate=true in lean/ultra modes.
+ * @summary Layer 3 — get full memory item (escalation required)
+ */
+export const getGetMemoryItemUrl = (
+  itemId: number,
+  params: GetMemoryItemParams,
+) => {
+  const normalizedParams = new URLSearchParams();
 
-export const getSessionRoutingStatsUrl = (sessionId: number) =>
-  `/api/sessions/${sessionId}/routing-stats`;
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
 
-export const getSessionRoutingStats = async (
-  sessionId: number,
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/mem/item/${itemId}?${stringifiedParams}`
+    : `/api/mem/item/${itemId}`;
+};
+
+export const getMemoryItem = async (
+  itemId: number,
+  params: GetMemoryItemParams,
   options?: RequestInit,
-): Promise<SessionRoutingStatsResponse> => {
-  return customFetch<SessionRoutingStatsResponse>(
-    getSessionRoutingStatsUrl(sessionId),
-    { ...options },
-  );
+): Promise<MemoryGetResponse> => {
+  return customFetch<MemoryGetResponse>(getGetMemoryItemUrl(itemId, params), {
+    ...options,
+    method: "GET",
+  });
 };
 
-export const getGetSessionRoutingStatsQueryKey = (sessionId: number) =>
-  [`/api/sessions/${sessionId}/routing-stats`] as const;
+export const getGetMemoryItemQueryKey = (
+  itemId: number,
+  params?: GetMemoryItemParams,
+) => {
+  return [`/api/mem/item/${itemId}`, ...(params ? [params] : [])] as const;
+};
 
-export const getGetSessionRoutingStatsQueryOptions = <
-  TData = Awaited<ReturnType<typeof getSessionRoutingStats>>,
+export const getGetMemoryItemQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMemoryItem>>,
   TError = ErrorType<ErrorResponse>,
 >(
-  sessionId: number,
+  itemId: number,
+  params: GetMemoryItemParams,
   options?: {
-    query?: UseQueryOptions<Awaited<ReturnType<typeof getSessionRoutingStats>>, TError, TData>;
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMemoryItem>>,
+      TError,
+      TData
+    >;
     request?: SecondParameter<typeof customFetch>;
   },
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
-  const queryKey = queryOptions?.queryKey ?? getGetSessionRoutingStatsQueryKey(sessionId);
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetMemoryItemQueryKey(itemId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getMemoryItem>>> = ({
+    signal,
+  }) => getMemoryItem(itemId, params, { signal, ...requestOptions });
+
   return {
     queryKey,
-    queryFn: () => getSessionRoutingStats(sessionId, requestOptions),
-    enabled: !!sessionId,
+    queryFn,
+    enabled: !!itemId,
     ...queryOptions,
-  } as UseQueryOptions<Awaited<ReturnType<typeof getSessionRoutingStats>>, TError, TData> & {
-    queryKey: QueryKey;
-  };
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMemoryItem>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
 };
 
-export type GetSessionRoutingStatsQueryResult = NonNullable<Awaited<ReturnType<typeof getSessionRoutingStats>>>;
-export type GetSessionRoutingStatsQueryError = ErrorType<ErrorResponse>;
+export type GetMemoryItemQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMemoryItem>>
+>;
+export type GetMemoryItemQueryError = ErrorType<ErrorResponse>;
 
-export function useGetSessionRoutingStats<
-  TData = Awaited<ReturnType<typeof getSessionRoutingStats>>,
+/**
+ * @summary Layer 3 — get full memory item (escalation required)
+ */
+
+export function useGetMemoryItem<
+  TData = Awaited<ReturnType<typeof getMemoryItem>>,
   TError = ErrorType<ErrorResponse>,
 >(
-  sessionId: number,
+  itemId: number,
+  params: GetMemoryItemParams,
   options?: {
-    query?: UseQueryOptions<Awaited<ReturnType<typeof getSessionRoutingStats>>, TError, TData>;
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMemoryItem>>,
+      TError,
+      TData
+    >;
     request?: SecondParameter<typeof customFetch>;
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetSessionRoutingStatsQueryOptions(sessionId, options);
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  const queryOptions = getGetMemoryItemQueryOptions(itemId, params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
   return { ...query, queryKey: queryOptions.queryKey };
 }
 
-// ─── Skill Feedback History ────────────────────────────────────────────────────
+/**
+ * Manually set the promotion_status of a memory item. Set to 'promoted' to confirm a candidate, 'demoted' to reverse a promotion (restores original type if promoted_from is set), or 'none' to clear promotion state.
+ * @summary Promote or demote a memory item
+ */
+export const getReverseMemoryPromotionUrl = (
+  itemId: number,
+  params: ReverseMemoryPromotionParams,
+) => {
+  const normalizedParams = new URLSearchParams();
 
-export const getSkillFeedbackHistoryUrl = (skillId: number) =>
-  `/api/skills/${skillId}/feedback`;
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
 
-export const getSkillFeedbackHistory = async (
-  skillId: number,
-  params?: { limit?: number; offset?: number },
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/mem/item/${itemId}/promote?${stringifiedParams}`
+    : `/api/mem/item/${itemId}/promote`;
+};
+
+export const reverseMemoryPromotion = async (
+  itemId: number,
+  reverseMemoryPromotionBody: ReverseMemoryPromotionBody,
+  params: ReverseMemoryPromotionParams,
   options?: RequestInit,
-): Promise<SkillFeedbackHistoryResponse> => {
-  const url = new URL(getSkillFeedbackHistoryUrl(skillId), "http://placeholder");
-  if (params?.limit != null) url.searchParams.set("limit", String(params.limit));
-  if (params?.offset != null) url.searchParams.set("offset", String(params.offset));
-  return customFetch<SkillFeedbackHistoryResponse>(
-    getSkillFeedbackHistoryUrl(skillId) + (url.search || ""),
+): Promise<PromotionUpdateResponse> => {
+  return customFetch<PromotionUpdateResponse>(
+    getReverseMemoryPromotionUrl(itemId, params),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(reverseMemoryPromotionBody),
+    },
+  );
+};
+
+export const getReverseMemoryPromotionMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reverseMemoryPromotion>>,
+    TError,
+    {
+      itemId: number;
+      data: BodyType<ReverseMemoryPromotionBody>;
+      params: ReverseMemoryPromotionParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof reverseMemoryPromotion>>,
+  TError,
+  {
+    itemId: number;
+    data: BodyType<ReverseMemoryPromotionBody>;
+    params: ReverseMemoryPromotionParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["reverseMemoryPromotion"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof reverseMemoryPromotion>>,
+    {
+      itemId: number;
+      data: BodyType<ReverseMemoryPromotionBody>;
+      params: ReverseMemoryPromotionParams;
+    }
+  > = (props) => {
+    const { itemId, data, params } = props ?? {};
+
+    return reverseMemoryPromotion(itemId, data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReverseMemoryPromotionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof reverseMemoryPromotion>>
+>;
+export type ReverseMemoryPromotionMutationBody =
+  BodyType<ReverseMemoryPromotionBody>;
+export type ReverseMemoryPromotionMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Promote or demote a memory item
+ */
+export const useReverseMemoryPromotion = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reverseMemoryPromotion>>,
+    TError,
+    {
+      itemId: number;
+      data: BodyType<ReverseMemoryPromotionBody>;
+      params: ReverseMemoryPromotionParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof reverseMemoryPromotion>>,
+  TError,
+  {
+    itemId: number;
+    data: BodyType<ReverseMemoryPromotionBody>;
+    params: ReverseMemoryPromotionParams;
+  },
+  TContext
+> => {
+  return useMutation(getReverseMemoryPromotionMutationOptions(options));
+};
+
+/**
+ * @summary List memory items
+ */
+export const getListMemoryItemsUrl = (params: ListMemoryItemsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/mem/items?${stringifiedParams}`
+    : `/api/mem/items`;
+};
+
+export const listMemoryItems = async (
+  params: ListMemoryItemsParams,
+  options?: RequestInit,
+): Promise<MemoryItemsListResponse> => {
+  return customFetch<MemoryItemsListResponse>(getListMemoryItemsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListMemoryItemsQueryKey = (params?: ListMemoryItemsParams) => {
+  return [`/api/mem/items`, ...(params ? [params] : [])] as const;
+};
+
+export const getListMemoryItemsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listMemoryItems>>,
+  TError = ErrorType<unknown>,
+>(
+  params: ListMemoryItemsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listMemoryItems>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListMemoryItemsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listMemoryItems>>> = ({
+    signal,
+  }) => listMemoryItems(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listMemoryItems>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListMemoryItemsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listMemoryItems>>
+>;
+export type ListMemoryItemsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List memory items
+ */
+
+export function useListMemoryItems<
+  TData = Awaited<ReturnType<typeof listMemoryItems>>,
+  TError = ErrorType<unknown>,
+>(
+  params: ListMemoryItemsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listMemoryItems>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListMemoryItemsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Updates injection_count for the specified items, which feeds ROI scoring and auto-promotion. Call this after injecting memory items into a model context window.
+ * @summary Track memory items injected into context
+ */
+export const getMarkMemoryInjectedUrl = () => {
+  return `/api/mem/injected`;
+};
+
+export const markMemoryInjected = async (
+  markMemoryInjectedBody: MarkMemoryInjectedBody,
+  options?: RequestInit,
+): Promise<SuccessResponse> => {
+  return customFetch<SuccessResponse>(getMarkMemoryInjectedUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(markMemoryInjectedBody),
+  });
+};
+
+export const getMarkMemoryInjectedMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markMemoryInjected>>,
+    TError,
+    { data: BodyType<MarkMemoryInjectedBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof markMemoryInjected>>,
+  TError,
+  { data: BodyType<MarkMemoryInjectedBody> },
+  TContext
+> => {
+  const mutationKey = ["markMemoryInjected"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof markMemoryInjected>>,
+    { data: BodyType<MarkMemoryInjectedBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return markMemoryInjected(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type MarkMemoryInjectedMutationResult = NonNullable<
+  Awaited<ReturnType<typeof markMemoryInjected>>
+>;
+export type MarkMemoryInjectedMutationBody = BodyType<MarkMemoryInjectedBody>;
+export type MarkMemoryInjectedMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Track memory items injected into context
+ */
+export const useMarkMemoryInjected = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markMemoryInjected>>,
+    TError,
+    { data: BodyType<MarkMemoryInjectedBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof markMemoryInjected>>,
+  TError,
+  { data: BodyType<MarkMemoryInjectedBody> },
+  TContext
+> => {
+  return useMutation(getMarkMemoryInjectedMutationOptions(options));
+};
+
+/**
+ * Called when a symbol's content hash changes (e.g., after a file edit). Items linked to the symbol via symbol_ref are marked stale and demoted for injection.
+ * @summary Mark memory items linked to a symbol as stale
+ */
+export const getMarkSymbolStaleUrl = () => {
+  return `/api/mem/symbol-stale`;
+};
+
+export const markSymbolStale = async (
+  markSymbolStaleBody: MarkSymbolStaleBody,
+  options?: RequestInit,
+): Promise<MarkStaleResponse> => {
+  return customFetch<MarkStaleResponse>(getMarkSymbolStaleUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(markSymbolStaleBody),
+  });
+};
+
+export const getMarkSymbolStaleMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markSymbolStale>>,
+    TError,
+    { data: BodyType<MarkSymbolStaleBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof markSymbolStale>>,
+  TError,
+  { data: BodyType<MarkSymbolStaleBody> },
+  TContext
+> => {
+  const mutationKey = ["markSymbolStale"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof markSymbolStale>>,
+    { data: BodyType<MarkSymbolStaleBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return markSymbolStale(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type MarkSymbolStaleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof markSymbolStale>>
+>;
+export type MarkSymbolStaleMutationBody = BodyType<MarkSymbolStaleBody>;
+export type MarkSymbolStaleMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Mark memory items linked to a symbol as stale
+ */
+export const useMarkSymbolStale = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markSymbolStale>>,
+    TError,
+    { data: BodyType<MarkSymbolStaleBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof markSymbolStale>>,
+  TError,
+  { data: BodyType<MarkSymbolStaleBody> },
+  TContext
+> => {
+  return useMutation(getMarkSymbolStaleMutationOptions(options));
+};
+
+/**
+ * @summary List contradiction / conflict groups
+ */
+export const getListMemoryConflictsUrl = (
+  params: ListMemoryConflictsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/mem/conflicts?${stringifiedParams}`
+    : `/api/mem/conflicts`;
+};
+
+export const listMemoryConflicts = async (
+  params: ListMemoryConflictsParams,
+  options?: RequestInit,
+): Promise<MemoryConflictsResponse> => {
+  return customFetch<MemoryConflictsResponse>(
+    getListMemoryConflictsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListMemoryConflictsQueryKey = (
+  params?: ListMemoryConflictsParams,
+) => {
+  return [`/api/mem/conflicts`, ...(params ? [params] : [])] as const;
+};
+
+export const getListMemoryConflictsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listMemoryConflicts>>,
+  TError = ErrorType<unknown>,
+>(
+  params: ListMemoryConflictsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listMemoryConflicts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListMemoryConflictsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listMemoryConflicts>>
+  > = ({ signal }) =>
+    listMemoryConflicts(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listMemoryConflicts>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListMemoryConflictsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listMemoryConflicts>>
+>;
+export type ListMemoryConflictsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List contradiction / conflict groups
+ */
+
+export function useListMemoryConflicts<
+  TData = Awaited<ReturnType<typeof listMemoryConflicts>>,
+  TError = ErrorType<unknown>,
+>(
+  params: ListMemoryConflictsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listMemoryConflicts>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListMemoryConflictsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Update the resolution status of a conflict group. Setting resolved also updates all member items.
+ * @summary Update conflict group status
+ */
+export const getUpdateMemoryConflictStatusUrl = (
+  groupId: number,
+  params: UpdateMemoryConflictStatusParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/mem/conflicts/${groupId}?${stringifiedParams}`
+    : `/api/mem/conflicts/${groupId}`;
+};
+
+export const updateMemoryConflictStatus = async (
+  groupId: number,
+  updateMemoryConflictStatusBody: UpdateMemoryConflictStatusBody,
+  params: UpdateMemoryConflictStatusParams,
+  options?: RequestInit,
+): Promise<ConflictStatusUpdateResponse> => {
+  return customFetch<ConflictStatusUpdateResponse>(
+    getUpdateMemoryConflictStatusUrl(groupId, params),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(updateMemoryConflictStatusBody),
+    },
+  );
+};
+
+export const getUpdateMemoryConflictStatusMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateMemoryConflictStatus>>,
+    TError,
+    {
+      groupId: number;
+      data: BodyType<UpdateMemoryConflictStatusBody>;
+      params: UpdateMemoryConflictStatusParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateMemoryConflictStatus>>,
+  TError,
+  {
+    groupId: number;
+    data: BodyType<UpdateMemoryConflictStatusBody>;
+    params: UpdateMemoryConflictStatusParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["updateMemoryConflictStatus"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateMemoryConflictStatus>>,
+    {
+      groupId: number;
+      data: BodyType<UpdateMemoryConflictStatusBody>;
+      params: UpdateMemoryConflictStatusParams;
+    }
+  > = (props) => {
+    const { groupId, data, params } = props ?? {};
+
+    return updateMemoryConflictStatus(groupId, data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateMemoryConflictStatusMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateMemoryConflictStatus>>
+>;
+export type UpdateMemoryConflictStatusMutationBody =
+  BodyType<UpdateMemoryConflictStatusBody>;
+export type UpdateMemoryConflictStatusMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Update conflict group status
+ */
+export const useUpdateMemoryConflictStatus = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateMemoryConflictStatus>>,
+    TError,
+    {
+      groupId: number;
+      data: BodyType<UpdateMemoryConflictStatusBody>;
+      params: UpdateMemoryConflictStatusParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateMemoryConflictStatus>>,
+  TError,
+  {
+    groupId: number;
+    data: BodyType<UpdateMemoryConflictStatusBody>;
+    params: UpdateMemoryConflictStatusParams;
+  },
+  TContext
+> => {
+  return useMutation(getUpdateMemoryConflictStatusMutationOptions(options));
+};
+
+/**
+ * Returns items that are stale by stale_status or TTL expiry. Stale items are searchable but deprioritized for injection.
+ * @summary List stale memory items
+ */
+export const getListStaleMemoryItemsUrl = (
+  params: ListStaleMemoryItemsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/mem/stale?${stringifiedParams}`
+    : `/api/mem/stale`;
+};
+
+export const listStaleMemoryItems = async (
+  params: ListStaleMemoryItemsParams,
+  options?: RequestInit,
+): Promise<MemoryStaleResponse> => {
+  return customFetch<MemoryStaleResponse>(getListStaleMemoryItemsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListStaleMemoryItemsQueryKey = (
+  params?: ListStaleMemoryItemsParams,
+) => {
+  return [`/api/mem/stale`, ...(params ? [params] : [])] as const;
+};
+
+export const getListStaleMemoryItemsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listStaleMemoryItems>>,
+  TError = ErrorType<unknown>,
+>(
+  params: ListStaleMemoryItemsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listStaleMemoryItems>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListStaleMemoryItemsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listStaleMemoryItems>>
+  > = ({ signal }) =>
+    listStaleMemoryItems(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listStaleMemoryItems>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListStaleMemoryItemsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listStaleMemoryItems>>
+>;
+export type ListStaleMemoryItemsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List stale memory items
+ */
+
+export function useListStaleMemoryItems<
+  TData = Awaited<ReturnType<typeof listStaleMemoryItems>>,
+  TError = ErrorType<unknown>,
+>(
+  params: ListStaleMemoryItemsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listStaleMemoryItems>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListStaleMemoryItemsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns auto-promotion audit log entries. Items are promoted from note→convention or warning→guardrail when ROI thresholds are met.
+ * @summary Get promotion history
+ */
+export const getGetMemoryPromotionHistoryUrl = (
+  params: GetMemoryPromotionHistoryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/mem/promotions?${stringifiedParams}`
+    : `/api/mem/promotions`;
+};
+
+export const getMemoryPromotionHistory = async (
+  params: GetMemoryPromotionHistoryParams,
+  options?: RequestInit,
+): Promise<MemoryPromotionHistoryResponse> => {
+  return customFetch<MemoryPromotionHistoryResponse>(
+    getGetMemoryPromotionHistoryUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetMemoryPromotionHistoryQueryKey = (
+  params?: GetMemoryPromotionHistoryParams,
+) => {
+  return [`/api/mem/promotions`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetMemoryPromotionHistoryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMemoryPromotionHistory>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetMemoryPromotionHistoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMemoryPromotionHistory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetMemoryPromotionHistoryQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getMemoryPromotionHistory>>
+  > = ({ signal }) =>
+    getMemoryPromotionHistory(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMemoryPromotionHistory>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetMemoryPromotionHistoryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMemoryPromotionHistory>>
+>;
+export type GetMemoryPromotionHistoryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get promotion history
+ */
+
+export function useGetMemoryPromotionHistory<
+  TData = Awaited<ReturnType<typeof getMemoryPromotionHistory>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetMemoryPromotionHistoryParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMemoryPromotionHistory>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetMemoryPromotionHistoryQueryOptions(
+    params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns stale count, contradiction count, promotion count, layer usage, average injected tokens, hit rate, and the active budget profile for the given token mode.
+ * @summary Memory governance observability stats
+ */
+export const getGetMemoryGovernanceStatsUrl = (
+  params: GetMemoryGovernanceStatsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/mem/stats?${stringifiedParams}`
+    : `/api/mem/stats`;
 };
 
-export const getGetSkillFeedbackHistoryQueryKey = (skillId: number) =>
-  ["skill-feedback-history", skillId] as const;
+export const getMemoryGovernanceStats = async (
+  params: GetMemoryGovernanceStatsParams,
+  options?: RequestInit,
+): Promise<MemoryGovernanceStatsResponse> => {
+  return customFetch<MemoryGovernanceStatsResponse>(
+    getGetMemoryGovernanceStatsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
 
-export const getGetSkillFeedbackHistoryQueryOptions = <
-  TData = Awaited<ReturnType<typeof getSkillFeedbackHistory>>,
-  TError = ErrorType<ErrorResponse>,
+export const getGetMemoryGovernanceStatsQueryKey = (
+  params?: GetMemoryGovernanceStatsParams,
+) => {
+  return [`/api/mem/stats`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetMemoryGovernanceStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMemoryGovernanceStats>>,
+  TError = ErrorType<unknown>,
 >(
-  skillId: number,
+  params: GetMemoryGovernanceStatsParams,
   options?: {
-    query?: UseQueryOptions<Awaited<ReturnType<typeof getSkillFeedbackHistory>>, TError, TData>;
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMemoryGovernanceStats>>,
+      TError,
+      TData
+    >;
     request?: SecondParameter<typeof customFetch>;
   },
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
-  const queryKey = queryOptions?.queryKey ?? getGetSkillFeedbackHistoryQueryKey(skillId);
-  return {
-    queryKey,
-    queryFn: () => getSkillFeedbackHistory(skillId, undefined, requestOptions),
-    enabled: skillId > 0,
-    staleTime: 30_000,
-    ...queryOptions,
-  } as UseQueryOptions<Awaited<ReturnType<typeof getSkillFeedbackHistory>>, TError, TData> & {
-    queryKey: QueryKey;
-  };
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetMemoryGovernanceStatsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getMemoryGovernanceStats>>
+  > = ({ signal }) =>
+    getMemoryGovernanceStats(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMemoryGovernanceStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
 };
 
-export type GetSkillFeedbackHistoryQueryResult = NonNullable<Awaited<ReturnType<typeof getSkillFeedbackHistory>>>;
-export type GetSkillFeedbackHistoryQueryError = ErrorType<ErrorResponse>;
+export type GetMemoryGovernanceStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMemoryGovernanceStats>>
+>;
+export type GetMemoryGovernanceStatsQueryError = ErrorType<unknown>;
 
-export function useGetSkillFeedbackHistory<
-  TData = Awaited<ReturnType<typeof getSkillFeedbackHistory>>,
-  TError = ErrorType<ErrorResponse>,
+/**
+ * @summary Memory governance observability stats
+ */
+
+export function useGetMemoryGovernanceStats<
+  TData = Awaited<ReturnType<typeof getMemoryGovernanceStats>>,
+  TError = ErrorType<unknown>,
 >(
-  skillId: number,
+  params: GetMemoryGovernanceStatsParams,
   options?: {
-    query?: UseQueryOptions<Awaited<ReturnType<typeof getSkillFeedbackHistory>>, TError, TData>;
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMemoryGovernanceStats>>,
+      TError,
+      TData
+    >;
     request?: SecondParameter<typeof customFetch>;
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetSkillFeedbackHistoryQueryOptions(skillId, options);
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  const queryOptions = getGetMemoryGovernanceStatsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
   return { ...query, queryKey: queryOptions.queryKey };
 }
-
-export const deleteSkillFeedbackEntry = async (
-  skillId: number,
-  feedbackId: number,
-  options?: RequestInit,
-): Promise<{ success: boolean }> => {
-  return customFetch<{ success: boolean }>(
-    `/api/skills/${skillId}/feedback/${feedbackId}`,
-    { ...options, method: "DELETE" },
-  );
-};
-
-export const useDeleteSkillFeedbackEntry = <
-  TError = ErrorType<ErrorResponse>,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof deleteSkillFeedbackEntry>>,
-    TError,
-    { skillId: number; feedbackId: number },
-    TContext
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseMutationResult<
-  Awaited<ReturnType<typeof deleteSkillFeedbackEntry>>,
-  TError,
-  { skillId: number; feedbackId: number },
-  TContext
-> => {
-  const { mutation: mutationOptions, request: requestOptions } = options ?? {};
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof deleteSkillFeedbackEntry>>,
-    { skillId: number; feedbackId: number }
-  > = ({ skillId, feedbackId }) => deleteSkillFeedbackEntry(skillId, feedbackId, requestOptions);
-  return useMutation({ mutationFn, ...mutationOptions });
-};

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db, repoGraphJobsTable, sessionRepoContextTable, sessionsTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { markSymbolsStaleForSession } from "../services/memory";
 
 const router = Router({ mergeParams: true });
 
@@ -522,6 +523,20 @@ router.post("/sync", async (req, res) => {
     newIsStale = ctx?.isStale ?? false; // preserve existing stale state on error
   } else if (normalizedStatus === "fingerprinting" && contentChanged) {
     newIsStale = true; // hash diverged — current stored data does not reflect current repo
+    // Automatically mark all symbol-bearing memory items for this session as stale.
+    // NOTE: This is intentionally session-wide (conservative): any memory items keyed to symbols
+    // may be outdated when repo content changes. Per-symbol precision is a future improvement:
+    // when the repo sync payload includes per-symbol hash deltas, pass them to a targeted
+    // markSymbolsStaleByRef(sessionId, changedSymbolRefs[]) instead of session-wide staling.
+    try {
+      const staleCount = markSymbolsStaleForSession(String(sessionId));
+      if (staleCount > 0) {
+        logger.info({ sessionId, staleCount }, "[mem] Auto-stale: symbol memories marked stale due to repo fingerprint change");
+      }
+    } catch (err) {
+      // Non-fatal: memory store may not have items for this session
+      logger.warn({ sessionId, err }, "[mem] Auto-stale: failed to mark symbol memories stale on repo change");
+    }
   } else {
     newIsStale = ctx?.isStale ?? false; // preserve for all other intermediate phases
   }

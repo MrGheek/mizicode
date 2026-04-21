@@ -56,6 +56,11 @@ export interface TokenModeProfile {
   responseStyleDirective: string;
   activeSkillCountLimit: number;
   memoryRetrievalDepth: number;
+  memoryCandidateCount: number;
+  memoryLayerAccess: 1 | 2 | 3;
+  memoryStaleSuppressionStrength: "strict" | "moderate" | "off";
+  memoryMetadataVerbosity: "compact" | "standard" | "full";
+  memoryContradictionSurfacing: "off" | "hint" | "full";
 }
 
 export const TOKEN_MODE_PROFILES: Record<TokenMode, TokenModeProfile> = {
@@ -67,6 +72,11 @@ export const TOKEN_MODE_PROFILES: Record<TokenMode, TokenModeProfile> = {
     responseStyleDirective: "Provide comprehensive, well-explained responses.",
     activeSkillCountLimit: 7,
     memoryRetrievalDepth: 3,
+    memoryCandidateCount: 20,
+    memoryLayerAccess: 3,
+    memoryStaleSuppressionStrength: "moderate",
+    memoryMetadataVerbosity: "full",
+    memoryContradictionSurfacing: "full",
   },
   core: {
     mode: "core",
@@ -76,6 +86,11 @@ export const TOKEN_MODE_PROFILES: Record<TokenMode, TokenModeProfile> = {
     responseStyleDirective: "Be clear and concise. Explain decisions briefly.",
     activeSkillCountLimit: 5,
     memoryRetrievalDepth: 2,
+    memoryCandidateCount: 10,
+    memoryLayerAccess: 2,
+    memoryStaleSuppressionStrength: "moderate",
+    memoryMetadataVerbosity: "standard",
+    memoryContradictionSurfacing: "hint",
   },
   lean: {
     mode: "lean",
@@ -85,6 +100,11 @@ export const TOKEN_MODE_PROFILES: Record<TokenMode, TokenModeProfile> = {
     responseStyleDirective: "Be terse. Skip preamble. Answer directly.",
     activeSkillCountLimit: 4,
     memoryRetrievalDepth: 1,
+    memoryCandidateCount: 5,
+    memoryLayerAccess: 1,
+    memoryStaleSuppressionStrength: "strict",
+    memoryMetadataVerbosity: "compact",
+    memoryContradictionSurfacing: "off",
   },
   ultra: {
     mode: "ultra",
@@ -94,6 +114,11 @@ export const TOKEN_MODE_PROFILES: Record<TokenMode, TokenModeProfile> = {
     responseStyleDirective: "Respond in the fewest tokens possible. No explanations unless asked.",
     activeSkillCountLimit: 3,
     memoryRetrievalDepth: 0,
+    memoryCandidateCount: 3,
+    memoryLayerAccess: 1,
+    memoryStaleSuppressionStrength: "strict",
+    memoryMetadataVerbosity: "compact",
+    memoryContradictionSurfacing: "off",
   },
 };
 

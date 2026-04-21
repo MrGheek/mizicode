@@ -828,6 +828,26 @@ export const CompileSkillPreviewResponse = zod.object({
 });
 
 /**
+ * @summary Get aggregated feedback scores for all skills
+ */
+export const GetSkillFeedbackScoresResponse = zod.object({
+  scores: zod.array(
+    zod.object({
+      skillId: zod.number(),
+      slug: zod.string(),
+      totalCount: zod.number(),
+      helpfulCount: zod.number(),
+      unhelpfulCount: zod.number(),
+      helpfulRate: zod.number().describe("Rate from 0.0 to 1.0"),
+      normalizedScore: zod
+        .number()
+        .describe("Normalized to [-1.0, +1.0] centered at 0.5 helpfulRate"),
+      avgTaskSuccessScore: zod.number().nullish(),
+    }),
+  ),
+});
+
+/**
  * @summary Get skill details and version history
  */
 export const GetSkillParams = zod.object({
@@ -952,6 +972,64 @@ export const DisableSkillResponse = zod.object({
     .record(zod.string(), zod.unknown())
     .nullish()
     .describe("The latest version manifest JSON for this skill"),
+});
+
+/**
+ * @summary Delete a specific feedback entry for a skill
+ */
+export const DeleteSkillFeedbackEntryParams = zod.object({
+  skillId: zod.coerce.number(),
+  feedbackId: zod.coerce.number(),
+});
+
+export const DeleteSkillFeedbackEntryResponse = zod.object({
+  success: zod.boolean(),
+});
+
+/**
+ * @summary Get feedback history for a specific skill
+ */
+export const GetSkillFeedbackHistoryParams = zod.object({
+  skillId: zod.coerce.number(),
+});
+
+export const getSkillFeedbackHistoryQueryLimitDefault = 50;
+export const getSkillFeedbackHistoryQueryLimitMax = 200;
+
+export const getSkillFeedbackHistoryQueryOffsetDefault = 0;
+
+export const GetSkillFeedbackHistoryQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .max(getSkillFeedbackHistoryQueryLimitMax)
+    .default(getSkillFeedbackHistoryQueryLimitDefault),
+  offset: zod.coerce
+    .number()
+    .default(getSkillFeedbackHistoryQueryOffsetDefault),
+});
+
+export const GetSkillFeedbackHistoryResponse = zod.object({
+  helpfulRate: zod.number(),
+  totalCount: zod.number(),
+  helpfulCount: zod.number(),
+  unhelpfulCount: zod.number(),
+  history: zod.array(
+    zod.object({
+      id: zod.number(),
+      sessionId: zod.number(),
+      skillId: zod.number(),
+      helpful: zod.boolean(),
+      notes: zod.string().nullish(),
+      tokenDelta: zod.number().nullish(),
+      taskSuccessScore: zod.number().nullish(),
+      createdAt: zod.string(),
+    }),
+  ),
+  pagination: zod.object({
+    limit: zod.number(),
+    offset: zod.number(),
+    count: zod.number(),
+  }),
 });
 
 /**
@@ -1204,6 +1282,62 @@ export const SubmitSkillFeedbackBody = zod.object({
   notes: zod.string().nullish(),
   tokenDelta: zod.number().nullish(),
   taskSuccessScore: zod.number().nullish(),
+});
+
+/**
+ * Processes bytesAvoided and taskSuccessScore to generate implicit positive/negative signals for all skills active in the session.
+ * @summary Record implicit per-skill feedback at session completion
+ */
+export const SessionCompleteFeedbackParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const sessionCompleteFeedbackBodyTaskSuccessScoreMax = 5;
+
+export const SessionCompleteFeedbackBody = zod.object({
+  bytesAvoided: zod
+    .number()
+    .optional()
+    .describe(
+      "Bytes avoided by context-shield routing, used as implicit signal for context-shield-core",
+    ),
+  taskSuccessScore: zod
+    .number()
+    .min(1)
+    .max(sessionCompleteFeedbackBodyTaskSuccessScoreMax)
+    .optional()
+    .describe("Overall task success score (1-5) for implicit skill signals"),
+});
+
+export const SessionCompleteFeedbackResponse = zod.object({
+  recorded: zod.array(
+    zod.object({
+      skillSlug: zod.string(),
+      helpful: zod.boolean(),
+      signal: zod.string(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get stored routing stats for a session
+ */
+export const GetSessionRoutingStatsParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const GetSessionRoutingStatsResponse = zod.object({
+  stats: zod.union([
+    zod.object({
+      totalBytesAvoided: zod.number(),
+      totalShielded: zod.number(),
+      totalArtifacts: zod.number(),
+      totalBlocked: zod.number(),
+      routingFailures: zod.number(),
+      recordedAt: zod.string(),
+    }),
+    zod.null(),
+  ]),
 });
 
 /**
@@ -1522,4 +1656,898 @@ export const GetRepoJobResponse = zod.object({
   durationMs: zod.number().nullish(),
   lastRunAt: zod.coerce.date().nullish(),
   createdAt: zod.coerce.date(),
+});
+
+/**
+ * Returns the top-N highest-ROI memory items for a user. Layer 1 is always available regardless of token mode. Use this first before escalating to search.
+ * @summary Layer 1 — memory index (tiny high-ROI shortlist)
+ */
+export const memoryIndexQueryTokenModeDefault = `core`;
+
+export const MemoryIndexQueryParams = zod.object({
+  userId: zod.coerce.string(),
+  tokenMode: zod
+    .enum(["full", "core", "lean", "ultra"])
+    .default(memoryIndexQueryTokenModeDefault),
+  scope: zod
+    .enum([
+      "task",
+      "lane_user",
+      "repo_shared",
+      "session_core",
+      "user_operator",
+      "global",
+    ])
+    .optional(),
+  sessionType: zod
+    .enum(["team", "solo"])
+    .optional()
+    .describe(
+      "Drives retrieval scope ordering: 'team' prioritises lane_user\/repo_shared first.",
+    ),
+  limit: zod.coerce.number().optional(),
+});
+
+export const MemoryIndexResponse = zod.object({
+  layer: zod.literal(1),
+  tokenMode: zod.string(),
+  items: zod.array(
+    zod
+      .object({
+        id: zod.number(),
+        content: zod.string(),
+        memoryType: zod.enum([
+          "observation",
+          "research",
+          "session_summary",
+          "convention",
+          "guardrail",
+          "note",
+          "warning",
+        ]),
+        scope: zod
+          .enum([
+            "task",
+            "lane_user",
+            "repo_shared",
+            "session_core",
+            "user_operator",
+            "global",
+          ])
+          .describe(
+            "Canonical scope order (most local to most shared): task → lane_user → repo_shared → session_core → user_operator → global",
+          ),
+        roiScore: zod.number(),
+        staleStatus: zod.enum(["fresh", "stale", "invalidated"]).optional(),
+        validityStatus: zod
+          .enum(["valid", "superseded", "retracted"])
+          .optional(),
+        promotionStatus: zod
+          .enum(["none", "candidate", "promoted", "demoted"])
+          .optional(),
+        accessCount: zod.number().optional(),
+        injectionCount: zod.number().optional(),
+        ttlExpiresAt: zod.number().nullish(),
+        symbolRef: zod.string().nullish(),
+        createdAt: zod.number().optional(),
+        lastUsedAt: zod.number().nullish(),
+        retrievalCount: zod.number().optional(),
+        contentHashAtSave: zod.string().nullish(),
+        metadataJson: zod.record(zod.string(), zod.unknown()).nullish(),
+        promotedFrom: zod.number().nullish(),
+        updatedAt: zod.number().optional(),
+        hasConflict: zod
+          .boolean()
+          .optional()
+          .describe(
+            "Present when memoryContradictionSurfacing is hint or full.",
+          ),
+        conflictGroupId: zod
+          .number()
+          .nullish()
+          .describe("Present when memoryContradictionSurfacing is full."),
+        conflictStatus: zod
+          .enum(["none", "open", "reviewed", "resolved", "accepted_override"])
+          .optional()
+          .describe("Present when memoryContradictionSurfacing is full."),
+      })
+      .describe(
+        "A profile-shaped memory item returned by Layer 1 (index) and Layer 2 (search). Fields present depend on the token-mode budget profile: compact returns only the core fields; standard adds status\/access fields; full adds all metadata and contradiction details.",
+      ),
+  ),
+  budgetProfile: zod.object({
+    memoryCandidateCount: zod
+      .number()
+      .describe("Maximum number of memory candidates to retrieve"),
+    memoryLayerAccess: zod
+      .union([zod.literal(1), zod.literal(2), zod.literal(3)])
+      .describe(
+        "Maximum layer available: 1=index only, 2=index+search, 3=all layers",
+      ),
+    memoryStaleSuppressionStrength: zod.enum(["strict", "moderate", "off"]),
+    memoryMetadataVerbosity: zod.enum(["compact", "standard", "full"]),
+    memoryContradictionSurfacing: zod.enum(["off", "hint", "full"]),
+  }),
+});
+
+/**
+ * Full-text search over memory items with scope and type filters. Layer 2 is restricted in lean/ultra token modes.
+ * @summary Layer 2 — memory search (richer filtered set)
+ */
+export const memorySearchItemsQueryTokenModeDefault = `core`;
+export const memorySearchItemsQueryIncludeStaleDefault = false;
+
+export const MemorySearchItemsQueryParams = zod.object({
+  userId: zod.coerce.string(),
+  q: zod.coerce.string(),
+  tokenMode: zod
+    .enum(["full", "core", "lean", "ultra"])
+    .default(memorySearchItemsQueryTokenModeDefault),
+  scope: zod
+    .enum([
+      "task",
+      "lane_user",
+      "repo_shared",
+      "session_core",
+      "user_operator",
+      "global",
+    ])
+    .optional(),
+  sessionType: zod
+    .enum(["team", "solo"])
+    .optional()
+    .describe(
+      "Drives retrieval scope ordering: 'team' prioritises lane_user\/repo_shared first.",
+    ),
+  memoryType: zod
+    .enum([
+      "observation",
+      "research",
+      "session_summary",
+      "convention",
+      "guardrail",
+      "note",
+      "warning",
+    ])
+    .optional(),
+  includeStale: zod.coerce
+    .boolean()
+    .default(memorySearchItemsQueryIncludeStaleDefault),
+  limit: zod.coerce.number().optional(),
+});
+
+export const MemorySearchItemsResponse = zod.object({
+  layer: zod.literal(2),
+  tokenMode: zod.string(),
+  query: zod.string(),
+  items: zod.array(
+    zod
+      .object({
+        id: zod.number(),
+        content: zod.string(),
+        memoryType: zod.enum([
+          "observation",
+          "research",
+          "session_summary",
+          "convention",
+          "guardrail",
+          "note",
+          "warning",
+        ]),
+        scope: zod
+          .enum([
+            "task",
+            "lane_user",
+            "repo_shared",
+            "session_core",
+            "user_operator",
+            "global",
+          ])
+          .describe(
+            "Canonical scope order (most local to most shared): task → lane_user → repo_shared → session_core → user_operator → global",
+          ),
+        roiScore: zod.number(),
+        staleStatus: zod.enum(["fresh", "stale", "invalidated"]).optional(),
+        validityStatus: zod
+          .enum(["valid", "superseded", "retracted"])
+          .optional(),
+        promotionStatus: zod
+          .enum(["none", "candidate", "promoted", "demoted"])
+          .optional(),
+        accessCount: zod.number().optional(),
+        injectionCount: zod.number().optional(),
+        ttlExpiresAt: zod.number().nullish(),
+        symbolRef: zod.string().nullish(),
+        createdAt: zod.number().optional(),
+        lastUsedAt: zod.number().nullish(),
+        retrievalCount: zod.number().optional(),
+        contentHashAtSave: zod.string().nullish(),
+        metadataJson: zod.record(zod.string(), zod.unknown()).nullish(),
+        promotedFrom: zod.number().nullish(),
+        updatedAt: zod.number().optional(),
+        hasConflict: zod
+          .boolean()
+          .optional()
+          .describe(
+            "Present when memoryContradictionSurfacing is hint or full.",
+          ),
+        conflictGroupId: zod
+          .number()
+          .nullish()
+          .describe("Present when memoryContradictionSurfacing is full."),
+        conflictStatus: zod
+          .enum(["none", "open", "reviewed", "resolved", "accepted_override"])
+          .optional()
+          .describe("Present when memoryContradictionSurfacing is full."),
+      })
+      .describe(
+        "A profile-shaped memory item returned by Layer 1 (index) and Layer 2 (search). Fields present depend on the token-mode budget profile: compact returns only the core fields; standard adds status\/access fields; full adds all metadata and contradiction details.",
+      ),
+  ),
+  budgetProfile: zod.object({
+    memoryCandidateCount: zod
+      .number()
+      .describe("Maximum number of memory candidates to retrieve"),
+    memoryLayerAccess: zod
+      .union([zod.literal(1), zod.literal(2), zod.literal(3)])
+      .describe(
+        "Maximum layer available: 1=index only, 2=index+search, 3=all layers",
+      ),
+    memoryStaleSuppressionStrength: zod.enum(["strict", "moderate", "off"]),
+    memoryMetadataVerbosity: zod.enum(["compact", "standard", "full"]),
+    memoryContradictionSurfacing: zod.enum(["off", "hint", "full"]),
+  }),
+});
+
+/**
+ * Saves a new memory item and runs automatic lexical contradiction detection against the same scope. Returns conflicting item IDs if any. Saves are never blocked — contradictions are flagged without preventing the write.
+ * @summary Save a memory item with contradiction check
+ */
+export const SaveMemoryItemBody = zod.object({
+  userId: zod.string(),
+  sessionId: zod.string().nullish(),
+  sessionType: zod
+    .enum(["team", "solo"])
+    .nullish()
+    .describe(
+      "Session type drives default scope resolution: 'team' defaults to lane_user, 'solo' defaults to session_core. Only used when scope is not explicitly provided.",
+    ),
+  memoryType: zod
+    .enum([
+      "observation",
+      "research",
+      "session_summary",
+      "convention",
+      "guardrail",
+      "note",
+      "warning",
+    ])
+    .optional(),
+  scope: zod
+    .enum([
+      "task",
+      "lane_user",
+      "repo_shared",
+      "session_core",
+      "user_operator",
+      "global",
+    ])
+    .optional()
+    .describe(
+      "Canonical scope order (most local to most shared): task → lane_user → repo_shared → session_core → user_operator → global",
+    ),
+  content: zod.string(),
+  symbolRef: zod.string().nullish(),
+  symbolContentHash: zod.string().nullish(),
+  metadata: zod.record(zod.string(), zod.unknown()).nullish(),
+});
+
+/**
+ * Returns the full memory item by ID. Layer 3 requires escalate=true in lean/ultra modes.
+ * @summary Layer 3 — get full memory item (escalation required)
+ */
+export const GetMemoryItemParams = zod.object({
+  itemId: zod.coerce.number(),
+});
+
+export const getMemoryItemQueryTokenModeDefault = `core`;
+export const getMemoryItemQueryEscalateDefault = false;
+
+export const GetMemoryItemQueryParams = zod.object({
+  userId: zod.coerce.string(),
+  tokenMode: zod
+    .enum(["full", "core", "lean", "ultra"])
+    .default(getMemoryItemQueryTokenModeDefault),
+  escalate: zod.coerce
+    .boolean()
+    .default(getMemoryItemQueryEscalateDefault)
+    .describe(
+      "Set to true to explicitly escalate to Layer 3. Required in lean\/ultra modes.",
+    ),
+});
+
+export const GetMemoryItemResponse = zod.object({
+  layer: zod.literal(3),
+  item: zod.object({
+    id: zod.number(),
+    userId: zod.string(),
+    sessionId: zod.string().nullish(),
+    memoryType: zod.enum([
+      "observation",
+      "research",
+      "session_summary",
+      "convention",
+      "guardrail",
+      "note",
+      "warning",
+    ]),
+    scope: zod
+      .enum([
+        "task",
+        "lane_user",
+        "repo_shared",
+        "session_core",
+        "user_operator",
+        "global",
+      ])
+      .describe(
+        "Canonical scope order (most local to most shared): task → lane_user → repo_shared → session_core → user_operator → global",
+      ),
+    content: zod.string(),
+    symbolRef: zod.string().nullish(),
+    contentHashAtSave: zod.string().nullish(),
+    validityStatus: zod.enum(["valid", "superseded", "retracted"]),
+    staleStatus: zod.enum(["fresh", "stale", "invalidated"]),
+    ttlExpiresAt: zod
+      .number()
+      .nullish()
+      .describe("Unix timestamp when this item expires (null = never)"),
+    accessCount: zod.number(),
+    retrievalCount: zod.number(),
+    injectionCount: zod.number(),
+    roiScore: zod
+      .number()
+      .describe("Computed ROI score — higher means more valuable"),
+    promotedFrom: zod
+      .number()
+      .nullish()
+      .describe("ID of the item this was promoted from"),
+    promotionStatus: zod.enum(["none", "candidate", "promoted", "demoted"]),
+    conflictGroupId: zod.number().nullish(),
+    conflictStatus: zod.enum([
+      "none",
+      "open",
+      "reviewed",
+      "resolved",
+      "accepted_override",
+    ]),
+    lastUsedAt: zod.number().nullish(),
+    createdAt: zod.number(),
+    updatedAt: zod.number(),
+    metadataJson: zod.record(zod.string(), zod.unknown()).nullish(),
+  }),
+});
+
+/**
+ * Manually set the promotion_status of a memory item. Set to 'promoted' to confirm a candidate, 'demoted' to reverse a promotion (restores original type if promoted_from is set), or 'none' to clear promotion state.
+ * @summary Promote or demote a memory item
+ */
+export const ReverseMemoryPromotionParams = zod.object({
+  itemId: zod.coerce.number(),
+});
+
+export const ReverseMemoryPromotionQueryParams = zod.object({
+  userId: zod.coerce.string(),
+});
+
+export const ReverseMemoryPromotionBody = zod.object({
+  promotionStatus: zod.enum(["none", "candidate", "promoted", "demoted"]),
+  notes: zod
+    .string()
+    .optional()
+    .describe(
+      "Optional note explaining the reason for this promotion status change.",
+    ),
+});
+
+export const ReverseMemoryPromotionResponse = zod.object({
+  success: zod.boolean(),
+  item: zod.object({
+    id: zod.number(),
+    userId: zod.string(),
+    sessionId: zod.string().nullish(),
+    memoryType: zod.enum([
+      "observation",
+      "research",
+      "session_summary",
+      "convention",
+      "guardrail",
+      "note",
+      "warning",
+    ]),
+    scope: zod
+      .enum([
+        "task",
+        "lane_user",
+        "repo_shared",
+        "session_core",
+        "user_operator",
+        "global",
+      ])
+      .describe(
+        "Canonical scope order (most local to most shared): task → lane_user → repo_shared → session_core → user_operator → global",
+      ),
+    content: zod.string(),
+    symbolRef: zod.string().nullish(),
+    contentHashAtSave: zod.string().nullish(),
+    validityStatus: zod.enum(["valid", "superseded", "retracted"]),
+    staleStatus: zod.enum(["fresh", "stale", "invalidated"]),
+    ttlExpiresAt: zod
+      .number()
+      .nullish()
+      .describe("Unix timestamp when this item expires (null = never)"),
+    accessCount: zod.number(),
+    retrievalCount: zod.number(),
+    injectionCount: zod.number(),
+    roiScore: zod
+      .number()
+      .describe("Computed ROI score — higher means more valuable"),
+    promotedFrom: zod
+      .number()
+      .nullish()
+      .describe("ID of the item this was promoted from"),
+    promotionStatus: zod.enum(["none", "candidate", "promoted", "demoted"]),
+    conflictGroupId: zod.number().nullish(),
+    conflictStatus: zod.enum([
+      "none",
+      "open",
+      "reviewed",
+      "resolved",
+      "accepted_override",
+    ]),
+    lastUsedAt: zod.number().nullish(),
+    createdAt: zod.number(),
+    updatedAt: zod.number(),
+    metadataJson: zod.record(zod.string(), zod.unknown()).nullish(),
+  }),
+});
+
+/**
+ * @summary List memory items
+ */
+export const listMemoryItemsQueryLimitDefault = 50;
+export const listMemoryItemsQueryLimitMax = 200;
+
+export const listMemoryItemsQueryOffsetDefault = 0;
+
+export const ListMemoryItemsQueryParams = zod.object({
+  userId: zod.coerce.string(),
+  scope: zod
+    .enum([
+      "task",
+      "lane_user",
+      "repo_shared",
+      "session_core",
+      "user_operator",
+      "global",
+    ])
+    .optional(),
+  memoryType: zod
+    .enum([
+      "observation",
+      "research",
+      "session_summary",
+      "convention",
+      "guardrail",
+      "note",
+      "warning",
+    ])
+    .optional(),
+  limit: zod.coerce
+    .number()
+    .max(listMemoryItemsQueryLimitMax)
+    .default(listMemoryItemsQueryLimitDefault),
+  offset: zod.coerce.number().default(listMemoryItemsQueryOffsetDefault),
+});
+
+export const ListMemoryItemsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.number(),
+      userId: zod.string(),
+      sessionId: zod.string().nullish(),
+      memoryType: zod.enum([
+        "observation",
+        "research",
+        "session_summary",
+        "convention",
+        "guardrail",
+        "note",
+        "warning",
+      ]),
+      scope: zod
+        .enum([
+          "task",
+          "lane_user",
+          "repo_shared",
+          "session_core",
+          "user_operator",
+          "global",
+        ])
+        .describe(
+          "Canonical scope order (most local to most shared): task → lane_user → repo_shared → session_core → user_operator → global",
+        ),
+      content: zod.string(),
+      symbolRef: zod.string().nullish(),
+      contentHashAtSave: zod.string().nullish(),
+      validityStatus: zod.enum(["valid", "superseded", "retracted"]),
+      staleStatus: zod.enum(["fresh", "stale", "invalidated"]),
+      ttlExpiresAt: zod
+        .number()
+        .nullish()
+        .describe("Unix timestamp when this item expires (null = never)"),
+      accessCount: zod.number(),
+      retrievalCount: zod.number(),
+      injectionCount: zod.number(),
+      roiScore: zod
+        .number()
+        .describe("Computed ROI score — higher means more valuable"),
+      promotedFrom: zod
+        .number()
+        .nullish()
+        .describe("ID of the item this was promoted from"),
+      promotionStatus: zod.enum(["none", "candidate", "promoted", "demoted"]),
+      conflictGroupId: zod.number().nullish(),
+      conflictStatus: zod.enum([
+        "none",
+        "open",
+        "reviewed",
+        "resolved",
+        "accepted_override",
+      ]),
+      lastUsedAt: zod.number().nullish(),
+      createdAt: zod.number(),
+      updatedAt: zod.number(),
+      metadataJson: zod.record(zod.string(), zod.unknown()).nullish(),
+    }),
+  ),
+});
+
+/**
+ * Updates injection_count for the specified items, which feeds ROI scoring and auto-promotion. Call this after injecting memory items into a model context window.
+ * @summary Track memory items injected into context
+ */
+export const MarkMemoryInjectedBody = zod.object({
+  userId: zod
+    .string()
+    .describe(
+      "Owner of the items — used to scope updates and prevent cross-tenant counter manipulation.",
+    ),
+  itemIds: zod.array(zod.number()),
+});
+
+export const MarkMemoryInjectedResponse = zod.object({
+  success: zod.boolean(),
+});
+
+/**
+ * Called when a symbol's content hash changes (e.g., after a file edit). Items linked to the symbol via symbol_ref are marked stale and demoted for injection.
+ * @summary Mark memory items linked to a symbol as stale
+ */
+export const MarkSymbolStaleBody = zod.object({
+  userId: zod
+    .string()
+    .describe(
+      "Caller's user ID — scopes staleness to this tenant's items only",
+    ),
+  symbolRef: zod.string(),
+  newContentHash: zod.string(),
+});
+
+export const MarkSymbolStaleResponse = zod.object({
+  ok: zod.boolean(),
+  markedStale: zod.number(),
+});
+
+/**
+ * @summary List contradiction / conflict groups
+ */
+export const listMemoryConflictsQueryLimitDefault = 20;
+export const listMemoryConflictsQueryOffsetDefault = 0;
+
+export const ListMemoryConflictsQueryParams = zod.object({
+  userId: zod.coerce.string(),
+  conflictStatus: zod
+    .enum(["none", "open", "reviewed", "resolved", "accepted_override"])
+    .optional(),
+  limit: zod.coerce.number().default(listMemoryConflictsQueryLimitDefault),
+  offset: zod.coerce.number().default(listMemoryConflictsQueryOffsetDefault),
+});
+
+export const ListMemoryConflictsResponse = zod.object({
+  conflicts: zod.array(
+    zod.object({
+      group: zod.object({
+        id: zod.number(),
+        userId: zod.string(),
+        scope: zod
+          .enum([
+            "task",
+            "lane_user",
+            "repo_shared",
+            "session_core",
+            "user_operator",
+            "global",
+          ])
+          .describe(
+            "Canonical scope order (most local to most shared): task → lane_user → repo_shared → session_core → user_operator → global",
+          ),
+        conflictStatus: zod.enum([
+          "none",
+          "open",
+          "reviewed",
+          "resolved",
+          "accepted_override",
+        ]),
+        firstItemId: zod.number().nullish(),
+        createdAt: zod.number(),
+        updatedAt: zod.number(),
+      }),
+      items: zod.array(
+        zod.object({
+          id: zod.number(),
+          userId: zod.string(),
+          sessionId: zod.string().nullish(),
+          memoryType: zod.enum([
+            "observation",
+            "research",
+            "session_summary",
+            "convention",
+            "guardrail",
+            "note",
+            "warning",
+          ]),
+          scope: zod
+            .enum([
+              "task",
+              "lane_user",
+              "repo_shared",
+              "session_core",
+              "user_operator",
+              "global",
+            ])
+            .describe(
+              "Canonical scope order (most local to most shared): task → lane_user → repo_shared → session_core → user_operator → global",
+            ),
+          content: zod.string(),
+          symbolRef: zod.string().nullish(),
+          contentHashAtSave: zod.string().nullish(),
+          validityStatus: zod.enum(["valid", "superseded", "retracted"]),
+          staleStatus: zod.enum(["fresh", "stale", "invalidated"]),
+          ttlExpiresAt: zod
+            .number()
+            .nullish()
+            .describe("Unix timestamp when this item expires (null = never)"),
+          accessCount: zod.number(),
+          retrievalCount: zod.number(),
+          injectionCount: zod.number(),
+          roiScore: zod
+            .number()
+            .describe("Computed ROI score — higher means more valuable"),
+          promotedFrom: zod
+            .number()
+            .nullish()
+            .describe("ID of the item this was promoted from"),
+          promotionStatus: zod.enum([
+            "none",
+            "candidate",
+            "promoted",
+            "demoted",
+          ]),
+          conflictGroupId: zod.number().nullish(),
+          conflictStatus: zod.enum([
+            "none",
+            "open",
+            "reviewed",
+            "resolved",
+            "accepted_override",
+          ]),
+          lastUsedAt: zod.number().nullish(),
+          createdAt: zod.number(),
+          updatedAt: zod.number(),
+          metadataJson: zod.record(zod.string(), zod.unknown()).nullish(),
+        }),
+      ),
+    }),
+  ),
+});
+
+/**
+ * Update the resolution status of a conflict group. Setting resolved also updates all member items.
+ * @summary Update conflict group status
+ */
+export const UpdateMemoryConflictStatusParams = zod.object({
+  groupId: zod.coerce.number(),
+});
+
+export const UpdateMemoryConflictStatusQueryParams = zod.object({
+  userId: zod.coerce.string(),
+});
+
+export const UpdateMemoryConflictStatusBody = zod.object({
+  conflictStatus: zod.enum([
+    "none",
+    "open",
+    "reviewed",
+    "resolved",
+    "accepted_override",
+  ]),
+});
+
+export const UpdateMemoryConflictStatusResponse = zod.object({
+  success: zod.boolean(),
+  conflictGroupId: zod.number(),
+  conflictStatus: zod.enum([
+    "none",
+    "open",
+    "reviewed",
+    "resolved",
+    "accepted_override",
+  ]),
+});
+
+/**
+ * Returns items that are stale by stale_status or TTL expiry. Stale items are searchable but deprioritized for injection.
+ * @summary List stale memory items
+ */
+export const listStaleMemoryItemsQueryLimitDefault = 50;
+export const listStaleMemoryItemsQueryOffsetDefault = 0;
+
+export const ListStaleMemoryItemsQueryParams = zod.object({
+  userId: zod.coerce.string(),
+  limit: zod.coerce.number().default(listStaleMemoryItemsQueryLimitDefault),
+  offset: zod.coerce.number().default(listStaleMemoryItemsQueryOffsetDefault),
+});
+
+export const ListStaleMemoryItemsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.number(),
+      userId: zod.string(),
+      sessionId: zod.string().nullish(),
+      memoryType: zod.enum([
+        "observation",
+        "research",
+        "session_summary",
+        "convention",
+        "guardrail",
+        "note",
+        "warning",
+      ]),
+      scope: zod
+        .enum([
+          "task",
+          "lane_user",
+          "repo_shared",
+          "session_core",
+          "user_operator",
+          "global",
+        ])
+        .describe(
+          "Canonical scope order (most local to most shared): task → lane_user → repo_shared → session_core → user_operator → global",
+        ),
+      content: zod.string(),
+      symbolRef: zod.string().nullish(),
+      contentHashAtSave: zod.string().nullish(),
+      validityStatus: zod.enum(["valid", "superseded", "retracted"]),
+      staleStatus: zod.enum(["fresh", "stale", "invalidated"]),
+      ttlExpiresAt: zod
+        .number()
+        .nullish()
+        .describe("Unix timestamp when this item expires (null = never)"),
+      accessCount: zod.number(),
+      retrievalCount: zod.number(),
+      injectionCount: zod.number(),
+      roiScore: zod
+        .number()
+        .describe("Computed ROI score — higher means more valuable"),
+      promotedFrom: zod
+        .number()
+        .nullish()
+        .describe("ID of the item this was promoted from"),
+      promotionStatus: zod.enum(["none", "candidate", "promoted", "demoted"]),
+      conflictGroupId: zod.number().nullish(),
+      conflictStatus: zod.enum([
+        "none",
+        "open",
+        "reviewed",
+        "resolved",
+        "accepted_override",
+      ]),
+      lastUsedAt: zod.number().nullish(),
+      createdAt: zod.number(),
+      updatedAt: zod.number(),
+      metadataJson: zod.record(zod.string(), zod.unknown()).nullish(),
+    }),
+  ),
+  count: zod.number(),
+});
+
+/**
+ * Returns auto-promotion audit log entries. Items are promoted from note→convention or warning→guardrail when ROI thresholds are met.
+ * @summary Get promotion history
+ */
+export const getMemoryPromotionHistoryQueryLimitDefault = 50;
+export const getMemoryPromotionHistoryQueryOffsetDefault = 0;
+
+export const GetMemoryPromotionHistoryQueryParams = zod.object({
+  userId: zod.coerce.string(),
+  itemId: zod.coerce.number().optional(),
+  limit: zod.coerce
+    .number()
+    .default(getMemoryPromotionHistoryQueryLimitDefault),
+  offset: zod.coerce
+    .number()
+    .default(getMemoryPromotionHistoryQueryOffsetDefault),
+});
+
+export const GetMemoryPromotionHistoryResponse = zod.object({
+  history: zod.array(
+    zod.object({
+      id: zod.number(),
+      itemId: zod.number(),
+      fromType: zod.string(),
+      toType: zod.string(),
+      fromStatus: zod.string(),
+      toStatus: zod.string(),
+      roiScoreAtPromotion: zod.number().nullish(),
+      promotedAt: zod.number(),
+      promotedBy: zod.string().describe("auto | manual"),
+      notes: zod.string().nullish(),
+    }),
+  ),
+});
+
+/**
+ * Returns stale count, contradiction count, promotion count, layer usage, average injected tokens, hit rate, and the active budget profile for the given token mode.
+ * @summary Memory governance observability stats
+ */
+export const getMemoryGovernanceStatsQueryTokenModeDefault = `core`;
+
+export const GetMemoryGovernanceStatsQueryParams = zod.object({
+  userId: zod.coerce.string(),
+  tokenMode: zod
+    .enum(["full", "core", "lean", "ultra"])
+    .default(getMemoryGovernanceStatsQueryTokenModeDefault),
+});
+
+export const GetMemoryGovernanceStatsResponse = zod.object({
+  totalItems: zod.number(),
+  staleCount: zod.number(),
+  contradictionCount: zod.number(),
+  promotionCount: zod.number(),
+  byType: zod.record(zod.string(), zod.number()),
+  byScope: zod.record(zod.string(), zod.number()),
+  layerUsage: zod.record(zod.string(), zod.number()),
+  avgInjectedTokensEstimate: zod.number(),
+  hitRate: zod.number().describe("Ratio of injections to retrievals in [0,1]"),
+  budgetProfile: zod.object({
+    memoryCandidateCount: zod
+      .number()
+      .describe("Maximum number of memory candidates to retrieve"),
+    memoryLayerAccess: zod
+      .union([zod.literal(1), zod.literal(2), zod.literal(3)])
+      .describe(
+        "Maximum layer available: 1=index only, 2=index+search, 3=all layers",
+      ),
+    memoryStaleSuppressionStrength: zod.enum(["strict", "moderate", "off"]),
+    memoryMetadataVerbosity: zod.enum(["compact", "standard", "full"]),
+    memoryContradictionSurfacing: zod.enum(["off", "hint", "full"]),
+  }),
+  semanticContradictionActive: zod
+    .boolean()
+    .optional()
+    .describe(
+      "True only when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1 and a real embedding backend is wired. Always false while semantic path is a stub.",
+    ),
 });
