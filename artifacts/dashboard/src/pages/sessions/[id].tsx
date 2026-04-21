@@ -1071,6 +1071,7 @@ export default function SessionDetail() {
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
   const [seenConflictFingerprint, setSeenConflictFingerprint] = useState<string>("");
+  const [conflictBannerDismissed, setConflictBannerDismissed] = useState(false);
   const [bootLog, setBootLog] = useState<string[]>([]);
   const lastBootMsgRef = useRef<string>("");
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -1129,6 +1130,7 @@ export default function SessionDetail() {
     (c) => c.recommendation !== "no_conflict"
   );
   const hasBlockingConflict = activeConflicts.some((c) => c.recommendation === "block");
+  const blockingConflictCount = activeConflicts.filter((c) => c.recommendation === "block").length;
   const hasAnyConflict = activeConflicts.length > 0;
 
   const conflictFingerprint = useMemo(
@@ -1145,11 +1147,13 @@ export default function SessionDetail() {
 
   useEffect(() => {
     setSeenConflictFingerprint("");
+    setConflictBannerDismissed(false);
   }, [sessionId]);
 
   useEffect(() => {
     if (!hasAnyConflict) {
       setSeenConflictFingerprint("");
+      setConflictBannerDismissed(false);
     }
   }, [hasAnyConflict]);
 
@@ -1418,6 +1422,32 @@ export default function SessionDetail() {
 
       {activeTab === "overview" && (
         <>
+          {/* Blocking conflict banner */}
+          {hasBlockingConflict && !conflictBannerDismissed && (
+            <div className="flex items-start gap-3 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm">
+              <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+              <span className="flex-1 text-red-300">
+                <span className="font-semibold text-red-200">
+                  {blockingConflictCount} blocking {blockingConflictCount === 1 ? "conflict" : "conflicts"} detected.
+                </span>{" "}
+                Team members are working on overlapping files.{" "}
+                <button
+                  className="underline underline-offset-2 font-medium text-red-200 hover:text-white transition-colors"
+                  onClick={() => { setActiveTab("team"); setSeenConflictFingerprint(conflictFingerprint); }}
+                >
+                  View in Team tab
+                </button>
+              </span>
+              <button
+                aria-label="Dismiss conflict banner"
+                className="text-red-400 hover:text-red-200 transition-colors ml-1 shrink-0"
+                onClick={() => setConflictBannerDismissed(true)}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {/* Primary launch — shown when ready */}
           {isReady && session.boltDiyUrl ? (
             <Card className="border-primary/60 bg-primary/5">
