@@ -560,9 +560,16 @@ function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?:
   };
 
   const handleFeedback = (manifest: ManifestItem, helpful: boolean) => {
-    const skillId = typeof manifest.id === "number" ? manifest.id : Number(manifest.id ?? 0);
-    if (!skillId) return;
-    submitFeedback.mutate({ sessionId, data: { skillId, helpful } }, {
+    const numericId = typeof manifest.id === "number" ? manifest.id : NaN;
+    const manifestId = typeof manifest.id === "string" ? manifest.id : undefined;
+    if (!numericId && !manifestId) {
+      toast({ title: "Cannot submit feedback — skill ID missing", variant: "destructive" });
+      return;
+    }
+    const data = numericId
+      ? { skillId: numericId, helpful }
+      : { manifestId, helpful };
+    submitFeedback.mutate({ sessionId, data }, {
       onSuccess: () => {
         setVotedSkills(prev => ({ ...prev, [manifest.id!]: (helpful ? "up" : "down") as "up" | "down" }));
         queryClient.invalidateQueries({ queryKey: getGetSessionSkillsQueryKey(sessionId) });

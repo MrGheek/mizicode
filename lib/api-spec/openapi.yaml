@@ -1824,6 +1824,12 @@ components:
       properties:
         skillId:
           type: integer
+          nullable: true
+          description: Numeric DB ID of the skill. Either skillId or manifestId must be provided.
+        manifestId:
+          type: string
+          nullable: true
+          description: String manifest/slug ID of the skill (e.g. "floatr-decision-log-lite"). Used when only a string ID is available from compiled manifests.
         helpful:
           type: boolean
         notes:
@@ -1836,7 +1842,6 @@ components:
           type: integer
           nullable: true
       required:
-        - skillId
         - helpful
 
     SkillFeedbackResponse:

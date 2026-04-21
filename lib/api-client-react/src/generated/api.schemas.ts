@@ -438,7 +438,10 @@ export interface SessionSkillsResponse {
 }
 
 export interface SkillFeedbackRequest {
-  skillId: number;
+  /** Numeric DB ID of the skill. Either skillId or manifestId must be provided. */
+  skillId?: number | null;
+  /** String manifest/slug ID of the skill (e.g. "floatr-decision-log-lite"). Used when only a string ID is available from compiled manifests. */
+  manifestId?: string | null;
   helpful: boolean;
   notes?: string | null;
   tokenDelta?: number | null;

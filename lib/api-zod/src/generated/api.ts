@@ -1188,7 +1188,18 @@ export const SubmitSkillFeedbackParams = zod.object({
 });
 
 export const SubmitSkillFeedbackBody = zod.object({
-  skillId: zod.number(),
+  skillId: zod
+    .number()
+    .nullish()
+    .describe(
+      "Numeric DB ID of the skill. Either skillId or manifestId must be provided.",
+    ),
+  manifestId: zod
+    .string()
+    .nullish()
+    .describe(
+      'String manifest\/slug ID of the skill (e.g. \"floatr-decision-log-lite\"). Used when only a string ID is available from compiled manifests.',
+    ),
   helpful: zod.boolean(),
   notes: zod.string().nullish(),
   tokenDelta: zod.number().nullish(),

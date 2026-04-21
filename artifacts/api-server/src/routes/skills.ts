@@ -509,24 +509,35 @@ router.post("/sessions/:sessionId/skills/feedback", async (req, res) => {
     return;
   }
 
-  const { skillId, helpful, notes, tokenDelta, taskSuccessScore } = req.body as {
-    skillId?: number;
+  const { skillId: rawSkillId, manifestId, helpful, notes, tokenDelta, taskSuccessScore } = req.body as {
+    skillId?: number | null;
+    manifestId?: string | null;
     helpful?: boolean;
     notes?: string;
     tokenDelta?: number;
     taskSuccessScore?: number;
   };
 
-  if (skillId === undefined || helpful === undefined) {
-    res.status(400).json({ error: "skillId and helpful are required" });
+  if (helpful === undefined) {
+    res.status(400).json({ error: "helpful is required" });
+    return;
+  }
+  if (!rawSkillId && !manifestId) {
+    res.status(400).json({ error: "Either skillId or manifestId is required" });
     return;
   }
 
-  const [skill] = await db.select({ id: skillsTable.id }).from(skillsTable).where(eq(skillsTable.id, skillId));
+  let skill: { id: number } | undefined;
+  if (rawSkillId) {
+    [skill] = await db.select({ id: skillsTable.id }).from(skillsTable).where(eq(skillsTable.id, rawSkillId));
+  } else if (manifestId) {
+    [skill] = await db.select({ id: skillsTable.id }).from(skillsTable).where(eq(skillsTable.slug, manifestId));
+  }
   if (!skill) {
     res.status(404).json({ error: "Skill not found" });
     return;
   }
+  const skillId = skill.id;
 
   const [feedback] = await db.insert(skillFeedbackTable).values({
     sessionId,
