@@ -1,0 +1,364 @@
+#40 — Smart Skills: Repo Intelligence + Hybrid Retrieval (Phase 2A)
+
+What & Why
+
+Smart Skills can now import, normalize, rank, and inject skill bundles. The next bottleneck is context quality: the agent still needs a better way to discover the right files, symbols, and code paths inside real repositories.
+
+This task adds Repo Intelligence and Hybrid Retrieval:
+
+structural repo understanding via Tree-sitter
+repo fingerprinting from actual checked-out code
+blast-radius analysis
+minimal read-set generation
+hybrid retrieval that combines:
+graph/AST retrieval
+lexical retrieval
+semantic retrieval
+
+This is where FLOATR starts to feel materially more intelligent in coding sessions, not just better organized. It also captures the most valuable idea from claude-context — semantic code retrieval for large codebases — without inheriting its default dependency on external Zilliz Cloud + OpenAI embedding setup. The upstream repo is built around semantic search over a vector database and documents those external prerequisites explicitly.
+
+Done looks like
+
+Repo fingerprinting
+
+On session start, FLOATR detects:
+primary languages
+framework/runtime hints
+package manager
+monorepo vs single-package
+test tooling
+likely entrypoints
+Fingerprint is stored on the session and exposed by API
+
+Repo graph
+
+New per-session repo graph index is built from the checked-out repo
+Graph captures:
+files
+symbols
+imports/includes
+callers/callees where supported
+test-to-source relationships where detectable
+Graph is stored locally on the instance at /workspace/.floatr/repo-graph.db
+
+Hybrid retrieval
+
+A retrieval service can answer:
+“what files are most relevant?”
+“what symbols likely matter?”
+“what is the blast radius of this change?”
+Retrieval score combines:
+graph proximity
+lexical match
+semantic similarity
+Semantic retrieval works locally-first with embeddings generated on the instance or API side, with no required external SaaS dependency
+
+Minimal read-set
+
+For build/review/debug/refactor tasks, FLOATR returns a ranked list of the smallest relevant file/symbol set
+Bundle compiler can consume this to choose or weight context-heavy skills
+
+Blast radius
+
+For a file or symbol, API returns likely impacted files/tests/modules
+Cockpit can later visualize this
+
+Repo summary
+
+Session-level repo summary is generated and stored:
+architecture sketch
+major packages/modules
+test strategy
+hotspots / high-centrality files
+
+APIs
+
+POST /api/sessions/:id/repo/index
+GET /api/sessions/:id/repo/fingerprint
+GET /api/sessions/:id/repo/summary
+GET /api/sessions/:id/repo/search
+GET /api/sessions/:id/repo/blast-radius
+GET /api/sessions/:id/repo/symbol/:name
+
+Bundle compiler integration
+
+Existing Smart Skills ranker can use real repo structure instead of only user-supplied task metadata
+Out of scope
+Full graph visualization UI
+Symbol-aware edit planning
+Cross-session symbol memory
+Automated refactor execution
+Enterprise remote vector DB connectors
+Eval leaderboard
+Steps
+
+1. Add repo metadata storage
+
+Extend sessions or add a dedicated session_repo_context table with:
+sessionId
+repoPath
+repoUrl
+fingerprintJson
+summaryJson
+indexStatus
+indexedAt
+
+2. Upgrade repo_graph_jobs
+
+Expand existing placeholder table to include:
+retrieval status
+index version
+embeddings status
+symbol count
+edge count
+error details
+
+3. Build fingerprinting service
+
+New service: repo-fingerprint.ts
+Inputs: repo path
+Outputs:
+langs
+frameworks
+monorepo flag
+package manager
+test stack
+likely build commands
+likely root modules
+
+4. Build Tree-sitter indexing service
+
+New service: repo-graph.ts
+Parse supported languages first:
+TypeScript/JavaScript
+Python
+Go
+Rust
+Store nodes/edges in SQLite
+Make indexing incremental where possible
+
+5. Add lexical retrieval
+
+Use SQLite FTS5 against file chunks, symbol docs, and summaries
+
+6. Add semantic retrieval
+
+New service: repo-semantic-search.ts
+Chunk code intelligently
+Generate embeddings
+Store vectors locally
+Retrieval API merges semantic results with graph + FTS results
+
+7. Add blast-radius service
+
+Input: file path or symbol
+Output:
+direct dependents
+likely tests
+related modules
+confidence score
+
+8. Generate repo summary
+
+New service: repo-summary.ts
+Produce compact architecture summary plus package/module descriptions
+
+9. Feed bundle compiler
+
+Extend Smart Skills ranker inputs:
+repo size
+repo complexity
+graph density
+review/debug/build context needs
+
+10. Add APIs + OpenAPI
+
+Update OpenAPI, regenerate Zod + React Query client
+Relevant files
+artifacts/api-server/src/routes/sessions.ts
+artifacts/api-server/src/routes/skills.ts
+artifacts/api-server/src/services/skills-bundler.ts
+artifacts/api-server/src/services/skills-ranker.ts
+artifacts/api-server/src/services/memory.ts
+artifacts/api-server/src/services/vastai.ts
+docker/onstart.sh
+lib/db/src/schema/
+lib/api-spec/openapi.yaml
+Design note
+
+Do not clone claude-context’s external dependency model as the default. It documents a vector DB requirement and OpenAI embedding key in its quick start, which is useful inspiration but the wrong default posture for FLOATR’s private/local product story.
+
+#41 — Smart Skills: Context Shield + Working State Continuity (Phase 2B / 3 Prelude)
+
+What & Why
+
+Once Repo Intelligence improves what the agent should read, the next problem is preventing the model from being flooded by large intermediate outputs.
+
+This task adds Context Shield:
+
+sandbox execution for heavy reads, grep output, logs, snapshots, JSON, and batch analysis
+only compact results enter the model context
+
+It also adds Working State Continuity:
+
+preserve active task state across compaction, restart, or resume
+rebuild working context automatically from a structured event journal
+
+This is the best part of context-mode to borrow. That repo exposes sandbox tools, documents large context savings from keeping raw tool output out of the prompt, and stores meaningful session events in a per-project SQLite database so working state can be restored after compaction or continuation.
+
+Done looks like
+
+Context Shield tools
+
+FLOATR-native tools exist:
+floatr_execute
+floatr_batch_execute
+floatr_execute_file
+floatr_index
+floatr_search
+Raw tool output stays in subprocess/file storage
+Only bounded summaries/stdout enter live model context
+
+Routing
+
+High-output operations are automatically routed to shielded tools:
+large file reads
+multi-file grep
+log analysis
+snapshot analysis
+large JSON processing
+Routing can be enforced by Claw Runner or the local tool adapter
+
+Working state journal
+
+Per-session SQLite journal records:
+current task
+recent decisions
+active files
+unresolved errors
+last successful commands
+current plan checkpoint
+bundle/token mode
+Resume can reconstruct working state after compaction or reconnect
+
+Compaction snapshot
+
+Before long sessions compact, FLOATR writes a compact structured state snapshot
+On resume, that snapshot is injected before work continues
+
+Stats + doctor
+
+Add operational tools:
+floatr_stats
+floatr_doctor
+floatr_purge
+floatr_insight
+
+Policy controls
+
+Context Shield obeys existing permission rules
+Dangerous commands are blocked consistently inside sandboxed execution
+Out of scope
+Full MCP marketplace integration
+Multi-user continuity merge logic
+UI replay timeline
+Autonomous self-healing plans
+Fine-grained role memory by team member
+Steps
+
+1. Add session state store
+
+Per-session SQLite DB:
+/workspace/.floatr/session-state.db
+Tables for:
+events
+snapshots
+active state
+tool routing stats
+
+2. Implement shielded execution runtime
+
+New service or local runtime module:
+context-shield.ts
+Spawn isolated subprocesses
+Capture stdout/stderr separately
+Persist raw artifacts to disk
+Only compact output is surfaced back to the model
+
+3. Add FLOATR-native shield tools
+
+floatr_execute: run analysis code in subprocess
+floatr_execute_file: process file content without dumping file into context
+floatr_batch_execute: batch shell/search operations into one summarized result
+floatr_index: lightweight indexer for markdown/docs/logs
+floatr_search: multi-query retrieval over indexed artifacts
+
+4. Add routing rules
+
+New routing layer in Claw Runner:
+redirect large-output tools automatically
+preserve direct/raw tools for small outputs
+Token mode influences routing aggressiveness:
+Ultra = most shielded
+Full = least aggressive
+
+5. Add event capture
+
+Record:
+user asks
+tool use
+tool results
+plan changes
+task completion markers
+compaction snapshots
+
+6. Add resume/restore
+
+On session resume or reconnect:
+rebuild working state from latest snapshot + events
+expose compact restore block to the agent
+
+7. Add observability
+
+Stats endpoint:
+context bytes avoided
+shielded calls count
+restore success rate
+token mode effectiveness
+Doctor endpoint:
+missing journal
+stale snapshots
+tool routing failures
+
+8. Extend Smart Skills
+
+Add new first-party skills:
+context-shield-core
+working-state-continuity
+Make them rank high for:
+debug
+review
+large monorepos
+long-running sessions
+Relevant files
+artifacts/api-server/src/services/memory.ts
+artifacts/api-server/src/services/skills-bundler.ts
+artifacts/api-server/src/services/skills-ranker.ts
+artifacts/api-server/src/services/vastai.ts
+docker/onstart.sh
+lib/db/src/schema/
+Claw Runner runtime files on the instance
+lib/api-spec/openapi.yaml
+Design note
+
+The upstream context-mode repo uses a hook/routing model and documents sandbox tools plus a per-project SQLite continuity store. FLOATR should copy the principle, not the exact product wiring, because FLOATR already owns its own runtime, boot flow, and agent surface.
+
+Recommended order
+
+Do them in this order:
+
+#40 first
+because better retrieval immediately improves Smart Skills selection and coding quality.
+
+#41 second
+because shielding and continuity become much more powerful once retrieval is already structured.

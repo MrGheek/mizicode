@@ -514,7 +514,7 @@ type ManifestItem = {
   license?: string;
 };
 
-function SmartSkillsTab({ sessionId }: { sessionId: number }) {
+function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?: string | null }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data, isLoading } = useGetSessionSkills(sessionId, {
@@ -591,8 +591,13 @@ function SmartSkillsTab({ sessionId }: { sessionId: number }) {
                 )}
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+                {(taskMode ?? latestActivation?.activationMode) && (
+                  <Badge variant="outline" className="text-[10px] capitalize">
+                    Task: {taskMode ?? latestActivation?.activationMode}
+                  </Badge>
+                )}
                 {latestActivation?.tokenMode && (
-                  <Badge variant="outline" className="text-[10px]">{latestActivation.tokenMode} tokens</Badge>
+                  <Badge variant="outline" className="text-[10px] capitalize">{latestActivation.tokenMode} tokens</Badge>
                 )}
                 <span>{manifests.length} skills active</span>
               </div>
@@ -1246,7 +1251,7 @@ export default function SessionDetail() {
       </div>
 
       {activeTab === "smart-skills" && (
-        <SmartSkillsTab sessionId={sessionId} />
+        <SmartSkillsTab sessionId={sessionId} taskMode={(session as unknown as Record<string, unknown>).taskMode as string | null} />
       )}
 
     </div>
