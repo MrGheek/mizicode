@@ -724,6 +724,8 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
     queryClient.invalidateQueries({ queryKey: getListHeavyJobsQueryKey(sessionId, { status: "queued,running,deferred" }) });
   }
 
+  const [showResolvedHandoffs, setShowResolvedHandoffs] = useState(false);
+
   if (isLoading) {
     return (
       <div className="mt-4 space-y-3">
@@ -740,6 +742,10 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
   );
   const jobs = jobsData?.jobs ?? [];
   const recentHandoffs = coordData?.recentHandoffs ?? [];
+
+  const pendingHandoffs = recentHandoffs.filter((h) => h.status === "pending");
+  const resolvedHandoffs = recentHandoffs.filter((h) => h.status !== "pending");
+  const visibleHandoffs = showResolvedHandoffs ? recentHandoffs : pendingHandoffs;
 
   const noData = lanes.length === 0 && jobs.length === 0 && recentHandoffs.length === 0;
 
@@ -836,23 +842,38 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
       )}
 
       {/* Handoff Feed */}
-      {recentHandoffs.length > 0 && (
+      {(pendingHandoffs.length > 0 || resolvedHandoffs.length > 0) && (
         <Card className="bg-card/50 border-border/50">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
               <Bell className="w-4 h-4" /> Handoff Signals
+              <Badge variant="outline" className="ml-auto text-[10px] font-normal normal-case tracking-normal bg-secondary/60 text-muted-foreground border-border/40">
+                {pendingHandoffs.length} pending
+              </Badge>
+              {resolvedHandoffs.length > 0 && (
+                <button
+                  onClick={() => setShowResolvedHandoffs((v) => !v)}
+                  className="text-[10px] text-muted-foreground/60 hover:text-muted-foreground underline underline-offset-2 transition-colors font-normal normal-case tracking-normal"
+                >
+                  {showResolvedHandoffs ? "Hide resolved" : `Show resolved (${resolvedHandoffs.length})`}
+                </button>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {recentHandoffs.map((handoff) => (
-              <HandoffFeedItem
-                key={handoff.id}
-                handoff={handoff}
-                lanes={lanes}
-                sessionId={sessionId}
-                onAction={() => queryClient.invalidateQueries({ queryKey: getGetSessionCoordinationQueryKey(sessionId) })}
-              />
-            ))}
+            {visibleHandoffs.length === 0 ? (
+              <p className="text-xs text-muted-foreground/60 text-center py-2">No pending handoffs.</p>
+            ) : (
+              visibleHandoffs.map((handoff) => (
+                <HandoffFeedItem
+                  key={handoff.id}
+                  handoff={handoff}
+                  lanes={lanes}
+                  sessionId={sessionId}
+                  onAction={() => queryClient.invalidateQueries({ queryKey: getGetSessionCoordinationQueryKey(sessionId) })}
+                />
+              ))
+            )}
           </CardContent>
         </Card>
       )}
