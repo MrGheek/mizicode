@@ -508,7 +508,7 @@ type ManifestItem = {
   installRisk?: string;
   tokenOverheadEstimate?: number;
   summary?: string;
-  instructions?: { system?: string };
+  instructions?: { system?: string | string[] };
   sourceRepoUrl?: string;
   pinnedCommitSha?: string;
   license?: string;
@@ -619,8 +619,10 @@ function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?:
           const skillId = manifest.id ?? i;
           const isExpanded = expandedSkills.has(skillId);
           const vote = votedSkills[skillId];
-          const instructions = manifest.instructions?.system ?? "";
-          const instructionLines = instructions.split("\n").filter(Boolean);
+          const rawSystem = manifest.instructions?.system;
+          const instructionLines = Array.isArray(rawSystem)
+            ? rawSystem.filter(Boolean)
+            : String(rawSystem ?? "").split("\n").filter(Boolean);
 
           return (
             <Card key={skillId} className="bg-card/50 border-border/50">
