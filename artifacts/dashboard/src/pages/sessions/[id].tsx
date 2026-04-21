@@ -1404,7 +1404,7 @@ export default function SessionDetail() {
           Team
           {showConflictBadge && (
             <span
-              className={`ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-semibold leading-none ${
+              className={`ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-semibold leading-none animate-badge-pop ${
                 hasBlockingConflict
                   ? "bg-red-500 text-white"
                   : "bg-yellow-500 text-black"
