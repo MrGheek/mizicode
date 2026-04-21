@@ -4,8 +4,11 @@ import {
   useDeleteSession,
   useRefreshSessionStatus,
   useCreateSession,
+  useGetSessionSkills,
+  useSubmitSkillFeedback,
   getGetSessionQueryKey,
   getGetActiveSessionQueryKey,
+  getGetSessionSkillsQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -18,7 +21,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SessionStatusBadge } from "@/components/session-status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
 import { useState, useEffect, useRef } from "react";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
@@ -493,13 +499,251 @@ function MemoryTab({
   );
 }
 
+type ManifestItem = {
+  id?: string | number;
+  manifestId?: string;
+  name?: string;
+  class?: string;
+  trustTier?: string;
+  installRisk?: string;
+  tokenOverheadEstimate?: number;
+  summary?: string;
+  instructions?: { system?: string };
+  sourceRepoUrl?: string;
+  pinnedCommitSha?: string;
+  license?: string;
+};
+
+function SmartSkillsTab({ sessionId }: { sessionId: number }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data, isLoading } = useGetSessionSkills(sessionId, {
+    query: { enabled: !!sessionId, queryKey: getGetSessionSkillsQueryKey(sessionId) },
+  });
+  const submitFeedback = useSubmitSkillFeedback();
+  const [votedSkills, setVotedSkills] = useState<Record<string | number, "up" | "down">>({});
+  const [expandedSkills, setExpandedSkills] = useState<Set<string | number>>(new Set());
+  const [comingSoonOpen, setComingSoonOpen] = useState(false);
+
+  if (isLoading) {
+    return (
+      <div className="mt-4 space-y-3">
+        {[1, 2, 3].map(i => <Skeleton key={i} className="h-20 w-full" />)}
+      </div>
+    );
+  }
+
+  const latestActivation = data?.activations?.[0] ?? null;
+  const activeBundle = data?.activeBundle ?? null;
+  const manifests = (data?.activeManifests ?? []) as ManifestItem[];
+
+  if (!latestActivation && manifests.length === 0) {
+    return (
+      <div className="mt-4">
+        <Card className="bg-card/50 border-border/50">
+          <CardContent className="py-12 text-center text-muted-foreground">
+            <Wand2 className="w-8 h-8 mx-auto mb-3 opacity-20" />
+            <p>No skills bundle was used in this session.</p>
+            <p className="text-xs mt-1 opacity-70">Skills are applied when sessions are launched with Smart Skills enabled.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const toggleExpand = (id: string | number) => {
+    setExpandedSkills(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const handleFeedback = (manifest: ManifestItem, helpful: boolean) => {
+    const skillId = typeof manifest.id === "number" ? manifest.id : Number(manifest.id ?? 0);
+    if (!skillId) return;
+    submitFeedback.mutate({ sessionId, data: { skillId, helpful } }, {
+      onSuccess: () => {
+        setVotedSkills(prev => ({ ...prev, [manifest.id!]: (helpful ? "up" : "down") as "up" | "down" }));
+        queryClient.invalidateQueries({ queryKey: getGetSessionSkillsQueryKey(sessionId) });
+        toast({ title: helpful ? "Thumbs up recorded" : "Thumbs down recorded" });
+      },
+      onError: () => toast({ title: "Feedback failed", variant: "destructive" }),
+    });
+  };
+
+  return (
+    <div className="mt-4 space-y-4">
+      {/* Bundle header */}
+      {(activeBundle || latestActivation) && (
+        <Card className="bg-card/50 border-border/50">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Wand2 className="w-4 h-4 text-primary" />
+                <span className="font-semibold text-sm">
+                  {activeBundle?.name ?? "Skills Bundle"}
+                </span>
+                {latestActivation?.activationMode && (
+                  <Badge variant="outline" className="text-[10px] bg-amber-500/20 text-amber-400 border-amber-500/30">
+                    {latestActivation.activationMode === "next-launch" ? "Next launch" : latestActivation.activationMode}
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+                {latestActivation?.tokenMode && (
+                  <Badge variant="outline" className="text-[10px]">{latestActivation.tokenMode} tokens</Badge>
+                )}
+                <span>{manifests.length} skills active</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Skill accordions */}
+      <div className="space-y-2">
+        {manifests.map((manifest, i) => {
+          const skillId = manifest.id ?? i;
+          const isExpanded = expandedSkills.has(skillId);
+          const vote = votedSkills[skillId];
+          const instructions = manifest.instructions?.system ?? "";
+          const instructionLines = instructions.split("\n").filter(Boolean);
+
+          return (
+            <Card key={skillId} className="bg-card/50 border-border/50">
+              <button
+                onClick={() => toggleExpand(skillId)}
+                className="w-full px-4 py-3 text-left flex items-center justify-between gap-2 hover:bg-secondary/20 transition-colors rounded-t-lg"
+              >
+                <div className="flex items-center gap-2 flex-wrap min-w-0">
+                  {manifest.class && <SkillClassBadge skillClass={manifest.class} />}
+                  {manifest.trustTier && <TrustBadge trustTier={manifest.trustTier} />}
+                  {manifest.installRisk && <InstallRiskBadge installRisk={manifest.installRisk} />}
+                  {manifest.tokenOverheadEstimate != null && (
+                    <TokenCostBadge tokens={manifest.tokenOverheadEstimate} />
+                  )}
+                  <span className="font-medium text-sm ml-1 truncate">{manifest.name ?? `Skill ${i + 1}`}</span>
+                </div>
+                {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+              </button>
+
+              {isExpanded && (
+                <CardContent className="pt-0 pb-4 space-y-3">
+                  <div className="border-t border-border/40 pt-3 space-y-3">
+                    {manifest.summary && (
+                      <p className="text-sm text-muted-foreground">{manifest.summary}</p>
+                    )}
+
+                    {instructionLines.length > 0 && (
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Instructions</p>
+                        <ul className="space-y-1">
+                          {instructionLines.map((line, j) => (
+                            <li key={j} className="text-xs text-foreground/80 flex items-start gap-2">
+                              <span className="text-primary mt-0.5 shrink-0">›</span>
+                              <span>{line}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {(manifest.sourceRepoUrl || manifest.pinnedCommitSha || manifest.license) && (
+                      <div className="rounded border border-border/40 bg-secondary/20 p-2.5 text-xs space-y-1">
+                        <p className="font-semibold text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Source</p>
+                        {manifest.sourceRepoUrl && (
+                          <div className="flex items-center gap-1.5">
+                            <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0" />
+                            <a href={manifest.sourceRepoUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline truncate">
+                              {manifest.sourceRepoUrl}
+                            </a>
+                          </div>
+                        )}
+                        {manifest.pinnedCommitSha && (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-muted-foreground">SHA:</span>
+                            <code className="font-mono text-primary/80">{manifest.pinnedCommitSha.slice(0, 12)}</code>
+                          </div>
+                        )}
+                        {manifest.license && (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-muted-foreground">License:</span>
+                            <span className="text-foreground/80">{manifest.license}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Feedback + Replace */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-[10px] text-muted-foreground">Was this skill helpful?</span>
+                      <button
+                        disabled={!!vote || submitFeedback.isPending}
+                        onClick={() => handleFeedback(manifest, true)}
+                        className={`p-1 rounded transition-colors ${vote === "up" ? "text-emerald-400" : "text-muted-foreground hover:text-emerald-400 disabled:opacity-40"}`}
+                        title="Thumbs up"
+                      >
+                        <ThumbsUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        disabled={!!vote || submitFeedback.isPending}
+                        onClick={() => handleFeedback(manifest, false)}
+                        className={`p-1 rounded transition-colors ${vote === "down" ? "text-red-400" : "text-muted-foreground hover:text-red-400 disabled:opacity-40"}`}
+                        title="Thumbs down"
+                      >
+                        <ThumbsDown className="w-3.5 h-3.5" />
+                      </button>
+                      {vote && (
+                        <span className="text-[10px] text-muted-foreground ml-1">
+                          {vote === "up" ? "👍 Marked helpful" : "👎 Marked unhelpful"}
+                        </span>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="ml-auto text-[10px] h-6 px-2 text-muted-foreground gap-1"
+                        onClick={() => setComingSoonOpen(true)}
+                      >
+                        <Wrench className="w-3 h-3" /> Replace skill
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              )}
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Coming soon sheet */}
+      <Sheet open={comingSoonOpen} onOpenChange={setComingSoonOpen}>
+        <SheetContent side="right" className="w-[360px]">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <Wrench className="w-4 h-4" /> Replace Skill
+            </SheetTitle>
+          </SheetHeader>
+          <div className="mt-6 space-y-3">
+            <div className="rounded border border-border/40 bg-secondary/20 p-4 text-sm text-muted-foreground text-center">
+              <Wand2 className="w-8 h-8 mx-auto mb-3 opacity-30" />
+              <p className="font-semibold text-foreground mb-1">Coming in the next release</p>
+              <p>Live skill replacement on a running session will let you hot-swap skills without restarting. This feature is available in v2.</p>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
+
 export default function SessionDetail() {
   const { id } = useParams();
   const sessionId = id ? parseInt(id, 10) : 0;
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"overview" | "memory">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills">("overview");
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
   const [bootLog, setBootLog] = useState<string[]>([]);
@@ -713,6 +957,17 @@ export default function SessionDetail() {
               {newObsCount > 99 ? "99+" : newObsCount}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => setActiveTab("smart-skills")}
+          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
+            activeTab === "smart-skills"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Wand2 className="w-3.5 h-3.5" />
+          Smart Skills
         </button>
       </div>
 
@@ -989,6 +1244,10 @@ export default function SessionDetail() {
           }) : undefined}
         />
       </div>
+
+      {activeTab === "smart-skills" && (
+        <SmartSkillsTab sessionId={sessionId} />
+      )}
 
     </div>
   );

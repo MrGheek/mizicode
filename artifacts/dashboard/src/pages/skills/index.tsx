@@ -6,6 +6,7 @@ import {
   useEnableSkill,
   useDisableSkill,
   useListSkillBundles,
+  getListSkillsQueryKey,
 } from "@workspace/api-client-react";
 import type { SkillRecord, SkillBundle } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -306,8 +307,11 @@ export default function SkillsLibrary() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const { data: skillsData, isLoading: skillsLoading } = useListSkills({
-    params: tab === "pending" ? { reviewStatus: "pending" as const } : { reviewStatus: "approved" as const },
+  const pendingParams = tab === "pending" ? { reviewStatus: "pending" as const } : undefined;
+  const approvedParams = tab !== "pending" && tab !== "bundles" ? { reviewStatus: "approved" as const } : undefined;
+  const activeParams = pendingParams ?? approvedParams;
+  const { data: skillsData, isLoading: skillsLoading } = useListSkills(activeParams, {
+    query: { enabled: tab !== "bundles", queryKey: getListSkillsQueryKey(activeParams) },
   });
   const { data: bundlesData, isLoading: bundlesLoading } = useListSkillBundles();
   const reviewSkill = useReviewSkill();
