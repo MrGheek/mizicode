@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "hhVKVeq0PfaayBrKuVHYc"
+uri = "file://FLOATR_SPEC.md"
+type = "text"
+title = "FLOATR Product Specification"
