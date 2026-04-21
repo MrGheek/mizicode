@@ -7,7 +7,7 @@ import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
 import { listObservations, listSessions, searchMemory, subscribeToObservations } from "../services/memory";
 import type { TeamMemberRecord } from "@workspace/db";
-import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles } from "../services/skills-bundler";
+import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles, getRepoIntelligenceForSession } from "../services/skills-bundler";
 import type { SessionContext } from "../services/skills-types";
 
 import { randomBytes } from "crypto";
@@ -486,12 +486,15 @@ router.post("/sessions", async (req, res) => {
         ? ((repoFingerprintJson as Record<string, unknown>).langs as string[])
         : [];
 
+      const repoIntelligence = await getRepoIntelligenceForSession(session.id).catch(() => undefined);
+
       const sessionCtx: SessionContext = {
         sessionType: sessionType as SessionContext["sessionType"],
         taskMode: resolvedTaskMode as SessionContext["taskMode"],
         modelProfile: profile.servedModelName || "kimi",
         repoLangs,
         tokenMode: resolvedTokenMode as SessionContext["tokenMode"],
+        repoIntelligence,
       };
 
       let bundle: typeof skillBundlesTable.$inferSelect | null = null;

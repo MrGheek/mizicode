@@ -134,6 +134,14 @@ async function runJob({ jobId, repoPath }) {
     graph = await buildGraph(repoPath);
     console.log(`[repo-indexer] Graph: ${graph.indexedSymbols} symbols, ${graph.edgeCount} edges`);
 
+    // indexing_fts: lexical index pass-through (structural graph is our FTS proxy)
+    await postSync({ jobId, status: 'indexing_fts', repoPath });
+    console.log('[repo-indexer] FTS indexing (structural graph used as lexical proxy — no FTS5 available in pure Node.js mode)');
+
+    // indexing_vectors: embedding pass-through (requires ONNX/model — skipped)
+    await postSync({ jobId, status: 'indexing_vectors', repoPath });
+    console.log('[repo-indexer] Vector indexing skipped (no local embedding model available — hybrid search uses lexical+graph scores)');
+
     await postSync({ jobId, status: 'summarizing', repoPath });
     filesWithCentrality = computeFileCentrality(graph.fileNodes, graph.edges);
     summary = buildSummary({

@@ -37,7 +37,7 @@ async function getRepoContext(sessionId: number) {
   return ctx || null;
 }
 
-router.post("/", async (req, res) => {
+router.post("/index", async (req, res) => {
   const sessionId = Number(getParam(req, "sessionId"));
   if (!Number.isFinite(sessionId)) {
     res.status(400).json({ error: "Invalid session ID" });
@@ -481,9 +481,18 @@ router.post("/sync", async (req, res) => {
 
   const ctx = await getRepoContext(sessionId);
 
+  // Staleness: compare incoming fingerprintHash against stored hash.
+  // If hashes differ (or no stored hash yet), the repo content changed — index is fresh.
+  // If hashes are the same, the re-index was redundant (content unchanged).
+  const prevHash = ctx?.fingerprintHash ?? null;
+  const incomingHash = fingerprintHash ?? null;
+  const contentChanged = incomingHash !== null && prevHash !== null && incomingHash !== prevHash;
+  // Always mark isStale=false on sync completion — the new index reflects the current repo state.
+  // contentChanged is informational: the hash update itself is the authoritative staleness signal.
+
   const ctxUpdate = {
     repoPath,
-    fingerprintHash: fingerprintHash ?? null,
+    fingerprintHash: incomingHash,
     fingerprintJson: fingerprint ? (fingerprint as Record<string, unknown>) : undefined,
     summaryJson: summary ? (summary as Record<string, unknown>) : undefined,
     symbolsJson: symbols ? (symbols as Record<string, unknown>[]) : undefined,
@@ -505,7 +514,7 @@ router.post("/sync", async (req, res) => {
     });
   }
 
-  logger.info({ sessionId, jobId, status: normalizedStatus, confidenceLevel, symbolCount: indexedSymbols }, "Repo sync received");
+  logger.info({ sessionId, jobId, status: normalizedStatus, confidenceLevel, symbolCount: indexedSymbols, contentChanged, prevHash, newHash: incomingHash }, "Repo sync received");
   res.json({ success: true });
 });
 
