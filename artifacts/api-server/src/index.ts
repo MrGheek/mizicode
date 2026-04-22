@@ -7,25 +7,64 @@ import { seedDefaultBundles } from "./services/skills-bundler";
 import { seedCuratedSources } from "./services/curated-sources";
 import { startEvalScheduler } from "./services/skills-evals";
 import { db, laneClaimsTable } from "@workspace/db";
-import { lt } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 
 const CLAIM_EXPIRY_INTERVAL_MS = 60_000;
+const CLAIM_PURGE_INTERVAL_MS = 60 * 60 * 1000;
+const CLAIM_RETENTION_DAYS = 7;
 
-async function sweepExpiredClaims(): Promise<void> {
+/**
+ * Mark active claims as inactive when their expiresAt has passed.
+ * Runs frequently so that conflict-detection queries never see stale active claims.
+ */
+async function sweepExpiredActiveClaims(): Promise<void> {
   try {
+    const now = new Date();
+    const expired = await db
+      .update(laneClaimsTable)
+      .set({ active: false })
+      .where(and(
+        eq(laneClaimsTable.active, true),
+        lt(laneClaimsTable.expiresAt, now),
+      ))
+      .returning({ id: laneClaimsTable.id });
+    if (expired.length > 0) {
+      logger.info({ count: expired.length }, "Expired active lane claims deactivated");
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to sweep expired active lane claims");
+  }
+}
+
+/**
+ * Permanently delete inactive claims older than the retention window.
+ * Runs hourly to keep the table lean without impacting in-flight operations.
+ */
+async function purgeOldInactiveClaims(): Promise<void> {
+  try {
+    const retentionCutoff = new Date(Date.now() - CLAIM_RETENTION_DAYS * 24 * 60 * 60 * 1000);
     const deleted = await db
       .delete(laneClaimsTable)
-      .where(lt(laneClaimsTable.expiresAt, new Date()))
+      .where(and(
+        eq(laneClaimsTable.active, false),
+        lt(laneClaimsTable.expiresAt, retentionCutoff),
+      ))
       .returning({ id: laneClaimsTable.id });
-    logger.info({ count: deleted.length }, "Expired lane claims deleted");
+    if (deleted.length > 0) {
+      logger.info({ count: deleted.length, retentionDays: CLAIM_RETENTION_DAYS }, "Old inactive lane claims purged");
+    }
   } catch (err) {
-    logger.error({ err }, "Failed to sweep expired lane claims");
+    logger.error({ err }, "Failed to purge old inactive lane claims");
   }
 }
 
 function startClaimExpiryCleanup(): void {
-  setInterval(sweepExpiredClaims, CLAIM_EXPIRY_INTERVAL_MS);
-  logger.info({ intervalMs: CLAIM_EXPIRY_INTERVAL_MS }, "Claim expiry cleanup scheduled");
+  setInterval(sweepExpiredActiveClaims, CLAIM_EXPIRY_INTERVAL_MS);
+  logger.info({ intervalMs: CLAIM_EXPIRY_INTERVAL_MS }, "Active claim expiry sweep scheduled");
+
+  purgeOldInactiveClaims();
+  setInterval(purgeOldInactiveClaims, CLAIM_PURGE_INTERVAL_MS);
+  logger.info({ intervalMs: CLAIM_PURGE_INTERVAL_MS, retentionDays: CLAIM_RETENTION_DAYS }, "Inactive claim purge job scheduled");
 }
 
 const rawPort = process.env["PORT"];
