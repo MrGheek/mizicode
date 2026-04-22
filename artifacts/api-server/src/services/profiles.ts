@@ -13,14 +13,17 @@ import { eq, notInArray } from "drizzle-orm";
 //                  Profiles with swarmWorkerCap ≤ 8 are severely constrained for swarm
 //                  workloads — users should prefer a higher tier.
 //
-// vLLM version-gating note: all new flags in llamaExtraArgs require vLLM ≥ 0.6.0.
-// The Dockerfile pins "vllm>=0.6.0". onstart.sh performs a runtime version check
-// before applying --scheduling-policy priority, --disable-log-requests, and
-// --uvicorn-log-level warning at the command level. Flags embedded in llamaExtraArgs
-// (e.g. --enable-chunked-prefill) are gated the same way: onstart.sh strips any
-// unrecognised flags and logs a warning rather than aborting.
+// vLLM version-gating note: the Dockerfile pins "vllm==0.19.0" (exact) to satisfy all
+// active model profiles:
+//   - GLM-5.1 FP8: requires >=0.19.0 for --tool-call-parser glm47,
+//     --reasoning-parser glm45, and --speculative-config.method mtp
+//   - Qwen3-Coder-Next: requires >=0.8.4 for Qwen3 architecture support
+//   - MiniMax M2.5: requires >=0.8.4 for updated MoE kernel support
+// onstart.sh performs capability-based flag gating at runtime: it probes the
+// installed vLLM's --help output and strips any unrecognised flags rather than
+// aborting, so the image remains forward-compatible with future vLLM builds.
 
-// Shared chunked-prefill flags for Pro/Ultra MoE profiles (vLLM ≥ 0.6.0 confirmed).
+// Shared chunked-prefill flags for Pro/Ultra MoE profiles (vLLM ≥ 0.19.0 confirmed).
 // These values are conservative starting points pending empirical validation.
 const CHUNKED_PREFILL_PRO =
   "--enable-chunked-prefill --max-num-batched-tokens 8192 " +

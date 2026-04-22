@@ -41,15 +41,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # vLLM: high-throughput inference engine with PagedAttention.
-# Replaces llama-cpp-python for better multi-request throughput.
+# Pinned to an exact version for reproducible builds.
+# Minimum compatibility requirements for active model profiles:
+#   - GLM-5.1 FP8: requires >=0.19.0 for --tool-call-parser glm47,
+#     --reasoning-parser glm45, and --speculative-config.method mtp
+#   - Qwen3-Coder-Next: requires >=0.8.4 for Qwen3 architecture support
+#   - MiniMax M2.5: requires >=0.8.4 for updated MoE kernel support
+# Bump this version after validating new profiles on real GPU hardware.
 # Uses CUDA 12.4 wheels from PyPI.
 RUN pip3 install --no-cache-dir \
-    "vllm>=0.6.0" \
+    "vllm==0.19.0" \
     --extra-index-url https://download.pytorch.org/whl/cu124
 
 # litellm proxy: accepts both OpenAI /v1/chat/completions and Anthropic /v1/messages,
 # forwarding to vLLM. Lets claw-code use Anthropic format seamlessly.
 RUN pip3 install --no-cache-dir litellm
+
+# transformers >=5.3.0 required by GLM-5.1 FP8 tokeniser and GLM-4 tool-call parser.
+# Also benefits Qwen3 and MiniMax M2.5 which rely on recent transformers features.
+RUN pip3 install --no-cache-dir "transformers>=5.3.0"
+
+# DeepGEMM: optional FP8 GEMM kernel library used by vLLM for GLM-5.1 FP8 inference.
+# Provides faster FP8 matrix multiply on H100/H200 vs the default triton kernels.
+# Pinned to a specific commit SHA for reproducible builds.
+# To update: find the desired commit at https://github.com/deepseek-ai/DeepGEMM
+# and set DEEPGEMM_SHA build arg: docker build --build-arg DEEPGEMM_SHA=<sha> ...
+# Falls back gracefully if CUDA compilation is unavailable (runtime image lacks
+# nvcc); vLLM's built-in triton FP8 kernels remain fully functional without it.
+# NOTE: full compilation requires the cudnn-devel base image (see follow-up task).
+ARG DEEPGEMM_SHA=a7b3d1e
+RUN pip3 install --no-cache-dir \
+    "git+https://github.com/deepseek-ai/DeepGEMM.git@${DEEPGEMM_SHA}" \
+    || echo "WARNING: DeepGEMM build failed (SHA=${DEEPGEMM_SHA}) — FP8 inference will use vLLM built-in kernels (fully functional, slightly slower on H100/H200)"
 
 # HuggingFace CLI for volume provisioning (one-time model download)
 RUN pip3 install --no-cache-dir huggingface-hub

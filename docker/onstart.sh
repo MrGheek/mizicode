@@ -609,7 +609,7 @@ print(shlex.join(result))
     #   since the companion knobs are meaningless without it.
     # --scheduling-policy: requires priority scheduling support.
     # --max-num-partial-prefills / --max-long-partial-prefills / --long-prefill-token-threshold:
-    #   vLLM 0.6.0+ partial-prefill tuning.
+    #   vLLM 0.19.0+ partial-prefill tuning.
     _SWARM_FLAGS=(
         "--enable-chunked-prefill"
         "--max-num-batched-tokens"
