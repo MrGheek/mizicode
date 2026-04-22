@@ -699,12 +699,21 @@ Memory retrieval respects the session's `tokenMode`:
 
 | Route | Description |
 |-------|-------------|
-| `GET /api/sessions/:id/memory/sessions` | Past sessions list |
-| `GET /api/sessions/:id/memory/observations` | Tool observations |
-| `GET /api/sessions/:id/memory/search?q=` | Full-text search |
-| `GET /api/sessions/:id/memory/stream` | SSE stream of live observations |
+| `GET /api/sessions/:id/memory/sessions` | Past sessions list (supports `?projectPath=` filter, `?limit=` and `?offset=` pagination) |
+| `GET /api/sessions/:id/memory/observations` | Tool observations (supports `?limit=` and `?offset=` pagination) |
+| `GET /api/sessions/:id/memory/search?q=` | Full-text search; reconnects automatically on SSE drop |
+| `GET /api/sessions/:id/memory/stream` | SSE stream of live observations; client reconnects on connection loss |
 | `GET /api/memory/sessions` | Global memory (all users) |
 | `GET /api/memory/search?q=` | Global full-text search |
+
+### Memory backup / restore
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/memory/backup` | Download the full SQLite memory DB as a binary attachment (`mem-backup-<date>.db`) |
+| POST | `/api/memory/restore` | Upload a SQLite DB file to replace the in-memory store; server responds with `{ok, message}` |
+
+Both endpoints are unprotected in development (no `OMNIQL_MEM_TOKEN`); in production the token gate applies.
 
 ---
 
@@ -816,7 +825,7 @@ Base path: `/api`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/repo/status?ids=1,2,3` | **Batch** — `{statuses: {[id]: {indexStatus, isStale, confidenceLevel}}}` |
+| GET | `/sessions/repo/status?ids=1,2,3` | **Batch** — `{statuses: {[id]: {indexStatus, isStale, confidenceLevel}}}` |
 | POST | `/sessions/:id/repo/index` | Enqueue a repo index job (deduplicates by active status) |
 | GET | `/sessions/:id/repo/fingerprint` | Current fingerprint + index status |
 | GET | `/sessions/:id/repo/summary` | Repo summary + counts (symbols, chunks, files) |
@@ -856,7 +865,8 @@ See [Section 20](#20-lane-coordination) for full endpoint reference.
 
 ### `/sessions` — All Sessions
 - Table of all sessions (running + historical)
-- Status badge, team badge (violet, shows team icon when `teamMembers` is present)
+- **Team / Solo / All filter** — client-side `TeamFilter` toggle (`"all"` | `"team"` | `"solo"`). `"team"` shows only sessions where `teamMembers` is non-empty; `"solo"` the inverse; `"all"` disables the filter. The active option is highlighted; empty-state messages are filter-aware.
+- Status badge (`SessionStatusBadge`) and team badge (`TeamSessionBadge`, violet, shows team icon + member tooltips when `teamMembers` is present)
 - **Swarm status pills** — refreshed via `/sessions/swarm-status-batch`; show `live`, `stale`, or `unavailable`
 - Cost column
 - Click → cockpit
@@ -877,9 +887,9 @@ See [Section 20](#20-lane-coordination) for full endpoint reference.
 - Heavy job queue viewer
 
 **Memory tab:**
-- Per-session tool observation log
+- Per-session tool observation log (paginated; SSE stream reconnects automatically on disconnect)
 - Session summary block
-- Full-text search
+- Full-text search with debounced input
 
 **Skills tab:**
 - Active bundle details, skill list, token usage stats
@@ -891,11 +901,16 @@ See [Section 20](#20-lane-coordination) for full endpoint reference.
 - Global searchable log across all sessions
 - Session summaries as styled note blocks
 - FTS5 search (debounced, 350ms)
+- **Project-path filter** — badge chips for unique project paths; clicking a chip filters the view; clicking again clears it
+- Paginated observation list; reconnects automatically to the SSE observation stream on connection loss
+- **Backup / Restore** buttons — trigger `GET /api/memory/backup` (file download) and `POST /api/memory/restore` (file upload)
 
 ### `/design-intelligence` — Design Intelligence
-- Browse categories (style, palette, typography, chart_type, ux_guideline, etc.)
-- Search entries with keyword filter
-- Skill map: category → linked approved skills
+- Browse all 8 canonical categories: `style`, `palette`, `typography`, `chart_type`, `ux_guideline`, `anti_pattern`, `stack_convention`, `ui_reasoning`
+- Category list loaded from `GET /api/design-intelligence/categories` (dynamic, DB-driven)
+- Search entries with keyword filter (ILIKE, debounced)
+- Paginated entry list per selected category
+- Skill map: `GET /api/design-intelligence/skill-map` — category → linked approved skills (explicit rows + keyword inference)
 - Sync status panel: last sync time, next sync, error state
 
 ---
@@ -1138,7 +1153,14 @@ Each `gpu_profiles` row carries `swarmWorkerCap` (integer, nullable). This value
 | GLM-5.1 Ultra | 4 | Severely constrained: 0.98 GPU memory utilisation |
 
 ### Swarm snapshot
-The Claw Runner pushes real-time worker snapshots to the dashboard via `POST /api/sessions/:id/swarm/status` (internal Claw Runner → API). Snapshots are stored in `sessions.swarmSnapshotJson` and cached in-memory with a freshness threshold (`STALE_THRESHOLD_MS`).
+The Claw Runner pushes real-time worker snapshots to the API via `POST /api/sessions/:id/swarm-push` (internal Claw Runner → API server). Snapshots are stored in `sessions.swarmSnapshotJson` and cached in-memory with a freshness threshold (`STALE_THRESHOLD_MS`). The server broadcasts each incoming snapshot to all open SSE connections on that session.
+
+### Per-session swarm endpoints
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/sessions/:id/swarm-push` | Claw Runner pushes a new `SwarmSnapshot`; broadcasts to SSE subscribers |
+| GET | `/sessions/:id/swarm-status` | Dashboard polls every 3 s; returns `{availability, snapshot}` from cache or DB |
+| GET | `/sessions/:id/swarm-stream` | SSE stream — server sends snapshot events in real time; dashboard falls back to polling on error |
 
 ### Batch swarm status
 `GET /api/sessions/swarm-status-batch?ids=1,2,3` returns:
@@ -1183,18 +1205,20 @@ GET /api/sessions/:id/repo/symbol  → filtered symbol list
 
 ### Confidence levels
 
+Computed by `computeConfidenceLevel()` in `routes/repo.ts` from the content of the incoming sync payload:
+
 | Level | Meaning |
 |-------|---------|
 | `none` | No index exists |
-| `low` | Partial index (few symbols, no graph) |
-| `medium` | Symbol graph + FTS, no embeddings |
-| `high` | Full index including embeddings |
+| `fingerprint` | Repo fingerprint only (no symbols or summary) |
+| `partial` | Symbols + dependency edges present, or summary present, but no embeddings |
+| `full` | Symbols + edges + embeddings all present |
 
 ### Stale flag
 When a new index job is enqueued for a session that already has a `ready` index, `isStale` is set to `true`. Existing results remain queryable while the new job runs.
 
 ### Batch status
-`GET /api/repo/status?ids=1,2,3` returns `{statuses: {[sessionId]: {indexStatus, isStale, confidenceLevel}}}` — used by the sessions list to show repo intelligence indicators per row.
+`GET /api/sessions/repo/status?ids=1,2,3` returns `{statuses: {[sessionId]: {indexStatus, isStale, confidenceLevel}}}` — used by the sessions list to show repo intelligence indicators per row.
 
 ### Authentication
 `GET /sessions/:id/repo/jobs/pending` and `POST /sessions/:id/repo/sync` require `Authorization: Bearer <OMNIQL_MEM_TOKEN>`. In development (`NODE_ENV=development`) with no token configured, requests are allowed (fail-closed in production).
@@ -1281,13 +1305,17 @@ Overlap scoring: path-prefix and exact-match heuristics. Score ≥ 0.75 → `blo
 Claims expire if `expiresAt` is past or if `lastHeartbeatAt` is older than `LANE_HEARTBEAT_WINDOW_SECONDS`. The claim endpoint supports `?heartbeat=true` to refresh both fields without releasing the claim.
 
 ### Claim sweeper
-`sweepExpiredClaims()` (called from the coordination route and available as an admin endpoint) performs a bulk `UPDATE lane_claims SET active=false WHERE (expiresAt < now OR lastHeartbeatAt < cutoff) AND active=true`. Protected by `ADMIN_SWEEP_TOKEN` when configured.
+`sweepExpiredClaims()` (in `services/claim-sweeper.ts`) performs a bulk `UPDATE lane_claims SET active=false WHERE (expiresAt < now OR lastHeartbeatAt < cutoff) AND active=true`. It runs as a background job on a **30-second** interval via `startClaimSweeper()` at startup. Claims are deactivated (not deleted) to preserve audit history.
+
+A separate **purge** job (`startClaimPurger()`) runs **hourly** and permanently deletes inactive claims whose `expiresAt` is older than the 7-day retention window. This keeps the `lane_claims` table lean without affecting in-flight operations.
+
+Admin manual trigger: `POST /api/admin/sweep-claims` — calls `sweepExpiredClaims()` immediately and returns `{deactivated, sweptAt}`. Protected by `ADMIN_SWEEP_TOKEN` when configured.
 
 ### Lane overlay bundles
 When a lane is created, `compileLaneBundles()` is called asynchronously (fire-and-forget) to compile per-lane Smart Skills overlays. Each overlay adapts the base session bundle for the lane's `laneType`, `taskMode`, and `tokenMode`. The resulting `overlayBundleId` is stored on `session_lanes`.
 
 ### SSE broadcaster
-`GET /api/sessions/:id/coordination/events` streams real-time coordination updates via SSE. Triggered on lane create/update, claim create/release, and handoff create.
+`GET /api/sessions/:id/coordination/stream` streams real-time coordination updates via SSE. Triggered on lane create/update, claim create/release, and handoff create.
 
 ### API endpoints
 
@@ -1307,13 +1335,13 @@ When a lane is created, `compileLaneBundles()` is called asynchronously (fire-an
 | POST | `/sessions/:id/heavy-jobs/:jobId/failed` | Mark job failed |
 | POST | `/sessions/:id/heavy-jobs/:jobId/deferred` | Defer job until timestamp |
 | GET | `/sessions/:id/heavy-jobs/next` | Peek next job by effective score |
-| GET | `/sessions/:id/coordination/events` | SSE stream of coordination updates |
+| GET | `/sessions/:id/coordination/stream` | SSE stream of real-time coordination updates |
 
 ---
 
 ## 21. GitHub CI/CD
 
-All CI/CD is defined in `.github/workflows/`.
+All CI/CD is defined in `.github/workflows/`. Supporting GitHub config lives in `.github/` (CODEOWNERS, Dependabot, issue/PR templates, labels).
 
 ### `ci-all.yml` — Main CI trigger
 Fires on `pull_request`, `push` to `main`, and `merge_group` events.
@@ -1337,28 +1365,58 @@ Called by `ci-all.yml`. Runs on `ubuntu-latest`.
 Enforces Conventional Commits format on PR title + commits.
 
 ### `codeql.yml`
-GitHub CodeQL static analysis for JavaScript/TypeScript. Runs on push to `main` and on a weekly schedule.
+GitHub CodeQL static analysis for JavaScript/TypeScript. Triggers:
+- `pull_request` (all PRs) — PR scans are cancellable
+- `push` to `main`
+- Weekly schedule (Mondays 07:00 UTC, `cron: "0 7 * * 1"`)
+
+Push-to-main and scheduled scans use a unique `run_id` concurrency key so they are never cancelled.
 
 ### `docker-build.yml`
-Builds `docker/Dockerfile` on push to `main` and on pull requests touching `docker/**`. Validates that the multi-stage build (claw-builder + runtime) succeeds. Does not push to Docker Hub (push is a manual step).
+Builds `docker/Dockerfile` on push to `main` and on pull requests touching `docker/**`. Validates that the multi-stage build (claw-builder + runtime) succeeds.
+
+**SLSA provenance**: when building on `push` to `main`, the workflow attests build provenance via `actions/attest-build-provenance` (OIDC token), producing a signed SLSA provenance attestation for the produced image.
+
+Does not push to Docker Hub automatically; push is a manual or separate deploy step.
 
 ### `pr-labeler.yml`
-Auto-labels PRs based on file paths changed (e.g. `area: api-server`, `area: dashboard`, `area: docker`, `area: db`).
+Auto-labels PRs based on file paths changed, using `.github/labeler.yml` rules (e.g. `area: api-server`, `area: dashboard`, `area: docker`, `area: db`).
 
 ### `sync-labels.yml`
-Syncs label definitions from a config file to the GitHub repository labels.
+Syncs label definitions from `.github/labels.yml` to the GitHub repository labels.
 
 ### `release.yml`
 Creates GitHub releases when a version tag (`v*`) is pushed. Generates a changelog from conventional commits since the last tag.
 
 ### `preview-dashboard.yml`
-Deploys a preview of the dashboard for pull requests (static build to a preview URL).
+Deploys a Vite-built static preview of the dashboard for every PR that touches `artifacts/dashboard/**`.
+
+- Runs in a `preview` GitHub Environment (requires `deployments: write` permission).
+- Default provider: Vercel (configurable by swapping the deploy step).
+- Posts a sticky PR comment with the preview URL; subsequent commits to the same PR update the same comment.
+- Concurrency key cancels in-progress preview runs for the same PR when a new commit is pushed.
 
 ### `workflow-hygiene.yml`
 Validates that workflow files use pinned action SHAs (prevents supply-chain attacks via mutable tags).
 
 ### Pin policy
-All `uses:` references in workflows use commit-SHA pins (e.g. `actions/checkout@de0fac2e4500...`) rather than mutable tag references. The SHA is noted in a comment alongside the semantic version for human readability.
+All `uses:` references in workflows use commit-SHA pins (e.g. `actions/checkout@de0fac2e4500...`) rather than mutable tag references. The SHA is annotated with a comment showing the semantic version for human readability.
+
+### CODEOWNERS (`.github/CODEOWNERS`)
+Broad-to-specific ordering (GitHub evaluates bottom-up):
+- `*` → `@gheeklabs/core` (all files default)
+- `lib/db/**`, `lib/api-spec/**`, `lib/api-client-react/**` → shared-lib owners
+- `artifacts/api-server/**` → `@gheeklabs/backend`
+- `artifacts/dashboard/**` → `@gheeklabs/frontend`
+- `docker/**` → `@gheeklabs/infra`
+- `.github/**` and `.github/workflows/**` → `@gheeklabs/core`
+
+### Dependabot (`.github/dependabot.yml`)
+- **npm (root workspace)**: weekly on Mondays 08:00 UTC. Groups minor+patch production deps into one PR; dev deps into another. Major bumps for `react`, `react-dom`, `typescript`, `vite`, `drizzle-orm` are ignored (require manual assessment). Per-subdirectory pnpm entries are intentionally omitted until frozen-lockfile compatibility is validated.
+- **GitHub Actions**: weekly on Mondays 08:00 UTC. All action updates bundled into a single PR for consolidated SHA-pin review.
+
+### Issue / PR templates (`.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md`)
+Standardised templates ensure consistent bug reports, feature requests, and PR checklists.
 
 ---
 
