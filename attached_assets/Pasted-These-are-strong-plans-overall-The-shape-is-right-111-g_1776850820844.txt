@@ -1,0 +1,193 @@
+These are strong plans overall. The shape is right:
+
+#111 gives K2.6 the ability to parallelize work without changing the user experience.
+#112 tunes the inference stack for many short concurrent requests instead of one long sequential stream.
+#113 gives users enough visibility to trust what the orchestrator is doing without turning swarm mode into a manual control panel.
+
+That fits FLOATR’s current architecture well, because you already have Claw Runner exposed through the session environment and proxied on port 5181, plus boot-time control through onstart.sh.
+
+#111 — Kimi K2.6 Swarm Orchestration Layer
+
+This is the most important one, and it is good. My main suggestions are about guardrails.
+
+First, add a decomposition gate before spawning anything. Do not let every <decompose> block automatically become a swarm. Have the runner validate:
+
+minimum task count, maybe 2–3
+no duplicate subtasks
+each subtask has enough specificity
+total worker count stays inside a profile cap
+the task is actually parallelizable
+
+That protects you from over-eager decomposition and from models generating lots of tiny, noisy workers.
+
+Second, make the decomposition format more structured than a raw XML-ish tag. I would strongly prefer:
+
+one clearly delimited JSON block
+required fields like id, task, goal, inputs, expected_output
+optional priority
+validation before spawn
+
+That will make parsing, journaling, and synthesis far more reliable.
+
+Third, worker prompts should be tightly scoped. Each worker should receive:
+
+only the subtask
+only the relevant shared context
+a hard instruction that it is a worker, not the final synthesizer
+no permission to spawn its own swarm
+
+That will reduce drift and stop recursive behavior from sneaking in even if you keep recursive sub-swarms out of scope.
+
+Fourth, add timeouts, retries, and partial-failure synthesis. Right now the plan says synthesize when all workers finish or fail, which is right, but it should explicitly define:
+
+per-worker timeout
+one retry max for transient failure
+synthesis behavior when some workers fail
+whether failed workers contribute error summaries into the final pass
+
+Fifth, do not derive SWARM_MAX_WORKERS too literally from llamaBatchSize. max_num_seqs is an engine concurrency control, but it is not the same thing as a safe user-facing worker ceiling, especially if workers have different prompt sizes and some requests are long-context. I would use a profile-specific swarm cap that is empirically smaller than the raw vLLM limit.
+
+Sixth, use request correlation everywhere. vLLM’s OpenAI-compatible server supports a request_id, and that will help a lot for swarm observability, synthesis tracing, and debugging stuck workers. if the server is not using priority scheduling. So the orchestration layer needs to set request priorities explicitly for orchestrator vs worker traffic; the flag alone will not create prioritization by magic. icorn-log-level warningalso makes sense. if instability appears. vLLM explicitly calls out preemption as a key signal for insufficient KV cache or overly aggressive batching. Without that metric, you’ll be tuning half-blind. is not reachable yet. Since FLOATR sessions boot services in phases, you do not want the cockpit spamming errors before port 5181 is live.
+
+Fifth, I’d add one more small state:
+
+“K2.6 chose not to parallelize this task”
+
+That helps users understand the difference between “no swarm yet” and “the model evaluated and stayed sequential.”
+
+The biggest cross-task improvement
+
+The most important thing I’d add across all three plans is a clear request-priority contract:
+
+orchestrator planning request: highest priority
+worker requests: medium priority
+synthesis request: highest priority
+background/non-interactive jobs: low priority
+
+That lines up with vLLM’s priority scheduling model, where lower numbers are handled earlier.
+
+You said nothing about 112 and 113
+
+I’m checking the vLLM flag assumptions and the UI/runtime details now, because 112 is the one most likely to succeed on paper but fail at boot if a flag is wrong.
+
+Thought for 54s
+
+Fair point — here are the missing comments on #112 and #113.
+
+#112 — vLLM Swarm-Mode Profile Tuning
+
+This plan is directionally right. Swarm traffic is a different shape from a normal long-context solo agent, so tuning for many short concurrent requests makes sense.
+
+What’s good
+--enable-chunked-prefill is a sensible fit for mixed-length concurrent work, and vLLM exposes chunked-prefill controls plus related knobs like --max-num-batched-tokens, --max-num-partial-prefills, --max-long-partial-prefills, and --long-prefill-token-threshold. requests, so the orchestration layer can actually mark orchestrator/synthesis requests differently from worker traffic. exists but is deprecated in newervllm servedocs. is deprecated and logging is already off by default in some serve modes. -prefill-token-threshold -num-batched-tokens is set above model length in some cases. context size `, and vLLM says non-zero priority will error if the served model is not using priority scheduling. may help throughput, but it also narrows safety margin when many sequences are live. acing “Swarm-ready” on profile cards is smart because users should know which tiers are meant for parallel capacity before they launch
+What I’d improve
+
+1. Make the proxy resilient, not just thin.
+GET /api/sessions/:id/swarm-status should not fail noisily every time:
+
+the instance is still provisioning
+Claw Runner is restarting
+the port mapping is briefly stale
+
+FLOATR already has a session lifecycle with provisioning/starting/ready states and periodic syncs.
+
+So I’d make the proxy return:
+
+unavailable
+starting
+stale
+live
+
+instead of just surfacing raw fetch failure.
+
+2. Cache the last known swarm snapshot in the API server.
+This is the biggest improvement I’d make.
+
+Do not make the cockpit depend entirely on the live /swarm/status call to the instance. Since #111 already pushes swarm lifecycle events and status snapshots to OMNIQL_CALLBACK_URL, the API server should store:
+
+last known active swarm status
+last decomposition
+last synthesis result summary
+
+Then the cockpit can show useful state even if the runner is temporarily unreachable.
+
+3. Add a real “historical but quiet” state.
+Right now the task says:
+
+tab appears when swarm becomes active
+disappears or shows empty state when none has run
+
+I’d separate:
+
+Never swarmed this session
+Swarmed earlier, idle now
+Swarm active now
+
+That gives users a much clearer picture.
+
+4. Abort should have confirmation and possibly role gating.
+Even if it is an emergency-only affordance, one click to kill all workers is risky. I’d add:
+
+confirm dialog
+maybe hide behind a danger confirmation phrase
+maybe only show to session owner / privileged user in team sessions
+
+FLOATR team sessions already have distinct member access and credentials, so this is worth thinking about.
+
+5. The badge should reflect both progress and failure.
+Instead of only 12 / 48 done, consider:
+
+12/48
+12 done · 2 failed
+Synthesising
+Aborted
+
+That will make the cockpit easier to scan.
+
+6. Show the orchestrator’s top-level intent, not just subtask rows.
+The first section should include:
+
+why it parallelized
+how many workers it chose
+maybe the decomposition confidence/reason
+
+Otherwise users may see a tree but not understand the model’s decision.
+
+7. The “Swarm-ready” badge should reflect actual safe swarm capacity, not just Pro/Ultra branding.
+If #112 introduces a dedicated swarmWorkerCap, use that in the tooltip:
+
+“Swarm-ready: up to 64 workers”
+“Swarm-ready: up to 150 workers”
+
+That is better than a vague capability label.
+
+My verdict on #113
+
+Strong plan.
+The biggest improvement is to make the API proxy/state model smarter:
+
+cache last-known swarm state
+distinguish unavailable vs idle vs historical
+do not rely only on the live Claw Runner endpoint
+My short summary
+#112
+
+Good plan, but strengthen it with:
+
+version-gated flags
+extra chunked-prefill tuning
+request-priority plumbing
+explicit swarm caps
+cautious GPU memory rollout
+#113
+
+Good plan, but strengthen it with:
+
+cached last-known swarm status
+better state distinctions
+safer abort UX
+worker-cap tooltip based on real caps
+
+The single most important improvement across both is this:
+
+Use a dedicated swarmWorkerCap and cached API-side swarm state, instead of relying purely on llamaBatchSize and a live runner fetch.
