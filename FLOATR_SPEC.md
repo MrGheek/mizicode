@@ -660,6 +660,15 @@ server {
 
 The API server runs an embedded SQLite FTS5 memory store. No external service required.
 
+### Startup validation (`validateMemoryDataDir`)
+`validateMemoryDataDir()` runs **before** `app.listen()` at server startup. It is a fatal guard: if it throws, the process exits without accepting any requests.
+
+Steps:
+1. `fs.mkdirSync(DATA_DIR, { recursive: true })` — creates the data directory if missing. Failure is fatal.
+2. Write + delete a per-process probe file (`.write-probe-<pid>-<ts>`) to verify actual write access (a read-only volume mount will pass `mkdirSync` but fail this step). Failure is fatal.
+
+The `DATA_DIR` is resolved from `MEM_DATA_DIR` env var (default: `~/omniql-memory/`). The SQLite DB lives at `DATA_DIR/mem.db`. On fatal failure, a structured error is logged with `DATA_DIR`, the source of the path (`MEM_DATA_DIR env var` or `"default (~omniql-memory)"`), and the underlying OS error.
+
 ### Storage
 - Location: controlled by `MEM_DATA_DIR` env var (default: `~/omniql-memory/mem.db`)
 - Auth: optional Bearer token via `OMNIQL_MEM_TOKEN`
@@ -1165,16 +1174,20 @@ The primary source is `nextlevelbuilder/ui-ux-pro-max-skill` on GitHub. Data is 
 
 ### Categories
 
-| Category | Description |
-|----------|-------------|
-| `style` | Visual style entries (components, icons, interfaces) |
-| `palette` | Colour palettes |
-| `typography` | Font pairings, scales |
-| `chart_type` | Chart type recommendations |
-| `ux_guideline` | UX rules and heuristics |
-| `anti_pattern` | Common design mistakes |
-| `stack_convention` | Framework and library conventions (from `stacks/`) |
-| `ui_reasoning` | AI-assisted UI reasoning patterns |
+The implementation defines **8 canonical `DesignCategory` values** (declared as a TypeScript union type in `curated-sources.ts` and reflected in the DB schema):
+
+| Category | Description | Auto-populated by default ingest? |
+|----------|-------------|----------------------------------|
+| `style` | Visual style entries (components, icons, interfaces) | Yes |
+| `palette` | Colour palettes | Yes |
+| `typography` | Font pairings, scales | Yes |
+| `chart_type` | Chart type recommendations | Yes |
+| `ux_guideline` | UX rules and heuristics | Yes |
+| `stack_convention` | Framework and library conventions (from `stacks/`) | Yes |
+| `ui_reasoning` | AI-assisted UI reasoning patterns | Yes |
+| `anti_pattern` | Common design mistakes | **No** — type defined, no default FILENAME_TO_CATEGORY mapping; only populated if a CSV file is explicitly mapped |
+
+> The `anti_pattern` category was added to the type but no curated CSV file maps to it in the default `FILENAME_TO_CATEGORY` table. It remains available for custom source ingestion.
 
 ### Derived skills (seeded at startup)
 Six design-intelligence skills are derived from the `nextlevelbuilder/ui-ux-pro-max-skill` source and seeded as default skills:
@@ -1236,7 +1249,17 @@ Each `gpu_profiles` row carries `swarmWorkerCap` (integer, nullable). This value
 | GLM-5.1 Ultra | 4 | Severely constrained: 0.98 GPU memory utilisation |
 
 ### Swarm snapshot
-The Claw Runner pushes real-time worker snapshots to the API via `POST /api/sessions/:id/swarm-push` (internal Claw Runner → API server). Snapshots are stored in `sessions.swarmSnapshotJson` and cached in-memory with a freshness threshold (`STALE_THRESHOLD_MS`). The server broadcasts each incoming snapshot to all open SSE connections on that session.
+The Claw Runner pushes real-time worker snapshots to the API server by deriving a callback URL from `OMNIQL_CALLBACK_URL`. The push URL is computed at startup as:
+
+```js
+const swarmCallbackUrl = OMNIQL_CALLBACK_URL.replace(/\/status$/, '/swarm-status');
+```
+
+So if `OMNIQL_CALLBACK_URL` is `https://api.example.com/api/sessions/123/status`, the Claw Runner POSTs snapshots to `https://api.example.com/api/sessions/123/swarm-status`.
+
+> **Note:** The API server's declared push handler is `POST /sessions/:sessionId/swarm-push`. Ensure `OMNIQL_CALLBACK_URL` is configured such that the derived `/swarm-status` path resolves to this endpoint (the Claw Runner and API server must agree on the path).
+
+Snapshots are stored in `sessions.swarmSnapshotJson` and cached in-memory. The server broadcasts each incoming snapshot to all open SSE connections on that session.
 
 ### Per-session swarm endpoints
 | Method | Path | Description |
@@ -1268,23 +1291,28 @@ The orchestrator LLM is invited to emit a structured decomposition block. The bl
 
 ```
 @@DECOMPOSE_START@@
-{ "subtasks": [ { "id": "...", "task": "...", "goal": "...", "inputs": "...", "expected_output": "...", "priority": 1 } ] }
+[ { "id": "...", "task": "...", "goal": "...", "inputs": "...", "expected_output": "...", "priority": 1 } ]
 @@DECOMPOSE_END@@
 ```
 
-`priority` is an optional positive integer (1 = highest priority; omit or `5` = normal). The block is parsed from the raw orchestrator output using string-index slicing on the sentinels; malformed JSON or a missing array is treated as `gate_rejected` (not `swarm_skipped`).
+**The block content MUST be a JSON array directly** (not an object with a `subtasks` key). If `JSON.parse()` produces a non-array, `parseDecomposition()` returns `error: 'decomposition block is not a JSON array'` which causes `gate_rejected`. Malformed JSON is also treated as `gate_rejected`.
 
-If the orchestrator explicitly chooses sequential execution, it may optionally emit a `@@SEQUENTIAL_REASON@@...` marker instead; `parseSequentialReason()` extracts it and the run is recorded as `swarm_skipped`.
+`priority` is an optional positive integer (1 = highest priority; default `5`). The remaining fields — `id`, `task`, `goal`, `inputs`, `expected_output` — are all **required** per subtask.
+
+If the orchestrator explicitly chooses sequential execution, it may optionally emit a `@@SEQUENTIAL_REASON@@:` marker instead; `parseSequentialReason()` extracts the reason text and the run is recorded as `swarm_skipped`.
 
 ### Gate validation
-After parsing, the decomposition is validated before workers are launched. Any of the following causes a `gate_rejected` event and triggers single-agent fallback:
+After parsing, the decomposition is validated by `validateDecomposition()` before workers are launched. Any of the following causes a `gate_rejected` event and triggers single-agent fallback:
 
 - Subtask count < 2 or > `SWARM_MAX_WORKERS`
-- Any subtask missing **required** field `id`, `task`, or `goal`
-- Subtask contains unknown fields. Allowed set: `{ id, task, goal, inputs, expected_output, priority }`. Note: `inputs` and `expected_output` are *allowed* but **not required** — only `id`, `task`, `goal` must be present.
+- Any subtask entry is not a plain object
+- Subtask contains unknown fields. Allowed set (strict): `{ id, task, goal, inputs, expected_output, priority }`
+- Any of the **five required** fields missing or empty: `id` (string), `task` (non-empty string), `goal` (non-empty string), `inputs` (non-empty), `expected_output` (non-empty string). All five must be present.
+- Duplicate `id` values across subtasks
+- `task` description is fewer than 10 characters (lacks specificity)
 - `priority` field is present but is not a positive integer
-- **Near-duplicate detection** — subtask `task` text is too similar to another subtask in the same decomposition (cross-subtask Jaccard/token similarity check)
-- **Sequential markers** — subtask `task` or `goal` text contains references implying dependency on other workers' output (the model should not decompose sequential work)
+- **Near-duplicate detection** — Levenshtein similarity between any two subtasks' `task` strings (both lowercased) exceeds `0.85`. `levenshteinSimilarity(a, b)` returns a normalized score in `[0, 1]`.
+- **Sequential markers** — `task` text contains any of these exact phrases (case-insensitive): `"after worker"`, `"depends on worker"`, `"once worker"`, `"wait for worker"`
 
 ### Worker priority and execution order
 Workers are sorted ascending by `priority` (1 = highest) before dispatch. Workers with equal priority share a concurrency slot; the scheduler dispatches up to `SWARM_CONCURRENCY` workers simultaneously from the sorted queue. Each worker runs in its own tmux session, receives shared context from the orchestrator output (up to 3000 chars preceding the decompose block), and writes its result to a dedicated output file.
