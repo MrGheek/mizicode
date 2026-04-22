@@ -145,11 +145,135 @@ A `CHANGELOG.md` entry is created only when a version is actually incremented. T
 
 ---
 
-## Layer 2 (Task #133)
+## Layer 2 — Additional CI/CD hardening
 
-The following are **out of scope for this runbook** and will be configured as part of Task #133:
+This section covers all manual GitHub settings that must be applied after the Layer 2 workflow files are merged. Layer 2 adds merge queue refinements, CodeQL scanning, dashboard PR previews, Docker image attestations, and secret scanning.
 
-- CodeQL scanning workflow and required check enrollment.
-- Preview deployments on PRs.
-- Build attestations for Docker images.
-- Merge queue refinements post-soak.
+> **Recommended rollout order for Layer 2:**
+> 1. Merge the Layer 2 workflow PR (adds `codeql.yml`, `preview-dashboard.yml`, attestation step to `docker-build.yml`).
+> 2. Create the `preview` GitHub Environment with its secrets (see below).
+> 3. Enable merge queue on `main` (see below).
+> 4. Enable secret scanning and push protection (see `.github/security-hardening.md`).
+> 5. Observe CodeQL results for 1–2 weeks before deciding whether to make it a required check.
+> 6. Configure the FLOATR Project board following `.github/projects.md`.
+
+---
+
+### Enabling merge queue on `main`
+
+Merge queue is a branch protection feature that serializes merges by re-running CI on the combined result of multiple PRs before any of them land on `main`.
+
+**Steps:**
+
+1. Go to **Settings → Branches → Branch protection rules** (or **Rulesets**).
+2. Edit the `main` rule.
+3. Enable **Require merge queue**.
+4. Set **Merge method**: Squash.
+5. Set **Minimum group size**: 1, **Maximum group size**: 5, **Wait time**: 5 minutes.
+
+**Which checks to mark as required in the merge queue:**
+
+Use the exact job `name:` strings from the workflows. The merge queue exposes these as separate check entries from the PR checks — add both sets.
+
+| Check name | Workflow | Notes |
+|---|---|---|
+| `TypeScript type-check` | `ci.yml` | Required |
+| `Validate PR title (conventional commits)` | `commitlint.yml` | Required |
+| `Lint workflow files with actionlint` | `workflow-hygiene.yml` | Required |
+| `CodeQL analysis (javascript-typescript)` | `codeql.yml` | **Do not require yet** — soak period first |
+
+> The `commitlint.yml` workflow now triggers on `merge_group` so commit validation runs inside the queue. The `ci-all.yml` already had `merge_group` support from Layer 1.
+
+---
+
+### Creating the `preview` GitHub Environment
+
+The `preview-dashboard.yml` workflow deploys dashboard previews using secrets from a `preview` GitHub Environment. This Environment must be created manually.
+
+**Steps:**
+
+1. Go to **Settings → Environments → New environment**.
+2. Name it exactly: `preview`.
+3. Under **Environment secrets**, add the following for the default Vercel provider:
+
+| Secret name | Description | Where to find it |
+|---|---|---|
+| `PREVIEW_VERCEL_TOKEN` | Vercel API token | vercel.com → Account Settings → Tokens |
+| `PREVIEW_VERCEL_ORG_ID` | Vercel team or personal account ID | vercel.com → Account Settings → General → Team ID |
+| `PREVIEW_VERCEL_PROJECT_ID` | Vercel project ID | vercel.com → Project Settings → General |
+
+4. Optionally, add **Deployment protection rules** (e.g. require a reviewer — not needed for `preview`).
+
+**Switching providers:** To use a provider other than Vercel, replace the "Deploy to preview (Vercel)" step in `preview-dashboard.yml` with your provider's CLI command. The step must write `echo "url=<preview-url>" >> "$GITHUB_OUTPUT"` and populate the corresponding secrets in the `preview` Environment.
+
+---
+
+### CodeQL — soak period and required-check enrollment
+
+`codeql.yml` runs on every PR, push to `main`, and weekly schedule. It is **not** a required check initially.
+
+**Soak period process:**
+
+1. After merging Layer 2, monitor the **Security → Code scanning** tab for 1–2 weeks.
+2. Review each alert: determine if it is a true positive (real vulnerability) or false positive (noise from test fixtures, generated code, etc.).
+3. Dismiss false positives with the "False positive" or "Used in tests" reason so they do not reappear.
+4. If the alert rate is acceptable (low false positives, manageable true positives), proceed to enrollment.
+
+**Enrolling CodeQL as a required check:**
+
+1. Go to **Settings → Branches → edit the `main` rule**.
+2. Under **Require status checks to pass**, add: `CodeQL analysis (javascript-typescript)`.
+3. Add the same check to the merge queue required checks.
+4. Communicate to the team that CodeQL is now blocking.
+
+---
+
+### Docker image attestations
+
+`docker-build.yml` now generates SLSA provenance attestations after each image push using `actions/attest-build-provenance`. No additional configuration is required — the workflow uses the built-in OIDC token (`id-token: write`).
+
+**Verifying an attestation:**
+
+```bash
+gh attestation verify oci://docker.io/gheeklabs/coding-env:latest \
+  --owner gheeklabs
+```
+
+Expected output:
+
+```
+Loaded digest sha256:<digest> for oci://docker.io/gheeklabs/coding-env:latest
+Successfully verified 1 attestation(s).
+
+The following attestations matched the predicate type "https://slsa.dev/provenance/v1":
+  - Predicate type: https://slsa.dev/provenance/v1
+  - Workflow:       .github/workflows/docker-build.yml@refs/heads/main
+  - Repository:     gheeklabs/<repo>
+  - Signer:         ...
+```
+
+If verification fails, check that:
+- The image was built from a `push` to `main` (not a manual `workflow_dispatch` run without the expected ref).
+- `id-token: write` is present in the job permissions (it is).
+- The `gh` CLI is authenticated: `gh auth login`.
+
+---
+
+### Secret scanning and push protection
+
+See `.github/security-hardening.md` for the full ops guide covering:
+- How to enable secret scanning and push protection in **Settings → Code security and analysis**.
+- What contributors see when a push is blocked.
+- How to request and review bypasses.
+- Credential types especially relevant to FLOATR.
+- Onboarding checklist for new contributors.
+
+---
+
+### FLOATR Project board
+
+See `.github/projects.md` for the full runbook covering:
+- Recommended board fields (Status, Component, Priority, Owner, Milestone/Release).
+- Built-in GitHub Project automations to configure (auto-add, status transitions, archive delay).
+- How to map `component:*` and `priority:*` labels to Project select fields.
+- Step-by-step board creation instructions.

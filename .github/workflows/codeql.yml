@@ -1,0 +1,59 @@
+name: CodeQL — Security Scanning
+
+# Scans JavaScript/TypeScript source for security vulnerabilities.
+#
+# SOAK PERIOD NOTICE: This workflow is intentionally NOT configured as a
+# required status check. The team should observe CodeQL results for 1–2
+# weeks to verify alert quality and run time before deciding whether to
+# gate PRs on it. See docs/github-ops.md for the recommended enrollment
+# process.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly scan every Monday at 07:00 UTC (offset from Dependabot to
+    # avoid simultaneous runner contention).
+    - cron: "0 7 * * 1"
+
+# Cancel in-progress scans for the same PR when a new commit arrives.
+# Push-to-main and scheduled scans are never cancelled.
+concurrency:
+  group: codeql-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: CodeQL analysis (javascript-typescript)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ff0a06e83cb2de871e5a09832bc6a81e7276941f # v3.26.0
+        with:
+          languages: javascript-typescript
+          # Scope analysis to application source; skip generated output,
+          # vendored dependencies, and build artifacts.
+          paths: |
+            artifacts
+            docker/scripts
+          paths-ignore: |
+            **/node_modules
+            **/dist
+            **/.next
+            **/codegen
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@91d7c1d674e68b90fd79d0d3e20cdcc0a2fc5bb5 # v3.26.0
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@45775bd8235c68ba998cffa5171334d58593da47 # v3.26.0
+        with:
+          category: "/language:javascript-typescript"

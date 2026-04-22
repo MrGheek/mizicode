@@ -1,0 +1,117 @@
+name: Preview — Dashboard
+
+# Deploys a preview of the dashboard on every PR that touches frontend-affecting
+# files. Posts a sticky comment with the preview URL; subsequent commits update
+# the same comment rather than creating duplicates.
+#
+# Default provider: Vercel. To switch providers, replace the "Deploy to preview"
+# step with your provider's CLI command and update the Environment secrets.
+#
+# Required one-time setup (see docs/github-ops.md → Layer 2):
+# 1. Create a `preview` GitHub Environment in Settings → Environments.
+# 2. Add Environment secrets:
+#    - PREVIEW_VERCEL_TOKEN  — Vercel API token (Settings → Tokens in vercel.com)
+#    - PREVIEW_VERCEL_ORG_ID — Vercel team/org ID (from vercel.com/account)
+#    - PREVIEW_VERCEL_PROJECT_ID — Vercel project ID (from project Settings)
+
+on:
+  pull_request:
+    paths:
+      - "artifacts/dashboard/**"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "tsconfig*.json"
+
+# Cancel in-progress preview runs for the same PR when a new commit is pushed.
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Deploy dashboard preview
+    runs-on: ubuntu-latest
+    environment: preview
+    permissions:
+      contents: read
+      deployments: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a3252b7ae470c0ab1f13d5c01c958a3e4b86fc64 # v4.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.2.0
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build dashboard
+        run: pnpm --filter @workspace/dashboard run build
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@41
+
+      # ── Deploy to Vercel preview ───────────────────────────────────────────
+      # Deploys the built dashboard dist to Vercel and captures the preview URL.
+      # The `--prebuilt` flag skips Vercel's own build step since we already ran
+      # `pnpm build` above. The `.vercel/output` convention requires the dist to
+      # be in the right place — we copy it before deploying.
+      #
+      # To switch providers: replace this step with your provider's CLI command.
+      # The step must write: echo "url=<preview-url>" >> "$GITHUB_OUTPUT"
+      - name: Deploy to preview (Vercel)
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.PREVIEW_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.PREVIEW_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.PREVIEW_VERCEL_PROJECT_ID }}
+        run: |
+          # Capture only the deployment URL line (https://...) from stdout.
+          # Redirecting stderr to /dev/null silences spinner/progress lines;
+          # grep extracts the first HTTPS URL from the output, which Vercel
+          # always emits as the deployment URL on its own line.
+          PREVIEW_URL=$(vercel deploy artifacts/dashboard/dist \
+            --token "$VERCEL_TOKEN" \
+            --yes \
+            2>/dev/null | grep -Eo 'https://[^[:space:]]+' | head -1)
+          if [ -z "$PREVIEW_URL" ]; then
+            echo "::error::Vercel deploy did not return a preview URL. Check PREVIEW_VERCEL_TOKEN, PREVIEW_VERCEL_ORG_ID, and PREVIEW_VERCEL_PROJECT_ID secrets in the 'preview' Environment."
+            exit 1
+          fi
+          echo "url=$PREVIEW_URL" >> "$GITHUB_OUTPUT"
+
+      # ── Sticky PR comment ──────────────────────────────────────────────────
+      # On first run: post a new comment tagged with a hidden marker.
+      # On subsequent commits: find and edit the existing comment in place.
+      - name: Find existing preview comment
+        id: find-comment
+        uses: peter-evans/find-comment@3eae49d9e5d0f4f45ef8dce1167c59e4c56a6f1c # v3.1.0
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "<!-- preview-dashboard-comment -->"
+
+      - name: Post or update preview comment
+        uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866d647c8a1a9c7 # v4.0.0
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            <!-- preview-dashboard-comment -->
+            ### Dashboard Preview
+
+            | | |
+            |---|---|
+            | **URL** | ${{ steps.deploy.outputs.url }} |
+            | **Commit** | `${{ github.event.pull_request.head.sha }}` |
+
+            > This comment is updated automatically on each new commit to this PR.
