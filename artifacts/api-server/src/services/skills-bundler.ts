@@ -1,10 +1,10 @@
 import crypto from "crypto";
-import { db, skillsTable, skillBundlesTable, skillVersionsTable, skillSourcesTable, sessionSkillsTable, sessionsTable, sessionRepoContextTable } from "@workspace/db";
-import { eq, and, inArray, desc } from "drizzle-orm";
+import { db, skillsTable, skillBundlesTable, skillVersionsTable, skillSourcesTable, sessionSkillsTable, sessionsTable, sessionRepoContextTable, designIntelligenceEntriesTable } from "@workspace/db";
+import { eq, and, inArray, desc, asc } from "drizzle-orm";
 import { DEFAULT_SKILLS, DEFAULT_BUNDLES } from "./default-skills";
 import { rankSkills, buildRepoIntelligenceContext, getSkillFeedbackScores, buildHistoryScoresMap, getEvalLiftScoresMap } from "./skills-ranker";
 import { TOKEN_MODE_PROFILES } from "./skills-types";
-import type { FloatrSkillManifest, SessionContext, CompiledBundle, TokenMode, RepoIntelligenceContext } from "./skills-types";
+import type { FloatrSkillManifest, SessionContext, CompiledBundle, TokenMode, RepoIntelligenceContext, DesignContextEntry } from "./skills-types";
 import { logger } from "../lib/logger";
 
 async function getAllEnabledManifests(): Promise<FloatrSkillManifest[]> {
@@ -34,6 +34,113 @@ async function getAllEnabledManifests(): Promise<FloatrSkillManifest[]> {
 
 const MIN_SKILLS = 3;
 const MAX_SKILLS = 7;
+
+const FRONTEND_LANGS = new Set(["ts", "tsx", "js", "jsx", "svelte", "vue", "css", "html"]);
+
+/**
+ * Categories fetched for UX lanes vs. general frontend lanes.
+ * UX lanes get the full design doctrine; frontend lanes get a narrower subset.
+ */
+const UX_LANE_CATEGORIES = [
+  "palette",
+  "typography",
+  "chart_type",
+  "ux_guideline",
+  "ui_reasoning",
+  "anti_pattern",
+  "style",
+];
+const FRONTEND_LANE_CATEGORIES = [
+  "palette",
+  "typography",
+  "stack_convention",
+  "ux_guideline",
+];
+
+/**
+ * Maximum design intelligence entries to inject per token mode.
+ * `lean` and `ultra` modes receive no design context (token budget constraint).
+ */
+const DESIGN_CONTEXT_LIMIT: Partial<Record<TokenMode, number>> = {
+  full: 10,
+  core: 5,
+};
+
+/**
+ * Query `design_intelligence_entries` for the given categories and return the
+ * top-N entries most relevant to the repo's tech stack, filtered by tag overlap.
+ *
+ * Filtering rules:
+ * - Builds a combined stack-tags set from repoLangs + repoIntelligence.frameworks (if present).
+ * - Hard-filters to entries with ≥1 matching tag. Falls back to category-scored entries only
+ *   when zero entries pass the hard filter (i.e., the design DB has no stack-specific data).
+ * - Fetches all category-matching rows (up to MAX_CANDIDATE_ROWS) so top-N is globally correct.
+ * - Skipped entirely for lean/ultra token modes (token budget constraint).
+ */
+const MAX_CANDIDATE_ROWS = 200;
+
+async function queryDesignIntelligenceContext(
+  categories: string[],
+  repoLangs: string[],
+  tokenMode: TokenMode,
+  repoIntelligence?: RepoIntelligenceContext,
+): Promise<DesignContextEntry[]> {
+  const limit = DESIGN_CONTEXT_LIMIT[tokenMode];
+  if (!limit) return [];
+
+  if (categories.length === 0) return [];
+
+  try {
+    const rows = await db
+      .select({
+        category: designIntelligenceEntriesTable.category,
+        name: designIntelligenceEntriesTable.name,
+        dataJson: designIntelligenceEntriesTable.dataJson,
+        tags: designIntelligenceEntriesTable.tags,
+      })
+      .from(designIntelligenceEntriesTable)
+      .where(inArray(designIntelligenceEntriesTable.category, categories))
+      .orderBy(asc(designIntelligenceEntriesTable.category), asc(designIntelligenceEntriesTable.id))
+      .limit(MAX_CANDIDATE_ROWS);
+
+    if (rows.length === 0) return [];
+
+    // Build comprehensive stack-tag set from both repo langs and detected frameworks.
+    const stackTags = new Set([
+      ...repoLangs.map(l => l.toLowerCase()),
+      ...(repoIntelligence?.frameworks ?? []).map(f => f.toLowerCase()),
+    ]);
+
+    const HIGH_PRIORITY = new Set(["ux_guideline", "ui_reasoning", "palette", "typography"]);
+
+    const toEntry = (row: typeof rows[0]) => {
+      const tags = (Array.isArray(row.tags) ? row.tags : []) as string[];
+      const tagOverlap = tags.filter(t => stackTags.has(t.toLowerCase())).length;
+      const categoryBoost = HIGH_PRIORITY.has(row.category) ? 1 : 0;
+      return { row, tags, score: tagOverlap * 2 + categoryBoost, tagOverlap };
+    };
+
+    const scored = rows.map(toEntry);
+
+    // Hard filter: prefer entries that match at least one stack tag.
+    // Fall back to all candidates only when the stack produces zero matches
+    // (e.g. design DB has no stack-specific tags, or repoLangs is empty).
+    const stackMatched = scored.filter(e => e.tagOverlap > 0);
+    const candidates = stackMatched.length > 0 ? stackMatched : scored;
+
+    candidates.sort((a, b) => b.score - a.score);
+
+    return candidates.slice(0, limit).map(({ row, tags }) => ({
+      category: row.category,
+      name: row.name,
+      data: row.dataJson as Record<string, string>,
+      tags,
+    }));
+  } catch (err) {
+    logger.warn({ err }, "Failed to query design intelligence context — continuing without it");
+    return [];
+  }
+}
 
 export async function compileBundle(bundleId: number, ctx: SessionContext): Promise<CompiledBundle> {
   const [bundle] = await db.select().from(skillBundlesTable).where(eq(skillBundlesTable.id, bundleId));
@@ -254,6 +361,18 @@ export function buildSystemPromptFragment(compiled: CompiledBundle, tokenMode: T
     lines.push("");
   }
 
+  if (compiled.designContext && compiled.designContext.length > 0) {
+    lines.push("<!-- Design System Context (live entries from design intelligence) -->");
+    for (const entry of compiled.designContext) {
+      const dataStr = Object.entries(entry.data)
+        .filter(([, v]) => v && v.trim().length > 0)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join("; ");
+      lines.push(`- [${entry.category}] ${entry.name}${dataStr ? ` — ${dataStr}` : ""}`);
+    }
+    lines.push("");
+  }
+
   return lines.join("\n");
 }
 
@@ -461,7 +580,6 @@ export async function compileLaneBundles(
       laneCtx.taskMode === "build" &&
       compiled !== null
     ) {
-      const FRONTEND_LANGS = new Set(["ts", "tsx", "js", "jsx", "svelte", "vue"]);
       const hasFrontend = laneCtx.repoLangs.some(l => FRONTEND_LANGS.has(l.toLowerCase()));
       if (hasFrontend) {
         const vizManifest = DEFAULT_SKILLS.find(s => s.id === "dashboard-viz-guidance");
@@ -469,6 +587,32 @@ export async function compileLaneBundles(
         if (vizManifest && !alreadyPresent) {
           compiled = { ...compiled, skills: [...compiled.skills, vizManifest] };
           logger.debug({ laneId: lane.laneId }, "Injected dashboard-viz-guidance into general lane overlay");
+        }
+      }
+    }
+
+    // ── Design intelligence injection ──
+    // UX lanes always receive the full design doctrine categories.
+    // Other lanes with frontend languages detected receive a narrower subset.
+    // Injection is skipped entirely for lean/ultra token modes (token budget constraint).
+    if (compiled !== null) {
+      const isUxLane = lane.laneType === "ux";
+      const hasFrontend = laneCtx.repoLangs.some(l => FRONTEND_LANGS.has(l.toLowerCase()));
+
+      if (isUxLane || hasFrontend) {
+        const categories = isUxLane ? UX_LANE_CATEGORIES : FRONTEND_LANE_CATEGORIES;
+        const designContext = await queryDesignIntelligenceContext(
+          categories,
+          laneCtx.repoLangs,
+          laneCtx.tokenMode,
+          laneCtx.repoIntelligence,
+        );
+        if (designContext.length > 0) {
+          compiled = { ...compiled, designContext };
+          logger.debug(
+            { laneId: lane.laneId, laneType: lane.laneType, entries: designContext.length, tokenMode: laneCtx.tokenMode },
+            "Injected design intelligence context into lane bundle",
+          );
         }
       }
     }

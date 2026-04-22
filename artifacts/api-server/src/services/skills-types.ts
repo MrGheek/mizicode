@@ -150,6 +150,13 @@ export interface SessionContext {
   repoIntelligence?: RepoIntelligenceContext;
 }
 
+export interface DesignContextEntry {
+  category: string;
+  name: string;
+  data: Record<string, string>;
+  tags: string[];
+}
+
 export interface CompiledBundle {
   bundleId: number;
   slug: string;
@@ -162,6 +169,7 @@ export interface CompiledBundle {
     tokenMode: string;
   };
   repoConfidenceLevel?: string;
+  designContext?: DesignContextEntry[];
 }
 
 export interface RepoFingerprint {
