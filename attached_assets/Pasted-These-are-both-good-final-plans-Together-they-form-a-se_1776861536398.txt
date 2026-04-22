@@ -1,0 +1,166 @@
+These are both good final plans. Together they form a sensible two-layer GitHub/CICD rollout for FLOATR’s monorepo and team workflow. FLOATR already has a clear split between backend, dashboard, Docker, and shared libs, so this approach of “foundation first, hardening second” fits the repo well.
+
+My last comments are mostly about avoiding duplication and tightening the operational boundaries.
+
+GitHub Workflow Hardening for FLOATR
+
+This one is strong and feels ready.
+
+What I like:
+
+labels as code instead of one-off bootstrapping
+Issue Forms instead of plain markdown templates
+reusable CI with caching, path filters, concurrency, and explicit permissions
+commitlint before release automation
+cautious Dependabot scope for a pnpm monorepo
+expanded CODEOWNERS for shared libs and .github/
+
+A few final tweaks:
+
+1. Keep workflow-hygiene.yml only in one layer
+
+Right now it appears here and in Layer 2. I would keep the actual workflow-hygiene.yml file in this foundational task, then make Layer 2 only extend the hardening policy if needed. Otherwise Replit may duplicate or overwrite it.
+
+2. Add component:lib or be explicit that shared libs map to owners, not labels
+
+You expanded component labels well, but shared library work may still not map neatly to:
+
+component:api
+component:dashboard
+
+You already cover shared libs in CODEOWNERS, which is great. Decide whether labels should also include something like:
+
+component:shared-lib
+or whether shared lib PRs should remain unlabeled unless they also touch another component.
+3. In CI, define “affected packages” concretely
+
+This line is right in spirit:
+
+build validation for affected packages
+
+But I would make sure the implementation brief says how that is determined:
+
+simple path-filter matrix
+or always build api-server and dashboard
+or use a monorepo tool if one exists
+
+Otherwise Replit may overengineer “affected packages.”
+
+4. Release automation should explicitly ignore no-version-bump pushes
+
+I would add:
+
+if only commits like docs-only or CI-only should not bump, then skip release cleanly
+if you do want docs: / ci: to patch-bump, keep it as written
+
+Just make that rule explicit so release behavior is predictable.
+
+5. Add a note that branch protection itself is manual
+
+You already do this in the runbook, which is good. I’d just make sure nobody expects the repo files alone to enforce:
+
+merge queue
+required checks
+CODEOWNERS review
+
+Those are GitHub settings, not just workflow files.
+
+GitHub CI/CD Hardening — Layer 2
+
+This is also strong and adds the right next layer:
+
+merge queue support
+Projects ops
+preview deployments
+CodeQL
+artifact attestations
+secret-scanning guidance
+
+A few final tweaks here too:
+
+1. Remove the duplicated workflow-hygiene.yml creation step
+
+As above: I would not “create” it again here if Task #129 already does.
+Instead say:
+
+extend/apply workflow hardening consistently across all workflows added in Layer 2
+2. Be careful making CodeQL “required” immediately
+
+CodeQL is valuable, but it can be noisy or slower than your core CI at first. I would suggest:
+
+add it now
+observe it
+then decide whether to make it a required check after a short soak period
+
+That will avoid blocking the team on false positives or config issues.
+
+3. Preview deployments should use sticky PR comments
+
+You already say:
+
+supersede the old comment rather than adding duplicates
+
+Good. I would keep that explicit, because otherwise preview workflows become comment spam quickly.
+
+4. Make preview paths include shared frontend-affecting files only
+
+You already mention shared config files like pnpm-workspace.yaml and package.json. Good. I’d just be careful not to let backend-only shared changes trigger previews unless they actually affect the dashboard build.
+
+5. Artifact attestations are worth doing, but keep the Docker workflow changes minimal
+
+You say Layer 2 should not rework docker-build.yml, but artifact attestations do require touching it. That is fine — just make sure the acceptance criteria frame this as:
+
+additive provenance step after push
+no redesign of the build pipeline
+6. Projects automation as docs-only is the right choice
+
+I think this is smart. Do not overbuild GitHub Project automation in code yet. A clear runbook for:
+
+board fields
+auto-add rules
+status transitions
+is enough for now.
+The main thing I’d change across both plans
+Clarify the ownership split between the two tasks
+
+Right now there is a little overlap. I’d define it like this:
+
+Task 129 owns
+
+labels
+Issue Forms
+PR template
+CODEOWNERS
+core CI
+commitlint
+release automation
+Dependabot
+initial workflow hygiene file
+branch protection runbook
+
+Layer 2 owns
+
+merge queue trigger expansion
+Projects runbook
+preview deployments
+CodeQL
+artifact attestations
+secret scanning / push protection docs
+extending hardening to newly added workflows
+
+That separation will prevent churn.
+
+Bottom line
+
+Both plans are good and worth shipping.
+
+My final advice is:
+
+keep workflow-hygiene.yml in only one task
+make CodeQL non-required at first unless you’re confident
+define “affected packages” concretely in CI
+keep preview deployment comments sticky
+keep artifact attestation changes additive
+be explicit about which manual GitHub settings are outside repo code
+
+With that, these look ready.
