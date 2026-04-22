@@ -1,0 +1,26 @@
+name: Workflow Hygiene
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: Lint workflow files with actionlint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Run actionlint
+        uses: rhysd/actionlint@6849a0dbc5a87e04df4efec60e2a0f43a2e8ce4b # v1.7.4
+        with:
+          # Fail on any error; include color output for readability.
+          flags: "-color"

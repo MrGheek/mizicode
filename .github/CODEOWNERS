@@ -1,0 +1,33 @@
+# CODEOWNERS — ordered broad-to-specific.
+#
+# GitHub evaluates rules bottom-up: a more-specific rule below overrides a
+# broader rule above for the same path. List the catch-all default first,
+# then progressively narrow rules below it, so the most-specific owner wins.
+#
+# After merging, enable "Require review from Code Owners" in the branch
+# protection / ruleset settings — CODEOWNERS is not self-enforcing.
+# See docs/github-ops.md for the full setup runbook.
+
+# ── Default: every file needs at least one owner review ───────────────────
+*                               @gheeklabs/core
+
+# ── Shared libraries (lib/*) ──────────────────────────────────────────────
+# Changes here affect both api-server and dashboard via generated code.
+lib/db/**                       @gheeklabs/core @gheeklabs/backend
+lib/api-spec/**                 @gheeklabs/core @gheeklabs/backend
+lib/api-client-react/**         @gheeklabs/core @gheeklabs/frontend
+
+# ── API server ────────────────────────────────────────────────────────────
+artifacts/api-server/**         @gheeklabs/backend
+
+# ── Frontend dashboard ────────────────────────────────────────────────────
+artifacts/dashboard/**          @gheeklabs/frontend
+
+# ── Docker / infra ────────────────────────────────────────────────────────
+docker/**                       @gheeklabs/infra
+
+# ── GitHub config and CI/CD ───────────────────────────────────────────────
+# Keep ownership narrow: only CI owners should approve changes to workflow
+# files, CODEOWNERS itself, and issue templates.
+.github/**                      @gheeklabs/core
+.github/workflows/**            @gheeklabs/core

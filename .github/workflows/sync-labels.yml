@@ -1,0 +1,31 @@
+name: Sync Labels
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/labels.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    name: Sync label definitions to GitHub
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Sync labels
+        uses: EndBug/add-and-delete-labels-not-in-file@da2583a26c5ca0d0e985c6f3bc0c3700f44d5d09 # v1.4.0
+        with:
+          path: .github/labels.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

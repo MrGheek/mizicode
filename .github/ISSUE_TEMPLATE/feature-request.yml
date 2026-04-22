@@ -1,0 +1,73 @@
+name: Feature Request
+description: Propose a new feature or enhancement
+title: "feat: <short description>"
+labels:
+  - "status:to-triage"
+  - "type:feature"
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Please describe it as clearly as possible.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: A one or two sentence description of the feature.
+      placeholder: "Add support for X so that users can Y."
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation / problem
+      description: What problem does this solve? Who is affected?
+      placeholder: "Currently, users have to ... which is slow/error-prone because ..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      description: Which part of the system would this touch?
+      options:
+        - component:api
+        - component:dashboard
+        - component:docker
+        - component:memory
+        - component:scheduler
+        - component:gpu
+        - component:skills
+        - component:swarm
+        - component:repo-intelligence
+        - component:ci
+        - component:github
+        - component:design
+        - component:shared-lib
+        - "Not sure / multiple"
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How do you think this should be implemented? Rough sketches are fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative approaches you considered and why you ruled them out.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Mockups, related issues, external references, or anything else useful.

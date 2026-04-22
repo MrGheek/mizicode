@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Allow only one release run at a time to prevent race conditions on the
+# version tag and CHANGELOG.md. New pushes queue rather than cancel.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Compute version bump and release
+    runs-on: ubuntu-latest
+    # Never run when the automated release commit itself triggers the workflow.
+    if: github.actor != 'github-actions[bot]'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout (full history for commit analysis)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Determine version bump from commit messages
+        id: bump
+        run: |
+          # Collect commit messages since the last version tag (or all commits
+          # if no tag exists yet).
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"%s" HEAD)
+          else
+            COMMITS=$(git log --pretty=format:"%s" "${LAST_TAG}..HEAD")
+          fi
+
+          echo "Commits since ${LAST_TAG:-'(beginning)'}:"
+          echo "$COMMITS"
+
+          # Detect BREAKING CHANGE (in body or footer via git log full message).
+          if [ -z "$LAST_TAG" ]; then
+            FULL=$(git log --pretty=format:"%B" HEAD)
+          else
+            FULL=$(git log --pretty=format:"%B" "${LAST_TAG}..HEAD")
+          fi
+
+          BUMP="none"
+
+          if echo "$FULL" | grep -qE "^BREAKING CHANGE:|^BREAKING-CHANGE:|!:"; then
+            BUMP="major"
+          elif echo "$COMMITS" | grep -qE "^feat(\(.+\))?!?:"; then
+            BUMP="minor"
+          elif echo "$COMMITS" | grep -qE "^(fix|hotfix|refactor|perf)(\(.+\))?!?:"; then
+            BUMP="patch"
+          fi
+
+          # docs: and ci: only → no bump, clean exit.
+          if [ "$BUMP" = "none" ]; then
+            echo "No version-bumping commits found (docs/ci/chore only). Skipping release."
+            echo "bump=none" >> "$GITHUB_OUTPUT"
+          else
+            echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute next version
+        id: version
+        if: steps.bump.outputs.bump != 'none'
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          # Strip leading 'v'
+          CURRENT="${LAST_TAG#v}"
+          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT" | cut -d. -f3)
+
+          BUMP="${{ steps.bump.outputs.bump }}"
+          if [ "$BUMP" = "major" ]; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          elif [ "$BUMP" = "minor" ]; then
+            MINOR=$((MINOR + 1)); PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+
+          NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT"
+
+      - name: Update CHANGELOG.md
+        if: steps.bump.outputs.bump != 'none'
+        run: |
+          VERSION="${{ steps.version.outputs.next }}"
+          DATE=$(date +%Y-%m-%d)
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$LAST_TAG" ]; then
+            LOG=$(git log --pretty=format:"- %s (%h)" HEAD)
+          else
+            LOG=$(git log --pretty=format:"- %s (%h)" "${LAST_TAG}..HEAD")
+          fi
+
+          # Prepend new section to CHANGELOG.md (create if missing).
+          ENTRY="## ${VERSION} — ${DATE}\n\n${LOG}\n"
+          if [ -f CHANGELOG.md ]; then
+            PREV=$(cat CHANGELOG.md)
+            printf "%s\n\n%s" "$ENTRY" "$PREV" > CHANGELOG.md
+          else
+            printf "# Changelog\n\n%s\n" "$ENTRY" > CHANGELOG.md
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore(release): ${VERSION} [skip ci]"
+          git push
+
+      - name: Create GitHub Release
+        if: steps.bump.outputs.bump != 'none'
+        uses: ncipollo/release-action@2c591bcc8ecdcd2db72b97d6147f871fcd833ba5 # v1.14.0
+        with:
+          tag: ${{ steps.version.outputs.next }}
+          name: ${{ steps.version.outputs.next }}
+          generateReleaseNotes: true
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,120 @@
+# Label taxonomy for Floatr.
+# Managed as code — edit this file and push to main;
+# the sync-labels.yml workflow will apply changes automatically.
+# Do NOT create labels manually in the GitHub UI; they will be overwritten.
+
+# ── Status ─────────────────────────────────────────────────────────────────
+- name: "status:to-triage"
+  color: "ededed"
+  description: "Needs initial triage — no owner yet"
+
+- name: "status:ready"
+  color: "0075ca"
+  description: "Triaged and ready to be picked up"
+
+- name: "status:in-progress"
+  color: "e4e669"
+  description: "Actively being worked on"
+
+- name: "status:in-review"
+  color: "d4c5f9"
+  description: "PR open and awaiting review"
+
+- name: "status:to-deploy"
+  color: "0e8a16"
+  description: "Approved, merged, waiting for deployment"
+
+# ── Type ───────────────────────────────────────────────────────────────────
+- name: "type:fix"
+  color: "d93f0b"
+  description: "Bug fix"
+
+- name: "type:feature"
+  color: "84b6eb"
+  description: "New feature or enhancement"
+
+- name: "type:hotfix"
+  color: "b60205"
+  description: "Urgent production fix"
+
+- name: "type:docs"
+  color: "0075ca"
+  description: "Documentation only"
+
+- name: "type:refactor"
+  color: "e4e669"
+  description: "Code refactor with no behavior change"
+
+- name: "type:deps"
+  color: "0075ca"
+  description: "Dependency update (Dependabot or manual)"
+
+# ── Component ──────────────────────────────────────────────────────────────
+- name: "component:docker"
+  color: "1d76db"
+  description: "Docker image / Dockerfile changes"
+
+- name: "component:api"
+  color: "5319e7"
+  description: "API server (artifacts/api-server)"
+
+- name: "component:dashboard"
+  color: "f9d0c4"
+  description: "Frontend dashboard (artifacts/dashboard)"
+
+- name: "component:memory"
+  color: "bfd4f2"
+  description: "SQLite memory / FTS5 subsystem"
+
+- name: "component:scheduler"
+  color: "c2e0c6"
+  description: "Heavy-job scheduler / eval scheduler"
+
+- name: "component:gpu"
+  color: "fef2c0"
+  description: "GPU provisioning / Vast.ai integration"
+
+- name: "component:skills"
+  color: "d93f0b"
+  description: "Smart Skills system"
+
+- name: "component:swarm"
+  color: "e99695"
+  description: "Team Lane / swarm coordination"
+
+- name: "component:repo-intelligence"
+  color: "c5def5"
+  description: "Repo indexing / vector search"
+
+- name: "component:ci"
+  color: "ededed"
+  description: "CI/CD workflows and tooling"
+
+- name: "component:github"
+  color: "e4e669"
+  description: ".github config (labels, templates, CODEOWNERS)"
+
+- name: "component:design"
+  color: "f9d0c4"
+  description: "UI/UX design, mockup sandbox"
+
+- name: "component:shared-lib"
+  color: "bfd4f2"
+  description: "Shared libraries (lib/*) — no single artifact owner"
+
+# ── Priority ───────────────────────────────────────────────────────────────
+- name: "priority:critical"
+  color: "b60205"
+  description: "Drop everything — production impact"
+
+- name: "priority:high"
+  color: "d93f0b"
+  description: "Next sprint focus"
+
+- name: "priority:medium"
+  color: "e4e669"
+  description: "Should be done soon"
+
+- name: "priority:low"
+  color: "0e8a16"
+  description: "Nice to have / backlog"

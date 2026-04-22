@@ -1,0 +1,96 @@
+name: CI (reusable)
+
+# Reusable workflow — called by ci-all.yml.
+# Do not trigger this workflow directly; use ci-all.yml instead.
+on:
+  workflow_call:
+    inputs:
+      api_changed:
+        required: true
+        type: boolean
+        description: "True when artifacts/api-server/** or shared config changed"
+      dashboard_changed:
+        required: true
+        type: boolean
+        description: "True when artifacts/dashboard/** or shared config changed"
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    name: TypeScript type-check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a3252b7ae470c0ab1f13d5c01c958a3e4b86fc64 # v4.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.2.0
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript type-check (all packages)
+        run: pnpm run typecheck
+
+  build-api:
+    name: Build API server
+    runs-on: ubuntu-latest
+    if: ${{ inputs.api_changed }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a3252b7ae470c0ab1f13d5c01c958a3e4b86fc64 # v4.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.2.0
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build API server
+        run: pnpm --filter @workspace/api-server run build
+
+  build-dashboard:
+    name: Build dashboard
+    runs-on: ubuntu-latest
+    if: ${{ inputs.dashboard_changed }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a3252b7ae470c0ab1f13d5c01c958a3e4b86fc64 # v4.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.2.0
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build dashboard
+        run: pnpm --filter @workspace/dashboard run build

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+
+# Cancel in-progress runs for the same PR branch. Push-to-main and
+# merge_group runs are not cancelled (no concurrency key) so they always
+# complete for correctness.
+#
+# NOTE: paths-ignore is intentionally absent here. Required status checks
+# must run on every PR — including docs-only PRs — or GitHub branch
+# protection will block the merge when the required check never fires.
+# Path-filtering happens inside the reusable ci.yml via the detect-changes
+# job: expensive build steps are skipped when unaffected, but the typecheck
+# always runs quickly and the required check is always satisfied.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Path-filter matrix ──────────────────────────────────────────────────
+  # Determines which packages changed so the reusable CI workflow can skip
+  # build jobs that are unaffected. "Shared config" means changes to files
+  # that every package depends on — those trigger a full build.
+  detect-changes:
+    name: Detect changed packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      api_changed: ${{ steps.filter.outputs.api }}
+      dashboard_changed: ${{ steps.filter.outputs.dashboard }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Detect file changes
+        id: filter
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        with:
+          # Shared config: changes here trigger builds for all packages.
+          # api: api-server OR shared config
+          # dashboard: dashboard OR shared config
+          filters: |
+            api:
+              - "pnpm-workspace.yaml"
+              - "package.json"
+              - "tsconfig*.json"
+              - "lib/**"
+              - "artifacts/api-server/**"
+            dashboard:
+              - "pnpm-workspace.yaml"
+              - "package.json"
+              - "tsconfig*.json"
+              - "lib/**"
+              - "artifacts/dashboard/**"
+
+  # ── Reusable CI ─────────────────────────────────────────────────────────
+  ci:
+    name: CI
+    needs: detect-changes
+    uses: ./.github/workflows/ci.yml
+    with:
+      api_changed: ${{ needs.detect-changes.outputs.api_changed == 'true' }}
+      dashboard_changed: ${{ needs.detect-changes.outputs.dashboard_changed == 'true' }}
+    permissions:
+      contents: read

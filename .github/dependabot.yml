@@ -1,0 +1,82 @@
+version: 2
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Dependabot configuration — root workspace only (Phase 1)
+#
+# IMPORTANT: Per-subdirectory npm entries (/artifacts/api-server,
+# /artifacts/dashboard) are intentionally NOT listed here.
+#
+# Dependabot's pnpm support updates the root pnpm-lock.yaml. In a monorepo
+# with workspace hoisting, updating a subdirectory entry in isolation can
+# produce a lock file that diverges from what pnpm install --frozen-lockfile
+# expects, causing CI failures.
+#
+# Before adding per-subdirectory entries, validate on a test branch that:
+#   1. Dependabot PRs for root-level packages produce a pnpm-lock.yaml that
+#      `pnpm install --frozen-lockfile` accepts without modification.
+#   2. The root lockfile correctly reflects workspace package resolutions.
+#
+# Only add subdirectory entries here after that validation passes.
+# ──────────────────────────────────────────────────────────────────────────────
+
+updates:
+  # ── npm (root workspace) ──────────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "type:deps"
+      - "component:shared-lib"
+    groups:
+      # Group all non-dev dependency bumps into a single PR to reduce noise.
+      dependencies:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      # Group all dev dependency bumps into a single PR.
+      devDependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+    # Ignore major version bumps for core framework packages — those require
+    # manual assessment and dedicated PRs.
+    ignore:
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "drizzle-orm"
+        update-types: ["version-update:semver-major"]
+
+  # ── GitHub Actions ────────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "type:deps"
+      - "component:ci"
+    groups:
+      # Bundle all action updates into a single PR so SHA-pin review is
+      # contained to one place per week.
+      actions:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

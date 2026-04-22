@@ -1,0 +1,112 @@
+name: Bug Report
+description: Report a reproducible bug in Floatr
+title: "fix: <short description>"
+labels:
+  - "status:to-triage"
+  - "type:fix"
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as possible.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+      placeholder: "When I do X, Y happens instead of Z."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps to reproduce the behavior.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. Observe error '...'
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened? Include error messages, stack traces, or screenshots.
+    validations:
+      required: true
+
+  - type: input
+    id: gpu_type
+    attributes:
+      label: GPU type / profile
+      description: "e.g. RTX 4090 (Starter), A100 (Pro), H100 (Ultra)"
+      placeholder: "RTX 4090 — Starter"
+
+  - type: input
+    id: model
+    attributes:
+      label: Model / quant
+      description: "e.g. Kimi K2.6 UD-TQ1_0"
+      placeholder: "Kimi K2.6 UD-TQ1_0"
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser & OS
+      description: "e.g. Chrome 124, macOS 14.4"
+      placeholder: "Chrome 124, macOS 14.4"
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      description: Which part of the system is affected?
+      options:
+        - component:api
+        - component:dashboard
+        - component:docker
+        - component:memory
+        - component:scheduler
+        - component:gpu
+        - component:skills
+        - component:swarm
+        - component:repo-intelligence
+        - component:ci
+        - component:github
+        - component:design
+        - component:shared-lib
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority estimate
+      description: How severe is this for you?
+      options:
+        - "priority:low — annoying but workable"
+        - "priority:medium — meaningfully affects workflow"
+        - "priority:high — blocks key functionality"
+        - "priority:critical — production is broken"
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Logs, related issues, or anything else that might help.

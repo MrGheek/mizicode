@@ -1,0 +1,42 @@
+# PR labeler configuration for actions/labeler@v5
+# Triggered by pr-labeler.yml on every pull_request event.
+#
+# Rules:
+#  - Component labels are applied automatically based on changed file paths.
+#  - type:docs is inferred from documentation-only paths (safe to auto-apply).
+#  - type:deps is NOT auto-applied here; Dependabot PRs receive it via
+#    the Dependabot config. Manual dep bumps should be labelled by the author.
+#  - Type and priority labels (except type:docs) remain manual/triage-driven.
+
+"component:docker":
+  - changed-files:
+    - any-glob-to-any-file:
+      - "docker/**"
+
+"component:api":
+  - changed-files:
+    - any-glob-to-any-file:
+      - "artifacts/api-server/**"
+
+"component:dashboard":
+  - changed-files:
+    - any-glob-to-any-file:
+      - "artifacts/dashboard/**"
+
+"component:shared-lib":
+  - changed-files:
+    - any-glob-to-any-file:
+      - "lib/**"
+
+"component:github":
+  - changed-files:
+    - any-glob-to-any-file:
+      - ".github/**"
+
+"type:docs":
+  - changed-files:
+    - any-glob-to-any-file:
+      - "docs/**"
+      - "*.md"
+      - "replit.md"
+      - ".github/ISSUE_TEMPLATE/**"
