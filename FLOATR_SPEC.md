@@ -984,7 +984,7 @@ These are **not** proxied through the API server. The dashboard reaches them via
 - **Backup / Restore** buttons — trigger `GET /api/memory/backup` (file download) and `POST /api/memory/restore` (file upload)
 
 ### `/design-intelligence` — Design Intelligence
-- Browse all 8 canonical categories: `style`, `palette`, `typography`, `chart_type`, `ux_guideline`, `anti_pattern`, `stack_convention`, `ui_reasoning`
+- Browse 7 canonical categories: `style`, `palette`, `typography`, `chart_type`, `ux_guideline`, `stack_convention`, `ui_reasoning`
 - Category list loaded from `GET /api/design-intelligence/categories` (dynamic, DB-driven)
 - Search entries with keyword filter (ILIKE, debounced)
 - Paginated entry list per selected category
@@ -1201,7 +1201,7 @@ The **7 canonical `DesignCategory` values** auto-populated by the default ingest
 | `stack_convention` | Framework and library conventions (from `stacks/`) |
 | `ui_reasoning` | AI-assisted UI reasoning patterns |
 
-> The `DesignCategory` TypeScript union type in `curated-sources.ts` also includes `anti_pattern` (common design mistakes) as an 8th value. It is schema-valid but has no corresponding CSV file in the default `FILENAME_TO_CATEGORY` mapping and is never populated by the default ingest pipeline. It is available for custom source ingestion.
+> **Implementation note:** The `DesignCategory` TypeScript union type also includes `anti_pattern` as a defined value. It is schema-valid, but no default CSV file maps to it (not auto-ingested). It can be populated via custom source ingestion if needed.
 
 ### Derived skills (seeded at startup)
 Six design-intelligence skills are derived from the `nextlevelbuilder/ui-ux-pro-max-skill` source and seeded as default skills:
