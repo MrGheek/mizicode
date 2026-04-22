@@ -267,12 +267,14 @@ function MemoryTab({
   const [streamedObservations, setStreamedObservations] = useState<MemObservation[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [gaveUp, setGaveUp] = useState(false);
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
   const esRef = useRef<EventSource | null>(null);
   const onNewObservationRef = useRef(onNewObservation);
   onNewObservationRef.current = onNewObservation;
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectRef = useRef<(() => void) | null>(null);
 
   // Project path filter
   const [selectedProject, setSelectedProject] = useState("");
@@ -309,6 +311,7 @@ function MemoryTab({
         retryCountRef.current = 0;
         setStreaming(true);
         setReconnecting(false);
+        setGaveUp(false);
       };
 
       es.onmessage = (event) => {
@@ -332,6 +335,7 @@ function MemoryTab({
 
         if (retryCountRef.current >= MAX_RETRIES) {
           setReconnecting(false);
+          setGaveUp(true);
           return;
         }
 
@@ -345,6 +349,7 @@ function MemoryTab({
       };
     }
 
+    connectRef.current = connect;
     connect();
 
     return () => {
@@ -359,9 +364,25 @@ function MemoryTab({
       }
       setStreaming(false);
       setReconnecting(false);
+      setGaveUp(false);
       retryCountRef.current = 0;
     };
   }, [sessionId]);
+
+  const handleReconnect = () => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+    retryCountRef.current = 0;
+    setGaveUp(false);
+    setReconnecting(false);
+    connectRef.current?.();
+  };
 
   // Debounce search input
   useEffect(() => {
@@ -459,6 +480,36 @@ function MemoryTab({
 
   return (
     <div className="mt-4 space-y-3">
+      {/* Live feed status row */}
+      {isActive && (streaming || reconnecting || gaveUp) && (
+        <div className="flex items-center gap-2 text-xs">
+          {streaming && (
+            <span className="flex items-center gap-1 text-emerald-500">
+              <Radio className="w-3 h-3 animate-pulse" /> Live
+            </span>
+          )}
+          {reconnecting && (
+            <span className="flex items-center gap-1 text-amber-500">
+              <RefreshCw className="w-3 h-3 animate-spin" /> Reconnecting…
+            </span>
+          )}
+          {gaveUp && (
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <AlertTriangle className="w-3 h-3 text-amber-500" />
+              <span>Live feed disconnected.</span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={handleReconnect}
+              >
+                <RefreshCw className="w-3 h-3 mr-1" /> Reconnect
+              </Button>
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Filter + Search row */}
       <div className="flex gap-2 items-center">
         {/* Project path filter dropdown */}
@@ -635,11 +686,6 @@ function MemoryTab({
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
                   <Brain className="w-4 h-4" /> Recent Tool Observations
-                  {streaming && (
-                    <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-emerald-500 normal-case tracking-normal">
-                      <Radio className="w-3 h-3 animate-pulse" /> Live
-                    </span>
-                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
