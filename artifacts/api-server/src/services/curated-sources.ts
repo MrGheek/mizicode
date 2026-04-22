@@ -20,7 +20,7 @@ const REPO_OWNER = "nextlevelbuilder";
 const REPO_NAME = "ui-ux-pro-max-skill";
 const REPO_URL = `https://github.com/${REPO_OWNER}/${REPO_NAME}`;
 const API_BASE = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}`;
-const RAW_BASE = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/HEAD`;
+// RAW_BASE is constructed with the resolved headSha at ingest time for deterministic fetches
 
 // Canonical data area per task spec: src/ui-ux-pro-max/ (root CSVs + stacks/ subdirectory)
 // The upstream repo places files under src/ui-ux-pro-max/data/ — scanning the parent path
@@ -170,8 +170,9 @@ function tagsFromRow(category: string, row: Record<string, string>): string[] {
 async function ingestCsvFile(
   spec: CsvFileSpec,
   sourceId: number,
+  rawBase: string,
 ): Promise<number> {
-  const rawUrl = `${RAW_BASE}/${spec.path}`;
+  const rawUrl = `${rawBase}/${spec.path}`;
   let csvText: string;
   try {
     csvText = await fetchText(rawUrl);
@@ -250,13 +251,13 @@ export async function seedCuratedSources(): Promise<void> {
       })
       .returning();
     logger.info({ sourceId: source.id }, "Created skill source for ui-ux-pro-max-skill");
-  } else if (source.sourceType !== "curated") {
-    // Fix legacy records that were created with wrong sourceType
+  } else if (source.sourceType !== "curated" || source.trustLevel !== "reviewed") {
+    // Fix legacy records that were created with wrong sourceType or trustLevel
     await db
       .update(skillSourcesTable)
-      .set({ sourceType: "curated" })
+      .set({ sourceType: "curated", trustLevel: "reviewed" })
       .where(eq(skillSourcesTable.id, source.id));
-    source = { ...source, sourceType: "curated" };
+    source = { ...source, sourceType: "curated", trustLevel: "reviewed" };
   }
 
   // SHA-aware idempotence: skip only if SHA matches AND entries already exist
@@ -303,11 +304,14 @@ export async function seedCuratedSources(): Promise<void> {
     return;
   }
 
+  // Pin CSV fetches to the resolved headSha for deterministic, SHA-consistent ingestion
+  const rawBase = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${headSha}`;
+
   let totalUpserted = 0;
   const countByCategory: Record<string, number> = {};
 
   for (const spec of csvFiles) {
-    const upserted = await ingestCsvFile(spec, source.id);
+    const upserted = await ingestCsvFile(spec, source.id, rawBase);
     totalUpserted += upserted;
     countByCategory[spec.category] = (countByCategory[spec.category] ?? 0) + upserted;
   }
