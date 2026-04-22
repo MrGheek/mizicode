@@ -141,6 +141,12 @@ export interface SessionContext {
   repoKind?: string;
   tokenMode: TokenMode;
   historyScores?: Record<string, number>;
+  /**
+   * Eval-based lift scores (manifest.id → lift in [-MAX_EVAL_LIFT, +MAX_EVAL_LIFT]).
+   * Only set when confidence ≥ MIN_EVAL_CONFIDENCE; keys absent otherwise.
+   * Internal compiler input — not user-facing.
+   */
+  evalLiftScores?: Record<string, number>;
   repoIntelligence?: RepoIntelligenceContext;
 }
 

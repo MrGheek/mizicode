@@ -1331,10 +1331,6 @@ export interface HandoffResponse {
   createdAt: string;
 }
 
-export interface AcknowledgeHandoffRequest {
-  status: "acknowledged" | "dismissed";
-}
-
 export type CreateHandoffRequestHandoffType =
   (typeof CreateHandoffRequestHandoffType)[keyof typeof CreateHandoffRequestHandoffType];
 
@@ -1353,6 +1349,18 @@ export interface CreateHandoffRequest {
   resourcePaths?: string[];
   message?: string | null;
   ttlSeconds?: number;
+}
+
+export type AcknowledgeHandoffRequestStatus =
+  (typeof AcknowledgeHandoffRequestStatus)[keyof typeof AcknowledgeHandoffRequestStatus];
+
+export const AcknowledgeHandoffRequestStatus = {
+  acknowledged: "acknowledged",
+  dismissed: "dismissed",
+} as const;
+
+export interface AcknowledgeHandoffRequest {
+  status: AcknowledgeHandoffRequestStatus;
 }
 
 export interface CoordinationLaneSummary {
@@ -1499,6 +1507,365 @@ export interface UpdateHeavyJobRequest {
   deferUntilSeconds?: number | null;
 }
 
+export type EvalRunResponseStatus =
+  (typeof EvalRunResponseStatus)[keyof typeof EvalRunResponseStatus];
+
+export const EvalRunResponseStatus = {
+  queued: "queued",
+  preparing: "preparing",
+  running: "running",
+  scoring: "scoring",
+  completed: "completed",
+  error: "error",
+} as const;
+
+export type EvalRunResponseRunType =
+  (typeof EvalRunResponseRunType)[keyof typeof EvalRunResponseRunType];
+
+export const EvalRunResponseRunType = {
+  baseline: "baseline",
+  skill: "skill",
+  bundle: "bundle",
+  bundle_variant: "bundle_variant",
+} as const;
+
+/**
+ * Per-run scoring weights override. When set, replaces the task-mode preset weights for all variants in this run.
+ */
+export type EvalRunResponseScoringWeightsJson = {
+  [key: string]: number;
+} | null;
+
+export interface EvalRunResponse {
+  id: number;
+  status: EvalRunResponseStatus;
+  runType: EvalRunResponseRunType;
+  targetSkillId?: number | null;
+  targetBundleId?: number | null;
+  taskMode: string;
+  sessionType: string;
+  tokenMode: string;
+  modelProfile: string;
+  repoKind?: string | null;
+  repoLangsJson?: string[] | null;
+  repoCommitSha?: string | null;
+  bundleVersionHash?: string | null;
+  /** SHA-256 hash encoding model profile, token mode, session type, task mode, and skill version hashes. Changes whenever any run-condition dimension changes. */
+  configVersion: string;
+  /** Per-run scoring weights override. When set, replaces the task-mode preset weights for all variants in this run. */
+  scoringWeightsJson?: EvalRunResponseScoringWeightsJson;
+  priority: number;
+  costCapUsd?: number | null;
+  actualCostUsd?: number | null;
+  errorDetails?: string | null;
+  notes?: string | null;
+  scheduledAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type EvalVariantResponseVariantType =
+  (typeof EvalVariantResponseVariantType)[keyof typeof EvalVariantResponseVariantType];
+
+export const EvalVariantResponseVariantType = {
+  baseline: "baseline",
+  treatment: "treatment",
+  ablated: "ablated",
+} as const;
+
+export type EvalVariantResponseScoringWeightsJson = {
+  [key: string]: unknown;
+} | null;
+
+export interface EvalVariantResponse {
+  id: number;
+  runId: number;
+  variantType: EvalVariantResponseVariantType;
+  skillIdsIncluded?: string[] | null;
+  skillIdsExcluded?: string[] | null;
+  timeToFirstAnswerMs?: number | null;
+  totalElapsedMs?: number | null;
+  memoryItemsRetrieved?: number | null;
+  contextBytesInjected?: number | null;
+  shieldedBytesAvoided?: number | null;
+  repoHitCount?: number | null;
+  /** Number of repo context cache hits during this variant run (0 = miss, >0 = hit count) */
+  repoCacheHit?: number | null;
+  success?: boolean | null;
+  userRating?: number | null;
+  costUsd?: number | null;
+  rawScore?: number | null;
+  compositeScore?: number | null;
+  scoringWeightsJson?: EvalVariantResponseScoringWeightsJson;
+  notes?: string | null;
+  createdAt: string;
+}
+
+export interface EvalRunListResponse {
+  runs: EvalRunResponse[];
+  total: number;
+}
+
+export interface EvalRunDetailResponse {
+  run: EvalRunResponse;
+  variants: EvalVariantResponse[];
+}
+
+export interface EvalRunFinalizeResponse {
+  run?: EvalRunResponse | null;
+  message: string;
+}
+
+export type ScheduleEvalRunRequestRunType =
+  (typeof ScheduleEvalRunRequestRunType)[keyof typeof ScheduleEvalRunRequestRunType];
+
+export const ScheduleEvalRunRequestRunType = {
+  baseline: "baseline",
+  skill: "skill",
+  bundle: "bundle",
+  bundle_variant: "bundle_variant",
+} as const;
+
+export type ScheduleEvalRunRequestTaskMode =
+  (typeof ScheduleEvalRunRequestTaskMode)[keyof typeof ScheduleEvalRunRequestTaskMode];
+
+export const ScheduleEvalRunRequestTaskMode = {
+  build: "build",
+  debug: "debug",
+  review: "review",
+  refactor: "refactor",
+  explore: "explore",
+  team: "team",
+} as const;
+
+export type ScheduleEvalRunRequestSessionType =
+  (typeof ScheduleEvalRunRequestSessionType)[keyof typeof ScheduleEvalRunRequestSessionType];
+
+export const ScheduleEvalRunRequestSessionType = {
+  solo: "solo",
+  team: "team",
+} as const;
+
+export type ScheduleEvalRunRequestTokenMode =
+  (typeof ScheduleEvalRunRequestTokenMode)[keyof typeof ScheduleEvalRunRequestTokenMode];
+
+export const ScheduleEvalRunRequestTokenMode = {
+  full: "full",
+  core: "core",
+  lean: "lean",
+  ultra: "ultra",
+} as const;
+
+/**
+ * Optional per-run scoring weights override. Replaces task-mode preset weights for all variants in this run. Useful for A/B testing weight regimes or sensitivity analysis.
+ */
+export type ScheduleEvalRunRequestScoringWeightsOverride = {
+  successScore?: number;
+  timeScore?: number;
+  retrievalEfficiency?: number;
+  contextEfficiency?: number;
+  stabilityPenalty?: number;
+  userFeedbackBonus?: number;
+} | null;
+
+export interface ScheduleEvalRunRequest {
+  runType: ScheduleEvalRunRequestRunType;
+  targetSkillId?: number | null;
+  targetBundleId?: number | null;
+  taskMode?: ScheduleEvalRunRequestTaskMode;
+  sessionType?: ScheduleEvalRunRequestSessionType;
+  tokenMode?: ScheduleEvalRunRequestTokenMode;
+  modelProfile?: string;
+  repoKind?: string | null;
+  repoLangs?: string[] | null;
+  repoCommitSha?: string | null;
+  notes?: string | null;
+  costCapOverrideUsd?: number | null;
+  /** Optional per-run scoring weights override. Replaces task-mode preset weights for all variants in this run. Useful for A/B testing weight regimes or sensitivity analysis. */
+  scoringWeightsOverride?: ScheduleEvalRunRequestScoringWeightsOverride;
+}
+
+export interface ScheduleEvalRunResponse {
+  run: EvalRunResponse;
+  message: string;
+}
+
+export type RecordEvalVariantRequestVariantType =
+  (typeof RecordEvalVariantRequestVariantType)[keyof typeof RecordEvalVariantRequestVariantType];
+
+export const RecordEvalVariantRequestVariantType = {
+  baseline: "baseline",
+  treatment: "treatment",
+  ablated: "ablated",
+} as const;
+
+export type RecordEvalVariantRequestMetrics = { [key: string]: unknown } | null;
+
+export interface RecordEvalVariantRequest {
+  variantType: RecordEvalVariantRequestVariantType;
+  skillIdsIncluded?: string[] | null;
+  skillIdsExcluded?: string[] | null;
+  metrics?: RecordEvalVariantRequestMetrics;
+  notes?: string | null;
+}
+
+export type UpdateEvalRunStatusRequestStatus =
+  (typeof UpdateEvalRunStatusRequestStatus)[keyof typeof UpdateEvalRunStatusRequestStatus];
+
+export const UpdateEvalRunStatusRequestStatus = {
+  preparing: "preparing",
+  running: "running",
+  scoring: "scoring",
+  completed: "completed",
+  error: "error",
+} as const;
+
+export interface UpdateEvalRunStatusRequest {
+  status: UpdateEvalRunStatusRequestStatus;
+  errorDetails?: string | null;
+  actualCostUsd?: number | null;
+}
+
+export interface ScoringWeights {
+  successScore: number;
+  timeScore: number;
+  retrievalEfficiency: number;
+  contextEfficiency: number;
+  stabilityPenalty: number;
+  userFeedbackBonus: number;
+}
+
+export interface TaskModeScoringPreset {
+  taskMode: string;
+  description: string;
+  weights: ScoringWeights;
+}
+
+export interface EvalBudgetConfig {
+  maxConcurrentEvalJobs: number;
+  perRunCostCapUsd: number;
+  dailyEvalBudgetUsd: number;
+  evalJobPriority: number;
+  configVersion: string;
+}
+
+export type EvalScoringPresetsResponsePresets = {
+  [key: string]: TaskModeScoringPreset;
+};
+
+export interface EvalScoringPresetsResponse {
+  presets: EvalScoringPresetsResponsePresets;
+  budgetConfig: EvalBudgetConfig;
+}
+
+export interface SkillLeaderboardEntry {
+  skillId: number;
+  slug: string;
+  name: string;
+  class: string;
+  trustTier: string;
+  evalAppearances: number;
+  positiveLiftCount: number;
+  negativeLiftCount: number;
+  confidenceScore: number;
+  estimatedContribution: number;
+  lastEvalRunId?: number | null;
+  regressionRisk: boolean;
+  feedbackHelpfulRate?: number | null;
+}
+
+export interface SkillLeaderboardResponse {
+  topByLift: SkillLeaderboardEntry[];
+  regressionRisk: SkillLeaderboardEntry[];
+  total: number;
+  generatedAt: string;
+}
+
+export interface BundleLeaderboardEntry {
+  bundleId: number;
+  slug: string;
+  name: string;
+  taskMode?: string | null;
+  tokenMode: string;
+  evalRunCount: number;
+  avgCompositeScore?: number | null;
+  avgBaselineScore?: number | null;
+  avgLift?: number | null;
+  confidenceScore: number;
+  lastEvalRunId?: number | null;
+}
+
+export type BundleLeaderboardResponseByTaskMode = {
+  [key: string]: BundleLeaderboardEntry[];
+};
+
+export type BundleLeaderboardResponseByTokenMode = {
+  [key: string]: BundleLeaderboardEntry[];
+};
+
+export type BundleLeaderboardResponseByRepoKind = {
+  [key: string]: BundleLeaderboardEntry[];
+};
+
+export type BundleLeaderboardResponseByModelFamily = {
+  [key: string]: BundleLeaderboardEntry[];
+};
+
+export interface BundleLeaderboardResponse {
+  overall: BundleLeaderboardEntry[];
+  byTaskMode: BundleLeaderboardResponseByTaskMode;
+  byTokenMode: BundleLeaderboardResponseByTokenMode;
+  byRepoKind: BundleLeaderboardResponseByRepoKind;
+  byModelFamily: BundleLeaderboardResponseByModelFamily;
+  total: number;
+  generatedAt: string;
+}
+
+/**
+ * Per-skill aggregate eval tracking record
+ */
+export interface SkillEvalAggregate {
+  id: number;
+  skillId: number;
+  activationCount: number;
+  evalAppearances: number;
+  positiveLiftCount: number;
+  negativeLiftCount: number;
+  confidenceScore: number;
+  estimatedContribution: number;
+  lastEvalRunId?: number | null;
+  updatedAt: string;
+}
+
+export interface SkillPerformanceResponse {
+  skill?: SkillEvalAggregate | null;
+  recentRuns: EvalRunResponse[];
+}
+
+/**
+ * Per-bundle aggregate eval tracking record
+ */
+export interface BundleEvalAggregate {
+  id: number;
+  bundleId: number;
+  evalRunCount: number;
+  avgCompositeScore?: number | null;
+  avgBaselineScore?: number | null;
+  avgLift?: number | null;
+  confidenceScore: number;
+  bestTaskMode?: string | null;
+  bestTokenMode?: string | null;
+  lastEvalRunId?: number | null;
+  updatedAt: string;
+}
+
+export interface BundlePerformanceResponse {
+  bundle?: BundleEvalAggregate | null;
+  recentRuns: EvalRunResponse[];
+}
+
 export type SearchOffersParams = {
   /**
    * Filter offers by GPU profile
@@ -1564,12 +1931,71 @@ export const ListSkillsReviewStatus = {
   rejected: "rejected",
 } as const;
 
+export type ListSkillEvalsParams = {
+  /**
+   * @maximum 100
+   */
+  limit?: number;
+  offset?: number;
+  status?: ListSkillEvalsStatus;
+  runType?: ListSkillEvalsRunType;
+  taskMode?: string;
+};
+
+export type ListSkillEvalsStatus =
+  (typeof ListSkillEvalsStatus)[keyof typeof ListSkillEvalsStatus];
+
+export const ListSkillEvalsStatus = {
+  queued: "queued",
+  preparing: "preparing",
+  running: "running",
+  scoring: "scoring",
+  completed: "completed",
+  error: "error",
+} as const;
+
+export type ListSkillEvalsRunType =
+  (typeof ListSkillEvalsRunType)[keyof typeof ListSkillEvalsRunType];
+
+export const ListSkillEvalsRunType = {
+  baseline: "baseline",
+  skill: "skill",
+  bundle: "bundle",
+  bundle_variant: "bundle_variant",
+} as const;
+
+export type ProcessNextQueuedEvalRun200 = {
+  processed: boolean;
+  runId?: number | null;
+  reason?: string | null;
+};
+
+export type GetSkillLeaderboardParams = {
+  limit?: number;
+  taskMode?: string;
+  minConfidence?: number;
+};
+
 export type GetSkillFeedbackHistoryParams = {
   /**
    * @maximum 200
    */
   limit?: number;
   offset?: number;
+};
+
+export type GetBundleLeaderboardParams = {
+  limit?: number;
+  taskMode?: string;
+  tokenMode?: string;
+  /**
+   * Filter to bundles that have been evaluated on this repo kind (e.g. monorepo, library, service)
+   */
+  repoKind?: string;
+  /**
+   * Filter to bundles evaluated with this model family (e.g. kimi, openai, anthropic, google, meta, deepseek, mistral)
+   */
+  modelFamily?: string;
 };
 
 export type SearchRepoParams = {

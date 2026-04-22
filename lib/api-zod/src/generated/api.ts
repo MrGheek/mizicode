@@ -828,6 +828,428 @@ export const CompileSkillPreviewResponse = zod.object({
 });
 
 /**
+ * Returns all eval runs with optional status/type/task-mode filters.
+ * @summary List eval runs
+ */
+export const listSkillEvalsQueryLimitDefault = 20;
+export const listSkillEvalsQueryLimitMax = 100;
+
+export const listSkillEvalsQueryOffsetDefault = 0;
+
+export const ListSkillEvalsQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .max(listSkillEvalsQueryLimitMax)
+    .default(listSkillEvalsQueryLimitDefault),
+  offset: zod.coerce.number().default(listSkillEvalsQueryOffsetDefault),
+  status: zod
+    .enum(["queued", "preparing", "running", "scoring", "completed", "error"])
+    .optional(),
+  runType: zod
+    .enum(["baseline", "skill", "bundle", "bundle_variant"])
+    .optional(),
+  taskMode: zod.coerce.string().optional(),
+});
+
+export const ListSkillEvalsResponse = zod.object({
+  runs: zod.array(
+    zod.object({
+      id: zod.number(),
+      status: zod.enum([
+        "queued",
+        "preparing",
+        "running",
+        "scoring",
+        "completed",
+        "error",
+      ]),
+      runType: zod.enum(["baseline", "skill", "bundle", "bundle_variant"]),
+      targetSkillId: zod.number().nullish(),
+      targetBundleId: zod.number().nullish(),
+      taskMode: zod.string(),
+      sessionType: zod.string(),
+      tokenMode: zod.string(),
+      modelProfile: zod.string(),
+      repoKind: zod.string().nullish(),
+      repoLangsJson: zod.array(zod.string()).nullish(),
+      repoCommitSha: zod.string().nullish(),
+      bundleVersionHash: zod.string().nullish(),
+      configVersion: zod
+        .string()
+        .describe(
+          "SHA-256 hash encoding model profile, token mode, session type, task mode, and skill version hashes. Changes whenever any run-condition dimension changes.",
+        ),
+      scoringWeightsJson: zod
+        .record(zod.string(), zod.number())
+        .nullish()
+        .describe(
+          "Per-run scoring weights override. When set, replaces the task-mode preset weights for all variants in this run.",
+        ),
+      priority: zod.number(),
+      costCapUsd: zod.number().nullish(),
+      actualCostUsd: zod.number().nullish(),
+      errorDetails: zod.string().nullish(),
+      notes: zod.string().nullish(),
+      scheduledAt: zod.coerce.date().nullish(),
+      startedAt: zod.coerce.date().nullish(),
+      completedAt: zod.coerce.date().nullish(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+  total: zod.number(),
+});
+
+/**
+ * Schedules a new eval run. Enforces daily budget and max-concurrent-job caps. Returns 429 when budget or concurrency limits are exceeded.
+ * @summary Schedule an async eval run
+ */
+export const scheduleEvalRunBodyTaskModeDefault = `build`;
+export const scheduleEvalRunBodySessionTypeDefault = `solo`;
+export const scheduleEvalRunBodyTokenModeDefault = `core`;
+export const scheduleEvalRunBodyModelProfileDefault = `kimi`;
+
+export const ScheduleEvalRunBody = zod.object({
+  runType: zod.enum(["baseline", "skill", "bundle", "bundle_variant"]),
+  targetSkillId: zod.number().nullish(),
+  targetBundleId: zod.number().nullish(),
+  taskMode: zod
+    .enum(["build", "debug", "review", "refactor", "explore", "team"])
+    .default(scheduleEvalRunBodyTaskModeDefault),
+  sessionType: zod
+    .enum(["solo", "team"])
+    .default(scheduleEvalRunBodySessionTypeDefault),
+  tokenMode: zod
+    .enum(["full", "core", "lean", "ultra"])
+    .default(scheduleEvalRunBodyTokenModeDefault),
+  modelProfile: zod.string().default(scheduleEvalRunBodyModelProfileDefault),
+  repoKind: zod.string().nullish(),
+  repoLangs: zod.array(zod.string()).nullish(),
+  repoCommitSha: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  costCapOverrideUsd: zod.number().nullish(),
+  scoringWeightsOverride: zod
+    .object({
+      successScore: zod.number().optional(),
+      timeScore: zod.number().optional(),
+      retrievalEfficiency: zod.number().optional(),
+      contextEfficiency: zod.number().optional(),
+      stabilityPenalty: zod.number().optional(),
+      userFeedbackBonus: zod.number().optional(),
+    })
+    .nullish()
+    .describe(
+      "Optional per-run scoring weights override. Replaces task-mode preset weights for all variants in this run. Useful for A\/B testing weight regimes or sensitivity analysis.",
+    ),
+});
+
+/**
+ * Processes the oldest queued eval run respecting budget and concurrency limits. Useful for testing and manual intervention.
+ * @summary Manually trigger the eval worker to process the next queued run
+ */
+export const ProcessNextQueuedEvalRunResponse = zod.object({
+  processed: zod.boolean(),
+  runId: zod.number().nullish(),
+  reason: zod.string().nullish(),
+});
+
+/**
+ * Returns the explicit, inspectable scoring weight presets for each task mode plus the current eval budget config.
+ * @summary Get task-mode scoring presets and budget config
+ */
+export const GetEvalScoringPresetsResponse = zod.object({
+  presets: zod.record(
+    zod.string(),
+    zod.object({
+      taskMode: zod.string(),
+      description: zod.string(),
+      weights: zod.object({
+        successScore: zod.number(),
+        timeScore: zod.number(),
+        retrievalEfficiency: zod.number(),
+        contextEfficiency: zod.number(),
+        stabilityPenalty: zod.number(),
+        userFeedbackBonus: zod.number(),
+      }),
+    }),
+  ),
+  budgetConfig: zod.object({
+    maxConcurrentEvalJobs: zod.number(),
+    perRunCostCapUsd: zod.number(),
+    dailyEvalBudgetUsd: zod.number(),
+    evalJobPriority: zod.number(),
+    configVersion: zod.string(),
+  }),
+});
+
+/**
+ * @summary Get an eval run with its variants
+ */
+export const GetEvalRunParams = zod.object({
+  runId: zod.coerce.number(),
+});
+
+export const GetEvalRunResponse = zod.object({
+  run: zod.object({
+    id: zod.number(),
+    status: zod.enum([
+      "queued",
+      "preparing",
+      "running",
+      "scoring",
+      "completed",
+      "error",
+    ]),
+    runType: zod.enum(["baseline", "skill", "bundle", "bundle_variant"]),
+    targetSkillId: zod.number().nullish(),
+    targetBundleId: zod.number().nullish(),
+    taskMode: zod.string(),
+    sessionType: zod.string(),
+    tokenMode: zod.string(),
+    modelProfile: zod.string(),
+    repoKind: zod.string().nullish(),
+    repoLangsJson: zod.array(zod.string()).nullish(),
+    repoCommitSha: zod.string().nullish(),
+    bundleVersionHash: zod.string().nullish(),
+    configVersion: zod
+      .string()
+      .describe(
+        "SHA-256 hash encoding model profile, token mode, session type, task mode, and skill version hashes. Changes whenever any run-condition dimension changes.",
+      ),
+    scoringWeightsJson: zod
+      .record(zod.string(), zod.number())
+      .nullish()
+      .describe(
+        "Per-run scoring weights override. When set, replaces the task-mode preset weights for all variants in this run.",
+      ),
+    priority: zod.number(),
+    costCapUsd: zod.number().nullish(),
+    actualCostUsd: zod.number().nullish(),
+    errorDetails: zod.string().nullish(),
+    notes: zod.string().nullish(),
+    scheduledAt: zod.coerce.date().nullish(),
+    startedAt: zod.coerce.date().nullish(),
+    completedAt: zod.coerce.date().nullish(),
+    createdAt: zod.coerce.date(),
+    updatedAt: zod.coerce.date(),
+  }),
+  variants: zod.array(
+    zod.object({
+      id: zod.number(),
+      runId: zod.number(),
+      variantType: zod.enum(["baseline", "treatment", "ablated"]),
+      skillIdsIncluded: zod.array(zod.string()).nullish(),
+      skillIdsExcluded: zod.array(zod.string()).nullish(),
+      timeToFirstAnswerMs: zod.number().nullish(),
+      totalElapsedMs: zod.number().nullish(),
+      memoryItemsRetrieved: zod.number().nullish(),
+      contextBytesInjected: zod.number().nullish(),
+      shieldedBytesAvoided: zod.number().nullish(),
+      repoHitCount: zod.number().nullish(),
+      repoCacheHit: zod
+        .number()
+        .nullish()
+        .describe(
+          "Number of repo context cache hits during this variant run (0 = miss, >0 = hit count)",
+        ),
+      success: zod.boolean().nullish(),
+      userRating: zod.number().nullish(),
+      costUsd: zod.number().nullish(),
+      rawScore: zod.number().nullish(),
+      compositeScore: zod.number().nullish(),
+      scoringWeightsJson: zod.record(zod.string(), zod.unknown()).nullish(),
+      notes: zod.string().nullish(),
+      createdAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * Records a baseline, treatment, or ablated variant for an in-progress eval run. Composite scores are computed automatically using the run's task-mode preset.
+ * @summary Record a variant result for an eval run
+ */
+export const RecordEvalVariantParams = zod.object({
+  runId: zod.coerce.number(),
+});
+
+export const RecordEvalVariantBody = zod.object({
+  variantType: zod.enum(["baseline", "treatment", "ablated"]),
+  skillIdsIncluded: zod.array(zod.string()).nullish(),
+  skillIdsExcluded: zod.array(zod.string()).nullish(),
+  metrics: zod.record(zod.string(), zod.unknown()).nullish(),
+  notes: zod.string().nullish(),
+});
+
+/**
+ * Computes baseline-vs-treatment lift, updates per-skill and per-bundle aggregates, and marks the run completed.
+ * @summary Finalize an eval run and apply contribution heuristics
+ */
+export const FinalizeEvalRunParams = zod.object({
+  runId: zod.coerce.number(),
+});
+
+export const FinalizeEvalRunResponse = zod.object({
+  run: zod
+    .object({
+      id: zod.number(),
+      status: zod.enum([
+        "queued",
+        "preparing",
+        "running",
+        "scoring",
+        "completed",
+        "error",
+      ]),
+      runType: zod.enum(["baseline", "skill", "bundle", "bundle_variant"]),
+      targetSkillId: zod.number().nullish(),
+      targetBundleId: zod.number().nullish(),
+      taskMode: zod.string(),
+      sessionType: zod.string(),
+      tokenMode: zod.string(),
+      modelProfile: zod.string(),
+      repoKind: zod.string().nullish(),
+      repoLangsJson: zod.array(zod.string()).nullish(),
+      repoCommitSha: zod.string().nullish(),
+      bundleVersionHash: zod.string().nullish(),
+      configVersion: zod
+        .string()
+        .describe(
+          "SHA-256 hash encoding model profile, token mode, session type, task mode, and skill version hashes. Changes whenever any run-condition dimension changes.",
+        ),
+      scoringWeightsJson: zod
+        .record(zod.string(), zod.number())
+        .nullish()
+        .describe(
+          "Per-run scoring weights override. When set, replaces the task-mode preset weights for all variants in this run.",
+        ),
+      priority: zod.number(),
+      costCapUsd: zod.number().nullish(),
+      actualCostUsd: zod.number().nullish(),
+      errorDetails: zod.string().nullish(),
+      notes: zod.string().nullish(),
+      scheduledAt: zod.coerce.date().nullish(),
+      startedAt: zod.coerce.date().nullish(),
+      completedAt: zod.coerce.date().nullish(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    })
+    .nullish(),
+  message: zod.string(),
+});
+
+/**
+ * Advances the run through queued → preparing → running → scoring → completed|error. Yields (429) if a heavy interactive job is active.
+ * @summary Advance an eval run's status
+ */
+export const UpdateEvalRunStatusParams = zod.object({
+  runId: zod.coerce.number(),
+});
+
+export const UpdateEvalRunStatusBody = zod.object({
+  status: zod.enum(["preparing", "running", "scoring", "completed", "error"]),
+  errorDetails: zod.string().nullish(),
+  actualCostUsd: zod.number().nullish(),
+});
+
+export const UpdateEvalRunStatusResponse = zod.object({
+  id: zod.number(),
+  status: zod.enum([
+    "queued",
+    "preparing",
+    "running",
+    "scoring",
+    "completed",
+    "error",
+  ]),
+  runType: zod.enum(["baseline", "skill", "bundle", "bundle_variant"]),
+  targetSkillId: zod.number().nullish(),
+  targetBundleId: zod.number().nullish(),
+  taskMode: zod.string(),
+  sessionType: zod.string(),
+  tokenMode: zod.string(),
+  modelProfile: zod.string(),
+  repoKind: zod.string().nullish(),
+  repoLangsJson: zod.array(zod.string()).nullish(),
+  repoCommitSha: zod.string().nullish(),
+  bundleVersionHash: zod.string().nullish(),
+  configVersion: zod
+    .string()
+    .describe(
+      "SHA-256 hash encoding model profile, token mode, session type, task mode, and skill version hashes. Changes whenever any run-condition dimension changes.",
+    ),
+  scoringWeightsJson: zod
+    .record(zod.string(), zod.number())
+    .nullish()
+    .describe(
+      "Per-run scoring weights override. When set, replaces the task-mode preset weights for all variants in this run.",
+    ),
+  priority: zod.number(),
+  costCapUsd: zod.number().nullish(),
+  actualCostUsd: zod.number().nullish(),
+  errorDetails: zod.string().nullish(),
+  notes: zod.string().nullish(),
+  scheduledAt: zod.coerce.date().nullish(),
+  startedAt: zod.coerce.date().nullish(),
+  completedAt: zod.coerce.date().nullish(),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
+});
+
+/**
+ * Returns top skills by eval-measured lift and skills with negative lift or regression risk. Backed by stored eval data.
+ * @summary Skill leaderboard — top skills by measured lift and regression risk
+ */
+export const getSkillLeaderboardQueryLimitDefault = 20;
+export const getSkillLeaderboardQueryMinConfidenceDefault = 0.1;
+
+export const GetSkillLeaderboardQueryParams = zod.object({
+  limit: zod.coerce.number().default(getSkillLeaderboardQueryLimitDefault),
+  taskMode: zod.coerce.string().optional(),
+  minConfidence: zod.coerce
+    .number()
+    .default(getSkillLeaderboardQueryMinConfidenceDefault),
+});
+
+export const GetSkillLeaderboardResponse = zod.object({
+  topByLift: zod.array(
+    zod.object({
+      skillId: zod.number(),
+      slug: zod.string(),
+      name: zod.string(),
+      class: zod.string(),
+      trustTier: zod.string(),
+      evalAppearances: zod.number(),
+      positiveLiftCount: zod.number(),
+      negativeLiftCount: zod.number(),
+      confidenceScore: zod.number(),
+      estimatedContribution: zod.number(),
+      lastEvalRunId: zod.number().nullish(),
+      regressionRisk: zod.boolean(),
+      feedbackHelpfulRate: zod.number().nullish(),
+    }),
+  ),
+  regressionRisk: zod.array(
+    zod.object({
+      skillId: zod.number(),
+      slug: zod.string(),
+      name: zod.string(),
+      class: zod.string(),
+      trustTier: zod.string(),
+      evalAppearances: zod.number(),
+      positiveLiftCount: zod.number(),
+      negativeLiftCount: zod.number(),
+      confidenceScore: zod.number(),
+      estimatedContribution: zod.number(),
+      lastEvalRunId: zod.number().nullish(),
+      regressionRisk: zod.boolean(),
+      feedbackHelpfulRate: zod.number().nullish(),
+    }),
+  ),
+  total: zod.number(),
+  generatedAt: zod.coerce.date(),
+});
+
+/**
  * @summary Get aggregated feedback scores for all skills
  */
 export const GetSkillFeedbackScoresResponse = zod.object({
@@ -875,6 +1297,77 @@ export const GetSkillResponse = zod.object({
     .record(zod.string(), zod.unknown())
     .nullish()
     .describe("The latest version manifest JSON for this skill"),
+});
+
+/**
+ * Returns per-skill eval aggregate (lift counts, confidence, contribution) and recent eval runs.
+ * @summary Get eval performance data for a specific skill
+ */
+export const GetSkillPerformanceParams = zod.object({
+  skillId: zod.coerce.number(),
+});
+
+export const GetSkillPerformanceResponse = zod.object({
+  skill: zod
+    .object({
+      id: zod.number(),
+      skillId: zod.number(),
+      activationCount: zod.number(),
+      evalAppearances: zod.number(),
+      positiveLiftCount: zod.number(),
+      negativeLiftCount: zod.number(),
+      confidenceScore: zod.number(),
+      estimatedContribution: zod.number(),
+      lastEvalRunId: zod.number().nullish(),
+      updatedAt: zod.coerce.date(),
+    })
+    .nullish()
+    .describe("Per-skill aggregate eval tracking record"),
+  recentRuns: zod.array(
+    zod.object({
+      id: zod.number(),
+      status: zod.enum([
+        "queued",
+        "preparing",
+        "running",
+        "scoring",
+        "completed",
+        "error",
+      ]),
+      runType: zod.enum(["baseline", "skill", "bundle", "bundle_variant"]),
+      targetSkillId: zod.number().nullish(),
+      targetBundleId: zod.number().nullish(),
+      taskMode: zod.string(),
+      sessionType: zod.string(),
+      tokenMode: zod.string(),
+      modelProfile: zod.string(),
+      repoKind: zod.string().nullish(),
+      repoLangsJson: zod.array(zod.string()).nullish(),
+      repoCommitSha: zod.string().nullish(),
+      bundleVersionHash: zod.string().nullish(),
+      configVersion: zod
+        .string()
+        .describe(
+          "SHA-256 hash encoding model profile, token mode, session type, task mode, and skill version hashes. Changes whenever any run-condition dimension changes.",
+        ),
+      scoringWeightsJson: zod
+        .record(zod.string(), zod.number())
+        .nullish()
+        .describe(
+          "Per-run scoring weights override. When set, replaces the task-mode preset weights for all variants in this run.",
+        ),
+      priority: zod.number(),
+      costCapUsd: zod.number().nullish(),
+      actualCostUsd: zod.number().nullish(),
+      errorDetails: zod.string().nullish(),
+      notes: zod.string().nullish(),
+      scheduledAt: zod.coerce.date().nullish(),
+      startedAt: zod.coerce.date().nullish(),
+      completedAt: zod.coerce.date().nullish(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
 });
 
 /**
@@ -1033,6 +1526,122 @@ export const GetSkillFeedbackHistoryResponse = zod.object({
 });
 
 /**
+ * Returns top bundles overall and by task mode / token mode / repo kind / model family. Backed by stored eval data.
+ * @summary Bundle leaderboard — top bundles by measured lift
+ */
+export const getBundleLeaderboardQueryLimitDefault = 20;
+
+export const GetBundleLeaderboardQueryParams = zod.object({
+  limit: zod.coerce.number().default(getBundleLeaderboardQueryLimitDefault),
+  taskMode: zod.coerce.string().optional(),
+  tokenMode: zod.coerce.string().optional(),
+  repoKind: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Filter to bundles that have been evaluated on this repo kind (e.g. monorepo, library, service)",
+    ),
+  modelFamily: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "Filter to bundles evaluated with this model family (e.g. kimi, openai, anthropic, google, meta, deepseek, mistral)",
+    ),
+});
+
+export const GetBundleLeaderboardResponse = zod.object({
+  overall: zod.array(
+    zod.object({
+      bundleId: zod.number(),
+      slug: zod.string(),
+      name: zod.string(),
+      taskMode: zod.string().nullish(),
+      tokenMode: zod.string(),
+      evalRunCount: zod.number(),
+      avgCompositeScore: zod.number().nullish(),
+      avgBaselineScore: zod.number().nullish(),
+      avgLift: zod.number().nullish(),
+      confidenceScore: zod.number(),
+      lastEvalRunId: zod.number().nullish(),
+    }),
+  ),
+  byTaskMode: zod.record(
+    zod.string(),
+    zod.array(
+      zod.object({
+        bundleId: zod.number(),
+        slug: zod.string(),
+        name: zod.string(),
+        taskMode: zod.string().nullish(),
+        tokenMode: zod.string(),
+        evalRunCount: zod.number(),
+        avgCompositeScore: zod.number().nullish(),
+        avgBaselineScore: zod.number().nullish(),
+        avgLift: zod.number().nullish(),
+        confidenceScore: zod.number(),
+        lastEvalRunId: zod.number().nullish(),
+      }),
+    ),
+  ),
+  byTokenMode: zod.record(
+    zod.string(),
+    zod.array(
+      zod.object({
+        bundleId: zod.number(),
+        slug: zod.string(),
+        name: zod.string(),
+        taskMode: zod.string().nullish(),
+        tokenMode: zod.string(),
+        evalRunCount: zod.number(),
+        avgCompositeScore: zod.number().nullish(),
+        avgBaselineScore: zod.number().nullish(),
+        avgLift: zod.number().nullish(),
+        confidenceScore: zod.number(),
+        lastEvalRunId: zod.number().nullish(),
+      }),
+    ),
+  ),
+  byRepoKind: zod.record(
+    zod.string(),
+    zod.array(
+      zod.object({
+        bundleId: zod.number(),
+        slug: zod.string(),
+        name: zod.string(),
+        taskMode: zod.string().nullish(),
+        tokenMode: zod.string(),
+        evalRunCount: zod.number(),
+        avgCompositeScore: zod.number().nullish(),
+        avgBaselineScore: zod.number().nullish(),
+        avgLift: zod.number().nullish(),
+        confidenceScore: zod.number(),
+        lastEvalRunId: zod.number().nullish(),
+      }),
+    ),
+  ),
+  byModelFamily: zod.record(
+    zod.string(),
+    zod.array(
+      zod.object({
+        bundleId: zod.number(),
+        slug: zod.string(),
+        name: zod.string(),
+        taskMode: zod.string().nullish(),
+        tokenMode: zod.string(),
+        evalRunCount: zod.number(),
+        avgCompositeScore: zod.number().nullish(),
+        avgBaselineScore: zod.number().nullish(),
+        avgLift: zod.number().nullish(),
+        confidenceScore: zod.number(),
+        lastEvalRunId: zod.number().nullish(),
+      }),
+    ),
+  ),
+  total: zod.number(),
+  generatedAt: zod.coerce.date(),
+});
+
+/**
  * @summary List all skill bundles
  */
 export const ListSkillBundlesResponse = zod.object({
@@ -1179,6 +1788,78 @@ export const UpdateSkillBundleResponse = zod.object({
   }),
   activationMode: zod.string().nullish(),
   message: zod.string().nullish(),
+});
+
+/**
+ * Returns per-bundle eval aggregate (run count, avg scores, avg lift, confidence) and recent eval runs.
+ * @summary Get eval performance data for a specific bundle
+ */
+export const GetBundlePerformanceParams = zod.object({
+  bundleId: zod.coerce.number(),
+});
+
+export const GetBundlePerformanceResponse = zod.object({
+  bundle: zod
+    .object({
+      id: zod.number(),
+      bundleId: zod.number(),
+      evalRunCount: zod.number(),
+      avgCompositeScore: zod.number().nullish(),
+      avgBaselineScore: zod.number().nullish(),
+      avgLift: zod.number().nullish(),
+      confidenceScore: zod.number(),
+      bestTaskMode: zod.string().nullish(),
+      bestTokenMode: zod.string().nullish(),
+      lastEvalRunId: zod.number().nullish(),
+      updatedAt: zod.coerce.date(),
+    })
+    .nullish()
+    .describe("Per-bundle aggregate eval tracking record"),
+  recentRuns: zod.array(
+    zod.object({
+      id: zod.number(),
+      status: zod.enum([
+        "queued",
+        "preparing",
+        "running",
+        "scoring",
+        "completed",
+        "error",
+      ]),
+      runType: zod.enum(["baseline", "skill", "bundle", "bundle_variant"]),
+      targetSkillId: zod.number().nullish(),
+      targetBundleId: zod.number().nullish(),
+      taskMode: zod.string(),
+      sessionType: zod.string(),
+      tokenMode: zod.string(),
+      modelProfile: zod.string(),
+      repoKind: zod.string().nullish(),
+      repoLangsJson: zod.array(zod.string()).nullish(),
+      repoCommitSha: zod.string().nullish(),
+      bundleVersionHash: zod.string().nullish(),
+      configVersion: zod
+        .string()
+        .describe(
+          "SHA-256 hash encoding model profile, token mode, session type, task mode, and skill version hashes. Changes whenever any run-condition dimension changes.",
+        ),
+      scoringWeightsJson: zod
+        .record(zod.string(), zod.number())
+        .nullish()
+        .describe(
+          "Per-run scoring weights override. When set, replaces the task-mode preset weights for all variants in this run.",
+        ),
+      priority: zod.number(),
+      costCapUsd: zod.number().nullish(),
+      actualCostUsd: zod.number().nullish(),
+      errorDetails: zod.string().nullish(),
+      notes: zod.string().nullish(),
+      scheduledAt: zod.coerce.date().nullish(),
+      startedAt: zod.coerce.date().nullish(),
+      completedAt: zod.coerce.date().nullish(),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
 });
 
 /**
@@ -2756,6 +3437,37 @@ export const CreateLaneHandoffBody = zod.object({
 });
 
 /**
+ * @summary Acknowledge or dismiss a handoff signal
+ */
+export const AcknowledgeLaneHandoffParams = zod.object({
+  id: zod.coerce.number(),
+  laneId: zod.coerce.number(),
+  handoffId: zod.coerce.number(),
+});
+
+export const AcknowledgeLaneHandoffBody = zod.object({
+  status: zod.enum(["acknowledged", "dismissed"]),
+});
+
+export const AcknowledgeLaneHandoffResponse = zod.object({
+  id: zod.number(),
+  fromLaneId: zod.number(),
+  toLaneIds: zod.array(zod.number()),
+  handoffType: zod.enum([
+    "blocked",
+    "needs_review",
+    "safe_to_merge",
+    "watch_files",
+    "related_lane",
+  ]),
+  resourcePaths: zod.array(zod.string()),
+  message: zod.string().nullish(),
+  status: zod.enum(["pending", "acknowledged", "dismissed", "expired"]),
+  acknowledgedAt: zod.coerce.date().nullish(),
+  createdAt: zod.coerce.date(),
+});
+
+/**
  * Returns all active lanes, current tasks, claims, and recent handoffs
  * @summary Get full coordination state for a session
  */
@@ -2805,7 +3517,8 @@ export const GetSessionCoordinationResponse = zod.object({
       ]),
       resourcePaths: zod.array(zod.string()),
       message: zod.string().nullish(),
-      status: zod.enum(["pending", "acknowledged", "expired"]),
+      status: zod.enum(["pending", "acknowledged", "dismissed", "expired"]),
+      acknowledgedAt: zod.coerce.date().nullish(),
       createdAt: zod.coerce.date(),
     }),
   ),

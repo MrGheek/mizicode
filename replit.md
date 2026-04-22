@@ -59,6 +59,10 @@ artifacts-monorepo/
 - **lane_claims** — Soft ownership claims on files/modules/symbols/tasks with TTL-expiry and heartbeat refresh
 - **lane_handoffs** — Handoff signals between lanes (task_complete, blocking, file_ready, review_ready, info)
 - **lane_heavy_jobs** — GPU-expensive job queue with weighted fair scheduler (priority + age weight + lane fairness + job class floor)
+- **eval_runs** — Async eval run queue (status: queued→preparing→running→scoring→completed|error). Stores runType, taskMode, sessionType, tokenMode, modelProfile, costCap, actualCostUsd, configVersion (SHA-256 fingerprint), scoringWeightsJson (per-run override), bundleVersionHash
+- **eval_run_variants** — One row per variant per run (variantType: baseline|treatment|ablated). Stores skillIdsIncluded/Excluded JSON, raw metrics JSON, compositeScore, liftVsBaseline, scoringWeightsJson
+- **skill_evals** — Aggregated per-skill eval performance (compositeScore, liftOverBaseline, evalCount, lastEvalAt, byTaskMode JSON)
+- **bundle_evals** — Aggregated per-bundle eval performance (avgLift, winRate, ablationLiftScores JSON, byTaskMode JSON)
 
 ## GPU Profiles
 
@@ -103,8 +107,17 @@ artifacts-monorepo/
 - `GET /api/sessions/:id/skills` — Get skill activations for a session
 - `POST /api/sessions/:id/skills/feedback` — Submit helpful/unhelpful feedback on a skill
 - `GET /api/skills/discover` — (501, Phase 4) Discovery feed
-- `GET /api/skills/leaderboard` — (501, Phase 4) Skill leaderboard
-- `POST /api/skills/evals/run` — (501, Phase 4) Run skill eval harness
+- `GET /api/skills/leaderboard` — Skill leaderboard with liftOverBaseline, regressionRisk tiers, byRepoKind/byModelFamily breakdowns
+- `GET /api/skill-bundles/leaderboard` — Bundle leaderboard (overall + byTaskMode + byTokenMode + byRepoKind + byModelFamily)
+- `GET /api/skills/:id/performance` — Per-skill eval stats (evalAppearances, positiveLiftCount, confidenceScore, estimatedContribution, recentRuns)
+- `GET /api/skill-bundles/:id/performance` — Per-bundle eval stats (avgLift, avgCompositeScore, avgBaselineScore, confidenceScore, bestTaskMode, recentRuns)
+- `POST /api/skills/evals/run` — Schedule async eval run (runType: baseline|skill|bundle|bundle_variant; supports scoringWeightsOverride)
+- `GET /api/skills/evals/runs` — List eval runs (filterable by status, runType, targetSkillId, targetBundleId, taskMode)
+- `GET /api/skills/evals/:runId` — Get eval run + all variants
+- `POST /api/skills/evals/:runId/variants` — Record an eval variant manually
+- `POST /api/skills/evals/:runId/finalize` — Finalize run and compute lift scores
+- `POST /api/skills/evals/process-next` — Process next queued eval run (also called by scheduler every 60s)
+- `GET /api/skills/evals/scoring-presets` — Get per-taskMode scoring weight presets and budget config
 
 ### Coordination API (Team Lane Intelligence)
 

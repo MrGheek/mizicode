@@ -527,27 +527,250 @@ paths:
     get:
       operationId: listSkillEvals
       tags: [skills]
-      summary: List skill evaluation results (not yet available)
+      summary: List eval runs
+      description: "Returns all eval runs with optional status/type/task-mode filters."
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [queued, preparing, running, scoring, completed, error]
+        - name: runType
+          in: query
+          schema:
+            type: string
+            enum: [baseline, skill, bundle, bundle_variant]
+        - name: taskMode
+          in: query
+          schema:
+            type: string
       responses:
-        "501":
-          description: Not implemented
+        "200":
+          description: Eval runs list
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NotImplementedResponse"
+                $ref: "#/components/schemas/EvalRunListResponse"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /skills/evals/run:
     post:
-      operationId: runSkillEval
+      operationId: scheduleEvalRun
       tags: [skills]
-      summary: Run a skill evaluation harness (not yet available)
+      summary: Schedule an async eval run
+      description: "Schedules a new eval run. Enforces daily budget and max-concurrent-job caps. Returns 429 when budget or concurrency limits are exceeded."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleEvalRunRequest"
       responses:
-        "501":
-          description: Not implemented
+        "202":
+          description: Eval run scheduled (queued)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NotImplementedResponse"
+                $ref: "#/components/schemas/ScheduleEvalRunResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Budget or concurrency limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/evals/process-next:
+    post:
+      operationId: processNextQueuedEvalRun
+      tags: [skills]
+      summary: Manually trigger the eval worker to process the next queued run
+      description: "Processes the oldest queued eval run respecting budget and concurrency limits. Useful for testing and manual intervention."
+      responses:
+        "200":
+          description: Worker result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  processed:
+                    type: boolean
+                  runId:
+                    type: integer
+                    nullable: true
+                  reason:
+                    type: string
+                    nullable: true
+                required: [processed]
+        "500":
+          description: Worker error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/evals/scoring-presets:
+    get:
+      operationId: getEvalScoringPresets
+      tags: [skills]
+      summary: Get task-mode scoring presets and budget config
+      description: "Returns the explicit, inspectable scoring weight presets for each task mode plus the current eval budget config."
+      responses:
+        "200":
+          description: Scoring presets and budget config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvalScoringPresetsResponse"
+
+  /skills/evals/{runId}:
+    get:
+      operationId: getEvalRun
+      tags: [skills]
+      summary: Get an eval run with its variants
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Eval run with variants
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvalRunDetailResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/evals/{runId}/variants:
+    post:
+      operationId: recordEvalVariant
+      tags: [skills]
+      summary: Record a variant result for an eval run
+      description: "Records a baseline, treatment, or ablated variant for an in-progress eval run. Composite scores are computed automatically using the run's task-mode preset."
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordEvalVariantRequest"
+      responses:
+        "201":
+          description: Variant recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvalVariantResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/evals/{runId}/finalize:
+    post:
+      operationId: finalizeEvalRun
+      tags: [skills]
+      summary: Finalize an eval run and apply contribution heuristics
+      description: "Computes baseline-vs-treatment lift, updates per-skill and per-bundle aggregates, and marks the run completed."
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Run finalized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvalRunFinalizeResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/evals/{runId}/status:
+    patch:
+      operationId: updateEvalRunStatus
+      tags: [skills]
+      summary: Advance an eval run's status
+      description: "Advances the run through queued → preparing → running → scoring → completed|error. Yields (429) if a heavy interactive job is active."
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateEvalRunStatusRequest"
+      responses:
+        "200":
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvalRunResponse"
+        "429":
+          description: Yielded — interactive heavy job is active
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /skills/discover:
     post:
@@ -566,14 +789,37 @@ paths:
     get:
       operationId: getSkillLeaderboard
       tags: [skills]
-      summary: Skill leaderboard (not yet available)
+      summary: Skill leaderboard — top skills by measured lift and regression risk
+      description: "Returns top skills by eval-measured lift and skills with negative lift or regression risk. Backed by stored eval data."
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: taskMode
+          in: query
+          schema:
+            type: string
+        - name: minConfidence
+          in: query
+          schema:
+            type: number
+            format: float
+            default: 0.10
       responses:
-        "501":
-          description: Not implemented
+        "200":
+          description: Skill leaderboard
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NotImplementedResponse"
+                $ref: "#/components/schemas/SkillLeaderboardResponse"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /skills/feedback-scores:
     get:
@@ -612,6 +858,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SkillDetailResponse"
+        "404":
+          description: Skill not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skills/{skillId}/performance:
+    get:
+      operationId: getSkillPerformance
+      tags: [skills]
+      summary: Get eval performance data for a specific skill
+      description: "Returns per-skill eval aggregate (lift counts, confidence, contribution) and recent eval runs."
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Skill performance data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillPerformanceResponse"
         "404":
           description: Skill not found
           content:
@@ -766,6 +1038,50 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /skill-bundles/leaderboard:
+    get:
+      operationId: getBundleLeaderboard
+      tags: [skills]
+      summary: Bundle leaderboard — top bundles by measured lift
+      description: "Returns top bundles overall and by task mode / token mode / repo kind / model family. Backed by stored eval data."
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: taskMode
+          in: query
+          schema:
+            type: string
+        - name: tokenMode
+          in: query
+          schema:
+            type: string
+        - name: repoKind
+          in: query
+          description: Filter to bundles that have been evaluated on this repo kind (e.g. monorepo, library, service)
+          schema:
+            type: string
+        - name: modelFamily
+          in: query
+          description: Filter to bundles evaluated with this model family (e.g. kimi, openai, anthropic, google, meta, deepseek, mistral)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Bundle leaderboard
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundleLeaderboardResponse"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /skill-bundles:
     get:
       operationId: listSkillBundles
@@ -888,6 +1204,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BundleResponse"
+        "404":
+          description: Bundle not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /skill-bundles/{bundleId}/performance:
+    get:
+      operationId: getBundlePerformance
+      tags: [skills]
+      summary: Get eval performance data for a specific bundle
+      description: "Returns per-bundle eval aggregate (run count, avg scores, avg lift, confidence) and recent eval runs."
+      parameters:
+        - name: bundleId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bundle performance data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BundlePerformanceResponse"
         "404":
           description: Bundle not found
           content:
@@ -2081,6 +2423,53 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Lane not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /sessions/{id}/lanes/{laneId}/handoff/{handoffId}:
+    patch:
+      operationId: acknowledgeLaneHandoff
+      tags: [coordination]
+      summary: Acknowledge or dismiss a handoff signal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: laneId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: handoffId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcknowledgeHandoffRequest"
+      responses:
+        "200":
+          description: Handoff signal updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HandoffResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Handoff or lane not found
           content:
             application/json:
               schema:
@@ -4630,7 +5019,11 @@ components:
           nullable: true
         status:
           type: string
-          enum: [pending, acknowledged, expired]
+          enum: [pending, acknowledged, dismissed, expired]
+        acknowledgedAt:
+          type: string
+          format: date-time
+          nullable: true
         createdAt:
           type: string
           format: date-time
@@ -4660,6 +5053,14 @@ components:
           type: integer
           default: 600
       required: [handoffType]
+
+    AcknowledgeHandoffRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [acknowledged, dismissed]
+      required: [status]
 
     CoordinationLaneSummary:
       type: object
@@ -4848,3 +5249,559 @@ components:
           description: Seconds from now to defer the job (used when status=deferred)
           nullable: true
       required: [status]
+
+    EvalRunResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [queued, preparing, running, scoring, completed, error]
+        runType:
+          type: string
+          enum: [baseline, skill, bundle, bundle_variant]
+        targetSkillId:
+          type: integer
+          nullable: true
+        targetBundleId:
+          type: integer
+          nullable: true
+        taskMode:
+          type: string
+        sessionType:
+          type: string
+        tokenMode:
+          type: string
+        modelProfile:
+          type: string
+        repoKind:
+          type: string
+          nullable: true
+        repoLangsJson:
+          type: array
+          items:
+            type: string
+          nullable: true
+        repoCommitSha:
+          type: string
+          nullable: true
+        bundleVersionHash:
+          type: string
+          nullable: true
+        configVersion:
+          type: string
+          description: "SHA-256 hash encoding model profile, token mode, session type, task mode, and skill version hashes. Changes whenever any run-condition dimension changes."
+        scoringWeightsJson:
+          type: object
+          description: "Per-run scoring weights override. When set, replaces the task-mode preset weights for all variants in this run."
+          additionalProperties:
+            type: number
+          nullable: true
+        priority:
+          type: integer
+        costCapUsd:
+          type: number
+          nullable: true
+        actualCostUsd:
+          type: number
+          nullable: true
+        errorDetails:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        scheduledAt:
+          type: string
+          format: date-time
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, status, runType, taskMode, sessionType, tokenMode, modelProfile, configVersion, priority, createdAt, updatedAt]
+
+    EvalVariantResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        runId:
+          type: integer
+        variantType:
+          type: string
+          enum: [baseline, treatment, ablated]
+        skillIdsIncluded:
+          type: array
+          items:
+            type: string
+          nullable: true
+        skillIdsExcluded:
+          type: array
+          items:
+            type: string
+          nullable: true
+        timeToFirstAnswerMs:
+          type: integer
+          nullable: true
+        totalElapsedMs:
+          type: integer
+          nullable: true
+        memoryItemsRetrieved:
+          type: integer
+          nullable: true
+        contextBytesInjected:
+          type: integer
+          nullable: true
+        shieldedBytesAvoided:
+          type: integer
+          nullable: true
+        repoHitCount:
+          type: integer
+          nullable: true
+        repoCacheHit:
+          type: integer
+          description: "Number of repo context cache hits during this variant run (0 = miss, >0 = hit count)"
+          nullable: true
+        success:
+          type: boolean
+          nullable: true
+        userRating:
+          type: integer
+          nullable: true
+        costUsd:
+          type: number
+          nullable: true
+        rawScore:
+          type: number
+          nullable: true
+        compositeScore:
+          type: number
+          nullable: true
+        scoringWeightsJson:
+          type: object
+          additionalProperties: true
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, runId, variantType, createdAt]
+
+    EvalRunListResponse:
+      type: object
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvalRunResponse"
+        total:
+          type: integer
+      required: [runs, total]
+
+    EvalRunDetailResponse:
+      type: object
+      properties:
+        run:
+          $ref: "#/components/schemas/EvalRunResponse"
+        variants:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvalVariantResponse"
+      required: [run, variants]
+
+    EvalRunFinalizeResponse:
+      type: object
+      properties:
+        run:
+          $ref: "#/components/schemas/EvalRunResponse"
+          nullable: true
+        message:
+          type: string
+      required: [message]
+
+    ScheduleEvalRunRequest:
+      type: object
+      properties:
+        runType:
+          type: string
+          enum: [baseline, skill, bundle, bundle_variant]
+        targetSkillId:
+          type: integer
+          nullable: true
+        targetBundleId:
+          type: integer
+          nullable: true
+        taskMode:
+          type: string
+          enum: [build, debug, review, refactor, explore, team]
+          default: build
+        sessionType:
+          type: string
+          enum: [solo, team]
+          default: solo
+        tokenMode:
+          type: string
+          enum: [full, core, lean, ultra]
+          default: core
+        modelProfile:
+          type: string
+          default: kimi
+        repoKind:
+          type: string
+          nullable: true
+        repoLangs:
+          type: array
+          items:
+            type: string
+          nullable: true
+        repoCommitSha:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        costCapOverrideUsd:
+          type: number
+          nullable: true
+        scoringWeightsOverride:
+          type: object
+          description: "Optional per-run scoring weights override. Replaces task-mode preset weights for all variants in this run. Useful for A/B testing weight regimes or sensitivity analysis."
+          properties:
+            successScore:
+              type: number
+            timeScore:
+              type: number
+            retrievalEfficiency:
+              type: number
+            contextEfficiency:
+              type: number
+            stabilityPenalty:
+              type: number
+            userFeedbackBonus:
+              type: number
+          nullable: true
+      required: [runType]
+
+    ScheduleEvalRunResponse:
+      type: object
+      properties:
+        run:
+          $ref: "#/components/schemas/EvalRunResponse"
+        message:
+          type: string
+      required: [run, message]
+
+    RecordEvalVariantRequest:
+      type: object
+      properties:
+        variantType:
+          type: string
+          enum: [baseline, treatment, ablated]
+        skillIdsIncluded:
+          type: array
+          items:
+            type: string
+          nullable: true
+        skillIdsExcluded:
+          type: array
+          items:
+            type: string
+          nullable: true
+        metrics:
+          type: object
+          additionalProperties: true
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+      required: [variantType]
+
+    UpdateEvalRunStatusRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [preparing, running, scoring, completed, error]
+        errorDetails:
+          type: string
+          nullable: true
+        actualCostUsd:
+          type: number
+          nullable: true
+      required: [status]
+
+    ScoringWeights:
+      type: object
+      properties:
+        successScore:
+          type: number
+        timeScore:
+          type: number
+        retrievalEfficiency:
+          type: number
+        contextEfficiency:
+          type: number
+        stabilityPenalty:
+          type: number
+        userFeedbackBonus:
+          type: number
+      required: [successScore, timeScore, retrievalEfficiency, contextEfficiency, stabilityPenalty, userFeedbackBonus]
+
+    TaskModeScoringPreset:
+      type: object
+      properties:
+        taskMode:
+          type: string
+        description:
+          type: string
+        weights:
+          $ref: "#/components/schemas/ScoringWeights"
+      required: [taskMode, description, weights]
+
+    EvalBudgetConfig:
+      type: object
+      properties:
+        maxConcurrentEvalJobs:
+          type: integer
+        perRunCostCapUsd:
+          type: number
+        dailyEvalBudgetUsd:
+          type: number
+        evalJobPriority:
+          type: integer
+        configVersion:
+          type: string
+      required: [maxConcurrentEvalJobs, perRunCostCapUsd, dailyEvalBudgetUsd, evalJobPriority, configVersion]
+
+    EvalScoringPresetsResponse:
+      type: object
+      properties:
+        presets:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/TaskModeScoringPreset"
+        budgetConfig:
+          $ref: "#/components/schemas/EvalBudgetConfig"
+      required: [presets, budgetConfig]
+
+    SkillLeaderboardEntry:
+      type: object
+      properties:
+        skillId:
+          type: integer
+        slug:
+          type: string
+        name:
+          type: string
+        class:
+          type: string
+        trustTier:
+          type: string
+        evalAppearances:
+          type: integer
+        positiveLiftCount:
+          type: integer
+        negativeLiftCount:
+          type: integer
+        confidenceScore:
+          type: number
+        estimatedContribution:
+          type: number
+        lastEvalRunId:
+          type: integer
+          nullable: true
+        regressionRisk:
+          type: boolean
+        feedbackHelpfulRate:
+          type: number
+          nullable: true
+      required: [skillId, slug, name, class, trustTier, evalAppearances, positiveLiftCount, negativeLiftCount, confidenceScore, estimatedContribution, regressionRisk]
+
+    SkillLeaderboardResponse:
+      type: object
+      properties:
+        topByLift:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillLeaderboardEntry"
+        regressionRisk:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillLeaderboardEntry"
+        total:
+          type: integer
+        generatedAt:
+          type: string
+          format: date-time
+      required: [topByLift, regressionRisk, total, generatedAt]
+
+    BundleLeaderboardEntry:
+      type: object
+      properties:
+        bundleId:
+          type: integer
+        slug:
+          type: string
+        name:
+          type: string
+        taskMode:
+          type: string
+          nullable: true
+        tokenMode:
+          type: string
+        evalRunCount:
+          type: integer
+        avgCompositeScore:
+          type: number
+          nullable: true
+        avgBaselineScore:
+          type: number
+          nullable: true
+        avgLift:
+          type: number
+          nullable: true
+        confidenceScore:
+          type: number
+        lastEvalRunId:
+          type: integer
+          nullable: true
+      required: [bundleId, slug, name, tokenMode, evalRunCount, confidenceScore]
+
+    BundleLeaderboardResponse:
+      type: object
+      properties:
+        overall:
+          type: array
+          items:
+            $ref: "#/components/schemas/BundleLeaderboardEntry"
+        byTaskMode:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/BundleLeaderboardEntry"
+        byTokenMode:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/BundleLeaderboardEntry"
+        byRepoKind:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/BundleLeaderboardEntry"
+        byModelFamily:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/BundleLeaderboardEntry"
+        total:
+          type: integer
+        generatedAt:
+          type: string
+          format: date-time
+      required: [overall, byTaskMode, byTokenMode, byRepoKind, byModelFamily, total, generatedAt]
+
+    SkillEvalAggregate:
+      type: object
+      description: Per-skill aggregate eval tracking record
+      properties:
+        id:
+          type: integer
+        skillId:
+          type: integer
+        activationCount:
+          type: integer
+        evalAppearances:
+          type: integer
+        positiveLiftCount:
+          type: integer
+        negativeLiftCount:
+          type: integer
+        confidenceScore:
+          type: number
+        estimatedContribution:
+          type: number
+        lastEvalRunId:
+          type: integer
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, skillId, activationCount, evalAppearances, positiveLiftCount, negativeLiftCount, confidenceScore, estimatedContribution, updatedAt]
+
+    SkillPerformanceResponse:
+      type: object
+      properties:
+        skill:
+          $ref: "#/components/schemas/SkillEvalAggregate"
+          nullable: true
+        recentRuns:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvalRunResponse"
+      required: [recentRuns]
+
+    BundleEvalAggregate:
+      type: object
+      description: Per-bundle aggregate eval tracking record
+      properties:
+        id:
+          type: integer
+        bundleId:
+          type: integer
+        evalRunCount:
+          type: integer
+        avgCompositeScore:
+          type: number
+          nullable: true
+        avgBaselineScore:
+          type: number
+          nullable: true
+        avgLift:
+          type: number
+          nullable: true
+        confidenceScore:
+          type: number
+        bestTaskMode:
+          type: string
+          nullable: true
+        bestTokenMode:
+          type: string
+          nullable: true
+        lastEvalRunId:
+          type: integer
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, bundleId, evalRunCount, confidenceScore, updatedAt]
+
+    BundlePerformanceResponse:
+      type: object
+      properties:
+        bundle:
+          $ref: "#/components/schemas/BundleEvalAggregate"
+          nullable: true
+        recentRuns:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvalRunResponse"
+      required: [recentRuns]

@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, boolean, timestamp, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, boolean, timestamp, jsonb, uniqueIndex, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -118,6 +118,106 @@ export const sessionRepoContextTable = pgTable("session_repo_context", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+/**
+ * Eval run — top-level record for a scheduled evaluation job.
+ * Status progression: queued → preparing → running → scoring → completed | error
+ * Priority: eval jobs always use priority ≤ 3 (lower than interactive work at 5–10).
+ */
+export const evalRunsTable = pgTable("eval_runs", {
+  id: serial("id").primaryKey(),
+  status: text("status").notNull().default("queued"),
+  runType: text("run_type").notNull().default("bundle"),
+  targetSkillId: integer("target_skill_id").references(() => skillsTable.id),
+  targetBundleId: integer("target_bundle_id").references(() => skillBundlesTable.id),
+  taskMode: text("task_mode").notNull().default("build"),
+  sessionType: text("session_type").notNull().default("solo"),
+  tokenMode: text("token_mode").notNull().default("core"),
+  modelProfile: text("model_profile").notNull().default("kimi"),
+  repoKind: text("repo_kind"),
+  repoLangsJson: jsonb("repo_langs_json"),
+  repoCommitSha: text("repo_commit_sha"),
+  skillVersionIdsJson: jsonb("skill_version_ids_json"),
+  bundleVersionHash: text("bundle_version_hash"),
+  configVersion: text("config_version").notNull().default("1"),
+  scoringWeightsJson: jsonb("scoring_weights_json"),
+  priority: integer("priority").notNull().default(3),
+  costCapUsd: real("cost_cap_usd"),
+  estimatedCostUsd: real("estimated_cost_usd"),
+  actualCostUsd: real("actual_cost_usd"),
+  errorDetails: text("error_details"),
+  notes: text("notes"),
+  scheduledAt: timestamp("scheduled_at"),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+/**
+ * Eval run variant — one treatment or baseline arm within an eval run.
+ * A single run may have a baseline + one or more treatment variants.
+ */
+export const evalRunVariantsTable = pgTable("eval_run_variants", {
+  id: serial("id").primaryKey(),
+  runId: integer("run_id").notNull().references(() => evalRunsTable.id),
+  variantType: text("variant_type").notNull().default("treatment"),
+  skillIdsIncludedJson: jsonb("skill_ids_included_json"),
+  skillIdsExcludedJson: jsonb("skill_ids_excluded_json"),
+  timeToFirstAnswerMs: integer("time_to_first_answer_ms"),
+  totalElapsedMs: integer("total_elapsed_ms"),
+  memoryItemsRetrieved: integer("memory_items_retrieved"),
+  contextBytesInjected: integer("context_bytes_injected"),
+  shieldedBytesAvoided: integer("shielded_bytes_avoided"),
+  repoHitCount: integer("repo_hit_count"),
+  repoCacheHit: integer("repo_cache_hit"),
+  success: boolean("success"),
+  userRating: integer("user_rating"),
+  costUsd: real("cost_usd"),
+  rawScore: real("raw_score"),
+  compositeScore: real("composite_score"),
+  scoringWeightsJson: jsonb("scoring_weights_json"),
+  metricsJson: jsonb("metrics_json"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * Per-skill aggregate eval tracking.
+ * Updated whenever a skill appears in a completed eval run.
+ */
+export const skillEvalsTable = pgTable("skill_evals", {
+  id: serial("id").primaryKey(),
+  skillId: integer("skill_id").notNull().references(() => skillsTable.id).unique(),
+  activationCount: integer("activation_count").notNull().default(0),
+  evalAppearances: integer("eval_appearances").notNull().default(0),
+  positiveLiftCount: integer("positive_lift_count").notNull().default(0),
+  negativeLiftCount: integer("negative_lift_count").notNull().default(0),
+  confidenceScore: real("confidence_score").notNull().default(0),
+  estimatedContribution: real("estimated_contribution").notNull().default(0),
+  lastEvalRunId: integer("last_eval_run_id").references(() => evalRunsTable.id),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+/**
+ * Per-bundle aggregate eval tracking.
+ * Updated whenever a bundle appears in a completed eval run.
+ */
+export const bundleEvalsTable = pgTable("bundle_evals", {
+  id: serial("id").primaryKey(),
+  bundleId: integer("bundle_id").notNull().references(() => skillBundlesTable.id).unique(),
+  evalRunCount: integer("eval_run_count").notNull().default(0),
+  avgCompositeScore: real("avg_composite_score"),
+  avgBaselineScore: real("avg_baseline_score"),
+  avgLift: real("avg_lift"),
+  confidenceScore: real("confidence_score").notNull().default(0),
+  bestTaskMode: text("best_task_mode"),
+  bestTokenMode: text("best_token_mode"),
+  ablationLiftScoresJson: jsonb("ablation_lift_scores_json"),
+  byTaskModeJson: jsonb("by_task_mode_json"),
+  lastEvalRunId: integer("last_eval_run_id").references(() => evalRunsTable.id),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const insertSkillSchema = createInsertSchema(skillsTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertSkill = z.infer<typeof insertSkillSchema>;
 export type Skill = typeof skillsTable.$inferSelect;
@@ -127,3 +227,7 @@ export type SkillBundle = typeof skillBundlesTable.$inferSelect;
 export type SessionSkills = typeof sessionSkillsTable.$inferSelect;
 export type RepoGraphJob = typeof repoGraphJobsTable.$inferSelect;
 export type SessionRepoContext = typeof sessionRepoContextTable.$inferSelect;
+export type EvalRun = typeof evalRunsTable.$inferSelect;
+export type EvalRunVariant = typeof evalRunVariantsTable.$inferSelect;
+export type SkillEval = typeof skillEvalsTable.$inferSelect;
+export type BundleEval = typeof bundleEvalsTable.$inferSelect;

@@ -3,12 +3,26 @@ import { writeFile, unlink } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Router } from "express";
-import { db, skillsTable, skillBundlesTable, skillSourcesTable, skillVersionsTable, skillFeedbackTable, sessionSkillsTable, sessionsTable } from "@workspace/db";
-import { eq, and, desc, or, like, sql } from "drizzle-orm";
+import { db, skillsTable, skillBundlesTable, skillSourcesTable, skillVersionsTable, skillFeedbackTable, sessionSkillsTable, sessionsTable, skillEvalsTable } from "@workspace/db";
+import { eq, and, desc, or, like, sql, inArray } from "drizzle-orm";
 import { importSkillFromUrl } from "../services/skills-import";
 import { seedDefaultBundles, compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext } from "../services/skills-bundler";
 import { DEFAULT_SKILLS } from "../services/default-skills";
 import { getSkillFeedbackScores } from "../services/skills-ranker";
+import {
+  scheduleEvalRun,
+  listEvalRuns,
+  getEvalRunWithVariants,
+  getSkillPerformance,
+  getBundlePerformance,
+  recordEvalVariant,
+  finalizeEvalRun,
+  advanceEvalRunStatus,
+  processNextQueuedEvalRun,
+  TASK_MODE_SCORING_PRESETS,
+  DEFAULT_EVAL_BUDGET,
+} from "../services/skills-evals";
+import { getSkillLeaderboard, getBundleLeaderboard } from "../services/skills-leaderboard";
 import { logger } from "../lib/logger";
 import type { SessionContext } from "../services/skills-types";
 
@@ -116,8 +130,20 @@ router.post("/skills/discover", (_req, res) => {
   res.status(501).json(NOT_IMPLEMENTED("skill discovery"));
 });
 
-router.get("/skills/leaderboard", (_req, res) => {
-  res.status(501).json(NOT_IMPLEMENTED("skill leaderboard"));
+router.get("/skills/leaderboard", async (req, res) => {
+  const { limit, taskMode, minConfidence } = req.query as Record<string, string | undefined>;
+  try {
+    const result = await getSkillLeaderboard({
+      limit: limit ? parseInt(limit) : undefined,
+      taskMode: taskMode || undefined,
+      minConfidence: minConfidence ? parseFloat(minConfidence) : undefined,
+    });
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Leaderboard fetch failed";
+    logger.error({ err }, "Skill leaderboard error");
+    res.status(500).json({ error: message });
+  }
 });
 
 router.get("/skills/feedback-scores", async (_req, res) => {
@@ -131,12 +157,248 @@ router.get("/skills/feedback-scores", async (_req, res) => {
   }
 });
 
-router.get("/skills/evals", (_req, res) => {
-  res.status(501).json(NOT_IMPLEMENTED("skill evals listing"));
+router.get("/skills/evals", async (req, res) => {
+  const { limit, offset, status, runType, taskMode } = req.query as Record<string, string | undefined>;
+  try {
+    const result = await listEvalRuns({
+      limit: limit ? parseInt(limit) : undefined,
+      offset: offset ? parseInt(offset) : undefined,
+      status: status || undefined,
+      runType: runType || undefined,
+      taskMode: taskMode || undefined,
+    });
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Eval list failed";
+    logger.error({ err }, "Eval list error");
+    res.status(500).json({ error: message });
+  }
 });
 
-router.post("/skills/evals/run", (_req, res) => {
-  res.status(501).json(NOT_IMPLEMENTED("skill eval runner"));
+router.post("/skills/evals/run", async (req, res) => {
+  const {
+    runType,
+    targetSkillId,
+    targetBundleId,
+    taskMode,
+    sessionType,
+    tokenMode,
+    modelProfile,
+    repoKind,
+    repoLangs,
+    repoCommitSha,
+    notes,
+    costCapOverrideUsd,
+    scoringWeightsOverride,
+  } = req.body as {
+    runType?: string;
+    targetSkillId?: number;
+    targetBundleId?: number;
+    taskMode?: string;
+    sessionType?: string;
+    tokenMode?: string;
+    modelProfile?: string;
+    repoKind?: string;
+    repoLangs?: string[];
+    repoCommitSha?: string;
+    notes?: string;
+    costCapOverrideUsd?: number;
+    scoringWeightsOverride?: Record<string, number>;
+  };
+
+  const VALID_RUN_TYPES = ["baseline", "skill", "bundle", "bundle_variant"] as const;
+  if (!runType || !VALID_RUN_TYPES.includes(runType as typeof VALID_RUN_TYPES[number])) {
+    res.status(400).json({ error: "runType is required and must be one of: baseline, skill, bundle, bundle_variant" });
+    return;
+  }
+
+  if (runType === "skill" && !targetSkillId) {
+    res.status(400).json({ error: "targetSkillId is required when runType is 'skill'" });
+    return;
+  }
+
+  if ((runType === "bundle" || runType === "bundle_variant") && !targetBundleId) {
+    res.status(400).json({ error: "targetBundleId is required when runType is 'bundle' or 'bundle_variant'" });
+    return;
+  }
+
+  const VALID_TASK_MODES = ["build", "debug", "review", "refactor", "explore", "team"] as const;
+  if (taskMode && !VALID_TASK_MODES.includes(taskMode as typeof VALID_TASK_MODES[number])) {
+    res.status(400).json({ error: `taskMode must be one of: ${VALID_TASK_MODES.join(", ")}` });
+    return;
+  }
+
+  try {
+    const run = await scheduleEvalRun({
+      runType: runType as "baseline" | "skill" | "bundle" | "bundle_variant",
+      targetSkillId: targetSkillId ?? undefined,
+      targetBundleId: targetBundleId ?? undefined,
+      taskMode: taskMode ?? "build",
+      sessionType: sessionType ?? "solo",
+      tokenMode: tokenMode ?? "core",
+      modelProfile: modelProfile ?? "kimi",
+      repoKind: repoKind ?? undefined,
+      repoLangs: Array.isArray(repoLangs) ? repoLangs : undefined,
+      repoCommitSha: repoCommitSha ?? undefined,
+      notes: notes ?? undefined,
+      costCapOverrideUsd: costCapOverrideUsd ?? undefined,
+      scoringWeightsOverride: scoringWeightsOverride ?? undefined,
+    });
+    res.status(202).json({ run, message: "Eval run scheduled. Status: queued." });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Eval run scheduling failed";
+    logger.error({ err }, "Eval run schedule error");
+    const httpStatus = (err as { statusCode?: number }).statusCode
+      ?? (message.includes("budget") || message.includes("concurrent") ? 429 : 500);
+    res.status(httpStatus).json({ error: message });
+  }
+});
+
+router.post("/skills/evals/process-next", async (_req, res) => {
+  try {
+    const result = await processNextQueuedEvalRun();
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Worker execution failed";
+    res.status(500).json({ error: message });
+  }
+});
+
+router.get("/skills/evals/scoring-presets", (_req, res) => {
+  res.json({ presets: TASK_MODE_SCORING_PRESETS, budgetConfig: DEFAULT_EVAL_BUDGET });
+});
+
+router.get("/skills/evals/:runId", async (req, res) => {
+  const runId = parseInt(req.params.runId);
+  if (isNaN(runId)) {
+    res.status(400).json({ error: "Invalid run ID" });
+    return;
+  }
+  try {
+    const result = await getEvalRunWithVariants(runId);
+    if (!result) {
+      res.status(404).json({ error: "Eval run not found" });
+      return;
+    }
+    res.json({
+      run: result.run,
+      variants: result.variants.map(v => {
+        const cost = v.costUsd != null ? parseFloat(String(v.costUsd)) : null;
+        const score = v.compositeScore != null ? parseFloat(String(v.compositeScore)) : null;
+        const costPerUsefulOutcome = cost != null && score != null && score > 0
+          ? cost / score
+          : null;
+        return {
+          ...v,
+          skillIdsIncluded: Array.isArray(v.skillIdsIncludedJson) ? v.skillIdsIncludedJson : null,
+          skillIdsExcluded: Array.isArray(v.skillIdsExcludedJson) ? v.skillIdsExcludedJson : null,
+          costPerUsefulOutcome,
+        };
+      }),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Eval fetch failed";
+    res.status(500).json({ error: message });
+  }
+});
+
+router.post("/skills/evals/:runId/variants", async (req, res) => {
+  const runId = parseInt(req.params.runId);
+  if (isNaN(runId)) {
+    res.status(400).json({ error: "Invalid run ID" });
+    return;
+  }
+
+  const { variantType, skillIdsIncluded, skillIdsExcluded, metrics, notes } = req.body as {
+    variantType?: string;
+    skillIdsIncluded?: string[];
+    skillIdsExcluded?: string[];
+    metrics?: Record<string, unknown>;
+    notes?: string;
+  };
+
+  if (!variantType) {
+    res.status(400).json({ error: "variantType is required (baseline | treatment | ablated)" });
+    return;
+  }
+
+  try {
+    const result = await getEvalRunWithVariants(runId);
+    if (!result) {
+      res.status(404).json({ error: "Eval run not found" });
+      return;
+    }
+
+    const variant = await recordEvalVariant(
+      runId,
+      {
+        variantType: variantType as "baseline" | "treatment" | "ablated",
+        skillIdsIncluded: Array.isArray(skillIdsIncluded) ? skillIdsIncluded : undefined,
+        skillIdsExcluded: Array.isArray(skillIdsExcluded) ? skillIdsExcluded : undefined,
+        metrics: metrics ?? {},
+        notes: notes ?? undefined,
+      },
+      result.run.taskMode
+    );
+
+    res.status(201).json({
+      ...variant,
+      skillIdsIncluded: Array.isArray(variant.skillIdsIncludedJson) ? variant.skillIdsIncludedJson : null,
+      skillIdsExcluded: Array.isArray(variant.skillIdsExcludedJson) ? variant.skillIdsExcludedJson : null,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Variant recording failed";
+    res.status(500).json({ error: message });
+  }
+});
+
+router.post("/skills/evals/:runId/finalize", async (req, res) => {
+  const runId = parseInt(req.params.runId);
+  if (isNaN(runId)) {
+    res.status(400).json({ error: "Invalid run ID" });
+    return;
+  }
+  try {
+    await finalizeEvalRun(runId);
+    const result = await getEvalRunWithVariants(runId);
+    res.json({ run: result?.run, message: "Eval run finalized and scores applied." });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Finalize failed";
+    res.status(500).json({ error: message });
+  }
+});
+
+router.patch("/skills/evals/:runId/status", async (req, res) => {
+  const runId = parseInt(req.params.runId);
+  if (isNaN(runId)) {
+    res.status(400).json({ error: "Invalid run ID" });
+    return;
+  }
+
+  const { status, errorDetails, actualCostUsd } = req.body as {
+    status?: string;
+    errorDetails?: string;
+    actualCostUsd?: number;
+  };
+
+  const allowed = ["preparing", "running", "scoring", "completed", "error"] as const;
+  if (!status || !allowed.includes(status as typeof allowed[number])) {
+    res.status(400).json({ error: `status must be one of: ${allowed.join(", ")}` });
+    return;
+  }
+
+  try {
+    const updated = await advanceEvalRunStatus(
+      runId,
+      status as typeof allowed[number],
+      { errorDetails, actualCostUsd }
+    );
+    res.json(updated);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Status update failed";
+    const httpStatus = message.includes("yielded") ? 429 : 500;
+    res.status(httpStatus).json({ error: message });
+  }
 });
 
 router.get("/skills/:skillId/feedback", async (req, res) => {
@@ -256,6 +518,26 @@ router.post("/skills/import", async (req, res) => {
   }
 });
 
+router.get("/skills/:skillId/performance", async (req, res) => {
+  const id = parseInt(req.params.skillId);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid skill ID" });
+    return;
+  }
+  const [skill] = await db.select({ id: skillsTable.id }).from(skillsTable).where(eq(skillsTable.id, id));
+  if (!skill) {
+    res.status(404).json({ error: "Skill not found" });
+    return;
+  }
+  try {
+    const performance = await getSkillPerformance(id);
+    res.json(performance);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Performance fetch failed";
+    res.status(500).json({ error: message });
+  }
+});
+
 router.post("/skills/:skillId/review", async (req, res) => {
   const id = parseInt(req.params.skillId);
   if (isNaN(id)) {
@@ -340,6 +622,24 @@ router.post("/skills/:skillId/disable", async (req, res) => {
   res.json({ skill: updated });
 });
 
+router.get("/skill-bundles/leaderboard", async (req, res) => {
+  const { limit, taskMode, tokenMode, repoKind, modelFamily } = req.query as Record<string, string | undefined>;
+  try {
+    const result = await getBundleLeaderboard({
+      limit: limit ? parseInt(limit) : undefined,
+      taskMode: taskMode || undefined,
+      tokenMode: tokenMode || undefined,
+      repoKind: repoKind || undefined,
+      modelFamily: modelFamily || undefined,
+    });
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Bundle leaderboard failed";
+    logger.error({ err }, "Bundle leaderboard error");
+    res.status(500).json({ error: message });
+  }
+});
+
 router.get("/skill-bundles", async (_req, res) => {
   const bundles = await db.select().from(skillBundlesTable).orderBy(desc(skillBundlesTable.createdAt));
   res.json({ bundles });
@@ -420,6 +720,26 @@ router.get("/skill-bundles/:bundleId", async (req, res) => {
   res.json({ bundle });
 });
 
+router.get("/skill-bundles/:bundleId/performance", async (req, res) => {
+  const id = parseInt(req.params.bundleId);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid bundle ID" });
+    return;
+  }
+  const [bundle] = await db.select({ id: skillBundlesTable.id }).from(skillBundlesTable).where(eq(skillBundlesTable.id, id));
+  if (!bundle) {
+    res.status(404).json({ error: "Bundle not found" });
+    return;
+  }
+  try {
+    const performance = await getBundlePerformance(id);
+    res.json(performance);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Performance fetch failed";
+    res.status(500).json({ error: message });
+  }
+});
+
 router.post("/skill-bundles/:bundleId/activate", async (req, res) => {
   const id = parseInt(req.params.bundleId);
   if (isNaN(id)) {
@@ -469,6 +789,28 @@ router.post("/skill-bundles/:bundleId/activate", async (req, res) => {
         activationMode: "next-launch",
       }).returning();
       sessionSkillsRecord = record;
+
+      // Track activation counts in skill_evals for each activated skill.
+      const activatedSkillSlugs = (compiled.skills ?? [])
+        .map((s: { id?: string }) => s.id)
+        .filter((slug): slug is string => typeof slug === "string");
+      if (activatedSkillSlugs.length > 0) {
+        const resolvedSkills = await db
+          .select({ id: skillsTable.id })
+          .from(skillsTable)
+          .where(inArray(skillsTable.slug, activatedSkillSlugs));
+        await Promise.all(
+          resolvedSkills.map(skill =>
+            db.insert(skillEvalsTable)
+              .values({ skillId: skill.id, activationCount: 1 })
+              .onConflictDoUpdate({
+                target: [skillEvalsTable.skillId],
+                set: { activationCount: sql`skill_evals.activation_count + 1`, updatedAt: new Date() },
+              })
+              .catch(() => {})
+          )
+        );
+      }
 
       // Best-effort SSH pre-write when instance is already running.
       // This is a silent optimisation — the API contract always returns next-launch.

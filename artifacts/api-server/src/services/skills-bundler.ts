@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { db, skillsTable, skillBundlesTable, skillVersionsTable, skillSourcesTable, sessionSkillsTable, sessionsTable, sessionRepoContextTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { DEFAULT_SKILLS, DEFAULT_BUNDLES } from "./default-skills";
-import { rankSkills, buildRepoIntelligenceContext, getSkillFeedbackScores, buildHistoryScoresMap } from "./skills-ranker";
+import { rankSkills, buildRepoIntelligenceContext, getSkillFeedbackScores, buildHistoryScoresMap, getEvalLiftScoresMap } from "./skills-ranker";
 import { TOKEN_MODE_PROFILES } from "./skills-types";
 import type { FloatrSkillManifest, SessionContext, CompiledBundle, TokenMode, RepoIntelligenceContext } from "./skills-types";
 import { logger } from "../lib/logger";
@@ -88,7 +88,7 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
   const maxSkills = Math.min(tokenProfile.activeSkillCountLimit, MAX_SKILLS);
   const maxTokenBudget = Math.floor(tokenProfile.maxContextBudget * 0.05);
 
-  // Inject historical feedback scores into context if not already present
+  // Inject historical feedback scores and eval lift scores into context if not already present
   let ctxWithHistory = ctx;
   if (!ctx.historyScores) {
     try {
@@ -101,7 +101,41 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
     }
   }
 
-  const ranked = rankSkills(allManifests, ctxWithHistory);
+  // Inject eval-based lift scores as a secondary internal ranking signal.
+  // Low-confidence eval data is already filtered inside getEvalLiftScoresMap (confidence < 0.30 → no key).
+  // This ensures eval signals only influence ranking when there is enough evidence.
+  if (!ctxWithHistory.evalLiftScores) {
+    try {
+      const evalLiftScores = await getEvalLiftScoresMap();
+      if (Object.keys(evalLiftScores).length > 0) {
+        ctxWithHistory = { ...ctxWithHistory, evalLiftScores };
+      }
+    } catch (err) {
+      logger.warn({ err }, "Failed to load eval lift scores for ranking — continuing without them");
+    }
+  }
+
+  // Explicit negative-lift suppression: exclude skills with strong measured negative lift
+  // from the candidate pool entirely. This is a hard safety rail beyond the soft ranking penalty.
+  // Threshold: effectiveLift < -0.1 (after recency decay and penalty factor applied in ranker).
+  const SUPPRESSION_LIFT_THRESHOLD = -0.1;
+  let suppressed: Set<string> = new Set();
+  if (ctxWithHistory.evalLiftScores) {
+    suppressed = new Set(
+      Object.entries(ctxWithHistory.evalLiftScores)
+        .filter(([, lift]) => lift < SUPPRESSION_LIFT_THRESHOLD)
+        .map(([slug]) => slug)
+    );
+    if (suppressed.size > 0) {
+      logger.info({ suppressed: [...suppressed] }, "[bundler] Suppressing skills with strong negative eval lift");
+    }
+  }
+
+  const candidateManifests = suppressed.size > 0
+    ? allManifests.filter(m => !suppressed.has(m.id))
+    : allManifests;
+
+  const ranked = rankSkills(candidateManifests, ctxWithHistory);
 
   // ── Step 1: Reserve mandatory slots for doctrine + workflow coverage ──
   const mandatory: FloatrSkillManifest[] = [];

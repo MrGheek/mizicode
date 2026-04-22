@@ -1,5 +1,5 @@
-import { db, skillsTable, skillFeedbackTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, skillsTable, skillFeedbackTable, skillEvalsTable } from "@workspace/db";
+import { eq, inArray } from "drizzle-orm";
 import type { FloatrSkillManifest, SessionContext, TrustTier, RepoIntelligenceContext } from "./skills-types";
 
 const INSTALL_RISK_PENALTY: Record<string, number> = {
@@ -101,15 +101,101 @@ function conflictRisk(manifest: FloatrSkillManifest, selected: FloatrSkillManife
 }
 
 /**
- * Compute the measured-lift bonus from historical feedback.
- * historyScores maps manifest.id → normalized score in [-1.0, +1.0]:
- *   +1.0 = always helpful, -1.0 = never helpful, 0 = unknown/neutral.
- * measuredLiftWeight scales how much impact this has on the final score.
+ * Compute the measured-lift bonus from historical feedback and eval data.
+ *
+ * Two signal sources are blended:
+ * 1. historyScores: feedback-based recency-weighted score in [-1, +1]
+ * 2. evalLiftScores: eval-run-based directional lift in [-MAX_EVAL_LIFT, +MAX_EVAL_LIFT]
+ *
+ * When both signals are available, the eval signal blends at 40% weight with feedback at 60%.
+ * When only one signal is available, that signal is used at full weight.
+ *
+ * Safety: eval lift signals are already confidence-gated and clipped before reaching ctx.
+ * Low-confidence eval data contributes 0 (no evalLiftScore key set).
+ * Experimental skills are bounded by trust-tier rules applied upstream in rankSkills.
+ *
+ * measuredLiftWeight from the manifest scales the total blended signal.
  */
 function measuredLiftBonus(manifest: FloatrSkillManifest, ctx: SessionContext): number {
-  const historyScore = ctx.historyScores?.[manifest.id] ?? 0;
+  const historyScore = ctx.historyScores?.[manifest.id] ?? null;
+  const evalLift = ctx.evalLiftScores?.[manifest.id] ?? null;
   const weight = manifest.rankingHints.measuredLiftWeight || 0;
-  return historyScore * weight;
+
+  let blendedScore = 0;
+  if (historyScore !== null && evalLift !== null) {
+    blendedScore = historyScore * 0.6 + evalLift * 0.4;
+  } else if (historyScore !== null) {
+    blendedScore = historyScore;
+  } else if (evalLift !== null) {
+    blendedScore = evalLift;
+  }
+
+  return blendedScore * weight;
+}
+
+/**
+ * Build an eval lift scores map (manifest.id → recency-weighted, clipped lift value).
+ *
+ * Recency decay: Eval data older than RECENCY_HALF_LIFE_DAYS is discounted.
+ *   effectiveLift = rawLift × 2^(-ageDays / halfLifeDays)
+ *   This ensures stale eval results (e.g. from a previous skill version) fade out
+ *   rather than permanently biasing recommendations.
+ *
+ * Confidence gate: Only skills meeting MIN_EVAL_CONFIDENCE are included.
+ *   Low-confidence data returns no key, so the blending logic uses feedback only.
+ *
+ * Negative-lift penalty: Skills with decayed lift < NEGATIVE_LIFT_THRESHOLD
+ *   receive an additional suppression multiplier (NEGATIVE_LIFT_PENALTY_FACTOR).
+ *   This encodes a risk-averse prior — we suppress more aggressively than we boost.
+ */
+export async function getEvalLiftScoresMap(): Promise<Record<string, number>> {
+  const MIN_EVAL_CONFIDENCE = 0.30;
+  const MAX_EVAL_LIFT = 0.5;
+  const RECENCY_HALF_LIFE_DAYS = 30;
+  const NEGATIVE_LIFT_THRESHOLD = -0.02;
+  const NEGATIVE_LIFT_PENALTY_FACTOR = 1.5;
+
+  const rows = await db
+    .select({
+      slug: skillsTable.slug,
+      estimatedContribution: skillEvalsTable.estimatedContribution,
+      confidenceScore: skillEvalsTable.confidenceScore,
+      negativeLiftCount: skillEvalsTable.negativeLiftCount,
+      updatedAt: skillEvalsTable.updatedAt,
+    })
+    .from(skillEvalsTable)
+    .innerJoin(skillsTable, eq(skillEvalsTable.skillId, skillsTable.id));
+
+  const now = Date.now();
+  const map: Record<string, number> = {};
+
+  for (const row of rows) {
+    if ((row.confidenceScore ?? 0) < MIN_EVAL_CONFIDENCE) continue;
+
+    const rawLift = row.estimatedContribution ?? 0;
+
+    const ageDays = row.updatedAt
+      ? (now - new Date(row.updatedAt).getTime()) / 86_400_000
+      : 0;
+    const recencyFactor = Math.pow(2, -ageDays / RECENCY_HALF_LIFE_DAYS);
+
+    let effectiveLift = rawLift * recencyFactor;
+
+    if (effectiveLift < NEGATIVE_LIFT_THRESHOLD) {
+      effectiveLift *= NEGATIVE_LIFT_PENALTY_FACTOR;
+    }
+
+    const clipped = Math.max(-MAX_EVAL_LIFT, Math.min(MAX_EVAL_LIFT, effectiveLift));
+    map[row.slug] = clipped;
+
+    if (row.slug.startsWith("imported-")) {
+      const manifestId = row.slug.replace(/^imported-\d+-/, "");
+      if (manifestId && manifestId !== row.slug) {
+        map[manifestId] = clipped;
+      }
+    }
+  }
+  return map;
 }
 
 export interface RankedSkill {

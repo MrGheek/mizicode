@@ -21,7 +21,9 @@ import type {
   ActivateBundleRequest,
   ActivateBundleResponse,
   ActiveSessionResponse,
+  BundleLeaderboardResponse,
   BundleListResponse,
+  BundlePerformanceResponse,
   BundleResponse,
   ClaimReleaseResponse,
   ClaimResponse,
@@ -41,12 +43,20 @@ import type {
   DashboardSummary,
   EnqueueHeavyJobRequest,
   ErrorResponse,
+  EvalRunDetailResponse,
+  EvalRunFinalizeResponse,
+  EvalRunListResponse,
+  EvalRunResponse,
+  EvalScoringPresetsResponse,
+  EvalVariantResponse,
+  GetBundleLeaderboardParams,
   GetMemoryGovernanceStatsParams,
   GetMemoryItemParams,
   GetMemoryPromotionHistoryParams,
   GetRepoBlastRadiusParams,
   GetRepoSymbolParams,
   GetSkillFeedbackHistoryParams,
+  GetSkillLeaderboardParams,
   GpuOffer,
   GpuProfile,
   HandoffResponse,
@@ -61,6 +71,7 @@ import type {
   ListHeavyJobsParams,
   ListMemoryConflictsParams,
   ListMemoryItemsParams,
+  ListSkillEvalsParams,
   ListSkillsParams,
   ListStaleMemoryItemsParams,
   MarkMemoryInjectedBody,
@@ -77,7 +88,9 @@ import type {
   MemorySearchResponse,
   MemoryStaleResponse,
   NotImplementedResponse,
+  ProcessNextQueuedEvalRun200,
   PromotionUpdateResponse,
+  RecordEvalVariantRequest,
   ReleaseLaneClaimParams,
   RepoBlastRadiusResponse,
   RepoFingerprintResponse,
@@ -93,6 +106,8 @@ import type {
   ReviewSkillRequest,
   SaveMemoryItemRequest,
   SaveMemoryItemResponse,
+  ScheduleEvalRunRequest,
+  ScheduleEvalRunResponse,
   SchedulerConfig,
   SearchOffersParams,
   SearchRepoParams,
@@ -106,10 +121,13 @@ import type {
   SkillFeedbackRequest,
   SkillFeedbackResponse,
   SkillFeedbackScoresResponse,
+  SkillLeaderboardResponse,
+  SkillPerformanceResponse,
   SkillsListResponse,
   SuccessResponse,
   Template,
   UpdateBundleRequest,
+  UpdateEvalRunStatusRequest,
   UpdateHeavyJobRequest,
   UpdateLaneRequest,
   UpdateMemoryConflictStatusBody,
@@ -1887,43 +1905,60 @@ export const useCompileSkillPreview = <
 };
 
 /**
- * @summary List skill evaluation results (not yet available)
+ * Returns all eval runs with optional status/type/task-mode filters.
+ * @summary List eval runs
  */
-export const getListSkillEvalsUrl = () => {
-  return `/api/skills/evals`;
+export const getListSkillEvalsUrl = (params?: ListSkillEvalsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/skills/evals?${stringifiedParams}`
+    : `/api/skills/evals`;
 };
 
 export const listSkillEvals = async (
+  params?: ListSkillEvalsParams,
   options?: RequestInit,
-): Promise<unknown> => {
-  return customFetch<unknown>(getListSkillEvalsUrl(), {
+): Promise<EvalRunListResponse> => {
+  return customFetch<EvalRunListResponse>(getListSkillEvalsUrl(params), {
     ...options,
     method: "GET",
   });
 };
 
-export const getListSkillEvalsQueryKey = () => {
-  return [`/api/skills/evals`] as const;
+export const getListSkillEvalsQueryKey = (params?: ListSkillEvalsParams) => {
+  return [`/api/skills/evals`, ...(params ? [params] : [])] as const;
 };
 
 export const getListSkillEvalsQueryOptions = <
   TData = Awaited<ReturnType<typeof listSkillEvals>>,
-  TError = ErrorType<NotImplementedResponse>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof listSkillEvals>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}) => {
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: ListSkillEvalsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSkillEvals>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getListSkillEvalsQueryKey();
+  const queryKey = queryOptions?.queryKey ?? getListSkillEvalsQueryKey(params);
 
   const queryFn: QueryFunction<Awaited<ReturnType<typeof listSkillEvals>>> = ({
     signal,
-  }) => listSkillEvals({ signal, ...requestOptions });
+  }) => listSkillEvals(params, { signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof listSkillEvals>>,
@@ -1935,24 +1970,27 @@ export const getListSkillEvalsQueryOptions = <
 export type ListSkillEvalsQueryResult = NonNullable<
   Awaited<ReturnType<typeof listSkillEvals>>
 >;
-export type ListSkillEvalsQueryError = ErrorType<NotImplementedResponse>;
+export type ListSkillEvalsQueryError = ErrorType<ErrorResponse>;
 
 /**
- * @summary List skill evaluation results (not yet available)
+ * @summary List eval runs
  */
 
 export function useListSkillEvals<
   TData = Awaited<ReturnType<typeof listSkillEvals>>,
-  TError = ErrorType<NotImplementedResponse>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof listSkillEvals>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getListSkillEvalsQueryOptions(options);
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: ListSkillEvalsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listSkillEvals>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListSkillEvalsQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -1962,37 +2000,43 @@ export function useListSkillEvals<
 }
 
 /**
- * @summary Run a skill evaluation harness (not yet available)
+ * Schedules a new eval run. Enforces daily budget and max-concurrent-job caps. Returns 429 when budget or concurrency limits are exceeded.
+ * @summary Schedule an async eval run
  */
-export const getRunSkillEvalUrl = () => {
+export const getScheduleEvalRunUrl = () => {
   return `/api/skills/evals/run`;
 };
 
-export const runSkillEval = async (options?: RequestInit): Promise<unknown> => {
-  return customFetch<unknown>(getRunSkillEvalUrl(), {
+export const scheduleEvalRun = async (
+  scheduleEvalRunRequest: ScheduleEvalRunRequest,
+  options?: RequestInit,
+): Promise<ScheduleEvalRunResponse> => {
+  return customFetch<ScheduleEvalRunResponse>(getScheduleEvalRunUrl(), {
     ...options,
     method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(scheduleEvalRunRequest),
   });
 };
 
-export const getRunSkillEvalMutationOptions = <
-  TError = ErrorType<NotImplementedResponse>,
+export const getScheduleEvalRunMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof runSkillEval>>,
+    Awaited<ReturnType<typeof scheduleEvalRun>>,
     TError,
-    void,
+    { data: BodyType<ScheduleEvalRunRequest> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
-  Awaited<ReturnType<typeof runSkillEval>>,
+  Awaited<ReturnType<typeof scheduleEvalRun>>,
   TError,
-  void,
+  { data: BodyType<ScheduleEvalRunRequest> },
   TContext
 > => {
-  const mutationKey = ["runSkillEval"];
+  const mutationKey = ["scheduleEvalRun"];
   const { mutation: mutationOptions, request: requestOptions } = options
     ? options.mutation &&
       "mutationKey" in options.mutation &&
@@ -2002,42 +2046,557 @@ export const getRunSkillEvalMutationOptions = <
     : { mutation: { mutationKey }, request: undefined };
 
   const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof runSkillEval>>,
-    void
-  > = () => {
-    return runSkillEval(requestOptions);
+    Awaited<ReturnType<typeof scheduleEvalRun>>,
+    { data: BodyType<ScheduleEvalRunRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return scheduleEvalRun(data, requestOptions);
   };
 
   return { mutationFn, ...mutationOptions };
 };
 
-export type RunSkillEvalMutationResult = NonNullable<
-  Awaited<ReturnType<typeof runSkillEval>>
+export type ScheduleEvalRunMutationResult = NonNullable<
+  Awaited<ReturnType<typeof scheduleEvalRun>>
 >;
-
-export type RunSkillEvalMutationError = ErrorType<NotImplementedResponse>;
+export type ScheduleEvalRunMutationBody = BodyType<ScheduleEvalRunRequest>;
+export type ScheduleEvalRunMutationError = ErrorType<ErrorResponse>;
 
 /**
- * @summary Run a skill evaluation harness (not yet available)
+ * @summary Schedule an async eval run
  */
-export const useRunSkillEval = <
-  TError = ErrorType<NotImplementedResponse>,
+export const useScheduleEvalRun = <
+  TError = ErrorType<ErrorResponse>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof runSkillEval>>,
+    Awaited<ReturnType<typeof scheduleEvalRun>>,
+    TError,
+    { data: BodyType<ScheduleEvalRunRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof scheduleEvalRun>>,
+  TError,
+  { data: BodyType<ScheduleEvalRunRequest> },
+  TContext
+> => {
+  return useMutation(getScheduleEvalRunMutationOptions(options));
+};
+
+/**
+ * Processes the oldest queued eval run respecting budget and concurrency limits. Useful for testing and manual intervention.
+ * @summary Manually trigger the eval worker to process the next queued run
+ */
+export const getProcessNextQueuedEvalRunUrl = () => {
+  return `/api/skills/evals/process-next`;
+};
+
+export const processNextQueuedEvalRun = async (
+  options?: RequestInit,
+): Promise<ProcessNextQueuedEvalRun200> => {
+  return customFetch<ProcessNextQueuedEvalRun200>(
+    getProcessNextQueuedEvalRunUrl(),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getProcessNextQueuedEvalRunMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof processNextQueuedEvalRun>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof processNextQueuedEvalRun>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["processNextQueuedEvalRun"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof processNextQueuedEvalRun>>,
+    void
+  > = () => {
+    return processNextQueuedEvalRun(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ProcessNextQueuedEvalRunMutationResult = NonNullable<
+  Awaited<ReturnType<typeof processNextQueuedEvalRun>>
+>;
+
+export type ProcessNextQueuedEvalRunMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Manually trigger the eval worker to process the next queued run
+ */
+export const useProcessNextQueuedEvalRun = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof processNextQueuedEvalRun>>,
     TError,
     void,
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
-  Awaited<ReturnType<typeof runSkillEval>>,
+  Awaited<ReturnType<typeof processNextQueuedEvalRun>>,
   TError,
   void,
   TContext
 > => {
-  return useMutation(getRunSkillEvalMutationOptions(options));
+  return useMutation(getProcessNextQueuedEvalRunMutationOptions(options));
+};
+
+/**
+ * Returns the explicit, inspectable scoring weight presets for each task mode plus the current eval budget config.
+ * @summary Get task-mode scoring presets and budget config
+ */
+export const getGetEvalScoringPresetsUrl = () => {
+  return `/api/skills/evals/scoring-presets`;
+};
+
+export const getEvalScoringPresets = async (
+  options?: RequestInit,
+): Promise<EvalScoringPresetsResponse> => {
+  return customFetch<EvalScoringPresetsResponse>(
+    getGetEvalScoringPresetsUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetEvalScoringPresetsQueryKey = () => {
+  return [`/api/skills/evals/scoring-presets`] as const;
+};
+
+export const getGetEvalScoringPresetsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEvalScoringPresets>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getEvalScoringPresets>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetEvalScoringPresetsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getEvalScoringPresets>>
+  > = ({ signal }) => getEvalScoringPresets({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEvalScoringPresets>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetEvalScoringPresetsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEvalScoringPresets>>
+>;
+export type GetEvalScoringPresetsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get task-mode scoring presets and budget config
+ */
+
+export function useGetEvalScoringPresets<
+  TData = Awaited<ReturnType<typeof getEvalScoringPresets>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getEvalScoringPresets>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetEvalScoringPresetsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get an eval run with its variants
+ */
+export const getGetEvalRunUrl = (runId: number) => {
+  return `/api/skills/evals/${runId}`;
+};
+
+export const getEvalRun = async (
+  runId: number,
+  options?: RequestInit,
+): Promise<EvalRunDetailResponse> => {
+  return customFetch<EvalRunDetailResponse>(getGetEvalRunUrl(runId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetEvalRunQueryKey = (runId: number) => {
+  return [`/api/skills/evals/${runId}`] as const;
+};
+
+export const getGetEvalRunQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEvalRun>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  runId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getEvalRun>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetEvalRunQueryKey(runId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getEvalRun>>> = ({
+    signal,
+  }) => getEvalRun(runId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!runId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEvalRun>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetEvalRunQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEvalRun>>
+>;
+export type GetEvalRunQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get an eval run with its variants
+ */
+
+export function useGetEvalRun<
+  TData = Awaited<ReturnType<typeof getEvalRun>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  runId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getEvalRun>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetEvalRunQueryOptions(runId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Records a baseline, treatment, or ablated variant for an in-progress eval run. Composite scores are computed automatically using the run's task-mode preset.
+ * @summary Record a variant result for an eval run
+ */
+export const getRecordEvalVariantUrl = (runId: number) => {
+  return `/api/skills/evals/${runId}/variants`;
+};
+
+export const recordEvalVariant = async (
+  runId: number,
+  recordEvalVariantRequest: RecordEvalVariantRequest,
+  options?: RequestInit,
+): Promise<EvalVariantResponse> => {
+  return customFetch<EvalVariantResponse>(getRecordEvalVariantUrl(runId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(recordEvalVariantRequest),
+  });
+};
+
+export const getRecordEvalVariantMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recordEvalVariant>>,
+    TError,
+    { runId: number; data: BodyType<RecordEvalVariantRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof recordEvalVariant>>,
+  TError,
+  { runId: number; data: BodyType<RecordEvalVariantRequest> },
+  TContext
+> => {
+  const mutationKey = ["recordEvalVariant"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof recordEvalVariant>>,
+    { runId: number; data: BodyType<RecordEvalVariantRequest> }
+  > = (props) => {
+    const { runId, data } = props ?? {};
+
+    return recordEvalVariant(runId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RecordEvalVariantMutationResult = NonNullable<
+  Awaited<ReturnType<typeof recordEvalVariant>>
+>;
+export type RecordEvalVariantMutationBody = BodyType<RecordEvalVariantRequest>;
+export type RecordEvalVariantMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Record a variant result for an eval run
+ */
+export const useRecordEvalVariant = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof recordEvalVariant>>,
+    TError,
+    { runId: number; data: BodyType<RecordEvalVariantRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof recordEvalVariant>>,
+  TError,
+  { runId: number; data: BodyType<RecordEvalVariantRequest> },
+  TContext
+> => {
+  return useMutation(getRecordEvalVariantMutationOptions(options));
+};
+
+/**
+ * Computes baseline-vs-treatment lift, updates per-skill and per-bundle aggregates, and marks the run completed.
+ * @summary Finalize an eval run and apply contribution heuristics
+ */
+export const getFinalizeEvalRunUrl = (runId: number) => {
+  return `/api/skills/evals/${runId}/finalize`;
+};
+
+export const finalizeEvalRun = async (
+  runId: number,
+  options?: RequestInit,
+): Promise<EvalRunFinalizeResponse> => {
+  return customFetch<EvalRunFinalizeResponse>(getFinalizeEvalRunUrl(runId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getFinalizeEvalRunMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof finalizeEvalRun>>,
+    TError,
+    { runId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof finalizeEvalRun>>,
+  TError,
+  { runId: number },
+  TContext
+> => {
+  const mutationKey = ["finalizeEvalRun"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof finalizeEvalRun>>,
+    { runId: number }
+  > = (props) => {
+    const { runId } = props ?? {};
+
+    return finalizeEvalRun(runId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type FinalizeEvalRunMutationResult = NonNullable<
+  Awaited<ReturnType<typeof finalizeEvalRun>>
+>;
+
+export type FinalizeEvalRunMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Finalize an eval run and apply contribution heuristics
+ */
+export const useFinalizeEvalRun = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof finalizeEvalRun>>,
+    TError,
+    { runId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof finalizeEvalRun>>,
+  TError,
+  { runId: number },
+  TContext
+> => {
+  return useMutation(getFinalizeEvalRunMutationOptions(options));
+};
+
+/**
+ * Advances the run through queued → preparing → running → scoring → completed|error. Yields (429) if a heavy interactive job is active.
+ * @summary Advance an eval run's status
+ */
+export const getUpdateEvalRunStatusUrl = (runId: number) => {
+  return `/api/skills/evals/${runId}/status`;
+};
+
+export const updateEvalRunStatus = async (
+  runId: number,
+  updateEvalRunStatusRequest: UpdateEvalRunStatusRequest,
+  options?: RequestInit,
+): Promise<EvalRunResponse> => {
+  return customFetch<EvalRunResponse>(getUpdateEvalRunStatusUrl(runId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateEvalRunStatusRequest),
+  });
+};
+
+export const getUpdateEvalRunStatusMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateEvalRunStatus>>,
+    TError,
+    { runId: number; data: BodyType<UpdateEvalRunStatusRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateEvalRunStatus>>,
+  TError,
+  { runId: number; data: BodyType<UpdateEvalRunStatusRequest> },
+  TContext
+> => {
+  const mutationKey = ["updateEvalRunStatus"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateEvalRunStatus>>,
+    { runId: number; data: BodyType<UpdateEvalRunStatusRequest> }
+  > = (props) => {
+    const { runId, data } = props ?? {};
+
+    return updateEvalRunStatus(runId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateEvalRunStatusMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateEvalRunStatus>>
+>;
+export type UpdateEvalRunStatusMutationBody =
+  BodyType<UpdateEvalRunStatusRequest>;
+export type UpdateEvalRunStatusMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Advance an eval run's status
+ */
+export const useUpdateEvalRunStatus = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateEvalRunStatus>>,
+    TError,
+    { runId: number; data: BodyType<UpdateEvalRunStatusRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateEvalRunStatus>>,
+  TError,
+  { runId: number; data: BodyType<UpdateEvalRunStatusRequest> },
+  TContext
+> => {
+  return useMutation(getUpdateEvalRunStatusMutationOptions(options));
 };
 
 /**
@@ -2122,43 +2681,69 @@ export const useDiscoverSkills = <
 };
 
 /**
- * @summary Skill leaderboard (not yet available)
+ * Returns top skills by eval-measured lift and skills with negative lift or regression risk. Backed by stored eval data.
+ * @summary Skill leaderboard — top skills by measured lift and regression risk
  */
-export const getGetSkillLeaderboardUrl = () => {
-  return `/api/skills/leaderboard`;
+export const getGetSkillLeaderboardUrl = (
+  params?: GetSkillLeaderboardParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/skills/leaderboard?${stringifiedParams}`
+    : `/api/skills/leaderboard`;
 };
 
 export const getSkillLeaderboard = async (
+  params?: GetSkillLeaderboardParams,
   options?: RequestInit,
-): Promise<unknown> => {
-  return customFetch<unknown>(getGetSkillLeaderboardUrl(), {
-    ...options,
-    method: "GET",
-  });
+): Promise<SkillLeaderboardResponse> => {
+  return customFetch<SkillLeaderboardResponse>(
+    getGetSkillLeaderboardUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
 };
 
-export const getGetSkillLeaderboardQueryKey = () => {
-  return [`/api/skills/leaderboard`] as const;
+export const getGetSkillLeaderboardQueryKey = (
+  params?: GetSkillLeaderboardParams,
+) => {
+  return [`/api/skills/leaderboard`, ...(params ? [params] : [])] as const;
 };
 
 export const getGetSkillLeaderboardQueryOptions = <
   TData = Awaited<ReturnType<typeof getSkillLeaderboard>>,
-  TError = ErrorType<NotImplementedResponse>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getSkillLeaderboard>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}) => {
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: GetSkillLeaderboardParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSkillLeaderboard>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getGetSkillLeaderboardQueryKey();
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSkillLeaderboardQueryKey(params);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof getSkillLeaderboard>>
-  > = ({ signal }) => getSkillLeaderboard({ signal, ...requestOptions });
+  > = ({ signal }) =>
+    getSkillLeaderboard(params, { signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof getSkillLeaderboard>>,
@@ -2170,24 +2755,27 @@ export const getGetSkillLeaderboardQueryOptions = <
 export type GetSkillLeaderboardQueryResult = NonNullable<
   Awaited<ReturnType<typeof getSkillLeaderboard>>
 >;
-export type GetSkillLeaderboardQueryError = ErrorType<NotImplementedResponse>;
+export type GetSkillLeaderboardQueryError = ErrorType<ErrorResponse>;
 
 /**
- * @summary Skill leaderboard (not yet available)
+ * @summary Skill leaderboard — top skills by measured lift and regression risk
  */
 
 export function useGetSkillLeaderboard<
   TData = Awaited<ReturnType<typeof getSkillLeaderboard>>,
-  TError = ErrorType<NotImplementedResponse>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getSkillLeaderboard>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetSkillLeaderboardQueryOptions(options);
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: GetSkillLeaderboardParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSkillLeaderboard>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSkillLeaderboardQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -2352,6 +2940,99 @@ export function useGetSkill<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetSkillQueryOptions(skillId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns per-skill eval aggregate (lift counts, confidence, contribution) and recent eval runs.
+ * @summary Get eval performance data for a specific skill
+ */
+export const getGetSkillPerformanceUrl = (skillId: number) => {
+  return `/api/skills/${skillId}/performance`;
+};
+
+export const getSkillPerformance = async (
+  skillId: number,
+  options?: RequestInit,
+): Promise<SkillPerformanceResponse> => {
+  return customFetch<SkillPerformanceResponse>(
+    getGetSkillPerformanceUrl(skillId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetSkillPerformanceQueryKey = (skillId: number) => {
+  return [`/api/skills/${skillId}/performance`] as const;
+};
+
+export const getGetSkillPerformanceQueryOptions = <
+  TData = Awaited<ReturnType<typeof getSkillPerformance>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  skillId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSkillPerformance>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetSkillPerformanceQueryKey(skillId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getSkillPerformance>>
+  > = ({ signal }) =>
+    getSkillPerformance(skillId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!skillId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getSkillPerformance>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetSkillPerformanceQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getSkillPerformance>>
+>;
+export type GetSkillPerformanceQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get eval performance data for a specific skill
+ */
+
+export function useGetSkillPerformance<
+  TData = Awaited<ReturnType<typeof getSkillPerformance>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  skillId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getSkillPerformance>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetSkillPerformanceQueryOptions(skillId, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -2819,6 +3500,113 @@ export function useGetSkillFeedbackHistory<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns top bundles overall and by task mode / token mode / repo kind / model family. Backed by stored eval data.
+ * @summary Bundle leaderboard — top bundles by measured lift
+ */
+export const getGetBundleLeaderboardUrl = (
+  params?: GetBundleLeaderboardParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/skill-bundles/leaderboard?${stringifiedParams}`
+    : `/api/skill-bundles/leaderboard`;
+};
+
+export const getBundleLeaderboard = async (
+  params?: GetBundleLeaderboardParams,
+  options?: RequestInit,
+): Promise<BundleLeaderboardResponse> => {
+  return customFetch<BundleLeaderboardResponse>(
+    getGetBundleLeaderboardUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetBundleLeaderboardQueryKey = (
+  params?: GetBundleLeaderboardParams,
+) => {
+  return [
+    `/api/skill-bundles/leaderboard`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetBundleLeaderboardQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBundleLeaderboard>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: GetBundleLeaderboardParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBundleLeaderboard>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetBundleLeaderboardQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getBundleLeaderboard>>
+  > = ({ signal }) =>
+    getBundleLeaderboard(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBundleLeaderboard>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBundleLeaderboardQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBundleLeaderboard>>
+>;
+export type GetBundleLeaderboardQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Bundle leaderboard — top bundles by measured lift
+ */
+
+export function useGetBundleLeaderboard<
+  TData = Awaited<ReturnType<typeof getBundleLeaderboard>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: GetBundleLeaderboardParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBundleLeaderboard>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBundleLeaderboardQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -3331,6 +4119,99 @@ export const useUpdateSkillBundle = <
 > => {
   return useMutation(getUpdateSkillBundleMutationOptions(options));
 };
+
+/**
+ * Returns per-bundle eval aggregate (run count, avg scores, avg lift, confidence) and recent eval runs.
+ * @summary Get eval performance data for a specific bundle
+ */
+export const getGetBundlePerformanceUrl = (bundleId: number) => {
+  return `/api/skill-bundles/${bundleId}/performance`;
+};
+
+export const getBundlePerformance = async (
+  bundleId: number,
+  options?: RequestInit,
+): Promise<BundlePerformanceResponse> => {
+  return customFetch<BundlePerformanceResponse>(
+    getGetBundlePerformanceUrl(bundleId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetBundlePerformanceQueryKey = (bundleId: number) => {
+  return [`/api/skill-bundles/${bundleId}/performance`] as const;
+};
+
+export const getGetBundlePerformanceQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBundlePerformance>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  bundleId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBundlePerformance>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetBundlePerformanceQueryKey(bundleId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getBundlePerformance>>
+  > = ({ signal }) =>
+    getBundlePerformance(bundleId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!bundleId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBundlePerformance>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBundlePerformanceQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBundlePerformance>>
+>;
+export type GetBundlePerformanceQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get eval performance data for a specific bundle
+ */
+
+export function useGetBundlePerformance<
+  TData = Awaited<ReturnType<typeof getBundlePerformance>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  bundleId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBundlePerformance>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBundlePerformanceQueryOptions(bundleId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Set a bundle as active for the next session launch
@@ -6490,7 +7371,11 @@ export const useCreateLaneHandoff = <
 /**
  * @summary Acknowledge or dismiss a handoff signal
  */
-export const getAcknowledgeLaneHandoffUrl = (id: number, laneId: number, handoffId: number) => {
+export const getAcknowledgeLaneHandoffUrl = (
+  id: number,
+  laneId: number,
+  handoffId: number,
+) => {
   return `/api/sessions/${id}/lanes/${laneId}/handoff/${handoffId}`;
 };
 
@@ -6501,12 +7386,15 @@ export const acknowledgeLaneHandoff = async (
   acknowledgeHandoffRequest: AcknowledgeHandoffRequest,
   options?: RequestInit,
 ): Promise<HandoffResponse> => {
-  return customFetch<HandoffResponse>(getAcknowledgeLaneHandoffUrl(id, laneId, handoffId), {
-    ...options,
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", ...options?.headers },
-    body: JSON.stringify(acknowledgeHandoffRequest),
-  });
+  return customFetch<HandoffResponse>(
+    getAcknowledgeLaneHandoffUrl(id, laneId, handoffId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(acknowledgeHandoffRequest),
+    },
+  );
 };
 
 export const getAcknowledgeLaneHandoffMutationOptions = <
@@ -6516,14 +7404,24 @@ export const getAcknowledgeLaneHandoffMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof acknowledgeLaneHandoff>>,
     TError,
-    { id: number; laneId: number; handoffId: number; data: BodyType<AcknowledgeHandoffRequest> },
+    {
+      id: number;
+      laneId: number;
+      handoffId: number;
+      data: BodyType<AcknowledgeHandoffRequest>;
+    },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof acknowledgeLaneHandoff>>,
   TError,
-  { id: number; laneId: number; handoffId: number; data: BodyType<AcknowledgeHandoffRequest> },
+  {
+    id: number;
+    laneId: number;
+    handoffId: number;
+    data: BodyType<AcknowledgeHandoffRequest>;
+  },
   TContext
 > => {
   const mutationKey = ["acknowledgeLaneHandoff"];
@@ -6537,7 +7435,12 @@ export const getAcknowledgeLaneHandoffMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof acknowledgeLaneHandoff>>,
-    { id: number; laneId: number; handoffId: number; data: BodyType<AcknowledgeHandoffRequest> }
+    {
+      id: number;
+      laneId: number;
+      handoffId: number;
+      data: BodyType<AcknowledgeHandoffRequest>;
+    }
   > = (props) => {
     const { id, laneId, handoffId, data } = props ?? {};
 
@@ -6550,7 +7453,8 @@ export const getAcknowledgeLaneHandoffMutationOptions = <
 export type AcknowledgeLaneHandoffMutationResult = NonNullable<
   Awaited<ReturnType<typeof acknowledgeLaneHandoff>>
 >;
-export type AcknowledgeLaneHandoffMutationBody = BodyType<AcknowledgeHandoffRequest>;
+export type AcknowledgeLaneHandoffMutationBody =
+  BodyType<AcknowledgeHandoffRequest>;
 export type AcknowledgeLaneHandoffMutationError = ErrorType<ErrorResponse>;
 
 /**
@@ -6563,14 +7467,24 @@ export const useAcknowledgeLaneHandoff = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof acknowledgeLaneHandoff>>,
     TError,
-    { id: number; laneId: number; handoffId: number; data: BodyType<AcknowledgeHandoffRequest> },
+    {
+      id: number;
+      laneId: number;
+      handoffId: number;
+      data: BodyType<AcknowledgeHandoffRequest>;
+    },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
   Awaited<ReturnType<typeof acknowledgeLaneHandoff>>,
   TError,
-  { id: number; laneId: number; handoffId: number; data: BodyType<AcknowledgeHandoffRequest> },
+  {
+    id: number;
+    laneId: number;
+    handoffId: number;
+    data: BodyType<AcknowledgeHandoffRequest>;
+  },
   TContext
 > => {
   return useMutation(getAcknowledgeLaneHandoffMutationOptions(options));
