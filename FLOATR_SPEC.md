@@ -303,7 +303,7 @@ Individual entries ingested from curated design sources. Unique on `(source_id, 
 |--------|------|-------------|
 | `id` | serial PK | |
 | `sourceId` | integer FK → skill_sources | |
-| `category` | text | One of: `style`, `palette`, `typography`, `chart_type`, `ux_guideline`, `anti_pattern`, `stack_convention`, `ui_reasoning` |
+| `category` | text | 7 canonical values: `style`, `palette`, `typography`, `chart_type`, `ux_guideline`, `stack_convention`, `ui_reasoning`. Type also includes `anti_pattern` (schema-valid, not auto-ingested). |
 | `name` | text | Primary key name from the CSV row (name/label/title/id field) |
 | `dataJson` | jsonb | Full raw CSV row as a key/value object |
 | `tags` | jsonb | String array: `[category, normalised-name]` |
@@ -561,7 +561,7 @@ Applied to Pro/Ultra MoE profiles (vLLM ≥ 0.19.0):
 - Expert-parallel enabled for MoE models
 - FP8 KV cache on H100/H200 profiles
 - Speculative decoding (MTP) on GLM-5.1
-- `onstart.sh` performs runtime flag-gating: probes `vllm serve --help` and strips any unrecognised flags, keeping the image forward-compatible
+- `onstart.sh` performs runtime flag-gating: probes `python3 -m vllm.entrypoints.openai.api_server --help` and strips any unrecognised flags from `VLLM_EXTRA_ARGS`, keeping the image forward-compatible
 
 **litellm proxy** (port 8081)
 - Wraps vLLM's OpenAI endpoint
@@ -760,14 +760,14 @@ Runs alongside the session scheduler in the same process.
 
 **15-minute SHA-check poll**: Fetches the HEAD commit SHA from GitHub (`GET /repos/{owner}/{repo}/commits?per_page=1`). If the SHA has changed since the last recorded `pinnedCommitSha`, triggers an immediate full sync. Skipped if a full sync is already running.
 
-**On-demand sync**: `POST /api/design-intelligence/sync` triggers a sync outside the schedule. Returns `409` if a sync is already in progress. On success or skip, returns `SeedResult`:
-```ts
-interface SeedResult {
-  success: boolean;
-  updated: boolean;
-  reason: "already_up_to_date" | "ingested" | "tree_fetch_failed" | "no_csv_files_found";
-}
-```
+**On-demand sync**: `POST /api/design-intelligence/sync` triggers a background sync outside the schedule. The endpoint returns **immediately** with:
+
+| Condition | Status | Body |
+|-----------|--------|------|
+| Sync queued | 200 | `{ ok: true, message: "Sync started" }` |
+| Already running | 409 | `{ error: "Sync already in progress" }` |
+
+The sync itself runs asynchronously. Progress is reflected in the state tracked by `GET /api/design-intelligence/sources` (see below).
 
 **State tracked in memory** (exposed via `GET /api/design-intelligence/sources`):
 - `lastSyncedAt` — timestamp of last successful sync
@@ -850,7 +850,7 @@ Base path: `/api`
 | GET | `/design-intelligence/categories` | Distinct categories with entry counts |
 | GET | `/design-intelligence/skill-map` | Map of category → related approved skills (explicit links + keyword matching) |
 | GET | `/design-intelligence/sources` | Curated sources with pinnedCommitSha + live sync status |
-| POST | `/design-intelligence/sync` | Trigger on-demand re-sync (409 if already running). Returns `SeedResult`: `{ success: boolean, updated: boolean, reason: string }` where `reason` is one of `already_up_to_date`, `ingested`, `tree_fetch_failed`, `no_csv_files_found` |
+| POST | `/design-intelligence/sync` | Trigger on-demand re-sync. Returns `{ ok: true, message: "Sync started" }` immediately; sync runs async. Returns 409 if already running. |
 
 ### Skills
 
@@ -918,7 +918,7 @@ See [Section 20](#20-lane-coordination) for full endpoint reference.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/admin/sweep-claims` | Manually trigger `sweepExpiredClaims()`; returns `{deactivated, sweptAt}`. Protected by `ADMIN_SWEEP_TOKEN` when set |
+| POST | `/admin/sweep-claims` | Manually trigger `sweepExpiredClaims()`; returns `{deactivated, sweptAt}`. Protected by `X-Admin-Token: <ADMIN_SWEEP_TOKEN>` header equality check when `ADMIN_SWEEP_TOKEN` is set |
 
 ### Claw Runner internal HTTP server (port 8080, instance-local)
 
@@ -1008,7 +1008,7 @@ These are **not** proxied through the API server. The dashboard reaches them via
 | `MEM_DATA_DIR` | No | **New** — Override for SQLite memory DB directory (default: `~/omniql-memory`) |
 | `REPLIT_DEV_DOMAIN` | Auto | Set by Replit. Used to construct callback and memory proxy URLs |
 | `DESIGN_SYNC_INTERVAL_MS` | No | **New** — Design Intelligence full-sync interval (default: 6 hours = 21 600 000 ms) |
-| `ADMIN_SWEEP_TOKEN` | No | **New** — Bearer token required to call the claim sweeper endpoint. Protects admin-only lane maintenance |
+| `ADMIN_SWEEP_TOKEN` | No | **New** — Secret value checked via `X-Admin-Token` request header (header equality, not Bearer) to protect the `/admin/sweep-claims` endpoint |
 | `GITHUB_TOKEN` | No | Optional GitHub PAT to increase API rate limits during design intelligence ingest |
 
 ### Injected into each Vast.ai instance via onstart script
@@ -1166,7 +1166,7 @@ export TEAM_MEMBERS_JSON='[{"name":"__shared__","password":"abc","path":"/shared
 Calls `OMNIQL_CALLBACK_URL` with `Authorization: Bearer $OMNIQL_MEM_AUTH_TOKEN`. Safe no-op if URL is not set. On failure it logs a warning but does not abort the boot sequence.
 
 ### Runtime flag-gating
-`onstart.sh` probes `vllm serve --help` before starting and removes any `VLLM_EXTRA_ARGS` flags not present in the help output. This keeps the image forward-compatible with future vLLM versions that may rename or remove flags.
+`onstart.sh` probes `python3 -m vllm.entrypoints.openai.api_server --help` before starting and removes any `VLLM_EXTRA_ARGS` flags not present in the help output. This keeps the image forward-compatible with future vLLM versions that may rename or remove flags.
 
 ---
 
@@ -1189,20 +1189,19 @@ The primary source is `nextlevelbuilder/ui-ux-pro-max-skill` on GitHub. Data is 
 
 ### Categories
 
-The implementation defines **8 canonical `DesignCategory` values** (declared as a TypeScript union type in `curated-sources.ts` and reflected in the DB schema):
+The **7 canonical `DesignCategory` values** auto-populated by the default ingest pipeline:
 
-| Category | Description | Auto-populated by default ingest? |
-|----------|-------------|----------------------------------|
-| `style` | Visual style entries (components, icons, interfaces) | Yes |
-| `palette` | Colour palettes | Yes |
-| `typography` | Font pairings, scales | Yes |
-| `chart_type` | Chart type recommendations | Yes |
-| `ux_guideline` | UX rules and heuristics | Yes |
-| `stack_convention` | Framework and library conventions (from `stacks/`) | Yes |
-| `ui_reasoning` | AI-assisted UI reasoning patterns | Yes |
-| `anti_pattern` | Common design mistakes | **No** — type defined, no default FILENAME_TO_CATEGORY mapping; only populated if a CSV file is explicitly mapped |
+| Category | Description |
+|----------|-------------|
+| `style` | Visual style entries (components, icons, interfaces) |
+| `palette` | Colour palettes |
+| `typography` | Font pairings, scales |
+| `chart_type` | Chart type recommendations |
+| `ux_guideline` | UX rules and heuristics |
+| `stack_convention` | Framework and library conventions (from `stacks/`) |
+| `ui_reasoning` | AI-assisted UI reasoning patterns |
 
-> The `anti_pattern` category was added to the type but no curated CSV file maps to it in the default `FILENAME_TO_CATEGORY` table. It remains available for custom source ingestion.
+> The `DesignCategory` TypeScript union type in `curated-sources.ts` also includes `anti_pattern` (common design mistakes) as an 8th value. It is schema-valid but has no corresponding CSV file in the default `FILENAME_TO_CATEGORY` mapping and is never populated by the default ingest pipeline. It is available for custom source ingestion.
 
 ### Derived skills (seeded at startup)
 Six design-intelligence skills are derived from the `nextlevelbuilder/ui-ux-pro-max-skill` source and seeded as default skills:
@@ -1264,15 +1263,19 @@ Each `gpu_profiles` row carries `swarmWorkerCap` (integer, nullable). This value
 | GLM-5.1 Ultra | 4 | Severely constrained: 0.98 GPU memory utilisation |
 
 ### Swarm snapshot
-The Claw Runner pushes real-time worker snapshots to the API server by deriving a callback URL from `OMNIQL_CALLBACK_URL`. The push URL is computed at startup as:
+The API server push handler is:
+
+```
+POST /sessions/:sessionId/swarm-push
+```
+
+The Claw Runner determines its push target at startup by applying a regex substitution to `OMNIQL_CALLBACK_URL`:
 
 ```js
 const swarmCallbackUrl = OMNIQL_CALLBACK_URL.replace(/\/status$/, '/swarm-status');
 ```
 
-So if `OMNIQL_CALLBACK_URL` is `https://api.example.com/api/sessions/123/status`, the Claw Runner POSTs snapshots to `https://api.example.com/api/sessions/123/swarm-status`.
-
-> **Note:** The API server's declared push handler is `POST /sessions/:sessionId/swarm-push`. Ensure `OMNIQL_CALLBACK_URL` is configured such that the derived `/swarm-status` path resolves to this endpoint (the Claw Runner and API server must agree on the path).
+**Important:** The Claw Runner sends snapshots to the path ending in `/swarm-status`; the API server handler is at `/swarm-push`. These suffixes differ because the derivation regex targets `/status` (the regular status-callback suffix). For swarm push to function, `OMNIQL_CALLBACK_URL` must be configured to **not end in `/status`** so the regex is a no-op, or an HTTP alias must forward `/swarm-status` requests to the `/swarm-push` handler. This is a known discrepancy in the current implementation.
 
 Snapshots are stored in `sessions.swarmSnapshotJson` and cached in-memory. The server broadcasts each incoming snapshot to all open SSE connections on that session.
 
@@ -1520,7 +1523,7 @@ Claims expire if `expiresAt` is past or if `lastHeartbeatAt` is older than `LANE
 
 A separate **purge** job (`startClaimPurger()`) runs **hourly** and permanently deletes inactive claims whose `expiresAt` is older than the 7-day retention window. This keeps the `lane_claims` table lean without affecting in-flight operations.
 
-Admin manual trigger: `POST /api/admin/sweep-claims` — calls `sweepExpiredClaims()` immediately and returns `{deactivated, sweptAt}`. Protected by `ADMIN_SWEEP_TOKEN` when configured.
+Admin manual trigger: `POST /api/admin/sweep-claims` — calls `sweepExpiredClaims()` immediately and returns `{deactivated, sweptAt}`. Protected when `ADMIN_SWEEP_TOKEN` is set: request must include header `X-Admin-Token: <token>` (checked by string equality, not Bearer scheme).
 
 ### Lane overlay bundles
 When a lane is created, `compileLaneBundles()` is called asynchronously (fire-and-forget) to compile per-lane Smart Skills overlays. Each overlay adapts the base session bundle for the lane's `laneType`, `taskMode`, and `tokenMode`. The resulting `overlayBundleId` is stored on `session_lanes`.
