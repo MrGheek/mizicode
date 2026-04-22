@@ -226,6 +226,33 @@ The `preview-dashboard.yml` workflow deploys dashboard previews using secrets fr
 3. Add the same check to the merge queue required checks.
 4. Communicate to the team that CodeQL is now blocking.
 
+**Soak period tracking log:**
+
+| Date | Event | Notes |
+|---|---|---|
+| 2026-04-22 | SHA pins verified & updated; soak period started | All action SHAs updated to current stable releases (see table below). Soak review target: **2026-05-06** |
+
+> **ACTION REQUIRED by 2026-05-06**: Open the **Security → Code scanning** tab, review all open alerts, dismiss confirmed false positives, and decide whether to enrol `CodeQL analysis (javascript-typescript)` as a required status check. The concrete soak-period tracking document is at `.github/CODEQL_SOAK_REVIEW.md` — fill in the checklist and record the decision there. A GitHub issue template is also available at `.github/ISSUE_TEMPLATE/codeql-soak-review.yml` if you prefer to track via a GitHub issue.
+
+---
+
+### SHA pin verification log
+
+All SHA pins in `.github/workflows/codeql.yml` and `.github/workflows/preview-dashboard.yml` (and other shared workflows) were verified against the GitHub releases pages on **2026-04-22** and updated to the following current stable releases:
+
+| Action | Previous version | Updated to | Commit SHA |
+|---|---|---|---|
+| `actions/checkout` | v4.2.2 | **v6.0.2** | `de0fac2e4500dabe0009e67214ff5f5447ce83dd` |
+| `actions/setup-node` | v4.2.0 | **v6.4.0** | `48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e` |
+| `pnpm/action-setup` | v4.0.0 | **v5.0.0** | `fc06bc1257f339d1d5d8b3a19a8cae5388b55320` |
+| `github/codeql-action/{init,autobuild,analyze}` | v3.26.0 | **v4.35.2** | `95e58e9a2cdfd71adc6e0353d5c52f41a045d225` |
+| `peter-evans/find-comment` | v3.1.0 | **v4.0.0** | `b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad` |
+| `peter-evans/create-or-update-comment` | v4.0.0 | **v5.0.0** | `e8674b075228eee787fea43ef493e45ece1004c9` |
+
+SHAs were obtained directly from the GitHub release pages for each action. Dependabot (`github-actions` entry in `.github/dependabot.yml`, `directory: "/"`) will keep these pins current going forward via weekly Monday PRs.
+
+> **Note on `github/codeql-action` v3 → v4**: CodeQL Action v3 was still supported at time of update but is scheduled for deprecation with GHES 3.19 (December 2026). The upgrade to v4 ensures the workflow tracks the actively maintained major version with Node.js 24 runtime support.
+
 ---
 
 ### Docker image attestations

@@ -1,0 +1,65 @@
+name: CodeQL soak period review
+description: Track the CodeQL soak period review decision after 1–2 weeks of observation.
+title: "ci: CodeQL soak period review — decide on required-check enrollment"
+labels:
+  - "type:ci"
+  - "component:ci"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## CodeQL soak period review
+
+        The `codeql.yml` workflow was added as an **informational** (non-blocking) check.
+        After 1–2 weeks of observation, the team should review alert quality and decide
+        whether to make it a required status check.
+
+        **Soak period started:** 2026-04-22
+        **Review target:** 2026-05-06
+
+        See `docs/github-ops.md → CodeQL — soak period and required-check enrollment` for the full process.
+
+  - type: checkboxes
+    id: review-steps
+    attributes:
+      label: Review checklist
+      options:
+        - label: "Open **Security → Code scanning** and review all open alerts"
+        - label: "Dismiss confirmed false positives (select reason: 'False positive' or 'Used in tests')"
+        - label: "Note average workflow run time (target: under 10 minutes)"
+        - label: "Confirm no PR was incorrectly blocked during the soak period"
+        - label: "Team agrees on enrollment decision"
+
+  - type: dropdown
+    id: enrollment-decision
+    attributes:
+      label: Enrollment decision
+      description: "What did the team decide after reviewing the soak period results?"
+      options:
+        - "Enrol as required check — alert quality is acceptable"
+        - "Extend soak period — too many false positives, needs tuning"
+        - "Do not enrol — alert noise is too high, revisit query configuration"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alert-summary
+    attributes:
+      label: Alert summary
+      description: "Briefly summarise the alerts observed during the soak period."
+      placeholder: |
+        - X total alerts
+        - Y true positives (describe briefly)
+        - Z false positives dismissed (describe patterns)
+        - Average run time: N minutes
+
+  - type: textarea
+    id: enrollment-steps
+    attributes:
+      label: Enrollment steps (if enrolling)
+      description: "If enrolling as a required check, list the steps taken."
+      placeholder: |
+        1. Go to Settings → Branches → edit the `main` rule
+        2. Under "Require status checks to pass", add: `CodeQL analysis (javascript-typescript)`
+        3. Add the same check to the merge queue required checks
+        4. Announce to the team that CodeQL is now a blocking check
