@@ -532,6 +532,7 @@ router.post("/sessions", async (req, res) => {
       llamaBatchSize: profile.llamaBatchSize,
       llamaExtraArgs: profile.llamaExtraArgs || "",
       numGpus: profile.numGpus,
+      swarmWorkerCap: profile.swarmWorkerCap,
       memProxyUrl,
       memAuthToken: process.env["OMNIQL_MEM_TOKEN"],
       memUserId,

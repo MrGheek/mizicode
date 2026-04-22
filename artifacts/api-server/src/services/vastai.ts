@@ -265,6 +265,11 @@ export function buildOnStartScript(profileConfig: {
   llamaBatchSize: number;
   llamaExtraArgs: string;
   numGpus?: number;
+  // Maximum concurrent swarm workers for this instance, sourced from the profile's
+  // swarmWorkerCap field. Exported as SWARM_MAX_WORKERS so the Claw Runner can
+  // enforce the cap without needing to know which model is running.
+  // 0 means no cap / swarm not configured.
+  swarmWorkerCap?: number | null;
   memProxyUrl?: string;
   memAuthToken?: string;
   memUserId?: string;
@@ -310,6 +315,7 @@ export VLLM_MAX_MODEL_LEN="${profileConfig.llamaCtxSize}"
 export VLLM_MAX_NUM_SEQS="${profileConfig.llamaBatchSize}"
 export VLLM_EXTRA_ARGS="${profileConfig.llamaExtraArgs}"
 export NUM_GPUS="${profileConfig.numGpus || 1}"
+export SWARM_MAX_WORKERS="${profileConfig.swarmWorkerCap ?? 0}"
 ${memLines}
 ${callbackLines}
 ${teamLine}

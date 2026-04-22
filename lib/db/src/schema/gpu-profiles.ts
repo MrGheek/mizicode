@@ -25,6 +25,11 @@ export const gpuProfilesTable = pgTable("gpu_profiles", {
   modelRepo: text("model_repo").notNull().default("moonshotai/Kimi-K2.5"),
   servedModelName: text("served_model_name").notNull().default("kimi-k2"),
   modelDisplayName: text("model_display_name").notNull().default("Kimi K2.5"),
+  // Maximum concurrent swarm workers this profile can support without starving
+  // the orchestrator's KV cache. Passed to the container as SWARM_MAX_WORKERS
+  // so the Claw Runner can enforce it without needing model-awareness.
+  // Null means swarm is not supported / not configured for this profile.
+  swarmWorkerCap: integer("swarm_worker_cap"),
 });
 
 export const insertGpuProfileSchema = createInsertSchema(gpuProfilesTable).omit({ id: true });

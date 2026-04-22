@@ -200,6 +200,7 @@ async function launchScheduledSession(profileId: number): Promise<void> {
     llamaBatchSize: profile.llamaBatchSize,
     llamaExtraArgs: profile.llamaExtraArgs || "",
     numGpus: profile.numGpus,
+    swarmWorkerCap: profile.swarmWorkerCap,
   });
 
   const result = await vastai.createInstance({

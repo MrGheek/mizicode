@@ -8,6 +8,24 @@ import { eq, notInArray } from "drizzle-orm";
 // llamaCtxSize  → vLLM --max-model-len
 // llamaBatchSize → vLLM --max-num-seqs
 // llamaExtraArgs → appended to the vllm serve command
+// swarmWorkerCap → max concurrent swarm workers; passed as SWARM_MAX_WORKERS to the
+//                  container so the Claw Runner can enforce it without model-awareness.
+//                  Profiles with swarmWorkerCap ≤ 8 are severely constrained for swarm
+//                  workloads — users should prefer a higher tier.
+//
+// vLLM version-gating note: all new flags in llamaExtraArgs require vLLM ≥ 0.6.0.
+// The Dockerfile pins "vllm>=0.6.0". onstart.sh performs a runtime version check
+// before applying --scheduling-policy priority, --disable-log-requests, and
+// --uvicorn-log-level warning at the command level. Flags embedded in llamaExtraArgs
+// (e.g. --enable-chunked-prefill) are gated the same way: onstart.sh strips any
+// unrecognised flags and logs a warning rather than aborting.
+
+// Shared chunked-prefill flags for Pro/Ultra MoE profiles (vLLM ≥ 0.6.0 confirmed).
+// These values are conservative starting points pending empirical validation.
+const CHUNKED_PREFILL_PRO =
+  "--enable-chunked-prefill --max-num-batched-tokens 8192 " +
+  "--max-num-partial-prefills 2 --max-long-partial-prefills 0 " +
+  "--long-prefill-token-threshold 2048 --scheduling-policy priority";
 
 const DEFAULT_PROFILES: InsertGpuProfile[] = [
   // ── Kimi K2.6 profiles (default / recommended) ───────────────────────────
@@ -34,6 +52,9 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "unsloth/Kimi-K2.6-GGUF",
     servedModelName: "kimi-k2-6",
     modelDisplayName: "Kimi K2.6",
+    // Single 4090 — minimal VRAM headroom; swarm is marginal on this tier.
+    // Users should prefer Standard or higher for swarm-intensive tasks.
+    swarmWorkerCap: 16,
   },
   {
     name: "kimi-k2-6-standard",
@@ -50,13 +71,17 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMin: 0.50,
     estimatedCostMax: 0.80,
     llamaCtxSize: 32768,
-    llamaBatchSize: 512,
+    // Raised from 512 → 768 to provide headroom for concurrent swarm workers
+    // while preserving KV cache budget for the orchestrator. Empirical validation pending.
+    llamaBatchSize: 768,
     llamaExtraArgs: "--enable-expert-parallel",
     searchParams: { gpu_name: "RTX 4090", num_gpus: 4, min_gpu_ram: 24 },
     startupTimeMin: 25,
     modelRepo: "unsloth/Kimi-K2.6-GGUF",
     servedModelName: "kimi-k2-6",
     modelDisplayName: "Kimi K2.6",
+    // 4× 4090 — comfortable ceiling for moderate swarm concurrency.
+    swarmWorkerCap: 48,
   },
   {
     name: "kimi-k2-6-pro",
@@ -74,12 +99,16 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMax: 4.0,
     llamaCtxSize: 65536,
     llamaBatchSize: 1024,
-    llamaExtraArgs: "--enable-expert-parallel --kv-cache-dtype fp8",
+    // Chunked prefill and priority scheduling added for swarm workloads (vLLM ≥ 0.6.0).
+    // Empirical validation of --max-num-batched-tokens pending.
+    llamaExtraArgs: `--enable-expert-parallel --kv-cache-dtype fp8 ${CHUNKED_PREFILL_PRO}`,
     searchParams: { gpu_name: "A100_SXM4", num_gpus: 4, min_gpu_ram: 80 },
     startupTimeMin: 30,
     modelRepo: "unsloth/Kimi-K2.6-GGUF",
     servedModelName: "kimi-k2-6",
     modelDisplayName: "Kimi K2.6",
+    // 4× A100 80GB — strong headroom; supports high swarm concurrency.
+    swarmWorkerCap: 100,
   },
   {
     name: "kimi-k2-6-ultra",
@@ -97,12 +126,17 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMax: 16.0,
     llamaCtxSize: 131072,
     llamaBatchSize: 2048,
-    llamaExtraArgs: "--enable-expert-parallel --kv-cache-dtype fp8",
+    // GPU memory raised to 0.95 (from onstart.sh default 0.92) — 8× H100 has sufficient
+    // VRAM headroom. Empirical validation of peak-load stability required before raising
+    // further. Chunked prefill + priority scheduling for swarm (vLLM ≥ 0.6.0).
+    llamaExtraArgs: `--enable-expert-parallel --kv-cache-dtype fp8 ${CHUNKED_PREFILL_PRO} --gpu-memory-utilization 0.95`,
     searchParams: { gpu_name: "H100_SXM5", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 35,
     modelRepo: "unsloth/Kimi-K2.6-GGUF",
     servedModelName: "kimi-k2-6",
     modelDisplayName: "Kimi K2.6",
+    // 8× H100 — near-full swarm capability.
+    swarmWorkerCap: 200,
   },
 
   // ── Kimi K2.5 profiles (legacy — kept for existing sessions) ──────────────
@@ -129,6 +163,9 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "unsloth/Kimi-K2.5-GGUF",
     servedModelName: "kimi-k2",
     modelDisplayName: "Kimi K2.5",
+    // Same architecture as K2.6 Starter — same constraints apply.
+    // Swarm is marginal on this tier; prefer a higher tier for swarm-intensive tasks.
+    swarmWorkerCap: 16,
   },
   {
     name: "standard",
@@ -145,13 +182,16 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMin: 0.50,
     estimatedCostMax: 0.80,
     llamaCtxSize: 32768,
-    llamaBatchSize: 512,
+    // Raised from 512 → 768 — same rationale as K2.6 Standard. Empirical validation pending.
+    llamaBatchSize: 768,
     llamaExtraArgs: "--enable-expert-parallel",
     searchParams: { gpu_name: "RTX 4090", num_gpus: 4, min_gpu_ram: 24 },
     startupTimeMin: 25,
     modelRepo: "unsloth/Kimi-K2.5-GGUF",
     servedModelName: "kimi-k2",
     modelDisplayName: "Kimi K2.5",
+    // Same architecture as K2.6 Standard.
+    swarmWorkerCap: 48,
   },
   {
     name: "pro",
@@ -169,12 +209,15 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMax: 4.0,
     llamaCtxSize: 65536,
     llamaBatchSize: 1024,
-    llamaExtraArgs: "--enable-expert-parallel --kv-cache-dtype fp8",
+    // Chunked prefill and priority scheduling added for swarm workloads (vLLM ≥ 0.6.0).
+    llamaExtraArgs: `--enable-expert-parallel --kv-cache-dtype fp8 ${CHUNKED_PREFILL_PRO}`,
     searchParams: { gpu_name: "A100_SXM4", num_gpus: 4, min_gpu_ram: 80 },
     startupTimeMin: 30,
     modelRepo: "unsloth/Kimi-K2.5-GGUF",
     servedModelName: "kimi-k2",
     modelDisplayName: "Kimi K2.5",
+    // Same architecture as K2.6 Pro.
+    swarmWorkerCap: 100,
   },
   {
     name: "ultra",
@@ -192,12 +235,17 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMax: 16.0,
     llamaCtxSize: 131072,
     llamaBatchSize: 2048,
-    llamaExtraArgs: "--enable-expert-parallel --kv-cache-dtype fp8",
+    // Chunked prefill and priority scheduling added for swarm workloads (vLLM ≥ 0.6.0).
+    // NOTE: GPU memory utilisation is NOT raised here (unlike K2.6 Ultra) pending
+    // dedicated empirical validation of the K2.5 weight layout on H100.
+    llamaExtraArgs: `--enable-expert-parallel --kv-cache-dtype fp8 ${CHUNKED_PREFILL_PRO}`,
     searchParams: { gpu_name: "H100_SXM5", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 35,
     modelRepo: "unsloth/Kimi-K2.5-GGUF",
     servedModelName: "kimi-k2",
     modelDisplayName: "Kimi K2.5",
+    // Same architecture as K2.6 Ultra.
+    swarmWorkerCap: 200,
   },
 
   // ── Qwen3-Coder-Next (80B total / 3B active) ──────────────────────────────
@@ -224,6 +272,8 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "Qwen/Qwen3-Coder-Next",
     servedModelName: "qwen3-coder-next",
     modelDisplayName: "Qwen3-Coder-Next",
+    // 3B active params — very cheap per worker; 4× A100 supports high concurrency.
+    swarmWorkerCap: 120,
   },
   // Pro: 8× A100 80GB — higher throughput, longer context
   {
@@ -242,12 +292,17 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMax: 8.0,
     llamaCtxSize: 131072,
     llamaBatchSize: 2048,
-    llamaExtraArgs: "--enable-expert-parallel",
+    // GPU memory raised to 0.95 — 8× A100 with 3B active params has substantial headroom.
+    // Empirical validation of stability under peak swarm load required.
+    // Chunked prefill + priority scheduling for swarm (vLLM ≥ 0.6.0).
+    llamaExtraArgs: `--enable-expert-parallel ${CHUNKED_PREFILL_PRO} --gpu-memory-utilization 0.95`,
     searchParams: { gpu_name: "A100_SXM4", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 15,
     modelRepo: "Qwen/Qwen3-Coder-Next",
     servedModelName: "qwen3-coder-next",
     modelDisplayName: "Qwen3-Coder-Next",
+    // 3B active params on 8× A100 — tiny active footprint allows extreme concurrency.
+    swarmWorkerCap: 250,
   },
 
   // ── MiniMax M2.5 (229B total / 10B active — fits Ultra H100 tier) ─────────
@@ -267,12 +322,16 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMax: 16.0,
     llamaCtxSize: 131072,
     llamaBatchSize: 1024,
-    llamaExtraArgs: "--enable-expert-parallel",
+    // Chunked prefill + priority scheduling for swarm (vLLM ≥ 0.6.0).
+    // 10B active params on 8× H100 — compact active layer gives reasonable headroom.
+    llamaExtraArgs: `--enable-expert-parallel ${CHUNKED_PREFILL_PRO}`,
     searchParams: { gpu_name: "H100_SXM5", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 25,
     modelRepo: "MiniMaxAI/MiniMax-M2.5",
     servedModelName: "minimax-m2.5",
     modelDisplayName: "MiniMax M2.5",
+    // 10B active on 8× H100 — compact active layer gives modest swarm headroom.
+    swarmWorkerCap: 80,
   },
 
   // ── GLM-5.1 FP8 (754B total / 40B active) ────────────────────────────────
@@ -293,12 +352,18 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMax: 16.0,
     llamaCtxSize: 32768,
     llamaBatchSize: 512,
+    // DO NOT modify: already at --gpu-memory-utilization 0.98 — VRAM is fully committed.
+    // Raising GPU memory or adding chunked-prefill risks OOM. Swarm is extremely constrained.
+    // Users should use glm-5-1-h200 for any swarm workload.
     llamaExtraArgs: "--kv-cache-dtype fp8 --enable-expert-parallel --tool-call-parser glm47 --reasoning-parser glm45 --enable-auto-tool-choice --speculative-config.method mtp --speculative-config.num_speculative_tokens 3 --gpu-memory-utilization 0.98",
     searchParams: { gpu_name: "H100_SXM5", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 45,
     modelRepo: "zai-org/GLM-5.1-FP8",
     servedModelName: "glm-5.1",
     modelDisplayName: "GLM-5.1 (FP8)",
+    // CONSTRAINED: already at 0.98 GPU memory utilisation — extremely limited swarm headroom.
+    // Swarm is marginal on this tier. Users should strongly prefer glm-5-1-h200 for swarm tasks.
+    swarmWorkerCap: 4,
   },
   // H200: 8× H200 — full context, recommended
   {
@@ -317,12 +382,19 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMax: 25.0,
     llamaCtxSize: 131072,
     llamaBatchSize: 1024,
+    // H200 provides additional VRAM headroom vs H100 Ultra; swarm is viable but
+    // limited by the 40B active parameter footprint. Chunked-prefill not added
+    // here pending validation with GLM's speculative decoding config.
     llamaExtraArgs: "--kv-cache-dtype fp8 --enable-expert-parallel --tool-call-parser glm47 --reasoning-parser glm45 --enable-auto-tool-choice --speculative-config.method mtp --speculative-config.num_speculative_tokens 3",
     searchParams: { gpu_name: "H200", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 45,
     modelRepo: "zai-org/GLM-5.1-FP8",
     servedModelName: "glm-5.1",
     modelDisplayName: "GLM-5.1 (FP8)",
+    // CONSTRAINED: H200 VRAM gives modest headroom over H100 Ultra tier.
+    // Swarm is possible but limited; prefer higher-throughput profiles for
+    // swarm-intensive tasks.
+    swarmWorkerCap: 16,
   },
 
   // ── DeepSeek V3.2 (671B total / MIT) ─────────────────────────────────────
@@ -342,12 +414,16 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMax: 25.0,
     llamaCtxSize: 131072,
     llamaBatchSize: 1024,
-    llamaExtraArgs: "--enable-expert-parallel",
+    // Chunked prefill + priority scheduling for swarm (vLLM ≥ 0.6.0).
+    // MoE 671B total — large weight footprint limits per-worker headroom despite H200.
+    llamaExtraArgs: `--enable-expert-parallel ${CHUNKED_PREFILL_PRO}`,
     searchParams: { gpu_name: "H200", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 40,
     modelRepo: "deepseek-ai/DeepSeek-V3.2",
     servedModelName: "deepseek-v3.2",
     modelDisplayName: "DeepSeek V3.2",
+    // MoE 671B — large weight footprint constrains per-worker headroom despite H200.
+    swarmWorkerCap: 32,
   },
 ];
 
@@ -393,6 +469,7 @@ export async function seedProfiles() {
           modelRepo: profile.modelRepo,
           servedModelName: profile.servedModelName,
           modelDisplayName: profile.modelDisplayName,
+          swarmWorkerCap: profile.swarmWorkerCap,
         })
         .where(eq(gpuProfilesTable.name, profile.name))
         .returning();

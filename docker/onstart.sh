@@ -62,6 +62,11 @@ VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-256}"
 VLLM_EXTRA_ARGS="${VLLM_EXTRA_ARGS:-}"
 NUM_GPUS="${NUM_GPUS:-1}"
 MODEL_BASE_PATH="${MODEL_BASE_PATH:-/workspace/models}"
+# Maximum concurrent swarm workers for this instance, sourced from the profile's
+# swarmWorkerCap field. Exported so the Claw Runner can enforce it without
+# needing to know which model is running. 0 = no cap / swarm not configured.
+SWARM_MAX_WORKERS="${SWARM_MAX_WORKERS:-0}"
+export SWARM_MAX_WORKERS
 
 # VLLM_PORT is the external port (litellm proxy — speaks OpenAI + Anthropic API)
 VLLM_PORT="${VLLM_PORT:-8081}"
@@ -543,6 +548,101 @@ log "Starting LLM backend in background..."
     report_status "starting_llm"
     log "Starting vLLM server on internal port $VLLM_INTERNAL_PORT..."
 
+    # ── vLLM capability-based flag gating ────────────────────────────────────
+    # We probe the installed vLLM's --help output to determine which flags are
+    # actually present in this build. This is more reliable than version-number
+    # comparisons because it catches flags removed or renamed in patch builds
+    # and avoids boot failures regardless of the exact vLLM wheel installed.
+    VLLM_VERSION=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "unknown")
+    log "Detected vLLM version: $VLLM_VERSION"
+
+    # Capture help text (vLLM may write to stdout or stderr; capture both).
+    # Suppress errors: if the module fails to import, _VLLM_HELP is empty and
+    # all flags are treated as unsupported — safe conservative fallback.
+    _VLLM_HELP=$(python3 -m vllm.entrypoints.openai.api_server --help 2>&1 || true)
+
+    # Returns 0 (true) if the flag name appears in the help output.
+    _vllm_has_flag() {
+        echo "$_VLLM_HELP" | grep -q -- "$1"
+    }
+
+    # Strip a flag (and its value, if any) from VLLM_EXTRA_ARGS.
+    # Handles both "--flag value" and standalone "--flag" forms.
+    # Uses python3 shlex for reliable tokenisation — always present in the image.
+    _strip_vllm_flag() {
+        local _f="$1"
+        if echo "$VLLM_EXTRA_ARGS" | grep -q -- "$_f"; then
+            VLLM_EXTRA_ARGS=$(python3 -c "
+import sys, shlex
+args_str, flag = sys.argv[1], sys.argv[2]
+tokens = shlex.split(args_str) if args_str.strip() else []
+result = []
+i = 0
+while i < len(tokens):
+    if tokens[i] == flag:
+        # Skip this flag and its value token (if any and not another flag)
+        if i + 1 < len(tokens) and not tokens[i + 1].startswith('-'):
+            i += 2
+        else:
+            i += 1
+    else:
+        result.append(tokens[i])
+        i += 1
+print(shlex.join(result))
+" "$VLLM_EXTRA_ARGS" "$_f" 2>/dev/null || echo "$VLLM_EXTRA_ARGS")
+            log "  Removed $_f from VLLM_EXTRA_ARGS (not present in this vLLM build)"
+        fi
+    }
+
+    # ── Per-flag capability gating for VLLM_EXTRA_ARGS ───────────────────────
+    # All flags below were added to llamaExtraArgs profiles in this task.
+    # Strip any flag that is not recognised by the installed vLLM, regardless of
+    # version. This prevents boot failures on any past or future build.
+    #
+    # --enable-chunked-prefill: if absent, strip the entire chunked-prefill group
+    #   since the companion knobs are meaningless without it.
+    # --scheduling-policy: requires priority scheduling support.
+    # --max-num-partial-prefills / --max-long-partial-prefills / --long-prefill-token-threshold:
+    #   vLLM 0.6.0+ partial-prefill tuning.
+    _SWARM_FLAGS=(
+        "--enable-chunked-prefill"
+        "--max-num-batched-tokens"
+        "--max-num-partial-prefills"
+        "--max-long-partial-prefills"
+        "--long-prefill-token-threshold"
+        "--scheduling-policy"
+    )
+    _stripped_any=0
+    for _flag in "${_SWARM_FLAGS[@]}"; do
+        if ! _vllm_has_flag "$_flag"; then
+            _strip_vllm_flag "$_flag"
+            _stripped_any=1
+        fi
+    done
+    if [ "$_stripped_any" -eq 1 ]; then
+        log "VLLM_EXTRA_ARGS after capability stripping: $VLLM_EXTRA_ARGS"
+    fi
+
+    # ── Per-flag capability gating for command-level swarm flags ─────────────
+    # --disable-log-requests: suppresses per-request log lines; safe for all profiles.
+    # --uvicorn-log-level warning: reduces uvicorn INFO noise in swarm workloads.
+    # Both are added only when confirmed present in this build's help output.
+    VLLM_VERSION_FLAGS=""
+    if _vllm_has_flag "--disable-log-requests"; then
+        VLLM_VERSION_FLAGS="$VLLM_VERSION_FLAGS --disable-log-requests"
+    else
+        log "WARNING: --disable-log-requests not found in this vLLM build — skipping"
+    fi
+    if _vllm_has_flag "--uvicorn-log-level"; then
+        VLLM_VERSION_FLAGS="$VLLM_VERSION_FLAGS --uvicorn-log-level warning"
+    else
+        log "WARNING: --uvicorn-log-level not found in this vLLM build — skipping"
+    fi
+    [ -n "$VLLM_VERSION_FLAGS" ] && log "Applying capability-confirmed vLLM flags:$VLLM_VERSION_FLAGS"
+    # ─────────────────────────────────────────────────────────────────────────
+
+    log "SWARM_MAX_WORKERS=$SWARM_MAX_WORKERS (passed to Claw Runner)"
+
     VLLM_CMD="python3 -m vllm.entrypoints.openai.api_server \
         --model $MODEL_DIR \
         --host 0.0.0.0 \
@@ -552,6 +652,7 @@ log "Starting LLM backend in background..."
         --max-num-seqs $VLLM_MAX_NUM_SEQS \
         --gpu-memory-utilization 0.92 \
         --served-model-name $SERVED_MODEL_NAME \
+        $VLLM_VERSION_FLAGS \
         $VLLM_EXTRA_ARGS"
 
     eval "$VLLM_CMD" > /var/log/vllm-server.log 2>&1 &
