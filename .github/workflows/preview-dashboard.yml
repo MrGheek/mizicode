@@ -60,10 +60,17 @@ jobs:
         run: npm install -g vercel@41
 
       # ── Deploy to Vercel preview ───────────────────────────────────────────
-      # Deploys the built dashboard dist to Vercel and captures the preview URL.
-      # The `--prebuilt` flag skips Vercel's own build step since we already ran
-      # `pnpm build` above. The `.vercel/output` convention requires the dist to
-      # be in the right place — we copy it before deploying.
+      # Deploys the already-built dashboard dist directory to Vercel as a static
+      # site and captures the resulting preview URL.
+      #
+      # `vercel deploy <dir>` treats a directory containing only static assets
+      # (no package.json / vercel.json) as a static deployment — Vercel skips
+      # any framework build and serves the files directly. This is intentional:
+      # we built the dashboard ourselves with `pnpm build` in the step above, so
+      # we just hand the dist output to Vercel for hosting.
+      #
+      # VERCEL_ORG_ID and VERCEL_PROJECT_ID are read from the environment
+      # automatically by the Vercel CLI — no project.json file is required.
       #
       # To switch providers: replace this step with your provider's CLI command.
       # The step must write: echo "url=<preview-url>" >> "$GITHUB_OUTPUT"
@@ -74,10 +81,9 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.PREVIEW_VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.PREVIEW_VERCEL_PROJECT_ID }}
         run: |
-          # Capture only the deployment URL line (https://...) from stdout.
-          # Redirecting stderr to /dev/null silences spinner/progress lines;
-          # grep extracts the first HTTPS URL from the output, which Vercel
-          # always emits as the deployment URL on its own line.
+          # Redirect stderr to /dev/null to suppress spinner/progress output.
+          # grep extracts the first HTTPS URL from stdout — Vercel always emits
+          # the deployment URL on its own line at the end of output.
           PREVIEW_URL=$(vercel deploy artifacts/dashboard/dist \
             --token "$VERCEL_TOKEN" \
             --yes \
