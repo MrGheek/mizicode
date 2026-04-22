@@ -17,15 +17,65 @@ export function subscribeToObservations(userId: string, handler: (obs: Observati
 const DATA_DIR = process.env["MEM_DATA_DIR"] || path.join(os.homedir(), "omniql-memory");
 const DB_PATH = path.join(DATA_DIR, "mem.db");
 
+/**
+ * Validate that the memory data directory is writable at startup.
+ *
+ * Called once from index.ts before the server accepts requests.  Throws with
+ * a descriptive message if the directory cannot be created or written to so
+ * that the process exits immediately instead of silently falling back to an
+ * unexpected path or losing data.
+ *
+ * On success it logs the resolved DB path so operators can confirm the correct
+ * volume is mounted at deploy time.
+ */
+export function validateMemoryDataDir(): void {
+  const source = process.env["MEM_DATA_DIR"] ? "MEM_DATA_DIR env var" : "default (~omniql-memory)";
+
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  } catch (err) {
+    const msg =
+      `[mem] FATAL: Cannot create memory data directory "${DATA_DIR}" (source: ${source}). ` +
+      `Ensure the directory exists and is writable, or that the volume is mounted correctly. ` +
+      `The server will not start without a writable data directory.`;
+    logger.error({ err, DATA_DIR, source }, msg);
+    throw new Error(msg);
+  }
+
+  // Verify writability with a probe file — directory creation alone does not
+  // guarantee writes succeed (e.g. read-only volume mounts).
+  // Use a per-process unique filename to avoid races when multiple processes
+  // start against the same directory simultaneously.
+  const probe = path.join(DATA_DIR, `.write-probe-${process.pid}-${Date.now()}`);
+  try {
+    fs.writeFileSync(probe, "ok");
+    fs.unlinkSync(probe);
+  } catch (err) {
+    const msg =
+      `[mem] FATAL: Memory data directory "${DATA_DIR}" exists but is not writable (source: ${source}). ` +
+      `Check volume mount permissions. The server will not start without a writable data directory.`;
+    logger.error({ err, DATA_DIR, source }, msg);
+    throw new Error(msg);
+  }
+
+  logger.info(
+    { DATA_DIR, DB_PATH, source },
+    "[mem] Memory data directory validated — database will be stored at DB_PATH"
+  );
+}
+
 let _db: Database.Database | null = null;
 
 function getDb(): Database.Database {
   if (_db) return _db;
 
+  // Directory is already validated at startup via validateMemoryDataDir().
+  // mkdirSync here is a last-resort safety net for the lazy-init path only.
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   } catch (err) {
-    logger.warn({ err, DATA_DIR }, "Could not create memory data directory");
+    logger.error({ err, DATA_DIR }, "[mem] FATAL: Could not create memory data directory at DB init time");
+    throw new Error(`[mem] Cannot create memory data directory "${DATA_DIR}": ${String(err)}`);
   }
 
   logger.info({ db: DB_PATH }, "Memory database initializing");

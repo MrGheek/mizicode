@@ -6,6 +6,7 @@ import { startScheduler, markDesignSyncComplete } from "./services/scheduler";
 import { seedDefaultBundles } from "./services/skills-bundler";
 import { seedCuratedSources } from "./services/curated-sources";
 import { startEvalScheduler } from "./services/skills-evals";
+import { validateMemoryDataDir } from "./services/memory";
 import { db, laneClaimsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
 
@@ -79,6 +80,16 @@ const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+// Validate memory data directory before accepting requests.
+// Throws (and exits) if the directory is missing or not writable so that
+// operators can detect a misconfigured volume mount immediately at deploy time.
+try {
+  validateMemoryDataDir();
+} catch (err) {
+  logger.error({ err }, "Memory data directory validation failed — aborting startup");
+  process.exit(1);
 }
 
 app.listen(port, async (err) => {
