@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Users } from "lucide-react";
-import type { SessionStatus } from "@workspace/api-client-react";
+import type { SessionStatus, TeamMember } from "@workspace/api-client-react";
 
 export function SessionStatusBadge({ status }: { status: SessionStatus }) {
   let colorClass = "bg-muted text-muted-foreground";
@@ -31,11 +32,26 @@ export function SessionStatusBadge({ status }: { status: SessionStatus }) {
   );
 }
 
-export function TeamSessionBadge({ count }: { count: number }) {
-  return (
-    <Badge variant="outline" className="bg-violet-500/20 text-violet-400 border-violet-500/30 text-xs gap-1 font-medium">
+export function TeamSessionBadge({ members }: { members: TeamMember[] }) {
+  const badge = (
+    <Badge variant="outline" className="bg-violet-500/20 text-violet-400 border-violet-500/30 text-xs gap-1 font-medium cursor-default">
       <Users className="w-3 h-3" />
-      Team · {count}
+      Team · {members.length}
     </Badge>
+  );
+
+  if (members.length === 0) {
+    return badge;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{badge}</TooltipTrigger>
+      <TooltipContent side="top" className="flex flex-col gap-0.5 text-left">
+        {members.map((m) => (
+          <span key={m.name}>{m.name}</span>
+        ))}
+      </TooltipContent>
+    </Tooltip>
   );
 }

@@ -175,7 +175,7 @@ export default function Dashboard() {
                   <div className="flex items-center gap-3 mb-2 flex-wrap">
                     <h3 className="text-lg font-bold">{activeSession.profileName}</h3>
                     <SessionStatusBadge status={activeSession.status} />
-                    {activeSession.teamMembers && activeSession.teamMembers.length > 0 && <TeamSessionBadge count={activeSession.teamMembers.length} />}
+                    {activeSession.teamMembers && activeSession.teamMembers.length > 0 && <TeamSessionBadge members={activeSession.teamMembers} />}
                     <SwarmPill sessionId={activeSession.id} isReady={activeSession.status === "ready"} />
                   </div>
                   <p className="text-sm text-muted-foreground font-mono">
