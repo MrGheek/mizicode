@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, designIntelligenceEntriesTable, skillSourcesTable } from "@workspace/db";
-import { eq, and, like, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 
 const router = Router();
 
@@ -10,7 +10,8 @@ const router = Router();
  * Query params:
  *   category  — filter by category (exact match)
  *   q         — keyword matched via ILIKE against name and data_json::text
- *   limit     — max rows returned (default 20, max 100)
+ *   limit     — page size (default 20, max 100)
+ *   offset    — number of rows to skip for pagination (default 0)
  */
 router.get("/design-intelligence", async (req, res) => {
   try {
@@ -18,6 +19,8 @@ router.get("/design-intelligence", async (req, res) => {
     const q = typeof req.query["q"] === "string" ? req.query["q"] : undefined;
     const limitRaw = Number(req.query["limit"] ?? 20);
     const limit = Math.min(Math.max(1, isNaN(limitRaw) ? 20 : limitRaw), 100);
+    const offsetRaw = Number(req.query["offset"] ?? 0);
+    const offset = Math.max(0, isNaN(offsetRaw) ? 0 : offsetRaw);
 
     const conditions = [];
 
@@ -34,19 +37,29 @@ router.get("/design-intelligence", async (req, res) => {
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-    const entries = await db
-      .select({
-        id: designIntelligenceEntriesTable.id,
-        category: designIntelligenceEntriesTable.category,
-        name: designIntelligenceEntriesTable.name,
-        data_json: designIntelligenceEntriesTable.dataJson,
-        tags: designIntelligenceEntriesTable.tags,
-      })
-      .from(designIntelligenceEntriesTable)
-      .where(whereClause)
-      .limit(limit);
+    const [entries, totalResult] = await Promise.all([
+      db
+        .select({
+          id: designIntelligenceEntriesTable.id,
+          category: designIntelligenceEntriesTable.category,
+          name: designIntelligenceEntriesTable.name,
+          data_json: designIntelligenceEntriesTable.dataJson,
+          tags: designIntelligenceEntriesTable.tags,
+        })
+        .from(designIntelligenceEntriesTable)
+        .where(whereClause)
+        .orderBy(designIntelligenceEntriesTable.id)
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({ total: sql<number>`count(*)::int` })
+        .from(designIntelligenceEntriesTable)
+        .where(whereClause),
+    ]);
 
-    return res.json({ entries });
+    const total = totalResult[0]?.total ?? 0;
+
+    return res.json({ entries, total, limit, offset });
   } catch (err) {
     req.log.error({ err }, "Failed to query design intelligence entries");
     return res.status(500).json({ error: "Failed to query design intelligence entries" });
