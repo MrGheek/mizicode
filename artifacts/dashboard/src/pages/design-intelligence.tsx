@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Palette, Search, Tag, Loader2, AlertCircle, RefreshCw, Clock, CheckCircle2, XCircle,
+  Palette, Search, Tag, Loader2, AlertCircle, RefreshCw, Clock, CheckCircle2, XCircle, Wand2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,19 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 const PAGE_SIZE = 20;
+
+type SkillSummary = {
+  id: number;
+  slug: string;
+  name: string;
+  class: string;
+  enabled: boolean;
+};
+
+type SkillMapResponse = {
+  skillMap: Record<string, SkillSummary[]>;
+  totalCategories: number;
+};
 
 type DesignEntry = {
   id: number;
@@ -169,6 +182,18 @@ function SyncStatusBar({ sync, onSyncNow, isSyncing, syncAlreadyRunning }: {
   );
 }
 
+function useDesignSkillMap() {
+  return useQuery<SkillMapResponse>({
+    queryKey: ["design-intelligence-skill-map"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/design-intelligence/skill-map`);
+      if (!res.ok) throw new Error("Failed to fetch skill map");
+      return res.json() as Promise<SkillMapResponse>;
+    },
+    staleTime: 120000,
+  });
+}
+
 function useDesignCategories() {
   return useQuery<CategoryInfo[]>({
     queryKey: ["design-intelligence-categories"],
@@ -320,10 +345,46 @@ function DataJsonView({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-function EntryCard({ entry }: { entry: DesignEntry }) {
+const SKILL_CLASS_COLORS: Record<string, string> = {
+  design: "text-purple-400 border-purple-500/30",
+  ui: "text-indigo-400 border-indigo-500/30",
+  frontend: "text-sky-400 border-sky-500/30",
+  backend: "text-emerald-400 border-emerald-500/30",
+  devops: "text-amber-400 border-amber-500/30",
+};
+
+function RelatedSkillsBadges({ skills }: { skills: SkillSummary[] }) {
+  if (skills.length === 0) return null;
+  const shown = skills.slice(0, 3);
+  const extra = skills.length - shown.length;
+
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap mt-2 pt-2 border-t border-border/30">
+      <span className="flex items-center gap-1 text-[10px] text-muted-foreground shrink-0">
+        <Wand2 className="w-2.5 h-2.5" />
+        Skills:
+      </span>
+      {shown.map((s) => (
+        <Badge
+          key={s.id}
+          variant="outline"
+          className={`text-[10px] py-0 h-4 gap-1 ${SKILL_CLASS_COLORS[s.class] ?? "text-muted-foreground border-border/50"}`}
+          title={`${s.name} (${s.class})`}
+        >
+          {s.enabled ? null : <span className="opacity-50">○</span>}
+          {s.name}
+        </Badge>
+      ))}
+      {extra > 0 && (
+        <span className="text-[10px] text-muted-foreground">+{extra} more</span>
+      )}
+    </div>
+  );
+}
+
+function EntryCard({ entry, relatedSkills }: { entry: DesignEntry; relatedSkills?: SkillSummary[] }) {
   const swatchColor =
     isColorCategory(entry.category) ? extractEntryColor(entry.data_json) : null;
-
   return (
     <Card className="bg-card/50 border-border/50">
       <CardContent className="pt-3 pb-3">
@@ -345,6 +406,9 @@ function EntryCard({ entry }: { entry: DesignEntry }) {
           <p className="font-semibold text-sm">{entry.name}</p>
         </div>
         <DataJsonView data={entry.data_json} />
+        {relatedSkills && relatedSkills.length > 0 && (
+          <RelatedSkillsBadges skills={relatedSkills} />
+        )}
       </CardContent>
     </Card>
   );
@@ -383,6 +447,7 @@ export default function DesignIntelligence() {
     useDesignEntriesPage(selectedCategory, search, offset);
 
   const { data: sourcesData } = useDesignSources();
+  const { data: skillMapData } = useDesignSkillMap();
 
   const [syncAlreadyRunning, setSyncAlreadyRunning] = useState(false);
 
@@ -559,7 +624,11 @@ export default function DesignIntelligence() {
         ) : (
           <div className="space-y-2">
             {accumulatedEntries.map((entry) => (
-              <EntryCard key={entry.id} entry={entry} />
+              <EntryCard
+                key={entry.id}
+                entry={entry}
+                relatedSkills={skillMapData?.skillMap[entry.category]}
+              />
             ))}
             {hasMore && (
               <div className="flex justify-center pt-2">

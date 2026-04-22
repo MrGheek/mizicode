@@ -3,7 +3,7 @@ import { writeFile, unlink } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Router } from "express";
-import { db, skillsTable, skillBundlesTable, skillSourcesTable, skillVersionsTable, skillFeedbackTable, sessionSkillsTable, sessionsTable, skillEvalsTable } from "@workspace/db";
+import { db, skillsTable, skillBundlesTable, skillSourcesTable, skillVersionsTable, skillFeedbackTable, sessionSkillsTable, sessionsTable, skillEvalsTable, skillDesignCategoriesTable, designIntelligenceEntriesTable } from "@workspace/db";
 import { eq, and, desc, or, like, sql, inArray } from "drizzle-orm";
 import { importSkillFromUrl } from "../services/skills-import";
 import { seedDefaultBundles, compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext } from "../services/skills-bundler";
@@ -486,15 +486,35 @@ router.get("/skills/:skillId", async (req, res) => {
     return;
   }
 
-  // Return only the latest version manifest
-  const [latestVersion] = await db
-    .select()
-    .from(skillVersionsTable)
-    .where(eq(skillVersionsTable.skillId, id))
-    .orderBy(desc(skillVersionsTable.createdAt))
-    .limit(1);
+  const [latestVersion, allCategories, explicitLinks] = await Promise.all([
+    db
+      .select()
+      .from(skillVersionsTable)
+      .where(eq(skillVersionsTable.skillId, id))
+      .orderBy(desc(skillVersionsTable.createdAt))
+      .limit(1),
+    db
+      .select({ category: designIntelligenceEntriesTable.category })
+      .from(designIntelligenceEntriesTable)
+      .groupBy(designIntelligenceEntriesTable.category),
+    db
+      .select({ category: skillDesignCategoriesTable.category })
+      .from(skillDesignCategoriesTable)
+      .where(eq(skillDesignCategoriesTable.skillId, id)),
+  ]);
 
-  res.json({ skill, latestManifest: latestVersion?.manifestJson || null });
+  const categoryNames = allCategories.map((r) => r.category);
+  const explicitCats = new Set(explicitLinks.map((l) => l.category));
+
+  const haystack = `${skill.name} ${skill.description} ${skill.class} ${skill.slug}`.toLowerCase();
+  const computedCats = categoryNames.filter((cat) => {
+    const keywords = cat.toLowerCase().split(/[-_\s]+/);
+    return keywords.some((kw) => kw.length >= 3 && haystack.includes(kw));
+  });
+
+  const designCategories = Array.from(new Set([...explicitCats, ...computedCats])).sort();
+
+  res.json({ skill, latestManifest: latestVersion?.manifestJson || null, designCategories });
 });
 
 router.post("/skills/import", async (req, res) => {

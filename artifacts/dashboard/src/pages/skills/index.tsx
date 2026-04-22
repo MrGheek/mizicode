@@ -19,7 +19,7 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   Wand2, Plus, ExternalLink, AlertTriangle, ChevronDown, ChevronRight,
   Loader2, CheckCircle, XCircle, Package, GitBranch, Key, Scale,
-  ThumbsUp, ThumbsDown, Trash2, MessageSquare,
+  ThumbsUp, ThumbsDown, Trash2, MessageSquare, Palette,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -354,6 +354,58 @@ function BundleSkillAccordion({ skill, index }: { skill: CompiledSkill; index: n
   );
 }
 
+const CATEGORY_ICONS: Record<string, string> = {
+  colors: "🎨",
+  typography: "Aa",
+  charts: "📊",
+  "ui-patterns": "⬜",
+  fonts: "T",
+  icons: "✦",
+  palette: "🎨",
+  style: "◈",
+};
+
+function categoryIcon(cat: string) {
+  const key = Object.keys(CATEGORY_ICONS).find((k) => cat.toLowerCase().includes(k));
+  return key ? CATEGORY_ICONS[key] : "◆";
+}
+
+function SkillDesignCategoriesPanel({ skillId }: { skillId: number }) {
+  const { data, isLoading } = useGetSkill(skillId);
+  const designCategories: string[] = ((data as unknown as { designCategories?: string[] }) ?? {}).designCategories ?? [];
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-muted-foreground text-xs py-2">
+        <Loader2 className="w-3 h-3 animate-spin" /> Loading…
+      </div>
+    );
+  }
+
+  if (designCategories.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground italic">
+        No design categories matched for this skill.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {designCategories.map((cat) => (
+        <Badge
+          key={cat}
+          variant="outline"
+          className="text-[10px] py-0 h-5 gap-1 border-primary/30 text-primary/80"
+        >
+          <span>{categoryIcon(cat)}</span>
+          <span className="capitalize">{cat}</span>
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
 function FeedbackHistoryPanel({ skillId }: { skillId: number }) {
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useGetSkillFeedbackHistory(skillId);
@@ -542,6 +594,15 @@ function SkillDetailSheet({
               Provenance
             </p>
             <SkillSourceBlock skillId={skill.id} alwaysOpen />
+          </div>
+
+          {/* Design categories */}
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+              <Palette className="w-3 h-3" />
+              Design Categories
+            </p>
+            <SkillDesignCategoriesPanel skillId={skill.id} />
           </div>
 
           {/* Feedback history */}

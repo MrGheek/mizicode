@@ -236,6 +236,21 @@ export const designIntelligenceEntriesTable = pgTable("design_intelligence_entri
     .on(table.sourceId, table.category, table.name),
 }));
 
+/**
+ * Join table linking skills to design intelligence categories.
+ * Populated via explicit manual links (matchMethod = "manual") or
+ * via keyword/tag matching (matchMethod = "keyword").
+ */
+export const skillDesignCategoriesTable = pgTable("skill_design_categories", {
+  id: serial("id").primaryKey(),
+  skillId: integer("skill_id").notNull().references(() => skillsTable.id, { onDelete: "cascade" }),
+  category: text("category").notNull(),
+  matchMethod: text("match_method").notNull().default("keyword"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  skillCategoryUnique: uniqueIndex("skill_design_category_unique").on(table.skillId, table.category),
+}));
+
 export const insertSkillSchema = createInsertSchema(skillsTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertSkill = z.infer<typeof insertSkillSchema>;
 export type Skill = typeof skillsTable.$inferSelect;
@@ -250,3 +265,4 @@ export type EvalRunVariant = typeof evalRunVariantsTable.$inferSelect;
 export type SkillEval = typeof skillEvalsTable.$inferSelect;
 export type BundleEval = typeof bundleEvalsTable.$inferSelect;
 export type DesignIntelligenceEntry = typeof designIntelligenceEntriesTable.$inferSelect;
+export type SkillDesignCategory = typeof skillDesignCategoriesTable.$inferSelect;
