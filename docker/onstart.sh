@@ -130,6 +130,12 @@ PASSWORD="$CODE_SERVER_PASSWORD" code-server \
 log "code-server (owner) started"
 
 log "Starting Claw Task Runner on port 5182..."
+# Wire swarm worker cap from profile env (swarmWorkerCap → SWARM_MAX_WORKERS).
+# Profile sets swarmWorkerCap; if absent, fall back to any pre-existing
+# SWARM_MAX_WORKERS, then default to 4.
+SWARM_MAX_WORKERS="${SWARM_MAX_WORKERS:-${swarmWorkerCap:-4}}"
+export SWARM_MAX_WORKERS
+log "Swarm orchestration: SWARM_MAX_WORKERS=${SWARM_MAX_WORKERS} (source: swarmWorkerCap=${swarmWorkerCap:-unset})"
 node /opt/claw-runner.js > /var/log/claw-runner.log 2>&1 &
 log "Claw Task Runner started"
 
