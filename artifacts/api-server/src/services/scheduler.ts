@@ -4,11 +4,12 @@ import { logger } from "../lib/logger";
 import * as vastai from "./vastai";
 import { getProfileById } from "./profiles";
 import type { VastOffer } from "./vastai";
-import { seedCuratedSources } from "./curated-sources";
+import { seedCuratedSources, fetchCurrentHeadSha, getStoredCommitSha } from "./curated-sources";
 
 // ─── Design Sync Scheduler ───────────────────────────────────────────────────
 
 const DEFAULT_DESIGN_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const SHA_POLL_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 
 function parseDesignSyncInterval(): number {
   const raw = process.env["DESIGN_SYNC_INTERVAL_MS"];
@@ -59,7 +60,7 @@ async function runDesignSync(): Promise<void> {
 
   designSyncState.isRunning = true;
   designSyncState.lastAttemptedAt = new Date();
-  logger.info("Design sync: starting scheduled re-sync of curated sources");
+  logger.info("Design sync: starting re-sync of curated sources");
 
   try {
     const result = await seedCuratedSources();
@@ -80,18 +81,59 @@ async function runDesignSync(): Promise<void> {
   }
 }
 
+/**
+ * Lightweight job: polls GitHub for the HEAD SHA every 15 minutes.
+ * Triggers a full ingest only when the SHA has changed since the last sync.
+ * The 6-hour full-sync timer remains as an unconditional safety net.
+ */
+async function runShaCheckJob(): Promise<void> {
+  if (designSyncState.isRunning) {
+    logger.debug("SHA-check: full sync already in progress — skipping poll");
+    return;
+  }
+
+  const remoteSha = await fetchCurrentHeadSha();
+  if (!remoteSha) {
+    logger.warn("SHA-check: remote HEAD SHA was null or unavailable — skipping");
+    return;
+  }
+
+  let storedSha: string | null;
+  try {
+    storedSha = await getStoredCommitSha();
+  } catch (err) {
+    logger.warn({ err }, "SHA-check: failed to read stored commit SHA");
+    return;
+  }
+
+  if (remoteSha === storedSha) {
+    logger.debug({ sha: remoteSha }, "SHA-check: no change detected — skipping full sync");
+    return;
+  }
+
+  logger.info(
+    { oldSha: storedSha ?? "none", newSha: remoteSha },
+    "SHA-check: new commit detected — triggering immediate design sync",
+  );
+  void runDesignSync();
+}
+
 function startDesignSyncScheduler(): void {
   const intervalMs = designSyncState.intervalMs;
   designSyncState.nextSyncAt = new Date(Date.now() + intervalMs);
 
+  // 6-hour safety-net: full sync regardless of SHA
   setInterval(() => {
     designSyncState.nextSyncAt = new Date(Date.now() + intervalMs);
     void runDesignSync();
   }, intervalMs);
 
+  // 15-minute lightweight SHA-check: only syncs when a new commit is detected
+  setInterval(() => void runShaCheckJob(), SHA_POLL_INTERVAL_MS);
+
   logger.info(
-    { intervalMs, nextSyncAt: designSyncState.nextSyncAt.toISOString() },
-    "Design sync scheduler started",
+    { intervalMs, shaPollIntervalMs: SHA_POLL_INTERVAL_MS, nextSyncAt: designSyncState.nextSyncAt.toISOString() },
+    "Design sync scheduler started (6-hour safety net + 15-minute SHA-check poll)",
   );
 }
 

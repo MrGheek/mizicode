@@ -228,6 +228,32 @@ export interface SeedResult {
   reason: string;
 }
 
+/**
+ * Fetch the current HEAD commit SHA from GitHub without doing a full ingest.
+ * Returns null if the request fails.
+ */
+export async function fetchCurrentHeadSha(): Promise<string | null> {
+  try {
+    const commits = await fetchJson<GitHubCommit[]>(`${API_BASE}/commits?per_page=1`);
+    return commits[0]?.sha ?? null;
+  } catch (err) {
+    logger.warn({ err }, "SHA-check: could not fetch HEAD commit SHA from GitHub");
+    return null;
+  }
+}
+
+/**
+ * Return the pinnedCommitSha stored in the DB for the curated source, or null
+ * if no record exists yet.
+ */
+export async function getStoredCommitSha(): Promise<string | null> {
+  const [source] = await db
+    .select({ pinnedCommitSha: skillSourcesTable.pinnedCommitSha })
+    .from(skillSourcesTable)
+    .where(eq(skillSourcesTable.repoUrl, REPO_URL));
+  return source?.pinnedCommitSha ?? null;
+}
+
 export async function seedCuratedSources(): Promise<SeedResult> {
   logger.info("Seeding curated design intelligence sources…");
 
