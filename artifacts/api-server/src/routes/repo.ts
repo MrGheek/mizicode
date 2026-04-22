@@ -259,6 +259,8 @@ router.get("/search", async (req, res) => {
     symbolsJson: ctx.symbolsJson as RepoSymbolRaw[] | null,
     filesJson: ctx.filesJson as RepoFileRaw[] | null,
     chunksJson: ctx.chunksJson as RepoChunkRaw[] | null,
+    embeddingsJson: ctx.embeddingsJson as RepoEmbeddingRaw[] | null,
+    embeddingDim: ctx.embeddingDim ?? null,
   });
 
   res.json({
@@ -470,7 +472,7 @@ router.post("/sync", async (req, res) => {
   }
 
   const body = req.body as RepoSyncPayload;
-  const { jobId, status, repoPath, fingerprintHash, fingerprint, summary, symbols, files, edges, chunks, indexedSymbols, edgeCount, durationMs, errorDetails } = body;
+  const { jobId, status, repoPath, fingerprintHash, fingerprint, summary, symbols, files, edges, chunks, embeddings, embeddingDim, indexedSymbols, edgeCount, durationMs, errorDetails } = body;
 
   if (!jobId || !status || !repoPath) {
     res.status(400).json({ error: "jobId, status, and repoPath are required" });
@@ -503,7 +505,7 @@ router.post("/sync", async (req, res) => {
     })
     .where(eq(repoGraphJobsTable.id, jobId));
 
-  const confidenceLevel = computeConfidenceLevel({ fingerprint, summary, symbols, edges });
+  const confidenceLevel = computeConfidenceLevel({ fingerprint, summary, symbols, edges, embeddings });
 
   const ctx = await getRepoContext(sessionId);
 
@@ -541,6 +543,13 @@ router.post("/sync", async (req, res) => {
     newIsStale = ctx?.isStale ?? false; // preserve for all other intermediate phases
   }
 
+  const incomingEmbeddings = embeddings && embeddings.length > 0 ? embeddings : undefined;
+
+  // When a terminal (ready/error) sync arrives without embeddings, explicitly clear
+  // any previously stored embedding data so stale vectors from a prior index run
+  // don't persist into search results for the updated index.
+  const shouldClearEmbeddings = isTerminal && !incomingEmbeddings;
+
   const baseUpdate = {
     repoPath,
     indexStatus: normalizedStatus,
@@ -554,6 +563,13 @@ router.post("/sync", async (req, res) => {
     filesJson: files ? (files as Record<string, unknown>[]) : undefined,
     edgesJson: edges ? (edges as Record<string, unknown>[]) : undefined,
     chunksJson: chunks ? (chunks as Record<string, unknown>[]) : undefined,
+    embeddingsJson: incomingEmbeddings
+      ? (incomingEmbeddings as Record<string, unknown>[])
+      : shouldClearEmbeddings ? null : undefined,
+    hasEmbeddings: incomingEmbeddings ? true : shouldClearEmbeddings ? false : undefined,
+    embeddingDim: incomingEmbeddings
+      ? (embeddingDim ?? null)
+      : shouldClearEmbeddings ? null : undefined,
     indexedAt: isTerminal ? new Date() : undefined,
   };
 
@@ -563,7 +579,7 @@ router.post("/sync", async (req, res) => {
     await db.insert(sessionRepoContextTable).values({ sessionId, ...baseUpdate });
   }
 
-  logger.info({ sessionId, jobId, status: normalizedStatus, confidenceLevel, symbolCount: indexedSymbols, contentChanged, isStale: newIsStale, prevHash, newHash: incomingHash }, "Repo sync received");
+  logger.info({ sessionId, jobId, status: normalizedStatus, confidenceLevel, symbolCount: indexedSymbols, embeddingCount: incomingEmbeddings?.length ?? 0, embeddingDim, contentChanged, isStale: newIsStale, prevHash, newHash: incomingHash }, "Repo sync received");
   res.json({ success: true, contentChanged, isStale: newIsStale });
 });
 
@@ -572,8 +588,9 @@ function normalizeStatus(raw: string): string {
   return valid.includes(raw) ? raw : "error";
 }
 
-function computeConfidenceLevel(data: { fingerprint?: unknown; summary?: unknown; symbols?: unknown[]; edges?: unknown[] }): string {
-  if (data.symbols && data.symbols.length > 0 && data.edges && data.edges.length > 0) return "full";
+function computeConfidenceLevel(data: { fingerprint?: unknown; summary?: unknown; symbols?: unknown[]; edges?: unknown[]; embeddings?: unknown[] }): string {
+  if (data.symbols && data.symbols.length > 0 && data.edges && data.edges.length > 0 && data.embeddings && data.embeddings.length > 0) return "full";
+  if (data.symbols && data.symbols.length > 0 && data.edges && data.edges.length > 0) return "partial";
   if (data.summary) return "partial";
   if (data.fingerprint) return "fingerprint";
   return "none";
@@ -605,6 +622,12 @@ interface RepoEdgeRaw {
   kind?: string;
 }
 
+interface RepoEmbeddingRaw {
+  ref: string;
+  refType?: string;
+  vec: number[];
+}
+
 interface HybridSearchOptions {
   q: string;
   typeFilter?: string;
@@ -615,6 +638,8 @@ interface HybridSearchOptions {
   symbolsJson: RepoSymbolRaw[] | null;
   filesJson: RepoFileRaw[] | null;
   chunksJson: RepoChunkRaw[] | null;
+  embeddingsJson: RepoEmbeddingRaw[] | null;
+  embeddingDim: number | null;
 }
 
 type SearchResult = {
@@ -675,13 +700,34 @@ function lexicalBm25(doc: string, query: string): number {
 }
 
 function hybridSearch(opts: HybridSearchOptions) {
-  const { q, typeFilter, limit, offset, langFilter, pathPrefix, symbolsJson, filesJson, chunksJson } = opts;
+  const { q, typeFilter, limit, offset, langFilter, pathPrefix, symbolsJson, filesJson, chunksJson, embeddingsJson, embeddingDim } = opts;
+
+  // Build a ref → vec lookup from stored embeddings.
+  // When stored dim matches the n-gram query dim (512), we use the stored vector directly.
+  // When stored dim is different (e.g., 384 from MiniLM), stored vectors are still used:
+  //   the query is encoded in n-gram 512-dim space, so cross-dim cosine is avoided —
+  //   instead we fall back to computing the doc vec with n-gram on-the-fly.
+  const embeddingLookup = new Map<string, number[]>();
+  const storedDim = embeddingDim ?? 0;
+  const ngramCompatible = storedDim === NGRAM_DIM_SEARCH;
+  if (embeddingsJson && embeddingsJson.length > 0) {
+    for (const e of embeddingsJson) {
+      if (e.ref && Array.isArray(e.vec) && e.vec.length > 0) {
+        embeddingLookup.set(e.ref, e.vec);
+      }
+    }
+  }
 
   const qVec = charNgramVec(q);
   const results: SearchResult[] = [];
 
   const avgSymDocLen = 5;
   const avgFileDocLen = 4;
+
+  // Minimum semantic score to admit a candidate even when lexical score is near zero.
+  // Only applies when n-gram-compatible stored embeddings are present, so the semantic
+  // score carries richer signal (computed from code content + docstrings at index time).
+  const SEMANTIC_ADMISSION_THRESHOLD = 0.15;
 
   if (!typeFilter || typeFilter === "symbol") {
     for (const sym of symbolsJson || []) {
@@ -695,17 +741,34 @@ function hybridSearch(opts: HybridSearchOptions) {
       const lxFull = lexicalBm25(fullDoc, q) * 0.5;
       const lexical = Math.min(1, lxName + lxFull);
 
-      if (lexical < 0.02) continue;
-
-      // Semantic (n-gram cosine)
-      const docText = [sym.name, sym.kind, sym.signature, sym.docstring].filter(Boolean).join(" ");
-      const docVec = charNgramVec(docText);
+      // Semantic: use pre-computed embedding if available and dimension-compatible,
+      // otherwise fall back to on-the-fly n-gram cosine.
+      const symRef = `sym:${sym.name || ""}:${sym.path || ""}`;
+      let docVec: number[];
+      let usingStoredVec = false;
+      if (ngramCompatible && embeddingLookup.has(symRef)) {
+        docVec = embeddingLookup.get(symRef)!;
+        usingStoredVec = true;
+      } else {
+        const docText = [sym.name, sym.kind, sym.signature, sym.docstring].filter(Boolean).join(" ");
+        docVec = charNgramVec(docText);
+      }
       const semantic = cosineSim(qVec, docVec);
+
+      // Admission: always require some signal. When stored embeddings are present,
+      // allow semantic-only matches (items with different wording but related meaning).
+      // Without embeddings, fall back to the original pure-lexical gate.
+      const admitted = lexical >= 0.02 || (usingStoredVec && semantic >= SEMANTIC_ADMISSION_THRESHOLD);
+      if (!admitted) continue;
 
       // Graph (zero on symbol level — centrality is file-level)
       const graph = 0;
 
-      const combined = lexical * 0.55 + semantic * 0.35 + graph * 0.1;
+      // When using stored (pre-computed) embeddings, weight semantic score higher
+      // since the stored vector was computed from richer text (includes docstrings).
+      const combined = usingStoredVec
+        ? lexical * 0.45 + semantic * 0.45 + graph * 0.1
+        : lexical * 0.55 + semantic * 0.35 + graph * 0.1;
       const confidence = lexical > 0.5 ? 0.9 : 0.5;
 
       results.push({
@@ -757,11 +820,26 @@ function hybridSearch(opts: HybridSearchOptions) {
 
       const chunkDoc = [chunk.symbolName, chunk.symbolKind, chunk.path, chunk.content?.slice(0, 500)].filter(Boolean).join(" ");
       const lexical = lexicalBm25(chunkDoc, q);
-      if (lexical < 0.02) continue;
 
-      const docVec = charNgramVec(chunkDoc);
-      const semantic = cosineSim(qVec, docVec);
-      const combined = lexical * 0.50 + semantic * 0.40 + 0.10; // chunks score higher on semantic
+      // Use stored symbol embedding for this chunk if available (keyed by sym:name:path)
+      const chunkRef = `sym:${chunk.symbolName || ""}:${chunk.path || ""}`;
+      let chunkDocVec: number[];
+      let chunkUsesStoredVec = false;
+      if (ngramCompatible && embeddingLookup.has(chunkRef)) {
+        chunkDocVec = embeddingLookup.get(chunkRef)!;
+        chunkUsesStoredVec = true;
+      } else {
+        chunkDocVec = charNgramVec(chunkDoc);
+      }
+      const semantic = cosineSim(qVec, chunkDocVec);
+
+      // Semantic admission: admit chunk if it has lexical overlap OR strong semantic match
+      const chunkAdmitted = lexical >= 0.02 || (chunkUsesStoredVec && semantic >= SEMANTIC_ADMISSION_THRESHOLD);
+      if (!chunkAdmitted) continue;
+
+      const combined = chunkUsesStoredVec
+        ? lexical * 0.40 + semantic * 0.50 + 0.10
+        : lexical * 0.50 + semantic * 0.40 + 0.10;
 
       results.push({
         type: "chunk",
@@ -852,6 +930,8 @@ interface RepoSyncPayload {
   files?: RepoFileRaw[];
   edges?: RepoEdgeRaw[];
   chunks?: RepoChunkRaw[];
+  embeddings?: RepoEmbeddingRaw[];
+  embeddingDim?: number;
   indexedSymbols?: number;
   edgeCount?: number;
   durationMs?: number;

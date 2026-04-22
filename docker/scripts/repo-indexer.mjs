@@ -67,6 +67,26 @@ function cosineSim(a, b) {
   return Math.max(0, dot);
 }
 
+// ─── N-gram embedding for sync payload ───────────────────────────────────────
+// Always 512-dim, matching the server-side query encoder (NGRAM_DIM_SEARCH=512).
+// Using the same algorithm as repo-embeddings.mjs charNgramVec + artifacts/api-server
+// hybridSearch so cosine similarity is always dimension-compatible.
+
+const SYNC_NGRAM_DIM = 512;
+
+function syncNgramVec(text) {
+  const t = (text || '').toLowerCase().replace(/[^a-z0-9_]/g, ' ').trim();
+  const vec = new Array(SYNC_NGRAM_DIM).fill(0);
+  for (let i = 0; i <= t.length - 3; i++) {
+    const g = t.slice(i, i + 3);
+    let h = 0;
+    for (let k = 0; k < g.length; k++) h = (Math.imul(31, h) + g.charCodeAt(k)) | 0;
+    vec[Math.abs(h) % SYNC_NGRAM_DIM] += 1;
+  }
+  const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0)) || 1;
+  return vec.map(v => v / mag);
+}
+
 // ─── Chunk extraction (function/class bodies for semantic retrieval) ───────────
 
 const MAX_CHUNK_CONTENT = 1500; // chars
@@ -319,10 +339,11 @@ async function runJob({ jobId, repoPath }) {
     // Uses @xenova/transformers all-MiniLM-L6-v2 (quantized) via repo-embeddings.mjs.
     // Falls back to remote HTTP API if local ONNX fails, then to character n-gram TF-IDF.
     await postSync({ jobId, status: 'indexing_vectors', repoPath });
+    let embeddingDim = 0;
     if (db) {
       tlog(`Computing embeddings (strategy=${process.env.FLOATR_EMBEDDINGS || 'local'})...`);
       const embSymbols = getAllSymbols(db, 500); // cap at 500 to limit embedding time
-      const embTexts = embSymbols.map(s => [s.name, s.kind, s.path, s.signature].filter(Boolean).join(' '));
+      const embTexts = embSymbols.map(s => [s.name, s.kind, s.path, s.signature, s.docstring].filter(Boolean).join(' '));
       try {
         const vecs = await embedBatch(embTexts, {
           maxBatch: 16,
@@ -336,6 +357,7 @@ async function runJob({ jobId, repoPath }) {
           }
         });
         insertEmbedding(embSymbols.map((sym, i) => ({ sym, vec: vecs[i] })));
+        embeddingDim = EMBEDDING_DIM;
         tlog(`Embeddings: ${vecs.length} vectors stored (dim=${EMBEDDING_DIM})`);
       } catch (embErr) {
         tlog(`Embeddings error (non-fatal): ${embErr.message}`);
@@ -383,10 +405,35 @@ async function runJob({ jobId, repoPath }) {
     const MAX_CHUNKS = parseInt(process.env.REPO_INDEX_MAX_CHUNKS || '500', 10);
     const finalChunks = allChunks.slice(0, MAX_CHUNKS);
 
+    // Compute n-gram embeddings for sync payload.
+    // Always 512-dim so they are dimension-compatible with the server-side query encoder
+    // (charNgramVec / NGRAM_DIM_SEARCH=512).  Using rich text that includes code chunk
+    // content gives better coverage than what the server can derive from compact symbolsJson.
+    const MAX_SYNC_EMBEDDINGS = parseInt(process.env.REPO_INDEX_MAX_SYNC_EMBEDDINGS || '300', 10);
+
+    // Build a chunk content lookup keyed by "symbolName:path" for fast access
+    const chunkBySymbol = new Map();
+    for (const chunk of finalChunks) {
+      if (!chunk.symbolName || !chunk.path) continue;
+      const key = `${chunk.symbolName}:${chunk.path}`;
+      if (!chunkBySymbol.has(key)) chunkBySymbol.set(key, chunk.content || '');
+    }
+
+    const finalEmbeddings = finalSymbols.slice(0, MAX_SYNC_EMBEDDINGS).map(sym => {
+      const chunkContent = chunkBySymbol.get(`${sym.name}:${sym.path}`) || '';
+      const richText = [sym.name, sym.kind, sym.signature, sym.docstring, chunkContent.slice(0, 300)]
+        .filter(Boolean).join(' ');
+      return { ref: `sym:${sym.name}:${sym.path}`, refType: 'symbol', vec: syncNgramVec(richText) };
+    });
+    const syncEmbeddingDim = SYNC_NGRAM_DIM;
+    tlog(`Sync embeddings: ${finalEmbeddings.length} n-gram vectors (dim=${syncEmbeddingDim}, enriched with chunk content)`);
+
     await postSync({
       jobId, status: 'ready', repoPath,
       fingerprintHash, fingerprint: fp, summary,
       symbols: finalSymbols, files: finalFiles, edges: finalEdges, chunks: finalChunks,
+      embeddings: finalEmbeddings.length > 0 ? finalEmbeddings : undefined,
+      embeddingDim: finalEmbeddings.length > 0 ? syncEmbeddingDim : undefined,
       indexedSymbols: dbStats?.symbols ?? symbolCount,
       edgeCount: dbStats?.edges ?? allEdges.length,
       durationMs: elapsed(),

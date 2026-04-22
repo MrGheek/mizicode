@@ -236,6 +236,24 @@ export function getStats(db) {
   return { files, symbols, edges, embeddings };
 }
 
+/**
+ * Retrieve top-N stored MiniLM (or n-gram fallback) embeddings from local SQLite.
+ * Intended for future use when the cloud sync path adds server-side query encoding
+ * (e.g. via a remote embedding API) so that real 384-dim model vectors can be sent
+ * and used for cosine similarity at search time.
+ * Currently the sync payload uses 512-dim n-gram vectors (see syncNgramVec in
+ * repo-indexer.mjs) to guarantee dimension compatibility with the server query encoder.
+ * Returns an array of { ref, refType, vec } where vec is a float32 number[].
+ */
+export function getAllEmbeddings(db, limit = 300) {
+  const rows = db.prepare('SELECT ref, ref_type, vec FROM embeddings LIMIT ?').all(limit);
+  return rows.map(row => ({
+    ref: row.ref,
+    refType: row.ref_type,
+    vec: row.vec ? Array.from(new Float32Array(row.vec.buffer)) : [],
+  }));
+}
+
 function ftsEscape(q) {
   return q.replace(/["'*]/g, ' ').trim() + '*';
 }
