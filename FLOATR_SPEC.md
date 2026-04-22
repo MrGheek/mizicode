@@ -715,6 +715,21 @@ Memory retrieval respects the session's `tokenMode`:
 | `GET /api/memory/sessions` | Global memory (all users) |
 | `GET /api/memory/search?q=` | Global full-text search |
 
+#### Memory SSE reconnect flow
+The dashboard implements exponential-backoff reconnect for the memory observation stream:
+
+```
+RETRY_DELAYS = [3000, 10000, 30000]   // ms; MAX_RETRIES = 3
+```
+
+On SSE error:
+1. Close the existing `EventSource`, set `memStreaming = false`
+2. If `retryCount >= MAX_RETRIES` → `setMemGaveUp(true)` (no further attempts)
+3. Otherwise, set `memReconnecting = true`, schedule reconnect after `RETRY_DELAYS[retryCount]`, increment `retryCount`
+4. On successful reconnect → `retryCount` resets to 0, `memReconnecting = false`, `memStreaming = true`
+
+The UI shows a "Reconnecting…" banner while `memReconnecting && !memStreaming`, and a permanent "gave up" notice when `memGaveUp`. While reconnecting but no observations have loaded yet, the panel still renders the live-status indicator.
+
 ### Memory backup / restore
 
 | Method | Path | Description |
@@ -1401,6 +1416,15 @@ Computed by `computeConfidenceLevel()` in `routes/repo.ts` from the content of t
 | `partial` | Symbols + dependency edges present, or summary present, but no embeddings |
 | `full` | Symbols + edges + embeddings all present |
 
+### Hybrid retrieval: BM25 + n-gram semantic + graph centrality
+`GET /api/sessions/:id/repo/search` runs `hybridRepoSearch()` which fuses three retrieval signals:
+
+1. **BM25 lexical** — SQLite FTS5 full-text search over symbol names, file paths, and chunk text
+2. **N-gram semantic** — Character n-gram TF-IDF at **512 dimensions** (`NGRAM_DIM = 512` / `NGRAM_DIM_SEARCH = 512`). Vectors are computed both at index time (`SYNC_NGRAM_DIM = 512` in `repo-indexer.mjs`) and at query time (on the API server). Cosine similarity is used. A result only enters the semantic ranking list if its cosine score exceeds `SEMANTIC_ADMISSION_THRESHOLD = 0.15`. If stored embeddings have a different dimension than 512, the server re-computes n-gram vectors on the fly (cross-dim cosine avoided).
+3. **Graph centrality** — Symbol dependency edge count used to boost highly-connected nodes
+
+If a ONNX model produces non-512 embeddings (e.g. 768-dim MiniLM or 1536-dim OpenAI), those are stored as-is; the semantic pass on the API server always queries in 512-dim n-gram space and falls back to re-encoding if the stored dim differs.
+
 ### Stale flag
 When a new index job is enqueued for a session that already has a `ready` index, `isStale` is set to `true`. Existing results remain queryable while the new job runs.
 
@@ -1523,6 +1547,15 @@ When a lane is created, `compileLaneBundles()` is called asynchronously (fire-an
 | POST | `/sessions/:id/heavy-jobs/:jobId/deferred` | Defer job until timestamp |
 | GET | `/sessions/:id/heavy-jobs/next` | Peek next job by effective score |
 | GET | `/sessions/:id/coordination/stream` | SSE stream of real-time coordination updates |
+
+#### Coordination stream — visibility-trigger reconnect
+The `useCoordinationStream` hook skips opening the SSE connection when the browser tab is hidden:
+
+```js
+if (document.visibilityState !== "visible") return;  // early return — do not open stream
+```
+
+When the tab regains visibility (`visibilitychange` event), the hook re-runs and opens a fresh `EventSource`. This prevents unnecessary SSE connections for background tabs.
 
 ---
 
