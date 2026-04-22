@@ -256,25 +256,23 @@ function SearchResults({
 function MemoryTab({
   sessionId,
   isActive,
-  onNewObservation,
+  streaming,
+  reconnecting,
+  gaveUp,
+  streamedObservations,
+  onReconnect,
 }: {
   sessionId: number;
   isActive: boolean;
-  onNewObservation?: () => void;
+  streaming: boolean;
+  reconnecting: boolean;
+  gaveUp: boolean;
+  streamedObservations: MemObservation[];
+  onReconnect: () => void;
 }) {
   const { data: sessions, isLoading: sessionsLoading } = useMemSessions(sessionId);
   const { data: polledObservations, isLoading: obsLoading } = useMemObservations(sessionId, isActive);
-  const [streamedObservations, setStreamedObservations] = useState<MemObservation[]>([]);
-  const [streaming, setStreaming] = useState(false);
-  const [reconnecting, setReconnecting] = useState(false);
-  const [gaveUp, setGaveUp] = useState(false);
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
-  const esRef = useRef<EventSource | null>(null);
-  const onNewObservationRef = useRef(onNewObservation);
-  onNewObservationRef.current = onNewObservation;
-  const retryCountRef = useRef(0);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const connectRef = useRef<(() => void) | null>(null);
 
   // Project path filter
   const [selectedProject, setSelectedProject] = useState("");
@@ -289,100 +287,6 @@ function MemoryTab({
   const [allSearchSessions, setAllSearchSessions] = useState<MemSession[]>([]);
   const [totalSearchObs, setTotalSearchObs] = useState(0);
   const [totalSearchSessions, setTotalSearchSessions] = useState(0);
-
-  useEffect(() => {
-    setStreamedObservations([]);
-  }, [sessionId]);
-
-  useEffect(() => {
-    if (!sessionId) return;
-
-    let cancelled = false;
-
-    function connect() {
-      if (cancelled) return;
-
-      const url = `${BASE_URL}api/sessions/${sessionId}/memory/stream`;
-      const es = new EventSource(url);
-      esRef.current = es;
-
-      es.onopen = () => {
-        if (cancelled) { es.close(); return; }
-        retryCountRef.current = 0;
-        setStreaming(true);
-        setReconnecting(false);
-        setGaveUp(false);
-      };
-
-      es.onmessage = (event) => {
-        if (cancelled) return;
-        try {
-          const obs: MemObservation = JSON.parse(event.data);
-          setStreamedObservations(prev => {
-            if (prev.some(o => o.id === obs.id)) return prev;
-            onNewObservationRef.current?.();
-            return [obs, ...prev];
-          });
-        } catch {
-        }
-      };
-
-      es.onerror = () => {
-        if (cancelled) return;
-        es.close();
-        esRef.current = null;
-        setStreaming(false);
-
-        if (retryCountRef.current >= MAX_RETRIES) {
-          setReconnecting(false);
-          setGaveUp(true);
-          return;
-        }
-
-        const delay = RETRY_DELAYS[retryCountRef.current];
-        retryCountRef.current += 1;
-        setReconnecting(true);
-
-        retryTimerRef.current = setTimeout(() => {
-          if (!cancelled) connect();
-        }, delay);
-      };
-    }
-
-    connectRef.current = connect;
-    connect();
-
-    return () => {
-      cancelled = true;
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
-      if (esRef.current) {
-        esRef.current.close();
-        esRef.current = null;
-      }
-      setStreaming(false);
-      setReconnecting(false);
-      setGaveUp(false);
-      retryCountRef.current = 0;
-    };
-  }, [sessionId]);
-
-  const handleReconnect = () => {
-    if (retryTimerRef.current) {
-      clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = null;
-    }
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-    retryCountRef.current = 0;
-    setGaveUp(false);
-    setReconnecting(false);
-    connectRef.current?.();
-  };
 
   // Debounce search input
   useEffect(() => {
@@ -501,7 +405,7 @@ function MemoryTab({
                 variant="outline"
                 size="sm"
                 className="h-6 px-2 text-xs"
-                onClick={handleReconnect}
+                onClick={onReconnect}
               >
                 <RefreshCw className="w-3 h-3 mr-1" /> Reconnect
               </Button>
@@ -1405,6 +1309,113 @@ export default function SessionDetail() {
   const [revealedPasswords, setRevealedPasswords] = useState<Set<string>>(new Set());
   const [tunnelCopied, setTunnelCopied] = useState(false);
 
+  // --- Live memory feed (lifted out of MemoryTab so it persists across tab switches) ---
+  const [streamedObservations, setStreamedObservations] = useState<MemObservation[]>([]);
+  const [memStreaming, setMemStreaming] = useState(false);
+  const [memReconnecting, setMemReconnecting] = useState(false);
+  const [memGaveUp, setMemGaveUp] = useState(false);
+  const memEsRef = useRef<EventSource | null>(null);
+  const memRetryCountRef = useRef(0);
+  const memRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const memConnectRef = useRef<(() => void) | null>(null);
+  const memOnNewObsRef = useRef<(() => void) | undefined>(undefined);
+
+  useEffect(() => {
+    setStreamedObservations([]);
+    memRetryCountRef.current = 0;
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    let cancelled = false;
+
+    function connect() {
+      if (cancelled) return;
+
+      const url = `${BASE_URL}api/sessions/${sessionId}/memory/stream`;
+      const es = new EventSource(url);
+      memEsRef.current = es;
+
+      es.onopen = () => {
+        if (cancelled) { es.close(); return; }
+        memRetryCountRef.current = 0;
+        setMemStreaming(true);
+        setMemReconnecting(false);
+        setMemGaveUp(false);
+      };
+
+      es.onmessage = (event) => {
+        if (cancelled) return;
+        try {
+          const obs: MemObservation = JSON.parse(event.data);
+          setStreamedObservations(prev => {
+            if (prev.some(o => o.id === obs.id)) return prev;
+            memOnNewObsRef.current?.();
+            return [obs, ...prev];
+          });
+        } catch {
+        }
+      };
+
+      es.onerror = () => {
+        if (cancelled) return;
+        es.close();
+        memEsRef.current = null;
+        setMemStreaming(false);
+
+        if (memRetryCountRef.current >= MAX_RETRIES) {
+          setMemReconnecting(false);
+          setMemGaveUp(true);
+          return;
+        }
+
+        const delay = RETRY_DELAYS[memRetryCountRef.current];
+        memRetryCountRef.current += 1;
+        setMemReconnecting(true);
+
+        memRetryTimerRef.current = setTimeout(() => {
+          if (!cancelled) connect();
+        }, delay);
+      };
+    }
+
+    memConnectRef.current = connect;
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (memRetryTimerRef.current) {
+        clearTimeout(memRetryTimerRef.current);
+        memRetryTimerRef.current = null;
+      }
+      if (memEsRef.current) {
+        memEsRef.current.close();
+        memEsRef.current = null;
+      }
+      setMemStreaming(false);
+      setMemReconnecting(false);
+      setMemGaveUp(false);
+      memRetryCountRef.current = 0;
+    };
+  }, [sessionId]);
+
+  const handleMemoryReconnect = () => {
+    if (memRetryTimerRef.current) {
+      clearTimeout(memRetryTimerRef.current);
+      memRetryTimerRef.current = null;
+    }
+    if (memEsRef.current) {
+      memEsRef.current.close();
+      memEsRef.current = null;
+    }
+    memRetryCountRef.current = 0;
+    setMemGaveUp(false);
+    setMemReconnecting(false);
+    memConnectRef.current?.();
+  };
+  // --- end live memory feed ---
+
   const copyToClipboard = (text: string, fieldId: string) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopiedField(fieldId);
@@ -1716,6 +1727,13 @@ export default function SessionDetail() {
 
   const isActive = session.status !== "stopped" && session.status !== "error";
   const isReady = session.status === "ready";
+
+  // Keep the new-observation badge callback in sync without causing re-renders.
+  // Only fire it when the Memory tab is not currently visible.
+  memOnNewObsRef.current = activeTab !== "memory" ? () => setNewObsCount(prev => {
+    if (prev > 0) setBadgePulseKey(k => k + 1);
+    return prev + 1;
+  }) : undefined;
 
   const swarmBadge = swarmTabBadgeLabel(swarmData);
   const swarmIsLive = swarmTabIsActive(swarmData);
@@ -2248,10 +2266,11 @@ export default function SessionDetail() {
         <MemoryTab
           sessionId={sessionId}
           isActive={isActive}
-          onNewObservation={activeTab !== "memory" ? () => setNewObsCount(prev => {
-            if (prev > 0) setBadgePulseKey(k => k + 1);
-            return prev + 1;
-          }) : undefined}
+          streaming={memStreaming}
+          reconnecting={memReconnecting}
+          gaveUp={memGaveUp}
+          streamedObservations={streamedObservations}
+          onReconnect={handleMemoryReconnect}
         />
       </div>
 
