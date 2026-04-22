@@ -79,13 +79,13 @@ export function ProfileCard({ profile, onLaunch, isLaunching }: ProfileCardProps
                             ? <AlertTriangle className="w-2.5 h-2.5" />
                             : <Network className="w-2.5 h-2.5" />
                           }
-                          {isLimitedSwarm ? "Limited swarm" : "Swarm-ready"}
+                          {isLimitedSwarm ? "Swarm constrained" : `Swarm: up to ${swarmCap} workers`}
                         </Badge>
                       </TooltipTrigger>
                       <TooltipContent side="top" className="max-w-xs text-xs">
                         {isLimitedSwarm
-                          ? `Limited swarm: up to ${swarmCap} workers — use a higher tier for swarm tasks`
-                          : `Swarm-ready: up to ${swarmCap} workers`
+                          ? `Swarm constrained — use a higher tier for swarm-intensive tasks (max ${swarmCap} workers)`
+                          : `Swarm: up to ${swarmCap} concurrent workers`
                         }
                       </TooltipContent>
                     </Tooltip>
