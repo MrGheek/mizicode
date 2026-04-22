@@ -343,7 +343,7 @@ Stores the result of a repo intelligence indexing run for a session.
 | `embeddingDim` | integer | Embedding dimension (e.g. 768, 1536) |
 | `indexStatus` | text | `queued` → `scanning` → `fingerprinting` → `indexing_graph` → `indexing_fts` → `indexing_vectors` → `summarizing` → `ready` / `error` |
 | `isStale` | boolean | True if a new index job was enqueued while a previous result exists |
-| `confidenceLevel` | text | `none`, `low`, `medium`, `high` |
+| `confidenceLevel` | text | `none` → `fingerprint` → `partial` → `full` (computed from sync payload; see §19) |
 | `indexedAt` | timestamp | When indexing completed |
 
 ### `repo_graph_jobs`
@@ -852,6 +852,34 @@ See [Section 20](#20-lane-coordination) for full endpoint reference.
 | GET | `/mem/sessions` | List memory sessions |
 | GET | `/memory/sessions` | Global memory sessions |
 | GET | `/memory/search?q=` | Global FTS5 search |
+| GET | `/memory/backup` | Download full SQLite memory DB as binary attachment |
+| POST | `/memory/restore` | Upload a SQLite DB file to replace the memory store |
+
+### Swarm (API server endpoints)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/sessions/swarm-status-batch?ids=1,2,3` | Batch swarm status for the sessions list |
+| POST | `/sessions/:id/swarm-push` | Claw Runner pushes a new `SwarmSnapshot`; broadcasts to SSE |
+| GET | `/sessions/:id/swarm-status` | Dashboard poll (every 3 s); returns `{availability, snapshot}` |
+| GET | `/sessions/:id/swarm-stream` | SSE stream of live swarm updates; dashboard falls back to polling on error |
+
+### Admin
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/admin/sweep-claims` | Manually trigger `sweepExpiredClaims()`; returns `{deactivated, sweptAt}`. Protected by `ADMIN_SWEEP_TOKEN` when set |
+
+### Claw Runner internal HTTP server (port 8080, instance-local)
+
+The Claw Runner exposes a small local HTTP server for in-process tooling:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/swarm/status` | Current `swarmState` snapshot (phase, workers, progress) |
+| POST | `/swarm/abort` | Emergency abort — sets `abortRequested=true`, kills in-flight workers |
+
+These are **not** proxied through the API server. The dashboard reaches them via code-server's proxy or the session's direct IP.
 
 ---
 
@@ -1122,6 +1150,35 @@ The primary source is `nextlevelbuilder/ui-ux-pro-max-skill` on GitHub. Data is 
 | `stack_convention` | Framework and library conventions (from `stacks/`) |
 | `ui_reasoning` | AI-assisted UI reasoning patterns |
 
+### Derived skills (seeded at startup)
+Six design-intelligence skills are derived from the `nextlevelbuilder/ui-ux-pro-max-skill` source and seeded as default skills:
+
+| Skill ID | Class | Triggers | Token overhead |
+|----------|-------|----------|----------------|
+| `design-intelligence-core` | doctrine | build, review, refactor | 200 |
+| `ui-ux-reasoning` | workflow | build, refactor | 190 |
+| `design-system-scaffold` | workflow | build, refactor | 210 |
+| `frontend-design-review` | workflow | review | 170 |
+| `dashboard-viz-guidance` | context | build, refactor | 190 |
+| `design-handoff-discipline` | workflow | build, review | 195 |
+
+All six are compatible with `kimi`, `qwen`, `glm`, `deepseek`, `minimax` models and `claw`/`vscode` interfaces. They have `shellExecution: none` and `networkAccess: none`.
+
+### Lane policy wiring
+The **UX lane** (`compileLaneBundles` / `lane-policy.ts`) includes `design-intelligence-core` and `ui-ux-reasoning` in its `defaultOverlaySkillIds`, ensuring every UX lane starts with design doctrine active. The `dashboard-viz-guidance` skill is conditionally injected for general lanes whose repo contains frontend languages.
+
+### Live context injection (bundle compilation)
+When compiling a session bundle, `skills-bundler.ts` queries `design_intelligence_entries` and injects top-N entries into the active prompt context:
+
+| Token mode | Entries injected |
+|------------|-----------------|
+| `full` | Up to 10 |
+| `core` | Up to 5 |
+| `lean` | 0 (skipped — token budget constraint) |
+| `ultra` | 0 (skipped — token budget constraint) |
+
+Scoring: each candidate entry is scored by `tagOverlap × 2 + categoryBoost`. High-priority categories (`ux_guideline`, `ui_reasoning`, `palette`, `typography`) receive a +1 categoryBoost. Entries are filtered to those whose tags overlap with the repo's detected languages + frameworks; falls back to all entries when no stack-tagged entries exist. Up to `MAX_CANDIDATE_ROWS = 200` candidate rows are fetched before top-N selection.
+
 ### Trust model
 Legacy `skill_sources` records with incorrect `sourceType` or `trustLevel` are automatically corrected to `sourceType="curated"` / `trustLevel="reviewed"` on next ingest.
 
@@ -1174,6 +1231,76 @@ The Claw Runner pushes real-time worker snapshots to the API via `POST /api/sess
 `availability` values: `starting` | `live` | `stale` | `unavailable`
 
 The dashboard sessions list uses this batch endpoint to refresh all swarm pills in a single request.
+
+### Concurrency model
+Two constants control parallelism:
+- `SWARM_MAX_WORKERS` — hard ceiling injected from `gpu_profiles.swarmWorkerCap` (env var); default `4` if unset.
+- `SWARM_CONCURRENCY` — effective fan-out: `min(parseInt(SWARM_CONCURRENCY env, 10), SWARM_MAX_WORKERS)`. Defaults to `SWARM_MAX_WORKERS`. Allows temporary over-subscription without exceeding the profile cap.
+
+### Orchestrator decompose-block protocol
+The orchestrator LLM is invited to emit a structured decomposition block. The block must use exact sentinel markers:
+
+```
+@@DECOMPOSE_START@@
+{ "subtasks": [ { "id": "...", "task": "...", "goal": "...", "inputs": "...", "expected_output": "...", "priority": 1 } ] }
+@@DECOMPOSE_END@@
+```
+
+`priority` is an optional positive integer (1 = highest priority; omit or `5` = normal). The block is parsed from the raw orchestrator output using string-index slicing on the sentinels; malformed JSON or a missing array is treated as `gate_rejected` (not `swarm_skipped`).
+
+If the orchestrator explicitly chooses sequential execution, it may optionally emit a `@@SEQUENTIAL_REASON@@...` marker instead; `parseSequentialReason()` extracts it and the run is recorded as `swarm_skipped`.
+
+### Gate validation
+After parsing, the decomposition is validated before workers are launched. Any of the following causes a `gate_rejected` event and triggers single-agent fallback:
+
+- Subtask count < 2 or > `SWARM_MAX_WORKERS`
+- Any subtask missing required field `id`, `task`, or `goal`
+- Subtask contains unknown fields (only `id`, `task`, `goal`, `inputs`, `expected_output`, `priority` are allowed)
+- `priority` field is not a positive integer when present
+- **Near-duplicate detection** — subtask `task` text is too similar to another subtask in the same decomposition (cross-subtask similarity check)
+- **Sequential markers** — subtask `task` or `goal` text contains references suggesting it depends on other workers' output
+
+### Worker priority and execution order
+Workers are sorted ascending by `priority` (1 = highest) before dispatch. Workers with equal priority share a concurrency slot; the scheduler dispatches up to `SWARM_CONCURRENCY` workers simultaneously from the sorted queue. Each worker runs in its own tmux session, receives shared context from the orchestrator output (up to 3000 chars preceding the decompose block), and writes its result to a dedicated output file.
+
+### Shell-token sanitization
+`sanitizeShellToken(str)` strips or escapes shell-unsafe characters from subtask IDs before they are interpolated into shell commands. Workers receive a `shellId` (sanitized) which is used for all file paths and tmux session names. The raw model-emitted `id` is never used directly in shell.
+
+### Worker retry
+Each worker gets one automatic retry (`SWARM_WORKER_RETRY = 1`) on transient failure, provided `abortRequested` is not set. A `worker_retry` event is emitted before the retry attempt.
+
+### Single-agent fallback
+When the gate rejects a decomposition (`gate_rejected`), a single-agent fallback (`runSingleAgentFallback`) is triggered immediately. The fallback runs the original task directly via claw in a fresh tmux session (without swarm prompt injection) so the task always completes. The orchestrator output already written to `OUTPUT_FILE` is not discarded — the fallback overwrites it only on success.
+
+### Abort flow
+`POST /swarm/abort` (Claw Runner local HTTP) sets `swarmState.abortRequested = true`. In-flight workers finish their current inference call but are not retried. After all in-flight calls complete, the swarm phase is set to `aborted` and a `swarm_aborted` event is emitted. The owner-token flow: the dashboard reads `ownerToken` from `GET /api/sessions/:id` and passes it as `Authorization: Bearer <ownerToken>` to destructive operations including swarm abort.
+
+### Event taxonomy
+All swarm events carry `{ event_type, payload, timestamp }` and are streamed via the push-callback mechanism:
+
+| Event type | Emitted when |
+|------------|-------------|
+| `task_start` | Task begins processing |
+| `swarm_start` | Gate passes; workers about to be dispatched |
+| `swarm_skipped` | Orchestrator chose sequential execution |
+| `gate_rejected` | Gate validation failed; fallback triggered |
+| `worker_start` | Individual worker begins |
+| `worker_retry` | Worker retrying after transient failure |
+| `worker_done` | Worker completed successfully |
+| `worker_failed` | Worker failed (after retries exhausted) |
+| `swarm_synthesis_start` | Synthesis LLM call begins |
+| `swarm_synthesis_done` | Synthesis complete |
+| `swarm_synthesis_error` | Synthesis LLM call failed |
+| `swarm_aborted` | Emergency abort completed |
+| `swarm_error` | Unexpected orchestration error |
+| `single_agent_fallback_start` | Fallback execution begins |
+| `single_agent_fallback_done` | Fallback completed |
+| `single_agent_fallback_error` | Fallback failed |
+| `task_complete` | Task finished |
+| `task_stopped` | Task stopped externally |
+| `swarm_abort_requested` | Abort signal received |
+| `user_ask` | Model emitted an interactive question |
+| `tool_use` / `tool_result` | Tool call / result during execution |
 
 ---
 
