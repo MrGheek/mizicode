@@ -46,8 +46,6 @@ export interface GpuProfile {
   servedModelName: string;
   /** Human-readable model name shown in the dashboard */
   modelDisplayName: string;
-  /** Maximum concurrent swarm workers this profile supports (0 = no swarm support) */
-  swarmWorkerCap?: number | null;
 }
 
 export interface TeamMember {
@@ -99,12 +97,6 @@ export interface Session {
   tokenMode?: string | null;
   /** Active Smart Skills bundle ID */
   activeBundleId?: number | null;
-  /** Session-owner authorization token. Present on the session detail endpoint.
-   * Required as Bearer auth on destructive owner-only actions (e.g. swarm abort).
-   * Not a team-member credential. */
-  ownerToken?: string | null;
-  /** Swarm worker capacity from the session's GPU profile. Null means swarm not configured. */
-  swarmWorkerCap?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -918,6 +910,27 @@ export interface RepoFingerprintData {
   entryPoints: string[];
   fileCount: number;
   fingerprintHash?: string | null;
+}
+
+export interface RepoStatusEntry {
+  /** Current indexing status (queued, scanning, fingerprinting, indexing_graph, indexing_fts, indexing_vectors, summarizing, ready, error) */
+  indexStatus: string;
+  /** True when the stored index no longer reflects the current repo content */
+  isStale: boolean;
+  /** Data completeness level: none | fingerprint | partial | full */
+  confidenceLevel: string;
+}
+
+/**
+ * Map of session ID (as string key) to its repo status entry. Sessions with no repo context are omitted.
+ */
+export type RepoStatusBatchResponseStatuses = {
+  [key: string]: RepoStatusEntry;
+};
+
+export interface RepoStatusBatchResponse {
+  /** Map of session ID (as string key) to its repo status entry. Sessions with no repo context are omitted. */
+  statuses: RepoStatusBatchResponseStatuses;
 }
 
 export interface RepoFingerprintResponse {
@@ -2004,6 +2017,13 @@ export type GetBundleLeaderboardParams = {
    * Filter to bundles evaluated with this model family (e.g. kimi, openai, anthropic, google, meta, deepseek, mistral)
    */
   modelFamily?: string;
+};
+
+export type GetBatchRepoStatusParams = {
+  /**
+   * Comma-separated list of session IDs (max 100)
+   */
+  ids: string;
 };
 
 export type SearchRepoParams = {

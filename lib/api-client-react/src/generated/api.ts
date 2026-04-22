@@ -49,6 +49,7 @@ import type {
   EvalRunResponse,
   EvalScoringPresetsResponse,
   EvalVariantResponse,
+  GetBatchRepoStatusParams,
   GetBundleLeaderboardParams,
   GetMemoryGovernanceStatsParams,
   GetMemoryItemParams,
@@ -98,6 +99,7 @@ import type {
   RepoIndexResponse,
   RepoJobStatus,
   RepoSearchResponse,
+  RepoStatusBatchResponse,
   RepoSummaryResponse,
   RepoSymbolResponse,
   RepoSyncRequest,
@@ -4661,6 +4663,107 @@ export function useGetSessionRoutingStats<
     sessionId,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns a map of sessionId → {indexStatus, isStale, confidenceLevel} in a single DB query. Use this instead of calling the per-session summary endpoint N times when rendering a sessions list.
+ * @summary Batch repo index status for multiple sessions
+ */
+export const getGetBatchRepoStatusUrl = (params: GetBatchRepoStatusParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sessions/repo/status?${stringifiedParams}`
+    : `/api/sessions/repo/status`;
+};
+
+export const getBatchRepoStatus = async (
+  params: GetBatchRepoStatusParams,
+  options?: RequestInit,
+): Promise<RepoStatusBatchResponse> => {
+  return customFetch<RepoStatusBatchResponse>(
+    getGetBatchRepoStatusUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetBatchRepoStatusQueryKey = (
+  params?: GetBatchRepoStatusParams,
+) => {
+  return [`/api/sessions/repo/status`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetBatchRepoStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getBatchRepoStatus>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params: GetBatchRepoStatusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBatchRepoStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetBatchRepoStatusQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getBatchRepoStatus>>
+  > = ({ signal }) => getBatchRepoStatus(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getBatchRepoStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetBatchRepoStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getBatchRepoStatus>>
+>;
+export type GetBatchRepoStatusQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Batch repo index status for multiple sessions
+ */
+
+export function useGetBatchRepoStatus<
+  TData = Awaited<ReturnType<typeof getBatchRepoStatus>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params: GetBatchRepoStatusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getBatchRepoStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetBatchRepoStatusQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

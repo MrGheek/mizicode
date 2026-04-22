@@ -1387,6 +1387,34 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /sessions/repo/status:
+    get:
+      operationId: getBatchRepoStatus
+      tags: [sessions]
+      summary: Batch repo index status for multiple sessions
+      description: Returns a map of sessionId → {indexStatus, isStale, confidenceLevel} in a single DB query. Use this instead of calling the per-session summary endpoint N times when rendering a sessions list.
+      parameters:
+        - name: ids
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Comma-separated list of session IDs (max 100)
+          example: "1,2,3"
+      responses:
+        "200":
+          description: Map of session ID to repo status entry (sessions with no repo context are omitted)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepoStatusBatchResponse"
+        "400":
+          description: Missing or invalid ids parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /sessions/{sessionId}/repo/index:
     post:
       operationId: enqueueRepoIndex
@@ -4384,6 +4412,34 @@ components:
         - testTooling
         - entryPoints
         - fileCount
+
+    RepoStatusEntry:
+      type: object
+      properties:
+        indexStatus:
+          type: string
+          description: Current indexing status (queued, scanning, fingerprinting, indexing_graph, indexing_fts, indexing_vectors, summarizing, ready, error)
+        isStale:
+          type: boolean
+          description: True when the stored index no longer reflects the current repo content
+        confidenceLevel:
+          type: string
+          description: "Data completeness level: none | fingerprint | partial | full"
+      required:
+        - indexStatus
+        - isStale
+        - confidenceLevel
+
+    RepoStatusBatchResponse:
+      type: object
+      properties:
+        statuses:
+          type: object
+          description: Map of session ID (as string key) to its repo status entry. Sessions with no repo context are omitted.
+          additionalProperties:
+            $ref: "#/components/schemas/RepoStatusEntry"
+      required:
+        - statuses
 
     RepoFingerprintResponse:
       type: object

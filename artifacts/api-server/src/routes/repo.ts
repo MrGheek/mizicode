@@ -4,6 +4,65 @@ import { eq, and, inArray, desc } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { markSymbolsStaleForSession } from "../services/memory";
 
+export const batchRepoRouter = Router();
+
+batchRepoRouter.get("/status", async (req, res) => {
+  const raw = (req.query["ids"] as string | undefined)?.trim() || "";
+  if (!raw) {
+    res.status(400).json({ error: "ids query parameter is required" });
+    return;
+  }
+
+  const ids = raw
+    .split(",")
+    .map(s => Number(s.trim()))
+    .filter(n => Number.isFinite(n) && n > 0);
+
+  if (ids.length === 0) {
+    res.status(400).json({ error: "No valid session IDs provided" });
+    return;
+  }
+
+  if (ids.length > 100) {
+    res.status(400).json({ error: "Too many IDs — maximum 100 per request" });
+    return;
+  }
+
+  const rows = await db
+    .select({
+      sessionId: sessionRepoContextTable.sessionId,
+      indexStatus: sessionRepoContextTable.indexStatus,
+      isStale: sessionRepoContextTable.isStale,
+      confidenceLevel: sessionRepoContextTable.confidenceLevel,
+      updatedAt: sessionRepoContextTable.updatedAt,
+    })
+    .from(sessionRepoContextTable)
+    .where(inArray(sessionRepoContextTable.sessionId, ids));
+
+  const latestBySession = new Map<number, typeof rows[0]>();
+  for (const row of rows) {
+    const existing = latestBySession.get(row.sessionId);
+    if (!existing || row.updatedAt > existing.updatedAt) {
+      latestBySession.set(row.sessionId, row);
+    }
+  }
+
+  const statusMap: Record<number, { indexStatus: string; isStale: boolean; confidenceLevel: string }> = {};
+  for (const id of ids) {
+    const row = latestBySession.get(id);
+    if (row) {
+      statusMap[id] = {
+        indexStatus: row.indexStatus,
+        isStale: row.isStale,
+        confidenceLevel: row.confidenceLevel,
+      };
+    }
+  }
+
+  logger.debug({ ids, found: Object.keys(statusMap).length }, "Batch repo status");
+  res.json({ statuses: statusMap });
+});
+
 const router = Router({ mergeParams: true });
 
 const ACTIVE_JOB_STATUSES = ["queued", "scanning", "fingerprinting", "indexing_graph", "indexing_fts", "indexing_vectors", "summarizing"];

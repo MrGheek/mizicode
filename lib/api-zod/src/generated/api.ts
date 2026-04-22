@@ -2022,6 +2022,43 @@ export const GetSessionRoutingStatsResponse = zod.object({
 });
 
 /**
+ * Returns a map of sessionId → {indexStatus, isStale, confidenceLevel} in a single DB query. Use this instead of calling the per-session summary endpoint N times when rendering a sessions list.
+ * @summary Batch repo index status for multiple sessions
+ */
+export const GetBatchRepoStatusQueryParams = zod.object({
+  ids: zod.coerce
+    .string()
+    .describe("Comma-separated list of session IDs (max 100)"),
+});
+
+export const GetBatchRepoStatusResponse = zod.object({
+  statuses: zod
+    .record(
+      zod.string(),
+      zod.object({
+        indexStatus: zod
+          .string()
+          .describe(
+            "Current indexing status (queued, scanning, fingerprinting, indexing_graph, indexing_fts, indexing_vectors, summarizing, ready, error)",
+          ),
+        isStale: zod
+          .boolean()
+          .describe(
+            "True when the stored index no longer reflects the current repo content",
+          ),
+        confidenceLevel: zod
+          .string()
+          .describe(
+            "Data completeness level: none | fingerprint | partial | full",
+          ),
+      }),
+    )
+    .describe(
+      "Map of session ID (as string key) to its repo status entry. Sessions with no repo context are omitted.",
+    ),
+});
+
+/**
  * Enqueues an async indexing job for the session's repository. Returns immediately with jobId and status. Deduplicates on active/queued jobs. Completed or error jobs trigger a full rebuild.
  * @summary Enqueue a repo indexing job
  */

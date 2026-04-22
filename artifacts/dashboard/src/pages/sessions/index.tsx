@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
-import { useListSessions } from "@workspace/api-client-react";
+import { useListSessions, useGetBatchRepoStatus, getGetBatchRepoStatusQueryKey } from "@workspace/api-client-react";
 import { format } from "date-fns";
 import { Terminal, Eye, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-statu
 import { Skeleton } from "@/components/ui/skeleton";
 import { SwarmPill } from "@/components/swarm-activity-panel";
 import type { SwarmStatusResponse } from "@/components/swarm-activity-panel";
-import { useState, useEffect, useRef } from "react";
+import { Badge } from "@/components/ui/badge";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 const BATCH_INTERVAL_MS = 3000;
@@ -59,6 +59,33 @@ function useSwarmBatchStatus(sessionIds: number[], hasReadySessions: boolean) {
 
 type TeamFilter = "all" | "team" | "solo";
 
+const REPO_STATUS_LABELS: Record<string, string> = {
+  queued: "Queued",
+  scanning: "Scanning",
+  fingerprinting: "Fingerprinting",
+  indexing_graph: "Indexing",
+  indexing_fts: "Indexing",
+  indexing_vectors: "Indexing",
+  summarizing: "Summarizing",
+  ready: "Indexed",
+  error: "Error",
+};
+
+const REPO_STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  ready: "default",
+  error: "destructive",
+};
+
+function RepoStatusBadge({ indexStatus, isStale }: { indexStatus: string; isStale: boolean }) {
+  const label = REPO_STATUS_LABELS[indexStatus] ?? indexStatus;
+  const variant = REPO_STATUS_VARIANT[indexStatus] ?? "secondary";
+  return (
+    <Badge variant={variant} className="text-xs font-mono">
+      {label}{isStale ? " (stale)" : ""}
+    </Badge>
+  );
+}
+
 export default function SessionsList() {
   const [, setLocation] = useLocation();
   const { data: sessions, isLoading } = useListSessions();
@@ -70,9 +97,21 @@ export default function SessionsList() {
     return true;
   });
 
-  const sessionIds = sessions?.map((s) => s.id) ?? [];
+  const sessionIds = useMemo(() => sessions?.map(s => s.id) ?? [], [sessions]);
   const hasReadySessions = sessions?.some((s) => s.status === "ready") ?? false;
   const swarmStatusMap = useSwarmBatchStatus(sessionIds, hasReadySessions);
+
+  const idsParam = useMemo(
+    () => sessionIds.length > 0 ? sessionIds.join(",") : undefined,
+    [sessionIds]
+  );
+
+  const { data: repoStatuses } = useGetBatchRepoStatus(
+    { ids: idsParam! },
+    { query: { enabled: !!idsParam, queryKey: getGetBatchRepoStatusQueryKey(idsParam ? { ids: idsParam } : undefined) } }
+  );
+
+  const repoStatusMap = repoStatuses?.statuses ?? {};
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
@@ -110,6 +149,7 @@ export default function SessionsList() {
               <TableHead className="w-[100px]">ID</TableHead>
               <TableHead>Profile</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Repo Index</TableHead>
               <TableHead>Hardware</TableHead>
               <TableHead>Created At</TableHead>
               <TableHead className="text-right">Total Cost</TableHead>
@@ -123,6 +163,7 @@ export default function SessionsList() {
                   <TableCell><Skeleton className="h-4 w-8" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-32" /></TableCell>
                   <TableCell><Skeleton className="h-6 w-20 rounded-full" /></TableCell>
+                  <TableCell><Skeleton className="h-6 w-16 rounded-full" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-32" /></TableCell>
                   <TableCell className="text-right"><Skeleton className="h-4 w-12 ml-auto" /></TableCell>
@@ -130,49 +171,60 @@ export default function SessionsList() {
                 </TableRow>
               ))
             ) : filteredSessions?.length ? (
-              filteredSessions.map((session) => (
-                <TableRow key={session.id} className="border-border/50">
-                  <TableCell className="font-mono text-muted-foreground">#{session.id}</TableCell>
-                  <TableCell className="font-medium">{session.profileName}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <SessionStatusBadge status={session.status} />
-                      {session.teamMembers && session.teamMembers.length > 0 && <TeamSessionBadge count={session.teamMembers.length} />}
-                      <SwarmPill
-                        sessionId={session.id}
-                        isReady={session.status === "ready"}
-                        data={swarmStatusMap[session.id] ?? null}
-                      />
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-sm">
-                    {session.gpuName ? `${session.gpuName} x${session.numGpus}` : 'N/A'}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-sm">
-                    {format(new Date(session.createdAt), "MMM d, yyyy HH:mm")}
-                  </TableCell>
-                  <TableCell className="text-right font-mono">
-                    ${session.totalCost?.toFixed(2) || "0.00"}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setLocation(`/sessions/${session.id}`)}
-                      title="View Details"
-                    >
-                      <Eye className="w-4 h-4 text-primary" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
+              filteredSessions.map((session) => {
+                const repoStatus = repoStatusMap[session.id];
+                return (
+                  <TableRow key={session.id} className="border-border/50">
+                    <TableCell className="font-mono text-muted-foreground">#{session.id}</TableCell>
+                    <TableCell className="font-medium">{session.profileName}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <SessionStatusBadge status={session.status} />
+                        {session.teamMembers && session.teamMembers.length > 0 && <TeamSessionBadge count={session.teamMembers.length} />}
+                        <SwarmPill
+                          sessionId={session.id}
+                          isReady={session.status === "ready"}
+                          data={swarmStatusMap[session.id] ?? null}
+                        />
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {repoStatus ? (
+                        <RepoStatusBadge
+                          indexStatus={repoStatus.indexStatus}
+                          isStale={repoStatus.isStale}
+                        />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground font-mono text-sm">
+                      {session.gpuName ? `${session.gpuName} x${session.numGpus}` : 'N/A'}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-sm">
+                      {format(new Date(session.createdAt), "MMM d, yyyy HH:mm")}
+                    </TableCell>
+                    <TableCell className="text-right font-mono">
+                      ${session.totalCost?.toFixed(2) || "0.00"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setLocation(`/sessions/${session.id}`)}
+                        title="View Details"
+                      >
+                        <Eye className="w-4 h-4 text-primary" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             ) : (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
                   <Terminal className="w-8 h-8 mx-auto mb-3 opacity-20" />
-                  {teamFilter === "all"
-                    ? "No sessions found"
-                    : `No ${teamFilter} sessions found`}
+                  No sessions found
                 </TableCell>
               </TableRow>
             )}
