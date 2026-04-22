@@ -736,7 +736,14 @@ Runs alongside the session scheduler in the same process.
 
 **15-minute SHA-check poll**: Fetches the HEAD commit SHA from GitHub (`GET /repos/{owner}/{repo}/commits?per_page=1`). If the SHA has changed since the last recorded `pinnedCommitSha`, triggers an immediate full sync. Skipped if a full sync is already running.
 
-**On-demand sync**: `POST /api/design-intelligence/sync` triggers a sync outside the schedule. Returns `409` if a sync is already in progress.
+**On-demand sync**: `POST /api/design-intelligence/sync` triggers a sync outside the schedule. Returns `409` if a sync is already in progress. On success or skip, returns `SeedResult`:
+```ts
+interface SeedResult {
+  success: boolean;
+  updated: boolean;
+  reason: "already_up_to_date" | "ingested" | "tree_fetch_failed" | "no_csv_files_found";
+}
+```
 
 **State tracked in memory** (exposed via `GET /api/design-intelligence/sources`):
 - `lastSyncedAt` — timestamp of last successful sync
@@ -819,7 +826,25 @@ Base path: `/api`
 | GET | `/design-intelligence/categories` | Distinct categories with entry counts |
 | GET | `/design-intelligence/skill-map` | Map of category → related approved skills (explicit links + keyword matching) |
 | GET | `/design-intelligence/sources` | Curated sources with pinnedCommitSha + live sync status |
-| POST | `/design-intelligence/sync` | Trigger on-demand re-sync (409 if already running) |
+| POST | `/design-intelligence/sync` | Trigger on-demand re-sync (409 if already running). Returns `SeedResult`: `{ success: boolean, updated: boolean, reason: string }` where `reason` is one of `already_up_to_date`, `ingested`, `tree_fetch_failed`, `no_csv_files_found` |
+
+### Skills
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/skills` | List all skills (imported + builtins) |
+| GET | `/skills/:skillId` | Skill detail: returns `{ skill, latestManifest, designCategories[] }`. `designCategories` is a deduplicated union of explicit links (`skill_design_categories`) and keyword-matched categories. |
+| POST | `/skills/import` | Import skill from a GitHub repo URL |
+| GET | `/skills/:skillId/feedback` | List feedback for a skill |
+| POST | `/skills/:skillId/feedback` | Submit helpful/unhelpful feedback |
+| GET | `/skills/:skillId/performance` | Per-skill eval stats |
+| GET | `/skills/leaderboard` | Skill leaderboard (liftOverBaseline, regressionRisk, byRepoKind, byModelFamily) |
+| GET | `/skills/evals/runs` | List eval runs (filterable by status, runType, targetSkillId, targetBundleId, taskMode) |
+| GET | `/skills/evals/:runId` | Eval run + all variants |
+| POST | `/skills/evals/run` | Schedule async eval run |
+| POST | `/skills/evals/process-next` | Process next queued eval run (also triggered by scheduler every 60s) |
+| GET | `/skills/evals/scoring-presets` | Per-taskMode scoring weight presets and budget config |
+| GET | `/sessions/:id/skills` | Skill activations for a session |
 
 ### Repo Intelligence
 
@@ -861,8 +886,9 @@ See [Section 20](#20-lane-coordination) for full endpoint reference.
 |--------|------|-------------|
 | GET | `/sessions/swarm-status-batch?ids=1,2,3` | Batch swarm status for the sessions list |
 | POST | `/sessions/:id/swarm-push` | Claw Runner pushes a new `SwarmSnapshot`; broadcasts to SSE |
-| GET | `/sessions/:id/swarm-status` | Dashboard poll (every 3 s); returns `{availability, snapshot}` |
-| GET | `/sessions/:id/swarm-stream` | SSE stream of live swarm updates; dashboard falls back to polling on error |
+| GET | `/sessions/:id/swarm-status` | Dashboard poll (every 3 s); returns `{availability, snapshot}` (hyphenated path) |
+| GET | `/sessions/:id/swarm-stream` | SSE stream of live swarm updates; dashboard falls back to polling on error (hyphenated path) |
+| POST | `/sessions/:id/swarm/abort` | **Owner-only** — set swarm phase to `aborted`; requires `Authorization: Bearer <ownerToken>` |
 
 ### Admin
 
@@ -1254,11 +1280,11 @@ If the orchestrator explicitly chooses sequential execution, it may optionally e
 After parsing, the decomposition is validated before workers are launched. Any of the following causes a `gate_rejected` event and triggers single-agent fallback:
 
 - Subtask count < 2 or > `SWARM_MAX_WORKERS`
-- Any subtask missing required field `id`, `task`, or `goal`
-- Subtask contains unknown fields (only `id`, `task`, `goal`, `inputs`, `expected_output`, `priority` are allowed)
-- `priority` field is not a positive integer when present
-- **Near-duplicate detection** — subtask `task` text is too similar to another subtask in the same decomposition (cross-subtask similarity check)
-- **Sequential markers** — subtask `task` or `goal` text contains references suggesting it depends on other workers' output
+- Any subtask missing **required** field `id`, `task`, or `goal`
+- Subtask contains unknown fields. Allowed set: `{ id, task, goal, inputs, expected_output, priority }`. Note: `inputs` and `expected_output` are *allowed* but **not required** — only `id`, `task`, `goal` must be present.
+- `priority` field is present but is not a positive integer
+- **Near-duplicate detection** — subtask `task` text is too similar to another subtask in the same decomposition (cross-subtask Jaccard/token similarity check)
+- **Sequential markers** — subtask `task` or `goal` text contains references implying dependency on other workers' output (the model should not decompose sequential work)
 
 ### Worker priority and execution order
 Workers are sorted ascending by `priority` (1 = highest) before dispatch. Workers with equal priority share a concurrency slot; the scheduler dispatches up to `SWARM_CONCURRENCY` workers simultaneously from the sorted queue. Each worker runs in its own tmux session, receives shared context from the orchestrator output (up to 3000 chars preceding the decompose block), and writes its result to a dedicated output file.
@@ -1273,7 +1299,13 @@ Each worker gets one automatic retry (`SWARM_WORKER_RETRY = 1`) on transient fai
 When the gate rejects a decomposition (`gate_rejected`), a single-agent fallback (`runSingleAgentFallback`) is triggered immediately. The fallback runs the original task directly via claw in a fresh tmux session (without swarm prompt injection) so the task always completes. The orchestrator output already written to `OUTPUT_FILE` is not discarded — the fallback overwrites it only on success.
 
 ### Abort flow
-`POST /swarm/abort` (Claw Runner local HTTP) sets `swarmState.abortRequested = true`. In-flight workers finish their current inference call but are not retried. After all in-flight calls complete, the swarm phase is set to `aborted` and a `swarm_aborted` event is emitted. The owner-token flow: the dashboard reads `ownerToken` from `GET /api/sessions/:id` and passes it as `Authorization: Bearer <ownerToken>` to destructive operations including swarm abort.
+Two abort paths exist:
+
+**API server (dashboard-initiated):** `POST /api/sessions/:id/swarm/abort` — requires `Authorization: Bearer <ownerToken>`. The API server validates the token, updates `sessions.swarmSnapshotJson` to phase `aborted`, clears the in-memory cache, and returns the aborted snapshot. The Claw Runner picks up the abort when it next polls `swarm-status`.
+
+**Claw Runner local HTTP (in-process):** `POST /swarm/abort` on port 8080 — sets `swarmState.abortRequested = true` directly. In-flight workers finish their current inference call but are not retried. After all in-flight calls complete, the swarm phase is set to `aborted` and a `swarm_aborted` event is emitted.
+
+The dashboard reads `ownerToken` from `GET /api/sessions/:id` (the only endpoint that exposes it) and sends it as `Authorization: Bearer <ownerToken>` on the API server abort call.
 
 ### Event taxonomy
 All swarm events carry `{ event_type, payload, timestamp }` and are streamed via the push-callback mechanism:
