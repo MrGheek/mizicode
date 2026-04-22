@@ -22,6 +22,11 @@
 14. [Vast.ai Integration](#14-vastai-integration)
 15. [Docker Image](#15-docker-image)
 16. [Boot Script (onstart.sh)](#16-boot-script-onstartsh)
+17. [Design Intelligence](#17-design-intelligence)
+18. [Swarm Orchestration](#18-swarm-orchestration)
+19. [Repo Intelligence](#19-repo-intelligence)
+20. [Lane Coordination](#20-lane-coordination)
+21. [GitHub CI/CD](#21-github-cicd)
 
 ---
 
@@ -30,7 +35,7 @@
 FLOATR lets you rent raw GPU compute from [Vast.ai](https://vast.ai), boot a pre-configured AI coding environment on it, and access everything through a hosted dashboard — without managing servers, Kubernetes, or cloud accounts yourself.
 
 Each **session** is a rented GPU machine running:
-- A frontier open-source LLM (Kimi K2.5, Qwen3-Coder, DeepSeek V3.2, etc.)
+- A frontier open-source LLM (Kimi K2.6, Qwen3-Coder-Next, DeepSeek V3.2, etc.)
 - **vLLM** for high-throughput GPU inference
 - **litellm proxy** for Anthropic-compatible API (so claw-code CLI works out of the box)
 - **code-server** — VS Code in the browser with the LLM wired in
@@ -38,7 +43,7 @@ Each **session** is a rented GPU machine running:
 - **nginx** — routes traffic, handles basic auth, provides preview proxy
 - **SSH** — key-based access for terminal use or port forwarding
 
-The hosted dashboard (this app) handles instance provisioning, status tracking, cost tracking, memory persistence, and scheduled auto-launch/stop.
+The hosted dashboard (this app) handles instance provisioning, status tracking, cost tracking, memory persistence, scheduled auto-launch/stop, repo intelligence indexing, and team lane coordination.
 
 ### Key properties
 
@@ -46,46 +51,59 @@ The hosted dashboard (this app) handles instance provisioning, status tracking, 
 - **Ephemeral by default** — sessions are destroyed when you stop them; `/workspace` is local to the machine.
 - **Persistent memory** — the dashboard maintains a SQLite FTS5 memory store that records what the AI agent did across sessions, injectable into future sessions as context.
 - **Team-capable** — one session can host multiple isolated IDEs for team members + a shared workspace, all proxied through nginx with per-user credentials.
+- **Swarm-aware** — each GPU profile carries a `swarmWorkerCap` limiting the number of concurrent vLLM requests the Claw Runner can schedule, preventing KV-cache exhaustion.
+- **Repo Intelligence** — sessions can index a Git repository on-instance, producing symbol graphs, embeddings, blast-radius maps, and natural-language summaries searchable from the dashboard.
+- **Design Intelligence** — curated UI/UX patterns and design guidelines are ingested from GitHub and surfaced via a queryable API linked to the skill system.
+- **Lane Coordination** — team sessions get per-member work lanes with claim-based file ownership, conflict detection, handoffs, and a weighted heavy-job scheduler.
 
 ---
 
 ## 2. Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    FLOATR Dashboard                          │
-│               (React + Vite, hosted on Replit)               │
-│                                                              │
-│  Pages: Dashboard / Sessions / Cockpit / Templates / Memory  │
-└────────────────────────┬────────────────────────────────────┘
-                         │ HTTP (React Query)
-┌────────────────────────▼────────────────────────────────────┐
-│                    API Server                                │
-│             (Express 5, hosted on Replit)                    │
-│                                                              │
-│  Routes: /sessions  /profiles  /scheduler  /memory  /offers  │
-│  Services: vastai.ts  profiles.ts  scheduler.ts  memory.ts   │
-│  DB: PostgreSQL + Drizzle ORM                                │
-│  Memory: SQLite FTS5 (~/omniql-memory/mem.db)                │
-└──────────┬──────────────────────────┬───────────────────────┘
-           │ Vast.ai REST API          │ Status callbacks
-           │                          │ (POST /sessions/:id/status)
-┌──────────▼──────────────────────────▼───────────────────────┐
-│                    Vast.ai GPU Instance                      │
-│         (rented bare-metal, your Docker image)               │
-│                                                              │
-│  onstart.sh runs at boot:                                    │
-│    Phase 1 (immediate): code-server · Bolt.diy · nginx · SSH │
-│    Phase 2 (background): model download · vLLM · litellm     │
-│                                                              │
-│  Exposed ports (Vast.ai maps to random external ports):      │
-│    8080 → code-server (or nginx team router)                 │
-│    8081 → litellm proxy (OpenAI + Anthropic API)             │
-│    5180 → Bolt.diy (through nginx auth)                      │
-│    3000 → preview proxy (through nginx auth)                 │
-│    5181 → Claw Runner                                        │
-│    22   → SSH                                                │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          FLOATR Dashboard                                    │
+│                    (React + Vite, hosted on Replit)                          │
+│                                                                              │
+│  Pages: Dashboard / Sessions / Cockpit / Templates / Memory /                │
+│         Design Intelligence / Coordination / Skills                          │
+└────────────────────────────┬───────────────────────────────────────────────┘
+                             │ HTTP (React Query, Orval-generated hooks)
+┌────────────────────────────▼───────────────────────────────────────────────┐
+│                          API Server                                          │
+│                   (Express 5, hosted on Replit)                              │
+│                                                                              │
+│  Routes: /sessions  /profiles  /scheduler  /memory  /offers                 │
+│          /design-intelligence  /repo  /coordination  /skills  /evals        │
+│  Services: vastai · profiles · scheduler · memory · curated-sources         │
+│            skills-bundler · lane-policy · heavy-job-scheduler               │
+│            claim-sweeper  (via coordination route)                           │
+│  DB: PostgreSQL + Drizzle ORM                                                │
+│  Memory: SQLite FTS5 (configurable via MEM_DATA_DIR)                        │
+└──────────┬───────────────────────────────┬────────────────────────────────┘
+           │ Vast.ai REST API               │ Status/phase callbacks
+           │                               │ (POST /sessions/:id/status)
+           │                               │ (POST /sessions/:id/repo/sync)
+┌──────────▼───────────────────────────────▼────────────────────────────────┐
+│                       Vast.ai GPU Instance                                   │
+│              (rented bare-metal, your Docker image)                          │
+│                                                                              │
+│  onstart.sh runs at boot:                                                    │
+│    Phase 1 (immediate): code-server · Bolt.diy · nginx · SSH                │
+│      → Compiles Smart Skills bundle                                          │
+│      → Starts Repo Intelligence indexer                                      │
+│      → POSTs services_ready callback                                         │
+│    Phase 2 (background): model download · vLLM · litellm                    │
+│      → POSTs phase callbacks (downloading / starting_llm / llm_ready)       │
+│                                                                              │
+│  Exposed ports (Vast.ai maps to random external ports):                      │
+│    8080 → code-server (or nginx team router)                                 │
+│    8081 → litellm proxy (OpenAI + Anthropic API)                             │
+│    5180 → Bolt.diy (through nginx auth)                                      │
+│    3000 → preview proxy (through nginx auth)                                 │
+│    5181 → Claw Runner                                                        │
+│    22   → SSH                                                                │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Tech stack
@@ -100,7 +118,7 @@ The hosted dashboard (this app) handles instance provisioning, status tracking, 
 | API contract | OpenAPI 3.1 → Orval codegen → React Query hooks + Zod schemas |
 | Monorepo | pnpm workspaces |
 | GPU compute | Vast.ai REST API |
-| LLM inference | vLLM + litellm proxy |
+| LLM inference | vLLM (pinned ==0.19.0) + litellm proxy |
 | IDE | code-server (VS Code in browser) |
 | Coding UI | Bolt.diy |
 | Proxy | nginx (basic auth + path-based team routing) |
@@ -116,39 +134,62 @@ floatr/
 │   │   └── src/
 │   │       ├── index.ts          # Entry point, port binding, profile seeding
 │   │       ├── routes/
-│   │       │   ├── sessions.ts   # Session CRUD, sync, status callback
-│   │       │   ├── profiles.ts   # GPU profile listing
-│   │       │   ├── templates.ts  # Vast.ai template management
-│   │       │   ├── offers.ts     # Live GPU marketplace search
-│   │       │   ├── scheduler.ts  # Scheduler config CRUD
-│   │       │   ├── dashboard.ts  # Summary stats
-│   │       │   └── memory.ts     # Memory proxy routes
+│   │       │   ├── sessions.ts         # Session CRUD, sync, status callback, swarm
+│   │       │   ├── profiles.ts         # GPU profile listing
+│   │       │   ├── templates.ts        # Vast.ai template management
+│   │       │   ├── offers.ts           # Live GPU marketplace search
+│   │       │   ├── scheduler.ts        # Scheduler config CRUD
+│   │       │   ├── dashboard.ts        # Summary stats
+│   │       │   ├── memory.ts           # Memory proxy routes
+│   │       │   ├── design-intelligence.ts  # Design Intelligence CRUD + sync
+│   │       │   ├── repo.ts             # Repo Intelligence (per-session + batch)
+│   │       │   ├── coordination.ts     # Lane coordination, claims, handoffs, heavy jobs
+│   │       │   ├── skills.ts           # Skill management + bundles
+│   │       │   └── evals.ts            # Eval run management
 │   │       └── services/
-│   │           ├── vastai.ts     # Vast.ai API client
-│   │           ├── profiles.ts   # Profile seeding & lookup
-│   │           ├── scheduler.ts  # Auto-launch/stop logic (runs every 30s)
-│   │           └── memory.ts     # SQLite FTS5 memory service
+│   │           ├── vastai.ts           # Vast.ai API client
+│   │           ├── profiles.ts         # Profile seeding & lookup (K2.6 + legacy)
+│   │           ├── scheduler.ts        # Auto-launch/stop + design sync scheduler
+│   │           ├── memory.ts           # SQLite FTS5 memory service (backup/restore)
+│   │           ├── curated-sources.ts  # Design Intelligence ingest from GitHub
+│   │           ├── skills-bundler.ts   # Smart Skills bundle compiler
+│   │           ├── skills-types.ts     # Shared skill types
+│   │           ├── lane-policy.ts      # Lane type policies + claim overlap math
+│   │           └── heavy-job-scheduler.ts  # Weighted queue for indexing/eval jobs
 │   └── dashboard/
 │       └── src/
 │           ├── pages/
-│           │   ├── dashboard.tsx         # Home — active session + stats
+│           │   ├── dashboard.tsx           # Home — active session + stats
 │           │   ├── sessions/
-│           │   │   ├── index.tsx         # All sessions list
-│           │   │   └── [id].tsx          # Session cockpit (boot log, links)
-│           │   ├── templates.tsx         # Template management
-│           │   └── memory.tsx            # Global memory search
+│           │   │   ├── index.tsx           # All sessions list (swarm pills)
+│           │   │   └── [id].tsx            # Session cockpit
+│           │   ├── templates.tsx           # Template management
+│           │   ├── memory.tsx              # Global memory search
+│           │   ├── design-intelligence.tsx # Design patterns explorer
+│           │   └── skills/                 # Skill browser + bundle management
 │           └── components/
-│               └── session-status-badge.tsx  # Status + team badges
+│               ├── session-status-badge.tsx
+│               ├── swarm-status-pill.tsx
+│               └── repo-intelligence-panel.tsx
 ├── docker/
-│   ├── Dockerfile               # CUDA 12.4 runtime image
-│   └── onstart.sh               # Parameterized startup script
+│   ├── Dockerfile               # CUDA 12.4 runtime, vLLM==0.19.0 pinned
+│   ├── onstart.sh               # Parameterized startup script
+│   ├── claw-runner.js           # Claw Runner (Node.js)
+│   └── scripts/                 # Repo Intelligence indexer scripts
 ├── lib/
 │   ├── api-spec/openapi.yaml    # Single source of truth for API contract
 │   ├── api-zod/                 # Generated Zod schemas (from openapi.yaml)
 │   ├── api-client-react/        # Generated React Query hooks
 │   └── db/src/schema/           # Drizzle table definitions
-└── scripts/
-    └── post-merge.sh            # Runs pnpm install + drizzle push after merges
+│       ├── sessions.ts          # sessions table
+│       ├── gpu-profiles.ts      # gpu_profiles table (+ swarmWorkerCap)
+│       ├── scheduler.ts         # scheduler_config table (+ secondReminderTime)
+│       ├── templates.ts         # templates table
+│       ├── coordination.ts      # session_lanes, lane_claims, lane_handoffs, lane_heavy_jobs
+│       └── skills.ts            # skills, skill_sources, skill_bundles, design_intelligence_entries,
+│                                #   skill_design_categories, session_repo_context, repo_graph_jobs,
+│                                #   eval_runs, eval_run_variants, skill_evals, bundle_evals
+└── .github/workflows/           # GitHub Actions CI/CD (see Section 21)
 ```
 
 ---
@@ -156,19 +197,19 @@ floatr/
 ## 4. Database Schema
 
 ### `gpu_profiles`
-Defines what GPU tier to rent and which model to run. Seeded automatically at API server startup; any changes to `services/profiles.ts` are applied on next restart.
+Defines what GPU tier to rent and which model to run. Seeded automatically at API server startup.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | serial PK | |
-| `name` | text | Unique slug (e.g. `standard`, `qwen3-coder-pro`) |
+| `name` | text unique | Slug (e.g. `kimi-k2-6-standard`, `qwen3-coder-pro`) |
 | `displayName` | text | Human label shown in dashboard |
 | `gpuName` | text | e.g. `RTX 4090`, `A100 80GB`, `H100 80GB`, `H200 141GB` |
 | `numGpus` | integer | Number of GPUs to request |
 | `totalVram` | integer | Total VRAM in GB |
 | `dockerImageTag` | text | Docker image to boot on the instance |
-| `modelRepo` | text | HuggingFace repo to download (e.g. `moonshotai/Kimi-K2.5`) |
-| `defaultQuant` | text | Cache subdirectory name under `/workspace/models/` |
+| `modelRepo` | text | HuggingFace repo to download |
+| `defaultQuant` | text | Cache subdirectory under `/workspace/models/` |
 | `servedModelName` | text | `--served-model-name` alias for vLLM and litellm |
 | `modelDisplayName` | text | Human label for the model |
 | `quantSizeGb` | integer | Model weight size on disk |
@@ -180,9 +221,10 @@ Defines what GPU tier to rent and which model to run. Seeded automatically at AP
 | `estimatedCostMin/Max` | real | $/hr range shown in the profile picker |
 | `estimatedSpeedMin/Max` | integer | tok/s range estimate |
 | `startupTimeMin` | integer | Expected boot time in minutes |
+| `swarmWorkerCap` | integer | **New** — max concurrent swarm workers this profile supports. Injected as `SWARM_MAX_WORKERS` into the container. `null` = swarm not configured. |
 
 ### `sessions`
-One row per instance launched. Status updates happen via Vast.ai sync (every 5s poll) and via instance callbacks.
+One row per instance launched.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -192,7 +234,7 @@ One row per instance launched. Status updates happen via Vast.ai sync (every 5s 
 | `vastOfferId` | integer | Offer selected at launch |
 | `templateHash` | text | Vast.ai template hash used |
 | `status` | text | `pending` → `provisioning` → `downloading` → `starting` → `ready` → `stopped` / `error` |
-| `statusMessage` | text | Human-readable current state (shown in boot log) |
+| `statusMessage` | text | Human-readable current state |
 | `boltDiyUrl` | text | Public URL for Bolt.diy |
 | `codeServerUrl` | text | Public URL for code-server |
 | `previewUrl` | text | Public URL for nginx preview proxy |
@@ -204,6 +246,13 @@ One row per instance launched. Status updates happen via Vast.ai sync (every 5s 
 | `gpuName` | text | Denormalized GPU label |
 | `numGpus` | integer | Denormalized GPU count |
 | `teamMembers` | jsonb | `TeamMemberRecord[]` — `{name, password, path, ideUrl}` |
+| `taskMode` | text | **New** — `build`, `review`, `debug`, etc. (set at launch) |
+| `tokenMode` | text | **New** — `core`, `full`, or `extended` (controls skill bundle size) |
+| `activeBundleId` | integer FK → skill_bundles | **New** — the Smart Skills bundle compiled for this session |
+| `repoFingerprintJson` | jsonb | **New** — repo fingerprint provided at launch (languages, frameworks, URL hash) |
+| `routingStatsJson` | jsonb | **New** — `SessionRoutingStats` (bytes avoided/shielded by the skill router) |
+| `swarmSnapshotJson` | jsonb | **New** — latest swarm worker snapshot pushed from the Claw Runner |
+| `ownerToken` | text | **New** — bearer secret issued at session creation; required for destructive owner actions (e.g. swarm abort). Redacted from list/active endpoints; exposed only on `GET /sessions/:id`. |
 | `startedAt` | timestamp | When instance was provisioned |
 | `stoppedAt` | timestamp | When session was destroyed |
 
@@ -226,55 +275,173 @@ One row, updated via the dashboard Scheduler settings panel.
 | `id` | serial PK |
 | `enabled` | Whether auto-launch is active |
 | `launchTime` | HH:MM string in the configured timezone |
-| `stopTime` | HH:MM for auto-stop (safety net) |
+| `stopTime` | HH:MM for primary auto-stop |
+| `secondReminderTime` | **New** — optional second stop trigger (HH:MM); fires 2 minutes after this time |
 | `daysOfWeek` | Array of `"mon"` / `"tue"` / etc. |
 | `timezone` | IANA timezone (e.g. `Europe/London`) |
 | `profileId` | FK → gpu_profiles to launch |
 | `safetyNetEnabled` | If true, stops any running session at `stopTime` |
 
+### `skill_sources`
+External repositories from which skill data is imported.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | serial PK | |
+| `repoUrl` | text | GitHub repo URL |
+| `sourceType` | text | `"curated"` (auto-ingested) or `"github"` (manually added) |
+| `defaultBranch` | text | e.g. `"main"` |
+| `pinnedCommitSha` | text | Last successfully ingested HEAD SHA (SHA-aware idempotence) |
+| `license` | text | SPDX license identifier |
+| `trustLevel` | text | `"reviewed"` (curated) or `"user_approved"` (user-added) |
+| `importedAt` | timestamp | When first imported |
+
+### `design_intelligence_entries`
+Individual entries ingested from curated design sources. Unique on `(source_id, category, name)`.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | serial PK | |
+| `sourceId` | integer FK → skill_sources | |
+| `category` | text | One of: `style`, `palette`, `typography`, `chart_type`, `ux_guideline`, `anti_pattern`, `stack_convention`, `ui_reasoning` |
+| `name` | text | Primary key name from the CSV row (name/label/title/id field) |
+| `dataJson` | jsonb | Full raw CSV row as a key/value object |
+| `tags` | jsonb | String array: `[category, normalised-name]` |
+| `createdAt` | timestamp | |
+
+### `skill_design_categories`
+Join table linking skills to design intelligence categories, for the skill-map endpoint.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | serial PK | |
+| `skillId` | integer FK → skills (cascade delete) | |
+| `category` | text | Design category name |
+| `matchMethod` | text | `"keyword"` (auto-matched) or `"manual"` (admin-linked) |
+| `createdAt` | timestamp | |
+
+Unique index on `(skillId, category)`.
+
+### `session_repo_context`
+Stores the result of a repo intelligence indexing run for a session.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | serial PK | |
+| `sessionId` | integer | References sessions |
+| `repoPath` | text | Absolute path on the instance (default `/workspace/projects`) |
+| `repoUrl` | text | Source URL if known |
+| `fingerprintJson` | jsonb | Repo fingerprint (language list, framework markers, URL hash) |
+| `fingerprintHash` | text | SHA256 of fingerprint for change detection |
+| `summaryJson` | jsonb | Natural-language summary of the repo |
+| `symbolsJson` | jsonb | Array of `RepoSymbol` (name, kind, path, line, lang, signature, docstring, callers, callees) |
+| `filesJson` | jsonb | Array of `RepoFile` (path, lang, size) |
+| `edgesJson` | jsonb | Array of dependency edges (from, to, type) |
+| `chunksJson` | jsonb | Text chunks for RAG retrieval |
+| `embeddingsJson` | jsonb | Float32 embedding vectors (optional) |
+| `hasEmbeddings` | boolean | Whether embeddings are populated |
+| `embeddingDim` | integer | Embedding dimension (e.g. 768, 1536) |
+| `indexStatus` | text | `queued` → `scanning` → `fingerprinting` → `indexing_graph` → `indexing_fts` → `indexing_vectors` → `summarizing` → `ready` / `error` |
+| `isStale` | boolean | True if a new index job was enqueued while a previous result exists |
+| `confidenceLevel` | text | `none`, `low`, `medium`, `high` |
+| `indexedAt` | timestamp | When indexing completed |
+
+### `repo_graph_jobs`
+One row per indexing job enqueued for a session. Deduplicated by active status per `(sessionId, repoPath)`.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | serial PK | |
+| `sessionId` | integer | |
+| `repoPath` | text | |
+| `status` | text | `queued` / `scanning` / `fingerprinting` / `indexing_graph` / `indexing_fts` / `indexing_vectors` / `summarizing` / `completed` / `error` |
+| `indexVersion` | integer | Monotonically increasing per session |
+| `indexedSymbols` | integer | Symbol count after completion |
+| `edgeCount` | integer | Edge count after completion |
+| `embeddingsStatus` | text | Embeddings sub-phase status |
+| `contentHashSeed` | text | Hash used for change detection |
+| `durationMs` | integer | Total job duration |
+| `errorDetails` | text | Error message if failed |
+
+### `session_lanes`, `lane_claims`, `lane_handoffs`, `lane_heavy_jobs`
+See [Section 20 — Lane Coordination](#20-lane-coordination).
+
+### Skills-related tables (`skills`, `skill_versions`, `skill_bundles`, `session_skills`, `skill_feedback`, `eval_runs`, `eval_run_variants`, `skill_evals`, `bundle_evals`)
+Managed by the Smart Skills system. Seeded via skill import; bundles are compiled per session at launch time and per lane at lane creation time. Eval system tracks per-skill and per-bundle performance via A/B lift scoring.
+
 ---
 
 ## 5. GPU Profiles & Models
 
-### Kimi K2.5 (moonshotai/Kimi-K2.5)
-Mixture-of-experts, 2T total / 32B active parameters. Optimised for coding and agentic tasks.
+Profiles are seeded at server startup from `services/profiles.ts`. Stale profiles (removed from code) are auto-deleted. All profiles carry a `swarmWorkerCap` that limits concurrent Claw Runner workers to prevent KV-cache exhaustion.
 
-| Profile | GPU | Count | VRAM | ctx | tok/s | $/hr est |
-|---------|-----|-------|------|-----|-------|---------|
-| Starter | RTX 4090 | 1 | 24 GB | 8 192 | 5–10 | $0.13–0.20 |
-| Standard | RTX 4090 | 4 | 96 GB | 32 768 | 20–35 | $0.50–0.80 |
-| Pro | A100 80GB | 4 | 320 GB | 65 536 | 40–65 | $2.00–4.00 |
-| Ultra | H100 80GB | 8 | 640 GB | 131 072 | 80–130 | $8.00–16.00 |
+### Kimi K2.6 (unsloth/Kimi-K2.6-GGUF) — **Primary / Recommended**
+Mixture-of-experts GGUF. 2T total / 32B active parameters.
+
+| Profile | GPU | Count | VRAM | ctx | tok/s | $/hr est | swarmWorkerCap |
+|---------|-----|-------|------|-----|-------|---------|----------------|
+| Starter · K2.6 | RTX 4090 | 1 | 24 GB | 8 192 | 5–10 | $0.13–0.20 | 16 |
+| Standard · K2.6 | RTX 4090 | 4 | 96 GB | 32 768 | 20–35 | $0.50–0.80 | 48 |
+| Pro · K2.6 | A100 80GB | 4 | 320 GB | 65 536 | 40–65 | $2.00–4.00 | 100 |
+| Ultra · K2.6 | H100 80GB | 8 | 640 GB | 131 072 | 80–130 | $8.00–16.00 | 200 |
+
+**K2.6 vLLM flags:**
+- Standard: `--enable-expert-parallel`, `llamaBatchSize=768` (raised from 512 for swarm headroom)
+- Pro: `--enable-expert-parallel --kv-cache-dtype fp8` + chunked-prefill + priority scheduling
+- Ultra: same as Pro + `--gpu-memory-utilization 0.95` (raised from default 0.92)
+
+### Kimi K2.5 (unsloth/Kimi-K2.5-GGUF) — Legacy (kept for existing sessions)
+
+| Profile | GPU | Count | VRAM | ctx | tok/s | $/hr est | swarmWorkerCap |
+|---------|-----|-------|------|-----|-------|---------|----------------|
+| Starter · K2.5 | RTX 4090 | 1 | 24 GB | 8 192 | 5–10 | $0.13–0.20 | 16 |
+| Standard · K2.5 | RTX 4090 | 4 | 96 GB | 32 768 | 20–35 | $0.50–0.80 | 48 |
+| Pro · K2.5 | A100 80GB | 4 | 320 GB | 65 536 | 40–65 | $2.00–4.00 | 100 |
+| Ultra · K2.5 | H100 80GB | 8 | 640 GB | 131 072 | 80–130 | $8.00–16.00 | 200 |
 
 ### Qwen3-Coder-Next (Qwen/Qwen3-Coder-Next)
-80B total / 3B active. Fast and cheap for coding tasks.
+80B total / 3B active. Very fast per-worker inference — favoured for swarm-intensive tasks.
 
-| Profile | GPU | Count | ctx | tok/s | $/hr est |
-|---------|-----|-------|-----|-------|---------|
-| Qwen3 Standard | A100 80GB | 4 | 65 536 | 55–90 | $2.00–4.00 |
-| Qwen3 Pro | A100 80GB | 8 | 131 072 | 120–200 | $4.00–8.00 |
+| Profile | GPU | Count | ctx | tok/s | $/hr est | swarmWorkerCap |
+|---------|-----|-------|-----|-------|---------|----------------|
+| Qwen3 Standard | A100 80GB | 4 | 65 536 | 55–90 | $2.00–4.00 | 120 |
+| Qwen3 Pro | A100 80GB | 8 | 131 072 | 120–200 | $4.00–8.00 | 250 |
+
+Qwen3 Pro raises `--gpu-memory-utilization 0.95` and applies chunked-prefill for swarm workloads.
 
 ### MiniMax M2.5 (MiniMaxAI/MiniMax-M2.5)
-229B total / 10B active.
+229B total / 10B active. Compact active layer gives moderate swarm headroom.
 
-| Profile | GPU | Count | ctx | tok/s | $/hr est |
-|---------|-----|-------|-----|-------|---------|
-| MiniMax Ultra | H100 80GB | 8 | 131 072 | 60–100 | $8.00–16.00 |
+| Profile | GPU | Count | ctx | tok/s | $/hr est | swarmWorkerCap |
+|---------|-----|-------|-----|-------|---------|----------------|
+| MiniMax Ultra | H100 80GB | 8 | 131 072 | 60–100 | $8.00–16.00 | 80 |
 
 ### GLM-5.1 FP8 (zai-org/GLM-5.1-FP8)
-754B total / 40B active. Speculative decoding via MTP, FP8 KV cache.
+754B total / 40B active. Speculative decoding (MTP), FP8 KV cache. Requires vLLM ≥ 0.19.0.
 
-| Profile | GPU | Count | ctx | tok/s | $/hr est |
-|---------|-----|-------|-----|-------|---------|
-| GLM-5.1 Ultra | H100 80GB | 8 | 32 768 | 25–45 | $8.00–16.00 |
-| GLM-5.1 H200 | H200 141GB | 8 | 131 072 | 40–70 | $15.00–25.00 |
+| Profile | GPU | Count | ctx | tok/s | $/hr est | swarmWorkerCap |
+|---------|-----|-------|-----|-------|---------|----------------|
+| GLM-5.1 Ultra | H100 80GB | 8 | 32 768 | 25–45 | $8.00–16.00 | 4 |
+| GLM-5.1 H200 | H200 141GB | 8 | 131 072 | 40–70 | $15.00–25.00 | 16 |
+
+> ⚠️ GLM-5.1 Ultra runs at `--gpu-memory-utilization 0.98` (VRAM fully committed). Swarm is extremely constrained — use H200 tier for any swarm workload.
+
+> ⚠️ GLM-5.1 H200 does **not** use `--enable-chunked-prefill` (incompatible with `--speculative-config.method mtp` on vLLM 0.6.x). Will be added when the pinned image moves to vLLM ≥ 0.7.0.
 
 ### DeepSeek V3.2 (deepseek-ai/DeepSeek-V3.2)
-671B total, MIT license.
+671B total (MoE), MIT license.
 
-| Profile | GPU | Count | ctx | tok/s | $/hr est |
-|---------|-----|-------|-----|-------|---------|
-| DeepSeek V3.2 | H200 141GB | 8 | 131 072 | 45–75 | $15.00–25.00 |
+| Profile | GPU | Count | ctx | tok/s | $/hr est | swarmWorkerCap |
+|---------|-----|-------|-----|-------|---------|----------------|
+| DeepSeek V3.2 | H200 141GB | 8 | 131 072 | 45–75 | $15.00–25.00 | 32 |
+
+### Chunked-prefill shared flags (`CHUNKED_PREFILL_PRO`)
+Applied to Pro/Ultra MoE profiles (vLLM ≥ 0.19.0):
+```
+--enable-chunked-prefill --max-num-batched-tokens 8192
+--max-num-partial-prefills 2 --max-long-partial-prefills 0
+--long-prefill-token-threshold 2048 --scheduling-policy priority
+```
 
 ---
 
@@ -285,7 +452,7 @@ Mixture-of-experts, 2T total / 32B active parameters. Optimised for coding and a
         │
         ▼
   status: pending
-  (session row created in DB)
+  (session row created, ownerToken generated, activeBundleId compiled)
         │
   POST /bundles/ → Vast.ai
   Select cheapest matching offer
@@ -302,12 +469,18 @@ Mixture-of-experts, 2T total / 32B active parameters. Optimised for coding and a
   ├── code-server
   ├── Claw Runner
   ├── Bolt.diy
-  └── nginx
+  ├── nginx
+  └── (optional) Repo Intelligence indexer triggered if repoUrl provided
         │
   Instance POSTs /api/sessions/:id/status  {status: "services_ready"}
         ▼
   status: starting
   statusMessage: "Tools ready — LLM model loading in background..."
+        │
+  Instance POSTs {status: "skills_compiling"}
+  → "Compiling Smart Skills bundle..."
+  Instance POSTs {status: "skills_ready"}
+  → "Smart Skills loaded — LLM loading in background..."
         │
   onstart.sh Phase 2 starts (background subshell)
   ├── [if model not cached] huggingface-cli download
@@ -332,9 +505,32 @@ Mixture-of-experts, 2T total / 32B active parameters. Optimised for coding and a
   status: stopped
 ```
 
-**Fallback for old/offline instances**: If the instance callback never arrives (e.g. instance was launched before callbacks were wired up), the sync checks `Vast.ai actual_status === "running"` + `status_msg` starts with `"success"` + instance has been running for >30 minutes → auto-marks as `ready`.
+**Fallback for old/offline instances**: If the instance callback never arrives, the sync checks `Vast.ai actual_status === "running"` + `status_msg` starts with `"success"` + instance has been running for >30 minutes → auto-marks as `ready`.
 
-**Dashboard polling**: The cockpit page calls `GET /api/sessions/:id` every 5 seconds while the session is active. Each call triggers a Vast.ai API sync to fetch the latest `actual_status`, `dph_total`, and service URLs.
+**Dashboard polling**: The cockpit page calls `GET /api/sessions/:id` every 5 seconds while active. Each call triggers a Vast.ai API sync.
+
+### POST /sessions — extended request body
+
+```json
+{
+  "profileId": 2,
+  "offerId": null,
+  "teamMembers": ["alice", "bob"],
+  "taskMode": "build",
+  "tokenMode": "core",
+  "bundleId": null,
+  "repoUrl": "https://github.com/acme/myrepo",
+  "repoBranch": "main",
+  "repoFingerprint": null
+}
+```
+
+- `teamMembers` — array of name strings (not objects); API generates passwords automatically
+- `taskMode` — `build`, `review`, `debug`, etc. Used to select the appropriate skill bundle
+- `tokenMode` — `core` (default, compact prompt injection), `full`, or `extended`
+- `bundleId` — explicit bundle override; null = auto-select default bundle for context
+- `repoUrl` — if provided, a repo fingerprint is derived via GitHub public API (language/framework detection) and stored on the session
+- `repoFingerprint` — override object if caller has already computed the fingerprint
 
 ---
 
@@ -345,12 +541,12 @@ Mixture-of-experts, 2T total / 32B active parameters. Optimised for coding and a
 | Internal port | Service | Notes |
 |---------------|---------|-------|
 | 22 | SSH | Key-based auth only |
-| 8080 | code-server OR nginx team router | Solo: code-server direct. Team: nginx routes / |
+| 8080 | code-server OR nginx team router | Solo: code-server direct. Team: nginx routes `/` |
 | 8081 | litellm proxy | OpenAI + Anthropic API. Used by claw-code and Bolt.diy |
 | 8082 | vLLM (internal) | OpenAI format only, not exposed externally |
-| 8090 | code-server owner (team) | Internal only, nginx proxies to / |
-| 8093-8096 | code-server per team member | Internal, nginx proxies to /ide/<name>/ |
-| 8097 | code-server shared workspace | Internal, nginx proxies to /shared/ |
+| 8090 | code-server owner (team) | Internal only, nginx proxies to `/` |
+| 8093-8096 | code-server per team member | Internal, nginx proxies to `/ide/<name>/` |
+| 8097 | code-server shared workspace | Internal, nginx proxies to `/shared/` |
 | 3000 | nginx preview proxy | Proxies localhost:5174 (dev server) |
 | 5173 | Bolt.diy (internal) | |
 | 5180 | nginx → Bolt.diy | Exposed with basic auth |
@@ -365,7 +561,7 @@ Mixture-of-experts, 2T total / 32B active parameters. Optimised for coding and a
 - Expert-parallel enabled for MoE models
 - FP8 KV cache on H100/H200 profiles
 - Speculative decoding (MTP) on GLM-5.1
-- Auto-restarts if the process dies
+- `onstart.sh` performs runtime flag-gating: probes `vllm serve --help` and strips any unrecognised flags, keeping the image forward-compatible
 
 **litellm proxy** (port 8081)
 - Wraps vLLM's OpenAI endpoint
@@ -384,18 +580,19 @@ Mixture-of-experts, 2T total / 32B active parameters. Optimised for coding and a
 
 **Claw Runner** (Node.js, port 5182)
 - Background task execution engine for long-running agentic workflows
+- Enforces `SWARM_MAX_WORKERS` concurrency limit set from `gpu_profiles.swarmWorkerCap`
 - Accessed via nginx on port 5181 with basic auth
 
 **nginx**
 - Handles basic auth for Bolt.diy, Claw Runner, and the preview proxy
 - For team sessions: routes `/`, `/ide/<name>/`, `/shared/` to the correct code-server instance
-- preview proxy on port 3000 proxies `localhost:5174` (useful for dev server outputs)
+- Preview proxy on port 3000 proxies `localhost:5174`
 
 ---
 
 ## 8. Team Sessions
 
-When launching a session with team members, an array of `{name, password}` objects is passed. The API generates paths automatically and injects the members as `TEAM_MEMBERS_JSON` into the startup script.
+When launching a session with team members, an array of name strings is passed. The API generates paths and passwords automatically and stores `TeamMemberRecord[]` in `sessions.teamMembers`.
 
 ### JSON structure stored in DB (`sessions.teamMembers`)
 
@@ -410,7 +607,16 @@ When launching a session with team members, an array of `{name, password}` objec
 - `__shared__` is always element 0; its path is `/shared/`
 - Named members get `/ide/<name>/` paths
 - Max 4 named members per session
-- Names are sanitized to `[a-z0-9][a-z0-9_-]{0,30}`, reserved words (`admin`, `root`, etc.) are rejected
+- Names sanitized to `[a-z0-9][a-z0-9_-]{0,30}`, reserved words (`admin`, `root`, `owner`, `shared`) are rejected
+
+### ownerToken
+A bearer secret (`sessions.ownerToken`) is generated at session creation time and stored on the session. It is exposed only via `GET /api/sessions/:id` — never on list or active endpoints. The dashboard reads it from the cockpit to authorize destructive owner-only controls (e.g. swarm abort).
+
+### taskMode and tokenMode
+Set at launch and stored on `sessions.taskMode` / `sessions.tokenMode`. Control which Smart Skills bundle is selected and how aggressively context is injected into the LLM system prompt.
+
+### Smart Skills bundle
+`activeBundleId` references the `skill_bundles` row compiled for this session. Bundle selection is based on `taskMode`, `tokenMode`, session type, repo languages, and model profile. Per-lane overlay bundles are compiled when lanes are created (see Section 20).
 
 ### nginx routing (port 8080 on team sessions)
 
@@ -433,7 +639,7 @@ server {
   location /shared/ {
     auth_basic "OmniQL Shared";
     auth_basic_user_file /etc/nginx/.htpasswd-shared; # all members combined
-    proxy_pass http://localhost:8097;                 # shared code-server (--auth none)
+    proxy_pass http://localhost:8097;                 # shared code-server
   }
 }
 ```
@@ -442,34 +648,41 @@ server {
 - Owner: `/workspace/projects`
 - Alice: `/workspace/users/alice`
 - Shared: `/workspace/shared`
-- Each workspace gets a `.env` with `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` pre-set
 
-### Dashboard — credential exposure
-- `GET /api/sessions` (list) — passwords are **redacted**
-- `GET /api/sessions/:id` (detail) — passwords are **included** (cockpit shows them with copy buttons)
-- Team badge shown on session cards and in the active session panel
-- "Copy invite" button on each member card: copies `"Your IDE: <url> | Password: <pw>"`
+### Dashboard credential exposure
+- `GET /api/sessions` (list) — passwords **redacted**, `ownerToken` **redacted**
+- `GET /api/sessions/active` — passwords **redacted**, `ownerToken` **redacted**
+- `GET /api/sessions/:id` (detail) — passwords **included**, `ownerToken` **included**
 
 ---
 
 ## 9. Memory Persistence System
 
-The API server runs an embedded SQLite FTS5 memory store that lets the AI agent remember what it did across sessions. No external service required.
+The API server runs an embedded SQLite FTS5 memory store. No external service required.
 
 ### Storage
-- Location: `~/omniql-memory/mem.db` (outside the workspace, not tracked by git)
-- Auth: optional Bearer token via `OMNIQL_MEM_TOKEN` env var
+- Location: controlled by `MEM_DATA_DIR` env var (default: `~/omniql-memory/mem.db`)
+- Auth: optional Bearer token via `OMNIQL_MEM_TOKEN`
+
+### Token modes (memory budget profiles)
+Memory retrieval respects the session's `tokenMode`:
+
+| Mode | Description |
+|------|-------------|
+| `core` | Default — compact context injection, prioritises recent high-signal items |
+| `full` | Broader retrieval window, more items injected |
+| `extended` | Maximum retrieval budget, including stale items |
+
+### Backup and restore
+`memory.ts` exposes `backupDb()` and `restoreDb(buf)` for operator-initiated SQLite hot-backup. The backup produces a binary SQLite file. Restore accepts a `Buffer` and atomically replaces the live database.
 
 ### Instance-side integration
-Three environment variables are injected into every instance's onstart script:
 
 | Variable | Value |
 |----------|-------|
 | `OMNIQL_MEM_PROXY_URL` | Base URL of this API server |
 | `OMNIQL_MEM_AUTH_TOKEN` | Bearer token (or empty in dev) |
 | `OMNIQL_MEM_USER_ID` | User ID scope (default: `"operator"`) |
-
-The claw-code Rust CLI reads these and calls the memory API after each tool use.
 
 ### Memory API endpoints
 
@@ -482,8 +695,7 @@ The claw-code Rust CLI reads these and calls the memory API after each tool use.
 | GET | `/api/mem/observations` | List recent observations |
 | GET | `/api/mem/sessions` | List past sessions with summaries |
 
-### Dashboard access (no Bearer token needed)
-The dashboard proxies memory through session-scoped routes:
+### Dashboard memory routes
 
 | Route | Description |
 |-------|-------------|
@@ -494,38 +706,36 @@ The dashboard proxies memory through session-scoped routes:
 | `GET /api/memory/sessions` | Global memory (all users) |
 | `GET /api/memory/search?q=` | Global full-text search |
 
-### Memory page
-`/memory` in the dashboard shows a searchable global log of all sessions with summaries displayed as note blocks. Per-session memory is also accessible via the Memory tab inside any cockpit.
-
 ---
 
 ## 10. Scheduler
 
 Runs in the API server process, checks every 30 seconds.
 
-### What it does
+### Session scheduler
 
-1. **Auto-launch**: At the configured `launchTime` on enabled days, if no session is currently active, launches a new session using the configured GPU profile.
+1. **Auto-launch**: At the configured `launchTime` on enabled days, if no session is currently active, launches a new session.
+2. **Safety-net stop**: 2 minutes after the configured `stopTime`, destroys any running session.
+3. **Second reminder stop**: If `secondReminderTime` is configured and differs from `stopTime`, a second stop fires 2 minutes after that time.
+4. **Dedup**: An in-memory `recentActions` Set keyed by `launch|stop-<dateKey>-<time>` prevents double-firing within the same 30-second interval.
 
-2. **Safety-net stop**: At the configured `stopTime`, destroys any running session (regardless of how it was started). Prevents runaway costs if you forget to stop.
+### Design Sync Scheduler
 
-3. **Reminder window**: Configurable lead-time warning shown in the dashboard before auto-launch.
+Runs alongside the session scheduler in the same process.
 
-### Configuration (via dashboard Settings panel)
+**6-hour safety-net sync**: Full re-ingest of all curated design sources, unconditionally.
 
-| Field | Description |
-|-------|-------------|
-| `enabled` | Master switch |
-| `profileId` | Which GPU profile to launch |
-| `launchTime` | HH:MM in `timezone` |
-| `stopTime` | HH:MM safety-net cutoff |
-| `daysOfWeek` | Which days are active (`["mon","tue","wed","thu","fri"]`) |
-| `timezone` | IANA timezone (e.g. `America/New_York`) |
-| `safetyNetEnabled` | Whether stopTime auto-kills the session |
+**15-minute SHA-check poll**: Fetches the HEAD commit SHA from GitHub (`GET /repos/{owner}/{repo}/commits?per_page=1`). If the SHA has changed since the last recorded `pinnedCommitSha`, triggers an immediate full sync. Skipped if a full sync is already running.
 
-### API
-- `GET /api/scheduler` — get current config
-- `PUT /api/scheduler` — update config
+**On-demand sync**: `POST /api/design-intelligence/sync` triggers a sync outside the schedule. Returns `409` if a sync is already in progress.
+
+**State tracked in memory** (exposed via `GET /api/design-intelligence/sources`):
+- `lastSyncedAt` — timestamp of last successful sync
+- `lastAttemptedAt` — timestamp of last attempt (success or fail)
+- `lastError` — error message if last sync failed
+- `nextSyncAt` — scheduled next full sync time
+- `intervalMs` — configured interval (default 6 hours; override with `DESIGN_SYNC_INTERVAL_MS`)
+- `isRunning` — whether a sync is currently in progress
 
 ---
 
@@ -537,47 +747,31 @@ Base path: `/api`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/sessions` | List all sessions (passwords redacted) |
-| POST | `/sessions` | Launch a new session |
-| GET | `/sessions/active` | Get the currently active session |
-| GET | `/sessions/:id` | Get session detail (includes team passwords) |
+| GET | `/sessions` | List all sessions (passwords + ownerToken redacted) |
+| POST | `/sessions` | Launch a new session (accepts taskMode, tokenMode, bundleId, repoUrl, repoBranch, repoFingerprint) |
+| GET | `/sessions/active` | Get the currently active session (ownerToken redacted) |
+| GET | `/sessions/swarm-status-batch?ids=1,2,3` | **New** — batch swarm status for the sessions list (returns map of id → `{availability, snapshot}`) |
+| GET | `/sessions/:id` | Get session detail (includes team passwords and ownerToken) |
 | DELETE | `/sessions/:id` | Destroy session and Vast.ai instance |
 | POST | `/sessions/:id/sync` | Force a Vast.ai API sync |
-| POST | `/sessions/:id/status` | **Instance callback** — update status from onstart.sh |
+| POST | `/sessions/:id/status` | **Instance callback** — update status from onstart.sh (authenticated via Bearer token) |
 
-#### POST /sessions — request body
+#### Instance callback status values
 
-```json
-{
-  "profileId": 2,
-  "teamMembers": [
-    { "name": "alice" },
-    { "name": "bob" }
-  ]
-}
-```
-
-- `profileId` — required, references gpu_profiles
-- `teamMembers` — optional; if provided, enables team session mode; passwords are auto-generated
-
-#### POST /sessions/:id/status — instance callback
-
-Called by `onstart.sh` via curl at each boot phase.
-
-```json
-{ "status": "services_ready" }
-{ "status": "downloading" }
-{ "status": "starting_llm" }
-{ "status": "llm_ready" }
-```
-
-Authenticated via `Authorization: Bearer <OMNIQL_MEM_AUTH_TOKEN>`. If `OMNIQL_MEM_TOKEN` is not set (dev mode), the endpoint is open.
+| `status` field | DB status → | statusMessage |
+|----------------|-------------|---------------|
+| `services_ready` | `starting` | "Tools ready — LLM model loading in background..." |
+| `downloading` | `downloading` | "Downloading model weights..." |
+| `starting_llm` | `starting` | "Loading model into GPU memory..." |
+| `skills_compiling` | `starting` | "Compiling Smart Skills bundle..." |
+| `skills_ready` | `starting` | "Smart Skills loaded — LLM loading in background..." |
+| `llm_ready` | `ready` | "Session is ready — vLLM online" |
 
 ### GPU Profiles
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/profiles` | List all profiles |
+| GET | `/profiles` | List all profiles (includes swarmWorkerCap) |
 | GET | `/profiles/:id` | Get single profile |
 
 ### Offers
@@ -586,14 +780,12 @@ Authenticated via `Authorization: Bearer <OMNIQL_MEM_AUTH_TOKEN>`. If `OMNIQL_ME
 |--------|------|-------------|
 | GET | `/offers` | Search live Vast.ai marketplace |
 
-Query params: `gpuName`, `numGpus`, `minGpuRam`, `maxPrice`, `limit`
-
 ### Templates
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/templates` | List templates |
-| POST | `/templates` | Create template on Vast.ai |
+| POST | `/templates` | Create template |
 | PUT | `/templates/:id` | Update template |
 | DELETE | `/templates/:id` | Delete template |
 
@@ -610,48 +802,101 @@ Query params: `gpuName`, `numGpus`, `minGpuRam`, `maxPrice`, `limit`
 |--------|------|-------------|
 | GET | `/dashboard/summary` | `{ activeSessions, totalSessions, totalCost, schedulerEnabled }` |
 
+### Design Intelligence
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/design-intelligence` | List entries. Query params: `category`, `q` (ILIKE search), `limit` (max 100), `offset` |
+| GET | `/design-intelligence/categories` | Distinct categories with entry counts |
+| GET | `/design-intelligence/skill-map` | Map of category → related approved skills (explicit links + keyword matching) |
+| GET | `/design-intelligence/sources` | Curated sources with pinnedCommitSha + live sync status |
+| POST | `/design-intelligence/sync` | Trigger on-demand re-sync (409 if already running) |
+
+### Repo Intelligence
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/repo/status?ids=1,2,3` | **Batch** — `{statuses: {[id]: {indexStatus, isStale, confidenceLevel}}}` |
+| POST | `/sessions/:id/repo/index` | Enqueue a repo index job (deduplicates by active status) |
+| GET | `/sessions/:id/repo/fingerprint` | Current fingerprint + index status |
+| GET | `/sessions/:id/repo/summary` | Repo summary + counts (symbols, chunks, files) |
+| GET | `/sessions/:id/repo/search?q=` | Approximate search over symbols/files/chunks/embeddings. Params: `type`, `lang`, `pathPrefix`, `limit`, `offset` |
+| GET | `/sessions/:id/repo/blast-radius?file=` | Direct/indirect dependents + affected tests for a file |
+| GET | `/sessions/:id/repo/symbol` | Filter symbols by `name`, `path`, `lang`, `kind` |
+| GET | `/sessions/:id/repo/jobs/:jobId` | Get a specific index job |
+| GET | `/sessions/:id/repo/jobs/pending` | **Auth required** — next queued job for the instance to pick up |
+| POST | `/sessions/:id/repo/sync` | **Auth required** — instance pushes index results back |
+
+### Lane Coordination
+
+See [Section 20](#20-lane-coordination) for full endpoint reference.
+
+### Memory
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/mem/init` | Start memory session |
+| POST | `/mem/observation` | Record tool call |
+| POST | `/mem/summarize` | Write session summary |
+| GET | `/mem/context/:userId` | Context string for prompt injection |
+| GET | `/mem/observations` | List observations |
+| GET | `/mem/sessions` | List memory sessions |
+| GET | `/memory/sessions` | Global memory sessions |
+| GET | `/memory/search?q=` | Global FTS5 search |
+
 ---
 
 ## 12. Dashboard UI Pages
 
 ### `/` — Dashboard
 - Active session card with status badge, GPU, cost/hr, and statusMessage
+- Swarm pill showing live/stale/unavailable worker status
 - "View Cockpit →" button
 - Summary stats: total sessions, total spend, scheduler status
-- Recent sessions list
 
 ### `/sessions` — All Sessions
 - Table of all sessions (running + historical)
 - Status badge, team badge (violet, shows team icon when `teamMembers` is present)
+- **Swarm status pills** — refreshed via `/sessions/swarm-status-batch`; show `live`, `stale`, or `unavailable`
 - Cost column
 - Click → cockpit
 
 ### `/sessions/:id` — Cockpit
 
-**Boot log panel** — live status updates as the instance boots, driven by 5-second polling. Shows current `statusMessage`.
+**Boot log panel** — live status updates (5-second polling).
 
 **Overview tab:**
-- "Your coding environment is ready" panel with "Open Coding Environment" button (links to Bolt.diy URL)
-- Hardware & Access card: GPU, Public IP, SSH command, SSH tunnel command (for VPN users)
-- Cost & Timing card: started time, $/hr, total spend
+- "Your coding environment is ready" panel with "Open Coding Environment" button
+- Hardware & Access card: GPU, Public IP, SSH command
+- Cost & Timing card
+- Repo Intelligence panel: index status, symbol count, confidence level, search
 
-**Team Access card** (team sessions only):
-- Credential table per member: IDE URL, username, password
-- "Copy invite" button — copies `"Your IDE: <url> | Password: <pw>"` to clipboard
+**Team tab** (team sessions only):
+- Credential table per member with copy-invite button
+- Lane coordination panel: per-lane status, active claims, conflict warnings, handoffs
+- Heavy job queue viewer
 
 **Memory tab:**
 - Per-session tool observation log
-- Session summary block (if AI wrote one)
-- Full-text search within this session
+- Session summary block
+- Full-text search
+
+**Skills tab:**
+- Active bundle details, skill list, token usage stats
 
 ### `/templates` — Templates
 - List and manage Vast.ai Docker templates
-- Set default template (used by scheduler and new sessions)
 
 ### `/memory` — Memory
 - Global searchable log across all sessions
 - Session summaries as styled note blocks
 - FTS5 search (debounced, 350ms)
+
+### `/design-intelligence` — Design Intelligence
+- Browse categories (style, palette, typography, chart_type, ux_guideline, etc.)
+- Search entries with keyword filter
+- Skill map: category → linked approved skills
+- Sync status panel: last sync time, next sync, error state
 
 ---
 
@@ -664,10 +909,14 @@ Query params: `gpuName`, `numGpus`, `minGpuRam`, `maxPrice`, `limit`
 | `VASTAI_API_KEY` | Yes | Vast.ai API key for all instance operations |
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `PORT` | No | API server port (default: 8080) |
-| `OMNIQL_MEM_TOKEN` | No | Bearer token for memory API (open in dev if not set) |
-| `OMNIQL_MEM_PROXY_URL` | No | Public URL of this API server (injected into instances for memory callbacks). Defaults to `https://$REPLIT_DEV_DOMAIN` |
+| `OMNIQL_MEM_TOKEN` | No | Bearer token for memory API (open in dev if not set). Also used to authenticate instance callbacks on `/sessions/:id/status` and `/sessions/:id/repo/*` |
+| `OMNIQL_MEM_PROXY_URL` | No | Public URL of this API server. Defaults to `https://$REPLIT_DEV_DOMAIN` |
 | `OMNIQL_MEM_USER_ID` | No | Memory user scope (default: `operator`) |
+| `MEM_DATA_DIR` | No | **New** — Override for SQLite memory DB directory (default: `~/omniql-memory`) |
 | `REPLIT_DEV_DOMAIN` | Auto | Set by Replit. Used to construct callback and memory proxy URLs |
+| `DESIGN_SYNC_INTERVAL_MS` | No | **New** — Design Intelligence full-sync interval (default: 6 hours = 21 600 000 ms) |
+| `ADMIN_SWEEP_TOKEN` | No | **New** — Bearer token required to call the claim sweeper endpoint. Protects admin-only lane maintenance |
+| `GITHUB_TOKEN` | No | Optional GitHub PAT to increase API rate limits during design intelligence ingest |
 
 ### Injected into each Vast.ai instance via onstart script
 
@@ -680,6 +929,8 @@ Query params: `gpuName`, `numGpus`, `minGpuRam`, `maxPrice`, `limit`
 | `VLLM_MAX_NUM_SEQS` | Max concurrent sequences |
 | `VLLM_EXTRA_ARGS` | Extra vLLM flags |
 | `NUM_GPUS` | GPU count |
+| `SWARM_MAX_WORKERS` | **New** — Max concurrent Claw Runner workers (from `gpu_profiles.swarmWorkerCap`) |
+| `VLLM_API_KEY` | **New** — Optional key for the vLLM server's built-in auth (when set, all litellm → vLLM calls must include it) |
 | `OMNIQL_MEM_PROXY_URL` | Memory API base URL |
 | `OMNIQL_MEM_AUTH_TOKEN` | Memory API bearer token |
 | `OMNIQL_MEM_USER_ID` | Memory user scope |
@@ -701,22 +952,18 @@ All interaction goes through `artifacts/api-server/src/services/vastai.ts`.
 - Returns `VastOffer[]`
 
 **Create instance** (`PUT /asks/:offerId/`)
-- Passes: Docker image, env dict (port mappings + model env), onstart script, disk size, template hash
+- Passes: Docker image, env dict (port mappings + model env + `SWARM_MAX_WORKERS` + `VLLM_API_KEY`), onstart script, disk size, template hash
 - Returns: `{ new_contract: instanceId, expected_price }`
-- Note: do **not** pass `template_hash_id` — causes 400
 
 **Get instance** (`GET /instances/:id/`)
 - Returns: `actual_status`, `status_msg`, `public_ipaddr`, `ports`, `dph_total`, `cost_run_time`
 - `actual_status`: `loading` → `creating` → `running` → `exited` / `error`
-- `status_msg`: set by Vast.ai (e.g. `"success, running <image>"`); not controlled by our script
 
 **Destroy instance** (`DELETE /instances/:id/`)
 
 **Create/update template** (`POST /templates/` and `PUT /templates/:id/`)
 
 ### Port mapping
-Ports are declared in the env dict with Docker `-p` flag syntax:
-
 ```typescript
 "-p 8080:8080": "1",   // code-server
 "-p 8081:8081": "1",   // litellm proxy
@@ -725,55 +972,68 @@ Ports are declared in the env dict with Docker `-p` flag syntax:
 "-p 3000:3000": "1",   // nginx preview
 ```
 
-Vast.ai maps these to random high ports on the public IP. The dashboard reads the mappings from `instance.ports["8080/tcp"][0].HostPort` etc.
-
 ### Cost fields
-- `dph_total` — actual running $/hr (updates in real time as instance runs)
-- `cost_run_time` — cumulative cost since instance started (null on some hosts)
-- `expected_price` — estimate returned at creation time (often 0 — use `dph_total` instead)
+- `dph_total` — actual running $/hr
+- `cost_run_time` — cumulative cost (preferred; fall back to `dph_total × hours` if null)
+- `expected_price` — estimate at creation (often 0)
 
 ---
 
 ## 15. Docker Image
 
-`gheeklabs/coding-env:latest` (CUDA 12.4 runtime base)
+`gheeklabs/coding-env:latest` (CUDA 12.4 cudnn-runtime base)
 
 ### What's pre-installed
 
-- CUDA 12.4 + cuDNN
+- CUDA 12.4 + cuDNN (cudnn-runtime base)
 - Python 3 + pip
-- vLLM (latest)
+- **vLLM == 0.19.0** (exact pin; CUDA 12.4 wheels from PyPI `--extra-index-url https://download.pytorch.org/whl/cu124`)
+- **transformers >= 5.3.0** (required by GLM-5.1 FP8 tokeniser and GLM-4 tool-call parser; also benefits Qwen3 and MiniMax M2.5)
+- **DeepGEMM** (optional FP8 GEMM kernel from `deepseek-ai/DeepGEMM` at pinned SHA via build arg `DEEPGEMM_SHA`; installed with `pip install --no-cache-dir git+https://github.com/deepseek-ai/DeepGEMM@<SHA>`. Falls back gracefully if CUDA compilation fails — vLLM's built-in triton FP8 kernels remain fully functional)
 - litellm
 - huggingface-cli
 - code-server
-- Node.js + pnpm
+- Node.js 20 + pnpm 9
 - Bolt.diy (`/opt/bolt-diy`)
+- claw-code binary (`/usr/local/bin/claw`) — built from bundled Rust source in a separate builder stage
 - Claw Runner (`/opt/claw-runner.js`)
-- nginx + apache2-utils (for htpasswd)
+- Repo Intelligence scripts (`/opt/repo-intelligence/`) — Node.js + better-sqlite3
+- nginx + apache2-utils
 - SSH server (openssh-server)
-- jq (for JSON parsing in bash)
-- `/opt/onstart.sh` — the startup script
+- jq, tmux, htop, vim, nano
 
-### Build
-See `docker/Dockerfile`. The image is pre-built and pushed to Docker Hub. It does not contain model weights — those are downloaded at runtime by `huggingface-cli` into `/workspace/models/`.
+### Build stages
+The Dockerfile uses a two-stage build:
+1. **`claw-builder`** (`ubuntu:22.04`) — installs Rust toolchain, compiles `claw` from `docker/claw-code-src/` into `/usr/local/bin/claw`
+2. **Runtime** (`nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04`) — installs all services and copies `claw` from the builder
+
+### Build args
+- `UBUNTU_VERSION` (default `22.04`)
+- `CUDA_VERSION` (default `12.4.1`)
+- `DEEPGEMM_SHA` (default `a7b3d1e`) — pin to a specific DeepGEMM commit for reproducible FP8 kernel builds
+
+### Model weights
+Not included in the image — downloaded at runtime by `huggingface-cli` into `/workspace/models/$MODEL_QUANT/`.
 
 ---
 
 ## 16. Boot Script (onstart.sh)
 
-The `buildOnStartScript()` function in `vastai.ts` generates a wrapper that sets environment variables and then calls `/opt/onstart.sh` (which is baked into the Docker image).
+The `buildOnStartScript()` function in `vastai.ts` generates a wrapper that sets environment variables (including the new `SWARM_MAX_WORKERS` and optionally `VLLM_API_KEY`) and then calls `/opt/onstart.sh`.
 
 ### Generated wrapper structure
 
 ```bash
 #!/bin/bash
-export MODEL_REPO="moonshotai/Kimi-K2.5"
-export MODEL_QUANT="kimi-k2.5"
-export SERVED_MODEL_NAME="kimi-k2"
+export MODEL_REPO="unsloth/Kimi-K2.6-GGUF"
+export MODEL_QUANT="kimi-k2.6"
+export SERVED_MODEL_NAME="kimi-k2-6"
 export VLLM_MAX_MODEL_LEN="32768"
-export VLLM_MAX_NUM_SEQS="512"
+export VLLM_MAX_NUM_SEQS="768"
 export VLLM_EXTRA_ARGS="--enable-expert-parallel"
 export NUM_GPUS="4"
+export SWARM_MAX_WORKERS="48"         # from gpu_profiles.swarmWorkerCap
+# export VLLM_API_KEY="..."           # optional, omitted if not set
 export OMNIQL_MEM_PROXY_URL="https://your-api.replit.dev"
 export OMNIQL_MEM_AUTH_TOKEN=""
 export OMNIQL_MEM_USER_ID="operator"
@@ -787,28 +1047,318 @@ export TEAM_MEMBERS_JSON='[{"name":"__shared__","password":"abc","path":"/shared
 ### onstart.sh phases
 
 **Phase 1** (sequential, completes in ~30 seconds):
-1. Generate code-server password (stored at `/workspace/.code-server-password`)
-2. Start SSH server (key-based auth only)
+1. Generate code-server password
+2. Start SSH server
 3. Start code-server (owner, port 8080 solo or 8090 team)
-4. Start Claw Runner (port 5182)
+4. Start Claw Runner (port 5182; picks up `SWARM_MAX_WORKERS` to enforce concurrency limit)
 5. Start Bolt.diy (port 5173)
 6. Configure nginx htpasswd + server blocks
 7. Start nginx
 8. (Team only) Build per-member nginx config, start per-member code-server instances
-9. `report_status services_ready` → POSTs to `OMNIQL_CALLBACK_URL`
+9. Compile Smart Skills bundle → `report_status skills_compiling` / `skills_ready`
+10. (If `repoUrl` provided) Kick off Repo Intelligence indexer → `report_status services_ready`
+11. `report_status services_ready` → POSTs to `OMNIQL_CALLBACK_URL`
 
-**Phase 2** (background subshell, takes 10–45 min depending on model):
-1. Check if model already cached at `/workspace/models/$MODEL_QUANT/`
-2. If not: `report_status downloading` → download with `huggingface-cli`
-3. `report_status starting_llm` → start vLLM on port 8082
-4. Start litellm proxy on port 8081 (wraps vLLM)
+**Phase 2** (background subshell, takes 10–45 min):
+1. Check model cache at `/workspace/models/$MODEL_QUANT/`
+2. If not cached: `report_status downloading` → `huggingface-cli download`
+3. `report_status starting_llm` → start vLLM on port 8082 (with runtime flag-gating)
+4. Start litellm proxy on port 8081
 5. Wait for `/health` on vLLM (polls every 5s, up to 600s)
 6. Configure `/etc/environment` + `/root/.bashrc` with `ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY`
 7. `report_status llm_ready`
 8. Watchdog loop: restart vLLM if it dies (checks every 30s)
 
 ### `report_status` helper
-Defined in `onstart.sh`. Uses `curl` to call `OMNIQL_CALLBACK_URL` with `Authorization: Bearer $OMNIQL_MEM_AUTH_TOKEN`. Safe no-op if `OMNIQL_CALLBACK_URL` is not set (older instances). On failure it logs a warning but does not abort the boot sequence.
+Calls `OMNIQL_CALLBACK_URL` with `Authorization: Bearer $OMNIQL_MEM_AUTH_TOKEN`. Safe no-op if URL is not set. On failure it logs a warning but does not abort the boot sequence.
+
+### Runtime flag-gating
+`onstart.sh` probes `vllm serve --help` before starting and removes any `VLLM_EXTRA_ARGS` flags not present in the help output. This keeps the image forward-compatible with future vLLM versions that may rename or remove flags.
+
+---
+
+## 17. Design Intelligence
+
+Design Intelligence is a system for ingesting, storing, and querying curated UI/UX design patterns, making them available both via API and linked to the Smart Skills catalogue.
+
+### Data source
+The primary source is `nextlevelbuilder/ui-ux-pro-max-skill` on GitHub. Data is auto-discovered from all CSV files under `src/ui-ux-pro-max/` (root CSVs + `stacks/` subdirectory). Scripts and CLI directories are excluded.
+
+### Ingest pipeline (`curated-sources.ts`)
+
+1. **HEAD SHA fetch** — `GET /repos/{owner}/{repo}/commits?per_page=1`
+2. **SHA-aware idempotence** — if `pinnedCommitSha` matches AND entries already exist → skip; if entries are missing despite SHA match → re-ingest
+3. **Tree discovery** — `GET /repos/{owner}/{repo}/git/trees/HEAD?recursive=1` to list all `.csv` files
+4. **Deterministic fetch** — all CSV raw file URLs are pinned to the resolved `headSha` (`https://raw.githubusercontent.com/{owner}/{repo}/{sha}/{path}`)
+5. **Category mapping** — filename stem is mapped to a canonical category; `stacks/` subdirectory always maps to `stack_convention`
+6. **Upsert** — `INSERT ... ON CONFLICT (source_id, category, name) DO UPDATE SET data_json = EXCLUDED.data_json`
+7. **SHA pin update** — `pinnedCommitSha` is updated only after a successful ingest
+
+### Categories
+
+| Category | Description |
+|----------|-------------|
+| `style` | Visual style entries (components, icons, interfaces) |
+| `palette` | Colour palettes |
+| `typography` | Font pairings, scales |
+| `chart_type` | Chart type recommendations |
+| `ux_guideline` | UX rules and heuristics |
+| `anti_pattern` | Common design mistakes |
+| `stack_convention` | Framework and library conventions (from `stacks/`) |
+| `ui_reasoning` | AI-assisted UI reasoning patterns |
+
+### Trust model
+Legacy `skill_sources` records with incorrect `sourceType` or `trustLevel` are automatically corrected to `sourceType="curated"` / `trustLevel="reviewed"` on next ingest.
+
+### Skill-map endpoint
+`GET /api/design-intelligence/skill-map` returns a map of `category → SkillSummary[]` using two resolution strategies:
+1. **Explicit links** — rows in `skill_design_categories` (`matchMethod="manual"`)
+2. **Keyword matching** — keyword tokens from the category name are matched against the skill's `name`, `description`, `class`, and `slug` fields (min 3-character tokens)
+
+Only `reviewStatus="approved"` skills appear in the skill map.
+
+---
+
+## 18. Swarm Orchestration
+
+Swarm Orchestration lets the Claw Runner spawn multiple concurrent LLM sub-agents (workers) for parallelised agentic tasks, while enforcing per-profile concurrency limits to prevent KV-cache exhaustion.
+
+### swarmWorkerCap
+Each `gpu_profiles` row carries `swarmWorkerCap` (integer, nullable). This value is injected into the container as `SWARM_MAX_WORKERS`. The Claw Runner reads `SWARM_MAX_WORKERS` at startup and uses it as a hard ceiling on concurrent worker goroutines — no model-awareness required on the instance side.
+
+### Per-profile guidance
+
+| Profile tier | swarmWorkerCap | Notes |
+|---|---|---|
+| Starter (1× 4090) | 16 | Marginal — prefer Standard+ for swarm |
+| Standard (4× 4090) | 48 | Comfortable for moderate swarm |
+| Pro (4× A100) | 100 | Strong headroom |
+| Ultra (8× H100) | 200 | Near-full swarm capability |
+| Qwen3 Pro (8× A100) | 250 | Highest: 3B active params = tiny per-worker footprint |
+| GLM-5.1 Ultra | 4 | Severely constrained: 0.98 GPU memory utilisation |
+
+### Swarm snapshot
+The Claw Runner pushes real-time worker snapshots to the dashboard via `POST /api/sessions/:id/swarm/status` (internal Claw Runner → API). Snapshots are stored in `sessions.swarmSnapshotJson` and cached in-memory with a freshness threshold (`STALE_THRESHOLD_MS`).
+
+### Batch swarm status
+`GET /api/sessions/swarm-status-batch?ids=1,2,3` returns:
+```json
+{
+  "1": { "availability": "live",        "snapshot": { ... } },
+  "2": { "availability": "stale",       "snapshot": { ... } },
+  "3": { "availability": "unavailable", "snapshot": null }
+}
+```
+`availability` values: `starting` | `live` | `stale` | `unavailable`
+
+The dashboard sessions list uses this batch endpoint to refresh all swarm pills in a single request.
+
+---
+
+## 19. Repo Intelligence
+
+Repo Intelligence indexes a Git repository on the instance and exposes the result via the API for code-aware features: symbol lookup, blast-radius analysis, natural-language search, and file embedding.
+
+### Architecture
+The Repo Intelligence indexer runs as a Node.js script (`/opt/repo-intelligence/`) on the instance, using `better-sqlite3` as a local scratch store. When indexing completes, it POSTs the full result (symbols, files, edges, chunks, optional embeddings) back to `POST /api/sessions/:id/repo/sync`.
+
+### Index lifecycle
+
+```
+POST /api/sessions/:id/repo/index
+  → Creates repo_graph_jobs row (status: "queued")
+  → Updates/creates session_repo_context (indexStatus: "queued", isStale: true if re-index)
+  → Deduplicates: if an active job already exists for (sessionId, repoPath), returns the existing job
+
+Instance picks up job via GET /api/sessions/:id/repo/jobs/pending (auth required)
+  → Runs phases: scanning → fingerprinting → indexing_graph → indexing_fts → indexing_vectors → summarizing
+  → POSTs result to POST /api/sessions/:id/repo/sync
+  → API stores result in session_repo_context
+
+GET /api/sessions/:id/repo/summary  → index status + counts
+GET /api/sessions/:id/repo/search?q=  → approximate symbol/chunk/embedding search
+GET /api/sessions/:id/repo/blast-radius?file=  → direct dependents + affected tests
+GET /api/sessions/:id/repo/symbol  → filtered symbol list
+```
+
+### Confidence levels
+
+| Level | Meaning |
+|-------|---------|
+| `none` | No index exists |
+| `low` | Partial index (few symbols, no graph) |
+| `medium` | Symbol graph + FTS, no embeddings |
+| `high` | Full index including embeddings |
+
+### Stale flag
+When a new index job is enqueued for a session that already has a `ready` index, `isStale` is set to `true`. Existing results remain queryable while the new job runs.
+
+### Batch status
+`GET /api/repo/status?ids=1,2,3` returns `{statuses: {[sessionId]: {indexStatus, isStale, confidenceLevel}}}` — used by the sessions list to show repo intelligence indicators per row.
+
+### Authentication
+`GET /sessions/:id/repo/jobs/pending` and `POST /sessions/:id/repo/sync` require `Authorization: Bearer <OMNIQL_MEM_TOKEN>`. In development (`NODE_ENV=development`) with no token configured, requests are allowed (fail-closed in production).
+
+### Repo fingerprint at session launch
+When `repoUrl` is passed to `POST /sessions`, the API fetches the repo's language breakdown and common marker files (package.json, requirements.txt, go.mod, etc.) from the GitHub API and stores the derived fingerprint in `sessions.repoFingerprintJson`. This lets the skill bundler pre-select languages before the on-instance indexer runs.
+
+---
+
+## 20. Lane Coordination
+
+Lane Coordination gives team sessions per-member work lanes with claim-based file ownership, conflict detection, handoffs between lanes, and a weighted heavy-job scheduler for compute-intensive tasks.
+
+### Database tables
+
+**`session_lanes`** — one row per team member's active work context.
+
+| Column | Description |
+|--------|-------------|
+| `sessionId` | Parent session |
+| `memberIdentifier` | Team member name |
+| `laneType` | `ux` / `debug` / `backend` / `review` / `general` |
+| `taskMode` | `build`, `review`, etc. |
+| `status` | `active` / `blocked` / `review-needed` / `ready-to-merge` |
+| `overlayBundleId` | Per-lane Smart Skills overlay bundle (compiled asynchronously on lane create) |
+| `tokenMode` | `core` / `full` / `extended` |
+| `currentTask` | Free-text description of current task |
+
+**`lane_claims`** — file/symbol ownership assertions per lane.
+
+| Column | Description |
+|--------|-------------|
+| `laneId` | Parent lane |
+| `claimType` | `file` / `module` / `symbol` / `task` |
+| `pathOrSymbol` | File path or symbol name |
+| `claimStrength` | `watching` / `editing` / `owner` |
+| `expiresAt` | Claim TTL (default 5 minutes; refreshed via heartbeat) |
+| `lastHeartbeatAt` | Last keepalive time |
+| `active` | Boolean; partial unique index on `(laneId, pathOrSymbol) WHERE active=true` |
+
+**`lane_handoffs`** — signals between lanes.
+
+| Column | Description |
+|--------|-------------|
+| `laneId` | Originating lane |
+| `handoffType` | `blocked` / `needs_review` / `safe_to_merge` / `watch_files` / `related_lane` |
+| `notes` | Free-text message |
+| `watchFiles` | JSON: `{toLaneIds, resourcePaths}` |
+| `status` | `pending` / `acknowledged` / `dismissed` / `expired` |
+| `acknowledgedAt` | When recipient acknowledged |
+
+**`lane_heavy_jobs`** — compute-intensive tasks queued from lanes.
+
+| Column | Description |
+|--------|-------------|
+| `sessionId` | Parent session |
+| `laneId` | Originating lane (nullable) |
+| `jobClass` | `indexing` / `embedding` / `eval` / `blast_radius` / `compile` / `other` |
+| `status` | `queued` / `running` / `deferred` / `completed` / `failed` |
+| `priority` | Integer; lower = higher priority (5 = normal, 3 = eval) |
+| `ageWeight` | Increases over time to prevent starvation |
+| `laneWeight` | Fairness weight across lanes (default 1.0) |
+| `effectiveScore` | Computed: `priority × ageWeight × laneWeight` |
+
+### Claim strength mapping
+
+| API float | DB enum | Meaning |
+|-----------|---------|---------|
+| 0.0–0.39 | `watching` (→ 0.3) | Read-only interest |
+| 0.40–0.74 | `editing` (→ 0.6) | Actively editing |
+| 0.75–1.0 | `owner` (→ 0.9) | Exclusive ownership |
+
+### Conflict detection
+On `POST .../claim`, the API:
+1. Upserts the claim (atomic `ON CONFLICT DO UPDATE` on the partial unique index)
+2. Loads all active claims from other lanes in the same session
+3. Computes `overlapScore` between the new resource path and each other lane's paths
+4. Returns `overlaps[]` with `conflictingLaneId`, `conflictingMember`, `overlapScore`, and `recommendation` (`no_conflict` / `warn` / `block`)
+5. Returns `overallRecommendation` (most severe overlap across all other lanes)
+
+Overlap scoring: path-prefix and exact-match heuristics. Score ≥ 0.75 → `block`, ≥ 0.4 → `warn`.
+
+### Claim heartbeat and expiry
+Claims expire if `expiresAt` is past or if `lastHeartbeatAt` is older than `LANE_HEARTBEAT_WINDOW_SECONDS`. The claim endpoint supports `?heartbeat=true` to refresh both fields without releasing the claim.
+
+### Claim sweeper
+`sweepExpiredClaims()` (called from the coordination route and available as an admin endpoint) performs a bulk `UPDATE lane_claims SET active=false WHERE (expiresAt < now OR lastHeartbeatAt < cutoff) AND active=true`. Protected by `ADMIN_SWEEP_TOKEN` when configured.
+
+### Lane overlay bundles
+When a lane is created, `compileLaneBundles()` is called asynchronously (fire-and-forget) to compile per-lane Smart Skills overlays. Each overlay adapts the base session bundle for the lane's `laneType`, `taskMode`, and `tokenMode`. The resulting `overlayBundleId` is stored on `session_lanes`.
+
+### SSE broadcaster
+`GET /api/sessions/:id/coordination/events` streams real-time coordination updates via SSE. Triggered on lane create/update, claim create/release, and handoff create.
+
+### API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/sessions/:id/lanes` | List lanes with active claims + policies. Expires stale claims first. |
+| POST | `/sessions/:id/lanes` | Create lane. Async overlay bundle compilation. |
+| PUT | `/sessions/:id/lanes/:laneId` | Update lane (laneType, status, tokenMode, currentTask) |
+| POST | `/sessions/:id/lanes/:laneId/claim` | Create/refresh claim. Returns overlaps + recommendation. |
+| DELETE | `/sessions/:id/lanes/:laneId/claim/:claimId` | Release claim. `?heartbeat=true` refreshes instead. |
+| POST | `/sessions/:id/lanes/:laneId/handoff` | Create handoff signal |
+| GET | `/sessions/:id/lanes/:laneId/conflicts` | Active conflicts for a lane |
+| POST | `/sessions/:id/heavy-jobs` | Enqueue a heavy job |
+| GET | `/sessions/:id/heavy-jobs` | List heavy jobs (filterable by status/class) |
+| POST | `/sessions/:id/heavy-jobs/:jobId/running` | Mark job running |
+| POST | `/sessions/:id/heavy-jobs/:jobId/completed` | Mark job completed with result |
+| POST | `/sessions/:id/heavy-jobs/:jobId/failed` | Mark job failed |
+| POST | `/sessions/:id/heavy-jobs/:jobId/deferred` | Defer job until timestamp |
+| GET | `/sessions/:id/heavy-jobs/next` | Peek next job by effective score |
+| GET | `/sessions/:id/coordination/events` | SSE stream of coordination updates |
+
+---
+
+## 21. GitHub CI/CD
+
+All CI/CD is defined in `.github/workflows/`.
+
+### `ci-all.yml` — Main CI trigger
+Fires on `pull_request`, `push` to `main`, and `merge_group` events.
+
+- **Concurrency**: cancels in-progress runs for the same PR branch; push-to-main and merge_group runs are never cancelled.
+- **`detect-changes` job**: uses `dorny/paths-filter` to determine which packages changed (`api` and/or `dashboard`). Shared config changes (workspace root, tsconfig, lib/) trigger a full build.
+- **`ci` job**: calls the reusable `ci.yml` workflow with `api_changed` and `dashboard_changed` boolean inputs.
+
+### `ci.yml` — Reusable CI
+Called by `ci-all.yml`. Runs on `ubuntu-latest`.
+
+**`typecheck` job** (always runs):
+- `pnpm install --frozen-lockfile`
+- `pnpm run typecheck` — TypeScript type-check across all packages
+
+**Build/lint jobs** (only when affected package changed):
+- API: esbuild compilation check
+- Dashboard: Vite build check
+
+### `commitlint.yml`
+Enforces Conventional Commits format on PR title + commits.
+
+### `codeql.yml`
+GitHub CodeQL static analysis for JavaScript/TypeScript. Runs on push to `main` and on a weekly schedule.
+
+### `docker-build.yml`
+Builds `docker/Dockerfile` on push to `main` and on pull requests touching `docker/**`. Validates that the multi-stage build (claw-builder + runtime) succeeds. Does not push to Docker Hub (push is a manual step).
+
+### `pr-labeler.yml`
+Auto-labels PRs based on file paths changed (e.g. `area: api-server`, `area: dashboard`, `area: docker`, `area: db`).
+
+### `sync-labels.yml`
+Syncs label definitions from a config file to the GitHub repository labels.
+
+### `release.yml`
+Creates GitHub releases when a version tag (`v*`) is pushed. Generates a changelog from conventional commits since the last tag.
+
+### `preview-dashboard.yml`
+Deploys a preview of the dashboard for pull requests (static build to a preview URL).
+
+### `workflow-hygiene.yml`
+Validates that workflow files use pinned action SHAs (prevents supply-chain attacks via mutable tags).
+
+### Pin policy
+All `uses:` references in workflows use commit-SHA pins (e.g. `actions/checkout@de0fac2e4500...`) rather than mutable tag references. The SHA is noted in a comment alongside the semantic version for human readability.
 
 ---
 
