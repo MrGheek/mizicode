@@ -16,7 +16,9 @@ import {
   getGetSessionConflictsQueryKey,
   getGetSessionCoordinationQueryKey,
   useEnqueueRepoIndex,
+  useGetRepoFingerprint,
   getGetRepoSummaryQueryKey,
+  getGetRepoFingerprintQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
@@ -1018,6 +1020,16 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
 
   const enqueue = useEnqueueRepoIndex();
 
+  const summaryStatus = summary?.indexStatus ?? "none";
+
+  const { data: fingerprintData } = useGetRepoFingerprint(sessionId, {
+    query: {
+      enabled: !!sessionId,
+      refetchInterval: isActive(summaryStatus) ? 5000 : false,
+    },
+  });
+  const fingerprint = fingerprintData?.fingerprint;
+
   const handleReindex = () => {
     enqueue.mutate(
       { sessionId, data: { repoPath: summary?.repoPath ?? undefined } },
@@ -1025,6 +1037,7 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
         onSuccess: () => {
           toast({ title: "Re-index triggered", description: "Indexing job enqueued — this may take a few minutes." });
           queryClient.invalidateQueries({ queryKey: getGetRepoSummaryQueryKey(sessionId) });
+          queryClient.invalidateQueries({ queryKey: getGetRepoFingerprintQueryKey(sessionId) });
         },
         onError: () => toast({ title: "Failed to trigger re-index", variant: "destructive" }),
       }
@@ -1065,7 +1078,7 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
       <Card className="bg-card/50 border-border/50">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
-            <GitBranch className="w-4 h-4" /> Repository Index
+            <GitBranch className="w-4 h-4" /> Repo Intelligence
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1079,9 +1092,24 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
                   <AlertCircle className="w-2.5 h-2.5" /> Stale
                 </Badge>
               )}
-              {isReady && (
-                <Badge variant="outline" className="text-[10px] bg-emerald-500/15 text-emerald-400 border-emerald-500/40">
-                  {summary?.confidenceLevel === "full" ? "Full index" : summary?.confidenceLevel === "partial" ? "Partial" : "Fingerprint only"}
+              {summary?.confidenceLevel && (
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] ${
+                    summary.confidenceLevel === "full" || summary.confidenceLevel === "partial"
+                      ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/40"
+                      : summary.confidenceLevel === "fingerprint"
+                      ? "bg-blue-500/15 text-blue-400 border-blue-500/40"
+                      : "bg-secondary/40 text-muted-foreground border-border/50"
+                  }`}
+                >
+                  {summary.confidenceLevel === "full"
+                    ? "Full index"
+                    : summary.confidenceLevel === "partial"
+                    ? "Partial"
+                    : summary.confidenceLevel === "fingerprint"
+                    ? "Fingerprint only"
+                    : "None"}
                 </Badge>
               )}
             </div>
@@ -1097,7 +1125,7 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
               ) : (
                 <RefreshCw className="w-3.5 h-3.5" />
               )}
-              {isIndexing ? "Indexing…" : "Re-index"}
+              {isIndexing ? "Indexing…" : status === "none" ? "Index Repo" : "Re-index"}
             </Button>
           </div>
 
@@ -1119,6 +1147,51 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
                 <p className="text-lg font-bold text-foreground leading-none">{(summary?.chunkCount ?? 0).toLocaleString()}</p>
                 <p className="text-[10px] text-muted-foreground mt-1">Chunks</p>
               </div>
+            </div>
+          )}
+
+          {/* Detected environment (from fingerprint) */}
+          {fingerprint && (fingerprint.primaryLangs.length > 0 || fingerprint.frameworks.length > 0) && (
+            <div className="space-y-2">
+              {fingerprint.primaryLangs.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Languages</p>
+                  <div className="flex flex-wrap gap-1">
+                    {fingerprint.primaryLangs.map((lang) => (
+                      <Badge key={lang} variant="outline" className="text-[10px] px-1.5 py-0">
+                        {lang}
+                      </Badge>
+                    ))}
+                    {fingerprint.allLangs.filter(l => !fingerprint.primaryLangs.includes(l)).map((lang) => (
+                      <Badge key={lang} variant="outline" className="text-[10px] px-1.5 py-0 opacity-60">
+                        {lang}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {fingerprint.frameworks.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Frameworks</p>
+                  <div className="flex flex-wrap gap-1">
+                    {fingerprint.frameworks.map((fw) => (
+                      <Badge key={fw} variant="outline" className="text-[10px] px-1.5 py-0 bg-primary/5 border-primary/20 text-primary/80">
+                        {fw}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(fingerprint.packageManager || fingerprint.monorepo) && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  {fingerprint.packageManager && (
+                    <span>Package manager: <span className="text-foreground font-mono">{fingerprint.packageManager}</span></span>
+                  )}
+                  {fingerprint.monorepo && (
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0">Monorepo</Badge>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -1711,7 +1784,7 @@ export default function SessionDetail() {
           }`}
         >
           <GitBranch className="w-3.5 h-3.5" />
-          Repo Index
+          Repo Intelligence
         </button>
         <button
           onClick={() => { setActiveTab("team"); setSeenConflictFingerprint(conflictFingerprint); setSeenHandoffCount(bgPendingHandoffs); }}
