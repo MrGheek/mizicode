@@ -22,7 +22,11 @@ const REPO_URL = `https://github.com/${REPO_OWNER}/${REPO_NAME}`;
 const API_BASE = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}`;
 const RAW_BASE = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/HEAD`;
 
-const CANONICAL_DATA_PATH = "src/ui-ux-pro-max/data";
+// Canonical data area per task spec: src/ui-ux-pro-max/ (root CSVs + stacks/ subdirectory)
+// The upstream repo places files under src/ui-ux-pro-max/data/ — scanning the parent path
+// covers both the spec-canonical location and the actual repo layout automatically.
+// cli/ and src/ui-ux-pro-max/scripts/ are explicitly excluded via the path filter.
+const CANONICAL_DATA_PATH = "src/ui-ux-pro-max";
 
 type DesignCategory =
   | "style"
@@ -280,7 +284,9 @@ export async function seedCuratedSources(): Promise<void> {
         item =>
           item.type === "blob" &&
           item.path.startsWith(CANONICAL_DATA_PATH) &&
-          item.path.endsWith(".csv"),
+          item.path.endsWith(".csv") &&
+          !item.path.includes("/scripts/") &&
+          !item.path.startsWith("cli/"),
       )
       .map(item => ({
         path: item.path,
