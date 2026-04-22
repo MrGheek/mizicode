@@ -5,38 +5,72 @@
  * and ingests it into the design_intelligence_entries table with SHA-aware idempotence.
  *
  * Rules:
- * - Only reads from src/ui-ux-pro-max/data/ (canonical data area)
- * - Never touches cli/ or scripts/
- * - Uses ON CONFLICT DO UPDATE for idempotent re-runs
- * - Stores the pinned commit SHA on the skill_sources row for drift detection
+ * - Auto-discovers all CSVs under src/ui-ux-pro-max/data/ (canonical data area)
+ * - Never executes cli/, src/ui-ux-pro-max/scripts/, or platform templates
+ * - SHA-aware idempotence: skips if pinnedCommitSha matches AND entries already exist
+ * - Updates pinnedCommitSha only AFTER a successful ingest
+ * - Fetch failures log a warning and do not abort the rest of startup
  */
 
 import { db, skillSourcesTable, designIntelligenceEntriesTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, count } from "drizzle-orm";
 import { logger } from "../lib/logger";
 
 const REPO_OWNER = "nextlevelbuilder";
 const REPO_NAME = "ui-ux-pro-max-skill";
 const REPO_URL = `https://github.com/${REPO_OWNER}/${REPO_NAME}`;
 const API_BASE = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}`;
+const RAW_BASE = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/HEAD`;
 
 const CANONICAL_DATA_PATH = "src/ui-ux-pro-max/data";
+
+type DesignCategory =
+  | "style"
+  | "palette"
+  | "typography"
+  | "chart_type"
+  | "ux_guideline"
+  | "anti_pattern"
+  | "stack_convention"
+  | "ui_reasoning";
+
+/**
+ * Map from filename stem (without .csv extension) to canonical category.
+ * Files not listed here fall back to "style".
+ */
+const FILENAME_TO_CATEGORY: Record<string, DesignCategory> = {
+  "styles": "style",
+  "design": "style",
+  "app-interface": "style",
+  "icons": "style",
+  "landing": "style",
+  "products": "style",
+  "draft": "style",
+  "colors": "palette",
+  "typography": "typography",
+  "google-fonts": "typography",
+  "charts": "chart_type",
+  "ui-reasoning": "ui_reasoning",
+  "ux-guidelines": "ux_guideline",
+  "react-performance": "stack_convention",
+};
+
+interface GitHubCommit {
+  sha: string;
+}
 
 interface GitHubTreeItem {
   path: string;
   type: string;
-  sha: string;
-  url: string;
 }
 
 interface GitHubTree {
-  sha: string;
   tree: GitHubTreeItem[];
-  truncated: boolean;
 }
 
-interface GitHubCommit {
-  sha: string;
+interface CsvFileSpec {
+  path: string;
+  category: DesignCategory;
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -98,18 +132,15 @@ function parseCsv(text: string): Record<string, string>[] {
   return rows;
 }
 
-/** Derive a human-friendly category name from the CSV filename */
-function categoryFromPath(filePath: string): string {
+/** Derive canonical category from file path */
+function categoryFromPath(filePath: string): DesignCategory {
   const filename = filePath.split("/").pop() ?? filePath;
-  return filename.replace(/\.csv$/i, "").replace(/-/g, "_");
-}
+  const stem = filename.replace(/\.csv$/i, "");
 
-/** Derive tags from the category and first few field values */
-function tagsFromRow(category: string, row: Record<string, string>): string[] {
-  const base = [category];
-  const nameField = row["name"] ?? row["label"] ?? row["title"] ?? "";
-  if (nameField) base.push(nameField.toLowerCase().replace(/\s+/g, "-").slice(0, 32));
-  return base;
+  // stacks/ subdirectory always maps to stack_convention
+  if (filePath.includes("/stacks/")) return "stack_convention";
+
+  return FILENAME_TO_CATEGORY[stem] ?? "style";
 }
 
 /** Primary key name for a row — first non-empty value of name/label/title/id fields */
@@ -124,6 +155,68 @@ function rowName(row: Record<string, string>): string {
   );
 }
 
+/** Derive tags from the category and the row name */
+function tagsFromRow(category: string, row: Record<string, string>): string[] {
+  const base = [category];
+  const nameField = row["name"] ?? row["label"] ?? row["title"] ?? "";
+  if (nameField) base.push(nameField.toLowerCase().replace(/\s+/g, "-").slice(0, 32));
+  return base;
+}
+
+async function ingestCsvFile(
+  spec: CsvFileSpec,
+  sourceId: number,
+): Promise<number> {
+  const rawUrl = `${RAW_BASE}/${spec.path}`;
+  let csvText: string;
+  try {
+    csvText = await fetchText(rawUrl);
+  } catch (err) {
+    logger.warn({ err, path: spec.path }, "Failed to fetch CSV — skipping");
+    return 0;
+  }
+
+  const rows = parseCsv(csvText);
+  if (rows.length === 0) {
+    logger.debug({ path: spec.path }, "Empty CSV — skipping");
+    return 0;
+  }
+
+  let upserted = 0;
+  for (const row of rows) {
+    const name = rowName(row);
+    const tags = tagsFromRow(spec.category, row);
+
+    try {
+      await db
+        .insert(designIntelligenceEntriesTable)
+        .values({
+          sourceId,
+          category: spec.category,
+          name,
+          dataJson: row as unknown as Record<string, unknown>,
+          tags: tags as unknown as Record<string, unknown>,
+        })
+        .onConflictDoUpdate({
+          target: [
+            designIntelligenceEntriesTable.sourceId,
+            designIntelligenceEntriesTable.category,
+            designIntelligenceEntriesTable.name,
+          ],
+          set: {
+            dataJson: sql`EXCLUDED.data_json`,
+          },
+        });
+      upserted++;
+    } catch (err) {
+      logger.warn({ err, category: spec.category, name }, "Failed to upsert design intelligence entry");
+    }
+  }
+
+  logger.debug({ path: spec.path, category: spec.category, upserted }, "Ingested CSV");
+  return upserted;
+}
+
 export async function seedCuratedSources(): Promise<void> {
   logger.info("Seeding curated design intelligence sources…");
 
@@ -136,6 +229,7 @@ export async function seedCuratedSources(): Promise<void> {
     headSha = "unknown";
   }
 
+  // Ensure the skill_sources record exists with sourceType "curated"
   let [source] = await db
     .select()
     .from(skillSourcesTable)
@@ -146,92 +240,77 @@ export async function seedCuratedSources(): Promise<void> {
       .insert(skillSourcesTable)
       .values({
         repoUrl: REPO_URL,
-        sourceType: "github",
+        sourceType: "curated",
         trustLevel: "reviewed",
-        pinnedCommitSha: headSha,
+        pinnedCommitSha: null, // set after successful ingest
       })
       .returning();
-    logger.info({ sourceId: source.id, sha: headSha }, "Created skill source for ui-ux-pro-max-skill");
-  } else if (source.pinnedCommitSha === headSha) {
-    logger.info({ sha: headSha }, "Design intelligence already up to date (SHA match) — skipping ingest");
-    return;
-  } else {
+    logger.info({ sourceId: source.id }, "Created skill source for ui-ux-pro-max-skill");
+  } else if (source.sourceType !== "curated") {
+    // Fix legacy records that were created with wrong sourceType
     await db
       .update(skillSourcesTable)
-      .set({ pinnedCommitSha: headSha })
+      .set({ sourceType: "curated" })
       .where(eq(skillSourcesTable.id, source.id));
-    logger.info({ sourceId: source.id, oldSha: source.pinnedCommitSha, newSha: headSha }, "SHA changed — re-ingesting");
+    source = { ...source, sourceType: "curated" };
   }
 
-  let tree: GitHubTree;
+  // SHA-aware idempotence: skip only if SHA matches AND entries already exist
+  if (source.pinnedCommitSha === headSha) {
+    const [existingCount] = await db
+      .select({ count: count() })
+      .from(designIntelligenceEntriesTable)
+      .where(eq(designIntelligenceEntriesTable.sourceId, source.id));
+
+    if ((existingCount?.count ?? 0) > 0) {
+      logger.info({ sha: headSha }, "Design intelligence already up to date (SHA match + entries present) — skipping ingest");
+      return;
+    }
+    logger.info({ sha: headSha }, "SHA matches but no entries found — re-ingesting");
+  } else {
+    logger.info({ oldSha: source.pinnedCommitSha, newSha: headSha }, "SHA changed — re-ingesting design intelligence");
+  }
+
+  // Discover all CSV files from the canonical data area via repo tree
+  let csvFiles: CsvFileSpec[] = [];
   try {
-    tree = await fetchJson<GitHubTree>(`${API_BASE}/git/trees/HEAD?recursive=1`);
+    const tree = await fetchJson<GitHubTree>(`${API_BASE}/git/trees/HEAD?recursive=1`);
+    csvFiles = tree.tree
+      .filter(
+        item =>
+          item.type === "blob" &&
+          item.path.startsWith(CANONICAL_DATA_PATH) &&
+          item.path.endsWith(".csv"),
+      )
+      .map(item => ({
+        path: item.path,
+        category: categoryFromPath(item.path),
+      }));
+    logger.info({ count: csvFiles.length }, "CSV files discovered in canonical data path");
   } catch (err) {
     logger.error({ err }, "Failed to fetch repo tree — aborting design intelligence ingest");
     return;
   }
 
-  const csvItems = tree.tree.filter(
-    item =>
-      item.type === "blob" &&
-      item.path.startsWith(CANONICAL_DATA_PATH) &&
-      item.path.endsWith(".csv"),
-  );
-
-  logger.info({ count: csvItems.length }, "CSV files found in canonical data path");
-
-  let totalUpserted = 0;
-
-  for (const item of csvItems) {
-    const rawUrl = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/HEAD/${item.path}`;
-    const category = categoryFromPath(item.path);
-
-    let csvText: string;
-    try {
-      csvText = await fetchText(rawUrl);
-    } catch (err) {
-      logger.warn({ err, path: item.path }, "Failed to fetch CSV — skipping");
-      continue;
-    }
-
-    const rows = parseCsv(csvText);
-    if (rows.length === 0) {
-      logger.debug({ path: item.path }, "Empty CSV — skipping");
-      continue;
-    }
-
-    for (const row of rows) {
-      const name = rowName(row);
-      const tags = tagsFromRow(category, row);
-
-      try {
-        await db
-          .insert(designIntelligenceEntriesTable)
-          .values({
-            sourceId: source.id,
-            category,
-            name,
-            dataJson: row as unknown as Record<string, unknown>,
-            tags: tags as unknown as Record<string, unknown>,
-          })
-          .onConflictDoUpdate({
-            target: [
-              designIntelligenceEntriesTable.sourceId,
-              designIntelligenceEntriesTable.category,
-              designIntelligenceEntriesTable.name,
-            ],
-            set: {
-              dataJson: sql`EXCLUDED.data_json`,
-            },
-          });
-        totalUpserted++;
-      } catch (err) {
-        logger.warn({ err, category, name }, "Failed to upsert design intelligence entry");
-      }
-    }
-
-    logger.debug({ path: item.path, category, rows: rows.length }, "Ingested CSV");
+  if (csvFiles.length === 0) {
+    logger.warn("No CSV files found in canonical data path — skipping ingest");
+    return;
   }
 
-  logger.info({ totalUpserted, sha: headSha }, "Design intelligence ingest complete");
+  let totalUpserted = 0;
+  const countByCategory: Record<string, number> = {};
+
+  for (const spec of csvFiles) {
+    const upserted = await ingestCsvFile(spec, source.id);
+    totalUpserted += upserted;
+    countByCategory[spec.category] = (countByCategory[spec.category] ?? 0) + upserted;
+  }
+
+  // Update pinnedCommitSha only after successful ingest
+  await db
+    .update(skillSourcesTable)
+    .set({ pinnedCommitSha: headSha })
+    .where(eq(skillSourcesTable.id, source.id));
+
+  logger.info({ totalUpserted, countByCategory, sha: headSha }, "Design intelligence ingest complete");
 }

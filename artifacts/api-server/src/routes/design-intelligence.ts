@@ -9,20 +9,15 @@ const router = Router();
  *
  * Query params:
  *   category  — filter by category (exact match)
- *   tag       — filter by tag (substring match within the tags JSON array)
- *   q         — search within name (ILIKE %q%)
- *   limit     — max rows returned (default 50, max 200)
- *   offset    — pagination offset (default 0)
+ *   q         — keyword matched via ILIKE against name and data_json::text
+ *   limit     — max rows returned (default 20, max 100)
  */
 router.get("/design-intelligence", async (req, res) => {
   try {
     const category = typeof req.query["category"] === "string" ? req.query["category"] : undefined;
-    const tag = typeof req.query["tag"] === "string" ? req.query["tag"] : undefined;
     const q = typeof req.query["q"] === "string" ? req.query["q"] : undefined;
-    const limitRaw = Number(req.query["limit"] ?? 50);
-    const offsetRaw = Number(req.query["offset"] ?? 0);
-    const limit = Math.min(Math.max(1, isNaN(limitRaw) ? 50 : limitRaw), 200);
-    const offset = Math.max(0, isNaN(offsetRaw) ? 0 : offsetRaw);
+    const limitRaw = Number(req.query["limit"] ?? 20);
+    const limit = Math.min(Math.max(1, isNaN(limitRaw) ? 20 : limitRaw), 100);
 
     const conditions = [];
 
@@ -31,43 +26,27 @@ router.get("/design-intelligence", async (req, res) => {
     }
 
     if (q) {
-      conditions.push(like(designIntelligenceEntriesTable.name, `%${q}%`));
-    }
-
-    if (tag) {
+      const pattern = `%${q}%`;
       conditions.push(
-        sql`${designIntelligenceEntriesTable.tags}::jsonb @> ${JSON.stringify([tag])}::jsonb`,
+        sql`(${designIntelligenceEntriesTable.name} ilike ${pattern} or ${designIntelligenceEntriesTable.dataJson}::text ilike ${pattern})`,
       );
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-    const [entries, countResult] = await Promise.all([
-      db
-        .select({
-          id: designIntelligenceEntriesTable.id,
-          category: designIntelligenceEntriesTable.category,
-          name: designIntelligenceEntriesTable.name,
-          dataJson: designIntelligenceEntriesTable.dataJson,
-          tags: designIntelligenceEntriesTable.tags,
-          createdAt: designIntelligenceEntriesTable.createdAt,
-        })
-        .from(designIntelligenceEntriesTable)
-        .where(whereClause)
-        .limit(limit)
-        .offset(offset),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(designIntelligenceEntriesTable)
-        .where(whereClause),
-    ]);
+    const entries = await db
+      .select({
+        id: designIntelligenceEntriesTable.id,
+        category: designIntelligenceEntriesTable.category,
+        name: designIntelligenceEntriesTable.name,
+        data_json: designIntelligenceEntriesTable.dataJson,
+        tags: designIntelligenceEntriesTable.tags,
+      })
+      .from(designIntelligenceEntriesTable)
+      .where(whereClause)
+      .limit(limit);
 
-    const total = countResult[0]?.count ?? 0;
-
-    return res.json({
-      entries,
-      pagination: { total, limit, offset },
-    });
+    return res.json({ entries });
   } catch (err) {
     req.log.error({ err }, "Failed to query design intelligence entries");
     return res.status(500).json({ error: "Failed to query design intelligence entries" });
@@ -100,7 +79,7 @@ router.get("/design-intelligence/categories", async (req, res) => {
 /**
  * GET /api/design-intelligence/sources
  *
- * Returns the ingested skill sources and their current commit SHAs.
+ * Returns the ingested curated skill sources and their current commit SHAs.
  */
 router.get("/design-intelligence/sources", async (req, res) => {
   try {
@@ -114,7 +93,7 @@ router.get("/design-intelligence/sources", async (req, res) => {
         importedAt: skillSourcesTable.importedAt,
       })
       .from(skillSourcesTable)
-      .where(eq(skillSourcesTable.sourceType, "github"));
+      .where(eq(skillSourcesTable.sourceType, "curated"));
 
     return res.json({ sources });
   } catch (err) {

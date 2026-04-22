@@ -48,7 +48,7 @@ export const LANE_POLICIES: Record<LaneType, LaneOverlayPolicy> = {
     sharedMemoryScopes: ["repo_shared", "session_core"],
     privateMemoryScopes: ["lane_user"],
     defaultOverlaySkillIds: ["karpathy-doctrine", "flow-router", "lean-compression", "design-intelligence-core", "ui-ux-reasoning"],
-    retrievalEmphasis: ["component", "style", "layout", "ui", "frontend"],
+    retrievalEmphasis: ["component", "style", "layout", "ui", "frontend", "design", "palette", "typography"],
     conflictEscalation: "warn",
     description: "UX/frontend lane — emphasises component and style context, warns on overlap with backend lanes.",
   },

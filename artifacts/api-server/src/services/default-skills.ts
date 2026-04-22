@@ -7,6 +7,13 @@ const FLOATR_NATIVE_SOURCE = {
   trust: "floatr_native" as const,
 };
 
+const UI_UX_PRO_MAX_SOURCE = {
+  repoUrl: "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
+  commitSha: "curated",
+  license: "MIT",
+  trust: "reviewed" as const,
+};
+
 export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
   {
     schemaVersion: 1,
@@ -572,7 +579,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "design-intelligence-core",
     name: "Design Intelligence Core",
     class: "doctrine",
-    source: FLOATR_NATIVE_SOURCE,
+    source: UI_UX_PRO_MAX_SOURCE,
     summary: "Core design doctrine derived from the ui-ux-pro-max-skill knowledge base — visual hierarchy, spacing systems, color semantics, and layout principles.",
     triggers: {
       tasks: ["build", "review", "refactor"],
@@ -601,7 +608,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "ui-ux-reasoning",
     name: "UX Reasoning",
     class: "workflow",
-    source: FLOATR_NATIVE_SOURCE,
+    source: UI_UX_PRO_MAX_SOURCE,
     summary: "Structured UX reasoning workflow — user goal → flow map → component decision → implementation.",
     triggers: {
       tasks: ["build", "refactor"],
@@ -629,7 +636,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "design-system-scaffold",
     name: "Design System Scaffold",
     class: "workflow",
-    source: FLOATR_NATIVE_SOURCE,
+    source: UI_UX_PRO_MAX_SOURCE,
     summary: "Guides implementation of a coherent design system: tokens → primitives → composites → patterns.",
     triggers: {
       tasks: ["build", "refactor"],
@@ -658,7 +665,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "frontend-design-review",
     name: "Frontend Design Review",
     class: "workflow",
-    source: FLOATR_NATIVE_SOURCE,
+    source: UI_UX_PRO_MAX_SOURCE,
     summary: "Structured review checklist for frontend UI/UX code — visual consistency, accessibility, responsive behaviour, and state coverage.",
     triggers: {
       tasks: ["review"],
@@ -687,7 +694,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "dashboard-viz-guidance",
     name: "Dashboard Visualization Guidance",
     class: "context",
-    source: FLOATR_NATIVE_SOURCE,
+    source: UI_UX_PRO_MAX_SOURCE,
     summary: "Context overlay for dashboard and data-visualization tasks — chart selection, data-ink ratio, colour encoding, and dashboard layout heuristics.",
     triggers: {
       tasks: ["build", "refactor"],
@@ -716,7 +723,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "design-handoff-discipline",
     name: "Design Handoff Discipline",
     class: "workflow",
-    source: FLOATR_NATIVE_SOURCE,
+    source: UI_UX_PRO_MAX_SOURCE,
     summary: "Structured workflow for design-to-code handoff: spec validation, token extraction, component mapping, and acceptance criteria.",
     triggers: {
       tasks: ["build", "review"],

@@ -461,7 +461,7 @@ export async function compileLaneBundles(
       laneCtx.taskMode === "build" &&
       compiled !== null
     ) {
-      const FRONTEND_LANGS = new Set(["typescript", "javascript", "tsx", "jsx", "css", "html", "vue", "svelte", "react"]);
+      const FRONTEND_LANGS = new Set(["ts", "tsx", "js", "jsx", "svelte", "vue"]);
       const hasFrontend = laneCtx.repoLangs.some(l => FRONTEND_LANGS.has(l.toLowerCase()));
       if (hasFrontend) {
         const vizManifest = DEFAULT_SKILLS.find(s => s.id === "dashboard-viz-guidance");
