@@ -7,35 +7,12 @@ import { seedDefaultBundles } from "./services/skills-bundler";
 import { seedCuratedSources } from "./services/curated-sources";
 import { startEvalScheduler } from "./services/skills-evals";
 import { validateMemoryDataDir } from "./services/memory";
+import { startClaimSweeper } from "./services/claim-sweeper";
 import { db, laneClaimsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
 
-const CLAIM_EXPIRY_INTERVAL_MS = 60_000;
 const CLAIM_PURGE_INTERVAL_MS = 60 * 60 * 1000;
 const CLAIM_RETENTION_DAYS = 7;
-
-/**
- * Mark active claims as inactive when their expiresAt has passed.
- * Runs frequently so that conflict-detection queries never see stale active claims.
- */
-async function sweepExpiredActiveClaims(): Promise<void> {
-  try {
-    const now = new Date();
-    const expired = await db
-      .update(laneClaimsTable)
-      .set({ active: false })
-      .where(and(
-        eq(laneClaimsTable.active, true),
-        lt(laneClaimsTable.expiresAt, now),
-      ))
-      .returning({ id: laneClaimsTable.id });
-    if (expired.length > 0) {
-      logger.info({ count: expired.length }, "Expired active lane claims deactivated");
-    }
-  } catch (err) {
-    logger.error({ err }, "Failed to sweep expired active lane claims");
-  }
-}
 
 /**
  * Permanently delete inactive claims older than the retention window.
@@ -59,10 +36,7 @@ async function purgeOldInactiveClaims(): Promise<void> {
   }
 }
 
-function startClaimExpiryCleanup(): void {
-  setInterval(sweepExpiredActiveClaims, CLAIM_EXPIRY_INTERVAL_MS);
-  logger.info({ intervalMs: CLAIM_EXPIRY_INTERVAL_MS }, "Active claim expiry sweep scheduled");
-
+function startClaimPurger(): void {
   purgeOldInactiveClaims();
   setInterval(purgeOldInactiveClaims, CLAIM_PURGE_INTERVAL_MS);
   logger.info({ intervalMs: CLAIM_PURGE_INTERVAL_MS, retentionDays: CLAIM_RETENTION_DAYS }, "Inactive claim purge job scheduled");
@@ -133,6 +107,7 @@ app.listen(port, async (err) => {
   }
 
   startScheduler();
-  startClaimExpiryCleanup();
+  startClaimSweeper();
+  startClaimPurger();
   startEvalScheduler(60);
 });

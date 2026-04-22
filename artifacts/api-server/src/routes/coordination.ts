@@ -39,6 +39,7 @@ import {
   peekNextJob,
 } from "../services/heavy-job-scheduler";
 import { compileLaneBundles } from "../services/skills-bundler";
+import { sweepExpiredClaims } from "../services/claim-sweeper";
 import type { HeavyJobClass, HeavyJobStatus, HandoffType, ClaimType, SessionLane, LaneClaim, LaneHandoff, LaneHeavyJob } from "@workspace/db";
 
 const router = Router({ mergeParams: true });
@@ -892,6 +893,22 @@ router.patch("/sessions/:id/heavy-jobs/:jobId", async (req, res) => {
 
   broadcastCoordinationUpdate(sessionId);
   res.json(serializeJob(updated));
+});
+
+// ─── POST /api/admin/sweep-claims ─────────────────────────────────────────────
+// Manual trigger for the background claim sweeper. Useful for debugging or
+// for shrinking the ghost-claim window immediately without waiting for the
+// next scheduled interval. No session scope: sweeps ALL sessions globally.
+
+router.post("/admin/sweep-claims", async (_req, res) => {
+  try {
+    const result = await sweepExpiredClaims();
+    logger.info(result, "Manual claim sweep triggered via admin endpoint");
+    res.json(result);
+  } catch (err) {
+    logger.error({ err }, "Manual claim sweep failed");
+    res.status(500).json({ error: "Sweep failed" });
+  }
 });
 
 // ─── GET /api/sessions/:id/coordination/stream ────────────────────────────────
