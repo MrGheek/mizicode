@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db, designIntelligenceEntriesTable, skillSourcesTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
-import { getDesignSyncStatus } from "../services/scheduler";
+import { getDesignSyncStatus, triggerDesignSync } from "../services/scheduler";
 
 const router = Router();
 
@@ -126,6 +126,23 @@ router.get("/design-intelligence/sources", async (req, res) => {
     req.log.error({ err }, "Failed to query design intelligence sources");
     return res.status(500).json({ error: "Failed to query design intelligence sources" });
   }
+});
+
+/**
+ * POST /api/design-intelligence/sync
+ *
+ * Triggers an on-demand re-sync of curated design intelligence sources.
+ * Returns 409 if a sync is already running.
+ */
+router.post("/design-intelligence/sync", async (req, res) => {
+  const currentStatus = getDesignSyncStatus();
+  if (currentStatus.isRunning) {
+    return res.status(409).json({ error: "Sync already in progress" });
+  }
+
+  void triggerDesignSync();
+
+  return res.json({ ok: true, message: "Sync started" });
 });
 
 export default router;

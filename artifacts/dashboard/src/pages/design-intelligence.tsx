@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Palette, Search, Tag, ChevronDown, ChevronRight, Loader2, AlertCircle,
+  Palette, Search, Tag, Loader2, AlertCircle, RefreshCw, Clock, CheckCircle2, XCircle,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,6 +31,143 @@ type CategoryInfo = {
   category: string;
   count: number;
 };
+
+type SyncStatus = {
+  lastSyncedAt: string | null;
+  lastAttemptedAt: string | null;
+  lastError: string | null;
+  nextSyncAt: string | null;
+  intervalMs: number;
+  isRunning: boolean;
+};
+
+type SourcesResponse = {
+  sources: unknown[];
+  sync: SyncStatus;
+};
+
+function useDesignSources() {
+  return useQuery<SourcesResponse>({
+    queryKey: ["design-intelligence-sources"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/design-intelligence/sources`);
+      if (!res.ok) throw new Error("Failed to fetch sync status");
+      return res.json() as Promise<SourcesResponse>;
+    },
+    staleTime: 30000,
+    refetchInterval: 30000,
+  });
+}
+
+function formatRelativeTime(isoString: string | null): string {
+  if (!isoString) return "Never";
+  const diff = Date.now() - new Date(isoString).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function formatCountdown(isoString: string | null): string {
+  if (!isoString) return "—";
+  const diff = new Date(isoString).getTime() - Date.now();
+  if (diff <= 0) return "Soon";
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMins = minutes % 60;
+  if (remainingMins === 0) return `${hours}h`;
+  return `${hours}h ${remainingMins}m`;
+}
+
+function formatAbsoluteTime(isoString: string | null): string {
+  if (!isoString) return "";
+  return new Date(isoString).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function SyncStatusBar({ sync, onSyncNow, isSyncing, syncAlreadyRunning }: {
+  sync: SyncStatus;
+  onSyncNow: () => void;
+  isSyncing: boolean;
+  syncAlreadyRunning: boolean;
+}) {
+  const hasError = !!sync.lastError;
+  const isActive = sync.isRunning || isSyncing;
+
+  return (
+    <div className={`flex items-center gap-3 px-3 py-2 rounded-lg border text-xs ${
+      hasError
+        ? "border-destructive/30 bg-destructive/5"
+        : isActive
+        ? "border-primary/30 bg-primary/5"
+        : "border-border/50 bg-muted/30"
+    }`}>
+      <div className="flex items-center gap-1.5 shrink-0">
+        {isActive ? (
+          <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
+        ) : hasError ? (
+          <XCircle className="w-3.5 h-3.5 text-destructive" />
+        ) : sync.lastSyncedAt ? (
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+        ) : (
+          <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+        )}
+        <span className={`font-medium ${
+          hasError ? "text-destructive" : isActive ? "text-primary" : "text-foreground/80"
+        }`}>
+          {isActive ? "Syncing…" : hasError ? "Sync failed" : "Synced"}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-3 text-muted-foreground flex-1 flex-wrap">
+        <span
+          title={formatAbsoluteTime(sync.lastSyncedAt)}
+          className="cursor-default"
+        >
+          Last synced:{" "}
+          <span className="text-foreground/70">
+            {formatRelativeTime(sync.lastSyncedAt)}
+          </span>
+        </span>
+        {sync.nextSyncAt && !isActive && (
+          <span
+            title={`Scheduled for ${formatAbsoluteTime(sync.nextSyncAt)}`}
+            className="cursor-default"
+          >
+            Next sync in:{" "}
+            <span className="text-foreground/70">{formatCountdown(sync.nextSyncAt)}</span>
+          </span>
+        )}
+        {syncAlreadyRunning && !isActive && (
+          <span className="text-amber-500/80">Sync already in progress</span>
+        )}
+        {hasError && (
+          <span className="text-destructive/80 truncate max-w-xs" title={sync.lastError ?? ""}>
+            {sync.lastError}
+          </span>
+        )}
+      </div>
+
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 px-2 text-[11px] shrink-0"
+        onClick={onSyncNow}
+        disabled={isActive}
+        title="Trigger an on-demand sync now"
+      >
+        <RefreshCw className={`w-3 h-3 mr-1 ${isActive ? "animate-spin" : ""}`} />
+        Sync now
+      </Button>
+    </div>
+  );
+}
 
 function useDesignCategories() {
   return useQuery<CategoryInfo[]>({
@@ -164,11 +301,37 @@ export default function DesignIntelligence() {
   const [offset, setOffset] = useState(0);
   const [accumulatedEntries, setAccumulatedEntries] = useState<DesignEntry[]>([]);
 
+  const queryClient = useQueryClient();
+
   const { data: categories, isLoading: catsLoading, isError: catsError } =
     useDesignCategories();
 
   const { data: page, isLoading: pageLoading, isError: pageError } =
     useDesignEntriesPage(selectedCategory, search, offset);
+
+  const { data: sourcesData } = useDesignSources();
+
+  const [syncAlreadyRunning, setSyncAlreadyRunning] = useState(false);
+
+  const syncMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${BASE_URL}api/design-intelligence/sync`, { method: "POST" });
+      const body = await res.json();
+      if (res.status === 409) {
+        setSyncAlreadyRunning(true);
+        setTimeout(() => setSyncAlreadyRunning(false), 5000);
+        return body;
+      }
+      if (!res.ok) throw new Error("Failed to start sync");
+      setSyncAlreadyRunning(false);
+      return body;
+    },
+    onSuccess: () => {
+      setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: ["design-intelligence-sources"] });
+      }, 3000);
+    },
+  });
 
   useEffect(() => {
     if (!page) return;
@@ -216,6 +379,16 @@ export default function DesignIntelligence() {
           </p>
         </div>
       </div>
+
+      {/* Sync status */}
+      {sourcesData && (
+        <SyncStatusBar
+          sync={sourcesData.sync}
+          onSyncNow={() => syncMutation.mutate()}
+          isSyncing={syncMutation.isPending}
+          syncAlreadyRunning={syncAlreadyRunning}
+        />
+      )}
 
       {/* Category filter */}
       <div className="space-y-2">

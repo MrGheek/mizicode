@@ -41,6 +41,10 @@ export function getDesignSyncStatus(): DesignSyncStatus {
   return { ...designSyncState };
 }
 
+export async function triggerDesignSync(): Promise<void> {
+  await runDesignSync();
+}
+
 export function markDesignSyncComplete(): void {
   designSyncState.lastSyncedAt = new Date();
   designSyncState.lastAttemptedAt = new Date();
