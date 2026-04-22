@@ -222,7 +222,13 @@ async function ingestCsvFile(
   return upserted;
 }
 
-export async function seedCuratedSources(): Promise<void> {
+export interface SeedResult {
+  success: boolean;
+  updated: boolean;
+  reason: string;
+}
+
+export async function seedCuratedSources(): Promise<SeedResult> {
   logger.info("Seeding curated design intelligence sources…");
 
   let headSha: string;
@@ -269,7 +275,7 @@ export async function seedCuratedSources(): Promise<void> {
 
     if ((existingCount?.count ?? 0) > 0) {
       logger.info({ sha: headSha }, "Design intelligence already up to date (SHA match + entries present) — skipping ingest");
-      return;
+      return { success: true, updated: false, reason: "already_up_to_date" };
     }
     logger.info({ sha: headSha }, "SHA matches but no entries found — re-ingesting");
   } else {
@@ -296,12 +302,12 @@ export async function seedCuratedSources(): Promise<void> {
     logger.info({ count: csvFiles.length }, "CSV files discovered in canonical data path");
   } catch (err) {
     logger.error({ err }, "Failed to fetch repo tree — aborting design intelligence ingest");
-    return;
+    return { success: false, updated: false, reason: "tree_fetch_failed" };
   }
 
   if (csvFiles.length === 0) {
     logger.warn("No CSV files found in canonical data path — skipping ingest");
-    return;
+    return { success: false, updated: false, reason: "no_csv_files_found" };
   }
 
   // Pin CSV fetches to the resolved headSha for deterministic, SHA-consistent ingestion
@@ -323,4 +329,5 @@ export async function seedCuratedSources(): Promise<void> {
     .where(eq(skillSourcesTable.id, source.id));
 
   logger.info({ totalUpserted, countByCategory, sha: headSha }, "Design intelligence ingest complete");
+  return { success: true, updated: true, reason: "ingested" };
 }

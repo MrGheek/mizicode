@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db, designIntelligenceEntriesTable, skillSourcesTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
+import { getDesignSyncStatus } from "../services/scheduler";
 
 const router = Router();
 
@@ -108,7 +109,19 @@ router.get("/design-intelligence/sources", async (req, res) => {
       .from(skillSourcesTable)
       .where(eq(skillSourcesTable.sourceType, "curated"));
 
-    return res.json({ sources });
+    const syncStatus = getDesignSyncStatus();
+
+    return res.json({
+      sources,
+      sync: {
+        lastSyncedAt: syncStatus.lastSyncedAt?.toISOString() ?? null,
+        lastAttemptedAt: syncStatus.lastAttemptedAt?.toISOString() ?? null,
+        lastError: syncStatus.lastError,
+        nextSyncAt: syncStatus.nextSyncAt?.toISOString() ?? null,
+        intervalMs: syncStatus.intervalMs,
+        isRunning: syncStatus.isRunning,
+      },
+    });
   } catch (err) {
     req.log.error({ err }, "Failed to query design intelligence sources");
     return res.status(500).json({ error: "Failed to query design intelligence sources" });

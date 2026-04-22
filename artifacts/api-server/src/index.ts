@@ -2,7 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { seedProfiles } from "./services/profiles";
 import { registerDefaultTemplate } from "./services/templates";
-import { startScheduler } from "./services/scheduler";
+import { startScheduler, markDesignSyncComplete } from "./services/scheduler";
 import { seedDefaultBundles } from "./services/skills-bundler";
 import { seedCuratedSources } from "./services/curated-sources";
 import { startEvalScheduler } from "./services/skills-evals";
@@ -71,8 +71,13 @@ app.listen(port, async (err) => {
   }
 
   try {
-    await seedCuratedSources();
-    logger.info("Curated design intelligence sources seeded");
+    const seedResult = await seedCuratedSources();
+    if (seedResult.success) {
+      markDesignSyncComplete();
+      logger.info({ reason: seedResult.reason, updated: seedResult.updated }, "Curated design intelligence sources seeded");
+    } else {
+      logger.warn({ reason: seedResult.reason }, "Curated design intelligence seed completed with non-success status");
+    }
   } catch (e) {
     logger.error(e, "Failed to seed curated design intelligence sources");
   }

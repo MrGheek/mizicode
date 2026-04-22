@@ -4,6 +4,92 @@ import { logger } from "../lib/logger";
 import * as vastai from "./vastai";
 import { getProfileById } from "./profiles";
 import type { VastOffer } from "./vastai";
+import { seedCuratedSources } from "./curated-sources";
+
+// ─── Design Sync Scheduler ───────────────────────────────────────────────────
+
+const DEFAULT_DESIGN_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+function parseDesignSyncInterval(): number {
+  const raw = process.env["DESIGN_SYNC_INTERVAL_MS"];
+  if (raw) {
+    const parsed = parseInt(raw, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_DESIGN_SYNC_INTERVAL_MS;
+}
+
+interface DesignSyncStatus {
+  lastSyncedAt: Date | null;
+  lastAttemptedAt: Date | null;
+  lastError: string | null;
+  nextSyncAt: Date | null;
+  intervalMs: number;
+  isRunning: boolean;
+}
+
+const designSyncState: DesignSyncStatus = {
+  lastSyncedAt: null,
+  lastAttemptedAt: null,
+  lastError: null,
+  nextSyncAt: null,
+  intervalMs: parseDesignSyncInterval(),
+  isRunning: false,
+};
+
+export function getDesignSyncStatus(): DesignSyncStatus {
+  return { ...designSyncState };
+}
+
+export function markDesignSyncComplete(): void {
+  designSyncState.lastSyncedAt = new Date();
+  designSyncState.lastAttemptedAt = new Date();
+  designSyncState.lastError = null;
+}
+
+async function runDesignSync(): Promise<void> {
+  if (designSyncState.isRunning) {
+    logger.warn("Design sync: previous run still in progress — skipping this interval tick");
+    return;
+  }
+
+  designSyncState.isRunning = true;
+  designSyncState.lastAttemptedAt = new Date();
+  logger.info("Design sync: starting scheduled re-sync of curated sources");
+
+  try {
+    const result = await seedCuratedSources();
+    if (result.success) {
+      designSyncState.lastSyncedAt = new Date();
+      designSyncState.lastError = null;
+      logger.info({ reason: result.reason, updated: result.updated }, "Design sync: completed successfully");
+    } else {
+      designSyncState.lastError = result.reason;
+      logger.error({ reason: result.reason }, "Design sync: sync reported failure — lastSyncedAt not updated");
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    designSyncState.lastError = message;
+    logger.error({ err }, "Design sync: unexpected error during scheduled sync");
+  } finally {
+    designSyncState.isRunning = false;
+  }
+}
+
+function startDesignSyncScheduler(): void {
+  const intervalMs = designSyncState.intervalMs;
+  designSyncState.nextSyncAt = new Date(Date.now() + intervalMs);
+
+  setInterval(() => {
+    designSyncState.nextSyncAt = new Date(Date.now() + intervalMs);
+    void runDesignSync();
+  }, intervalMs);
+
+  logger.info(
+    { intervalMs, nextSyncAt: designSyncState.nextSyncAt.toISOString() },
+    "Design sync scheduler started",
+  );
+}
 
 const ACTIVE_STATUSES = ["pending", "provisioning", "downloading", "starting", "ready"];
 
@@ -254,4 +340,6 @@ export function startScheduler(): void {
   // Run once at startup, then every 30 seconds aligned to the schedule
   void checkSchedule();
   setInterval(() => void checkSchedule(), 30 * 1000);
+
+  startDesignSyncScheduler();
 }
