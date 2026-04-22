@@ -720,3 +720,39 @@ describe("Heavy-job scheduler: age-weight ordering", () => {
     expect(staleJob.score).toBeGreaterThan(freshHighJob.score);
   });
 });
+
+// ─── Admin sweep-claims auth tests ────────────────────────────────────────────
+
+describe("POST /api/admin/sweep-claims authentication", () => {
+  const REAL_TOKEN = "test-admin-token-123";
+
+  beforeAll(() => {
+    process.env.ADMIN_SWEEP_TOKEN = REAL_TOKEN;
+  });
+
+  afterAll(() => {
+    delete process.env.ADMIN_SWEEP_TOKEN;
+  });
+
+  it("returns 401 when no X-Admin-Token header is provided", async () => {
+    const res = await request(app).post("/api/admin/sweep-claims");
+    expect(res.status).toBe(401);
+    expect(res.body).toMatchObject({ error: "Unauthorized" });
+  });
+
+  it("returns 401 when an incorrect X-Admin-Token is provided", async () => {
+    const res = await request(app)
+      .post("/api/admin/sweep-claims")
+      .set("X-Admin-Token", "wrong-token");
+    expect(res.status).toBe(401);
+    expect(res.body).toMatchObject({ error: "Unauthorized" });
+  });
+
+  it("returns 200 when the correct X-Admin-Token is provided", async () => {
+    const res = await request(app)
+      .post("/api/admin/sweep-claims")
+      .set("X-Admin-Token", REAL_TOKEN);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("sweptAt");
+  });
+});

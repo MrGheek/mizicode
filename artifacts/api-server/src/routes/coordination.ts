@@ -900,7 +900,12 @@ router.patch("/sessions/:id/heavy-jobs/:jobId", async (req, res) => {
 // for shrinking the ghost-claim window immediately without waiting for the
 // next scheduled interval. No session scope: sweeps ALL sessions globally.
 
-router.post("/admin/sweep-claims", async (_req, res) => {
+router.post("/admin/sweep-claims", async (req, res) => {
+  const adminToken = process.env.ADMIN_SWEEP_TOKEN;
+  if (!adminToken || req.headers["x-admin-token"] !== adminToken) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
   try {
     const result = await sweepExpiredClaims();
     logger.info(result, "Manual claim sweep triggered via admin endpoint");
