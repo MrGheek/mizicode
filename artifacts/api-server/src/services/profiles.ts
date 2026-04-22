@@ -382,9 +382,21 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     estimatedCostMax: 25.0,
     llamaCtxSize: 131072,
     llamaBatchSize: 1024,
+    // CHUNKED-PREFILL BLOCKED (vLLM 0.6.x): --enable-chunked-prefill is
+    // incompatible with --speculative-config.method mtp on vLLM 0.6.x. vLLM
+    // raises a ValueError at engine initialisation when both flags are present,
+    // causing the server to fail to boot. This was confirmed via vLLM 0.6.x
+    // release notes and issue tracker (vllm-project/vllm #6226 / #7181):
+    // speculative decoding (all methods, including MTP) explicitly disables
+    // chunked prefill on 0.6.x builds.
+    //
+    // Compatibility was introduced in vLLM 0.7.0. The Dockerfile uses a
+    // lower-bound constraint ("vllm>=0.6.0"), so if the resolved install is
+    // already ≥ 0.7.0 this flag can be added immediately. To enable, append
+    // CHUNKED_PREFILL_PRO to llamaExtraArgs below and update this comment.
+    //
     // H200 provides additional VRAM headroom vs H100 Ultra; swarm is viable but
-    // limited by the 40B active parameter footprint. Chunked-prefill not added
-    // here pending validation with GLM's speculative decoding config.
+    // limited by the 40B active parameter footprint.
     llamaExtraArgs: "--kv-cache-dtype fp8 --enable-expert-parallel --tool-call-parser glm47 --reasoning-parser glm45 --enable-auto-tool-choice --speculative-config.method mtp --speculative-config.num_speculative_tokens 3",
     searchParams: { gpu_name: "H200", num_gpus: 8, min_gpu_ram: 80 },
     startupTimeMin: 45,
