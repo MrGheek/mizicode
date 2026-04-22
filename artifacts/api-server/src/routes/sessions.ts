@@ -982,6 +982,10 @@ export interface SwarmSnapshot {
 const swarmCache = new Map<number, { snapshot: SwarmSnapshot; receivedAt: number }>();
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
+// SSE subscribers waiting for live swarm pushes, keyed by session ID.
+// When the runner posts a new snapshot via swarm-push, it is broadcast to all open streams.
+const swarmSseSubscribers = new Map<number, Set<(snapshot: SwarmSnapshot) => void>>();
+
 // POST /sessions/:sessionId/swarm-push — Claw Runner pushes a new snapshot.
 // Requires the runner callback token (OMNIQL_MEM_TOKEN) as Bearer auth.
 // Persists snapshot both to the in-memory cache (fast) and DB (durable).
@@ -1011,6 +1015,14 @@ router.post("/sessions/:sessionId/swarm-push", async (req, res) => {
 
   // Write to in-memory cache for fast polling response
   swarmCache.set(sessionId, { snapshot, receivedAt: Date.now() });
+
+  // Notify any open SSE streams immediately so they reflect the update within milliseconds
+  const sseSubscribers = swarmSseSubscribers.get(sessionId);
+  if (sseSubscribers && sseSubscribers.size > 0) {
+    for (const cb of sseSubscribers) {
+      try { cb(snapshot); } catch { /* ignore broken pipe */ }
+    }
+  }
 
   // Persist to DB so snapshot survives API server restarts
   try {
@@ -1096,6 +1108,86 @@ router.get("/sessions/:sessionId/swarm-status", async (req, res) => {
     logger.error(err, "Failed to fetch swarm status");
     res.status(500).json({ error: "Failed to fetch swarm status" });
   }
+});
+
+// GET /sessions/:sessionId/swarm-stream — SSE endpoint for live swarm updates.
+// The client subscribes once; every time the runner posts a new snapshot via
+// swarm-push the server pushes it directly over this stream, replacing the 3-second poll.
+// On connection error the dashboard falls back to polling swarm-status.
+router.get("/sessions/:sessionId/swarm-stream", async (req, res) => {
+  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid sessionId" });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  // Track cleanup resources so we can tear down correctly regardless of when the
+  // client disconnects — including during the async DB read below.
+  let keepAlive: ReturnType<typeof setInterval> | null = null;
+  const cb = (snapshot: SwarmSnapshot) => {
+    res.write(`data: ${JSON.stringify({ availability: "live", snapshot })}\n\n`);
+  };
+
+  const cleanup = () => {
+    if (keepAlive) clearInterval(keepAlive);
+    const subs = swarmSseSubscribers.get(sessionId);
+    if (subs) {
+      subs.delete(cb);
+      if (subs.size === 0) swarmSseSubscribers.delete(sessionId);
+    }
+  };
+
+  // Register close handler before any async work so early disconnects are caught.
+  req.on("close", cleanup);
+
+  // Send the current snapshot immediately so the UI renders without waiting for the next push.
+  try {
+    const [session] = await db
+      .select({ status: sessionsTable.status, swarmSnapshotJson: sessionsTable.swarmSnapshotJson })
+      .from(sessionsTable)
+      .where(eq(sessionsTable.id, sessionId));
+
+    if (!session) {
+      // Session not found — tell the client explicitly so it can stop loading.
+      res.write(`data: ${JSON.stringify({ availability: "unavailable", snapshot: null })}\n\n`);
+      res.end();
+      return;
+    }
+
+    const cached = swarmCache.get(sessionId);
+    const dbSnapshot = session.swarmSnapshotJson as SwarmSnapshot | null;
+    let initialPayload: { availability: string; snapshot: SwarmSnapshot | null };
+    if (["pending", "provisioning", "downloading", "starting"].includes(session.status)) {
+      initialPayload = { availability: "starting", snapshot: null };
+    } else if (cached) {
+      const ageMs = Date.now() - cached.receivedAt;
+      initialPayload = { availability: ageMs <= STALE_THRESHOLD_MS ? "live" : "stale", snapshot: cached.snapshot };
+    } else if (dbSnapshot) {
+      initialPayload = { availability: "stale", snapshot: dbSnapshot };
+    } else {
+      initialPayload = { availability: "unavailable", snapshot: null };
+    }
+    res.write(`data: ${JSON.stringify(initialPayload)}\n\n`);
+  } catch (initErr) {
+    logger.warn({ err: initErr, sessionId }, "swarm-stream: failed to send initial snapshot (non-fatal)");
+  }
+
+  // Keep the connection alive so proxies/load-balancers don't time it out.
+  keepAlive = setInterval(() => {
+    res.write(": ping\n\n");
+  }, 20000);
+
+  // Register the push callback — invoked by swarm-push whenever a new snapshot arrives.
+  if (!swarmSseSubscribers.has(sessionId)) {
+    swarmSseSubscribers.set(sessionId, new Set());
+  }
+  swarmSseSubscribers.get(sessionId)!.add(cb);
 });
 
 // POST /sessions/:sessionId/swarm/abort — session-owner emergency abort.

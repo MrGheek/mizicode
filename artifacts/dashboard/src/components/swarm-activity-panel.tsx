@@ -172,12 +172,52 @@ export function useSwarmStatus(sessionId: number, isReady: boolean) {
 
   useEffect(() => {
     if (!sessionId) return;
-    // Always fetch at least once (to show historical swarm data for stopped sessions).
-    // When the session is ready, poll every 3 seconds for live updates.
-    fetchStatus();
-    if (!isReady) return;
-    const interval = setInterval(fetchStatus, 3000);
-    return () => clearInterval(interval);
+
+    if (!isReady) {
+      // Session not yet ready — fetch once for historical snapshot then stop.
+      fetchStatus();
+      return;
+    }
+
+    // Session is ready — open an SSE stream for instant push updates.
+    // Fall back to 3-second polling if the connection cannot be established.
+    let es: EventSource | null = null;
+    let fallbackInterval: ReturnType<typeof setInterval> | null = null;
+
+    const startPollingFallback = () => {
+      if (fallbackInterval) return;
+      fetchStatus();
+      fallbackInterval = setInterval(fetchStatus, 3000);
+    };
+
+    try {
+      es = new EventSource(`${BASE_URL}api/sessions/${sessionId}/swarm-stream`);
+
+      es.onmessage = (event) => {
+        try {
+          const json: SwarmStatusResponse = JSON.parse(event.data);
+          setData(json);
+          setLoading(false);
+        } catch {
+          // Ignore malformed SSE events
+        }
+      };
+
+      es.onerror = () => {
+        es?.close();
+        es = null;
+        // Connection failed — degrade gracefully to polling
+        startPollingFallback();
+      };
+    } catch {
+      // EventSource constructor failed (very unusual) — fall back immediately
+      startPollingFallback();
+    }
+
+    return () => {
+      es?.close();
+      if (fallbackInterval) clearInterval(fallbackInterval);
+    };
   }, [sessionId, isReady, fetchStatus]);
 
   return { data, loading };
