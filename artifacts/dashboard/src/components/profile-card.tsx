@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Cpu, HardDrive, Clock, Zap, Play, Loader2 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Cpu, HardDrive, Clock, Zap, Play, Loader2, Network, AlertTriangle } from "lucide-react";
 import type { GpuProfile } from "@workspace/api-client-react";
 import { LaunchSessionDialog, type LaunchOptions } from "@/components/launch-session-dialog";
 
@@ -47,6 +48,10 @@ export function ProfileCard({ profile, onLaunch, isLaunching }: ProfileCardProps
     setDialogOpen(false);
   };
 
+  const swarmCap = profile.swarmWorkerCap ?? 0;
+  const hasSwarm = swarmCap > 0;
+  const isLimitedSwarm = hasSwarm && swarmCap <= 8;
+
   return (
     <>
       <Card className="flex flex-col bg-card/50 border-border/50 hover:border-primary/50 transition-colors">
@@ -58,6 +63,34 @@ export function ProfileCard({ profile, onLaunch, isLaunching }: ProfileCardProps
                 <Badge variant="secondary" className="text-xs font-mono px-1.5 py-0">
                   {profile.modelDisplayName}
                 </Badge>
+                {hasSwarm && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] px-1.5 py-0 flex items-center gap-0.5 cursor-default ${
+                            isLimitedSwarm
+                              ? "border-yellow-500/50 text-yellow-500"
+                              : "border-primary/50 text-primary"
+                          }`}
+                        >
+                          {isLimitedSwarm
+                            ? <AlertTriangle className="w-2.5 h-2.5" />
+                            : <Network className="w-2.5 h-2.5" />
+                          }
+                          {isLimitedSwarm ? "Limited swarm" : "Swarm-ready"}
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs text-xs">
+                        {isLimitedSwarm
+                          ? `Limited swarm: up to ${swarmCap} workers — use a higher tier for swarm tasks`
+                          : `Swarm-ready: up to ${swarmCap} workers`
+                        }
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
               </div>
               <CardDescription className="font-mono text-xs mt-1">
                 {profile.gpuName} x{profile.numGpus} ({profile.totalVram}GB VRAM)

@@ -46,6 +46,11 @@ export const sessionsTable = pgTable("sessions", {
   activeBundleId: integer("active_bundle_id").references(() => skillBundlesTable.id),
   repoFingerprintJson: jsonb("repo_fingerprint_json"),
   routingStatsJson: jsonb("routing_stats_json").$type<SessionRoutingStats>(),
+  swarmSnapshotJson: jsonb("swarm_snapshot_json"),
+  // Token issued at session creation time. Required to call session-owner actions
+  // (e.g. swarm abort) from the dashboard. Not a team-member credential — the
+  // owner token gates destructive controls that team members must not access.
+  ownerToken: text("owner_token"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

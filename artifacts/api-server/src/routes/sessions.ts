@@ -32,6 +32,17 @@ const router = Router();
 
 const ACTIVE_STATUSES = ["pending", "provisioning", "downloading", "starting", "ready"];
 
+// Remove ownerToken from any session-shaped object before sending to the client.
+// ownerToken is a sensitive bearer secret — expose ONLY on the single detail endpoint
+// GET /sessions/:id (where the operator dashboard reads it to authorize abort calls).
+// All list, active, refresh, and delete responses must redact it.
+function redactOwnerToken<T extends { ownerToken?: string | null }>(
+  session: T
+): Omit<T, "ownerToken"> {
+  const { ownerToken: _redacted, ...rest } = session;
+  return rest;
+}
+
 async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect): Promise<typeof sessionsTable.$inferSelect> {
   if (!session.vastInstanceId || !ACTIVE_STATUSES.includes(session.status)) {
     return session;
@@ -263,12 +274,12 @@ router.get("/sessions/active", async (_req, res) => {
     .from(gpuProfilesTable)
     .where(eq(gpuProfilesTable.id, synced.profileId));
 
-  // Redact passwords (only /sessions/:id detail endpoint exposes them)
+  // Redact team member passwords and ownerToken — these are only exposed on the detail endpoint.
   const sanitizedMembers = synced.teamMembers
     ? (synced.teamMembers as TeamMemberRecord[]).map(({ password: _pw, ...rest }) => rest)
     : null;
 
-  res.json({ session: { ...synced, teamMembers: sanitizedMembers, profileName: profile?.displayName || "" } });
+  res.json({ session: { ...redactOwnerToken(synced), teamMembers: sanitizedMembers, profileName: profile?.displayName || "" } });
 });
 
 router.get("/sessions/:sessionId", async (req, res) => {
@@ -290,11 +301,11 @@ router.get("/sessions/:sessionId", async (req, res) => {
 
   const synced = await syncSessionFromVastai(rawSession);
   const [profile] = await db
-    .select({ displayName: gpuProfilesTable.displayName })
+    .select({ displayName: gpuProfilesTable.displayName, swarmWorkerCap: gpuProfilesTable.swarmWorkerCap })
     .from(gpuProfilesTable)
     .where(eq(gpuProfilesTable.id, synced.profileId));
 
-  res.json({ ...synced, profileName: profile?.displayName || "" });
+  res.json({ ...synced, profileName: profile?.displayName || "", swarmWorkerCap: profile?.swarmWorkerCap ?? null });
 });
 
 router.post("/sessions", async (req, res) => {
@@ -458,6 +469,10 @@ router.post("/sessions", async (req, res) => {
         tokenMode: resolvedTokenMode,
         activeBundleId: requestedBundleId || null,
         repoFingerprintJson,
+        // Owner token: a random secret issued at session creation. Required by
+        // the dashboard to call owner-only endpoints (e.g. swarm abort). Not a
+        // team-member credential — team members use their own name+password.
+        ownerToken: generatePassword(32),
       })
       .returning();
 
@@ -582,8 +597,10 @@ router.post("/sessions", async (req, res) => {
       .where(eq(sessionsTable.id, session.id))
       .returning();
 
+    // ownerToken is a bearer secret — expose only via GET /sessions/:id detail.
+    // The creation response goes to the dashboard which will redirect to the detail page.
     res.status(201).json({
-      ...updated,
+      ...redactOwnerToken(updated),
       profileName: profile.displayName,
     });
   } catch (err: unknown) {
@@ -620,7 +637,7 @@ router.post("/sessions/:sessionId/refresh", async (req, res) => {
   }
 
   if (!session.vastInstanceId) {
-    res.json({ ...session, profileName: "" });
+    res.json({ ...redactOwnerToken(session), profileName: "" });
     return;
   }
 
@@ -685,7 +702,7 @@ router.post("/sessions/:sessionId/refresh", async (req, res) => {
     const [profile] = await db.select().from(gpuProfilesTable).where(eq(gpuProfilesTable.id, session.profileId));
 
     res.json({
-      ...updated,
+      ...redactOwnerToken(updated),
       profileName: profile?.displayName || "",
     });
   } catch (err: unknown) {
@@ -742,7 +759,7 @@ router.delete("/sessions/:sessionId", async (req, res) => {
     const [profile] = await db.select().from(gpuProfilesTable).where(eq(gpuProfilesTable.id, session.profileId));
 
     res.json({
-      ...updated,
+      ...redactOwnerToken(updated),
       profileName: profile?.displayName || "",
     });
   } catch (err: unknown) {
@@ -930,6 +947,232 @@ router.get("/sessions/:sessionId/routing-stats", async (req, res) => {
   } catch (err) {
     logger.error(err, "Failed to fetch routing stats");
     res.status(500).json({ error: "Failed to fetch routing stats" });
+  }
+});
+
+// ── Swarm status cache & endpoints ──────────────────────────────────────────
+// The API server caches the last swarm snapshot pushed by the Claw Runner via
+// the callback URL so the cockpit can render useful state even when the runner
+// is temporarily unreachable. This is an in-memory cache keyed by session ID.
+
+export interface SwarmWorker {
+  id: string;
+  title: string;
+  status: "pending" | "running" | "done" | "failed" | "aborted";
+  priority?: number;
+  outputPreview?: string;
+  outputFull?: string;
+  errorSummary?: string;
+  retryCount?: number;
+}
+
+export interface SwarmSnapshot {
+  phase: "active" | "idle" | "synthesising" | "aborted" | "sequential" | "never";
+  skipReason?: string;
+  orchestratorReason?: string;
+  decompositionReason?: string;
+  totalWorkers?: number;
+  workers?: SwarmWorker[];
+  doneCount?: number;
+  failedCount?: number;
+  synthesisResult?: string;
+  timestamp: string;
+}
+
+const swarmCache = new Map<number, { snapshot: SwarmSnapshot; receivedAt: number }>();
+const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+// POST /sessions/:sessionId/swarm-push — Claw Runner pushes a new snapshot.
+// Requires the runner callback token (OMNIQL_MEM_TOKEN) as Bearer auth.
+// Persists snapshot both to the in-memory cache (fast) and DB (durable).
+router.post("/sessions/:sessionId/swarm-push", async (req, res) => {
+  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid sessionId" });
+    return;
+  }
+
+  if (CALLBACK_TOKEN) {
+    const auth = req.headers["authorization"] || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    if (token !== CALLBACK_TOKEN) {
+      logger.warn({ sessionId }, "Swarm-push callback: invalid token");
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+  }
+
+  const snapshot = req.body as SwarmSnapshot;
+  if (!snapshot || !snapshot.phase) {
+    res.status(400).json({ error: "Missing snapshot phase" });
+    return;
+  }
+  if (!snapshot.timestamp) snapshot.timestamp = new Date().toISOString();
+
+  // Write to in-memory cache for fast polling response
+  swarmCache.set(sessionId, { snapshot, receivedAt: Date.now() });
+
+  // Persist to DB so snapshot survives API server restarts
+  try {
+    await db
+      .update(sessionsTable)
+      .set({ swarmSnapshotJson: snapshot as unknown as Record<string, unknown>, updatedAt: new Date() })
+      .where(eq(sessionsTable.id, sessionId));
+  } catch (dbErr) {
+    logger.warn({ err: dbErr, sessionId }, "Failed to persist swarm snapshot to DB (non-fatal)");
+  }
+
+  logger.info({ sessionId, phase: snapshot.phase }, "Swarm snapshot cached");
+  res.json({ ok: true });
+});
+
+// GET /sessions/:sessionId/swarm-status — cockpit polls this every 3 seconds.
+// Returns one of four availability states:
+//   "live"        — in-memory cache is fresh (received within STALE_THRESHOLD_MS)
+//   "stale"       — snapshot exists but cache is old (runner may be unreachable)
+//   "starting"    — session not yet ready, runner hasn't started pushing
+//   "unavailable" — no snapshot has ever been received for this session
+router.get("/sessions/:sessionId/swarm-status", async (req, res) => {
+  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid sessionId" });
+    return;
+  }
+
+  try {
+    const [session] = await db
+      .select({ status: sessionsTable.status, swarmSnapshotJson: sessionsTable.swarmSnapshotJson })
+      .from(sessionsTable)
+      .where(eq(sessionsTable.id, sessionId));
+
+    if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    // If session is still provisioning/starting, report "starting"
+    if (["pending", "provisioning", "downloading", "starting"].includes(session.status)) {
+      res.json({ availability: "starting", snapshot: null });
+      return;
+    }
+
+    const cached = swarmCache.get(sessionId);
+    const dbSnapshot = session.swarmSnapshotJson as SwarmSnapshot | null;
+
+    // No snapshot in memory or DB — "never swarmed"
+    if (!cached && !dbSnapshot) {
+      res.json({ availability: "unavailable", snapshot: null });
+      return;
+    }
+
+    // If we have a fresh in-memory cache, it's live
+    if (cached) {
+      const ageMs = Date.now() - cached.receivedAt;
+      if (ageMs <= STALE_THRESHOLD_MS) {
+        // Fresh cache — live regardless of phase
+        res.json({ availability: "live", snapshot: cached.snapshot });
+        return;
+      }
+      // Cache exists but is older than threshold — stale.
+      // Do NOT set isHistorical: true here — whether a snapshot is "historical"
+      // (from a completed run) is determined by its phase (active/synthesising = still
+      // a live run that just hasn't sent updates; idle/aborted/etc = completed run).
+      // Conflating stale-freshness with historical-completion misleads the UI.
+      res.json({ availability: "stale", snapshot: cached.snapshot });
+      return;
+    }
+
+    // No in-memory cache (server was restarted) but DB has a snapshot —
+    // warm the cache from DB and return as stale (freshness unknown after restart).
+    // Again, do NOT force isHistorical — let the phase drive that decision client-side.
+    if (dbSnapshot) {
+      swarmCache.set(sessionId, { snapshot: dbSnapshot, receivedAt: 0 });
+      res.json({ availability: "stale", snapshot: dbSnapshot });
+      return;
+    }
+
+    res.json({ availability: "unavailable", snapshot: null });
+  } catch (err) {
+    logger.error(err, "Failed to fetch swarm status");
+    res.status(500).json({ error: "Failed to fetch swarm status" });
+  }
+});
+
+// POST /sessions/:sessionId/swarm/abort — session-owner emergency abort.
+// This is a user-initiated action from the dashboard, NOT a runner callback.
+// AUTHORIZATION: requires `Authorization: Bearer {ownerToken}` where ownerToken
+// is the random secret generated at session creation (returned on the detail endpoint).
+// This gates the destructive abort control against direct API calls from team members
+// or other unauthorized callers.
+router.post("/sessions/:sessionId/swarm/abort", async (req, res) => {
+  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid sessionId" });
+    return;
+  }
+
+  // Verify owner token from Authorization header
+  const authHeader = req.headers["authorization"] || "";
+  const providedToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+
+  try {
+    const [session] = await db
+      .select({ status: sessionsTable.status, ownerToken: sessionsTable.ownerToken })
+      .from(sessionsTable)
+      .where(eq(sessionsTable.id, sessionId));
+
+    if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    // Server-enforced owner authorization via ownerToken.
+    // The token is generated at session creation (returned ONLY on detail endpoint).
+    // Always require a matching token — a null DB token is not a valid bypass.
+    // (Null would only occur for sessions created before this feature; the migration
+    // backfills all existing sessions so nulls should not appear in practice.)
+    if (!session.ownerToken || providedToken !== session.ownerToken) {
+      logger.warn({ sessionId, hasToken: !!session.ownerToken }, "Swarm abort: invalid or missing owner token");
+      res.status(403).json({ error: "Forbidden: valid owner token required to abort swarm" });
+      return;
+    }
+
+    // Only allow abort on sessions that are not already stopped/errored
+    if (session.status === "stopped" || session.status === "error") {
+      res.status(409).json({ error: "Session is already stopped — nothing to abort" });
+      return;
+    }
+
+    // Record abort in snapshot cache and persist to DB
+    const abortedTimestamp = new Date().toISOString();
+    const cached = swarmCache.get(sessionId);
+    const baseSnapshot: SwarmSnapshot = cached?.snapshot ?? {
+      phase: "aborted",
+      timestamp: abortedTimestamp,
+    };
+    const abortedSnapshot: SwarmSnapshot = {
+      ...baseSnapshot,
+      phase: "aborted",
+      timestamp: abortedTimestamp,
+    };
+
+    swarmCache.set(sessionId, { snapshot: abortedSnapshot, receivedAt: Date.now() });
+
+    // Persist abort state to DB
+    try {
+      await db
+        .update(sessionsTable)
+        .set({ swarmSnapshotJson: abortedSnapshot as unknown as Record<string, unknown>, updatedAt: new Date() })
+        .where(eq(sessionsTable.id, sessionId));
+    } catch (dbErr) {
+      logger.warn({ err: dbErr, sessionId }, "Failed to persist abort snapshot to DB (non-fatal)");
+    }
+
+    logger.info({ sessionId }, "Swarm abort recorded");
+    res.json({ ok: true, message: "Abort signal recorded. The runner will process it on next check." });
+  } catch (err) {
+    logger.error(err, "Failed to process swarm abort");
+    res.status(500).json({ error: "Failed to process abort" });
   }
 });
 

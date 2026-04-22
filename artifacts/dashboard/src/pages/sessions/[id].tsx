@@ -22,7 +22,7 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
   Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw, Users, Copy, Check, Eye, EyeOff, FolderOpen,
-  Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap,
+  Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap, Network,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,11 +32,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { TeamTab } from "@/components/team-tab";
+import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 
@@ -1070,7 +1072,7 @@ export default function SessionDetail() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "team">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "team" | "swarm">("overview");
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
   const [seenConflictFingerprint, setSeenConflictFingerprint] = useState<string>("");
@@ -1121,6 +1123,11 @@ export default function SessionDetail() {
   const [isRetrying, setIsRetrying] = useState(false);
   const [stopRatingOpen, setStopRatingOpen] = useState(false);
   const completeFeedback = useSessionCompleteFeedback();
+
+  // Swarm status — polled every 3 seconds when session is ready
+  // Must be called unconditionally before early returns (rules of hooks)
+  const sessionIsReady = session?.status === "ready";
+  const { data: swarmData } = useSwarmStatus(sessionId, sessionIsReady);
 
   // Fetch routing stats in the background so they are ready when the session stops.
   // bytesAvoided is passed to complete-feedback to signal context-shield-core effectiveness.
@@ -1395,6 +1402,28 @@ export default function SessionDetail() {
   const isActive = session.status !== "stopped" && session.status !== "error";
   const isReady = session.status === "ready";
 
+  const swarmBadge = swarmTabBadgeLabel(swarmData);
+  const swarmIsLive = swarmTabIsActive(swarmData);
+  // Show the Swarm tab if the session is ready (active) — so users can see when swarm starts —
+  // or if there is actual swarm data to display (historical runs for stopped sessions).
+  const showSwarmTab = isReady || swarmTabShouldShow(swarmData);
+
+  // Determine if the current user is the session "owner" for swarm abort gating.
+  // The abort button is only shown to session owners, hidden for non-owner team members.
+  //
+  // Identity model:
+  //   • Solo sessions (no named teamMembers): dashboard viewer is always the operator → owner.
+  //   • Team sessions (has named members): without a login layer we cannot distinguish the
+  //     owner from a team member who might access this URL. We take the conservative stance
+  //     and hide the abort button for all team sessions to prevent accidental use by non-owners.
+  //     The operator of a team session can still call the abort API directly with ownerToken.
+  //
+  // Server enforcement: abort endpoint always validates ownerToken regardless of this UI check,
+  // providing a defence-in-depth layer independent of what the UI shows.
+  const sessionTeamMembers = (session.teamMembers ?? []) as Array<{ name: string }>;
+  const hasNamedTeamMembers = sessionTeamMembers.some((m) => m.name !== "__shared__");
+  const isSessionOwner = !hasNamedTeamMembers;
+
   return (
     <div className="p-8 max-w-3xl mx-auto space-y-6">
 
@@ -1550,6 +1579,30 @@ export default function SessionDetail() {
             </span>
           )}
         </button>
+        {showSwarmTab && (
+          <button
+            onClick={() => setActiveTab("swarm")}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
+              activeTab === "swarm"
+                ? "border-primary text-foreground"
+                : swarmIsLive
+                  ? "border-transparent text-primary hover:text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Network className={`w-3.5 h-3.5 ${swarmIsLive ? "animate-pulse" : ""}`} />
+            Swarm
+            {swarmBadge && (
+              <span className={`ml-0.5 px-1.5 py-0 flex items-center justify-center rounded-full text-[10px] font-semibold leading-none ${
+                swarmIsLive
+                  ? "bg-primary text-primary-foreground animate-badge-pop"
+                  : "bg-secondary text-secondary-foreground"
+              }`}>
+                {swarmBadge}
+              </span>
+            )}
+          </button>
+        )}
       </div>
 
       {activeTab === "overview" && (
@@ -1766,9 +1819,41 @@ export default function SessionDetail() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">GPU</span>
-                  <span className="font-mono">{session.gpuName || "—"} x{session.numGpus || "—"}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono">{session.gpuName || "—"} x{session.numGpus || "—"}</span>
+                    {(() => {
+                      const swarmCap = session.swarmWorkerCap ?? 0;
+                      if (swarmCap <= 0) return null;
+                      const isLimited = swarmCap <= 8;
+                      return (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] rounded border font-medium cursor-default ${
+                                isLimited
+                                  ? "border-yellow-500/50 text-yellow-500 bg-yellow-500/5"
+                                  : "border-primary/50 text-primary bg-primary/5"
+                              }`}>
+                                {isLimited
+                                  ? <AlertTriangle className="w-2.5 h-2.5" />
+                                  : <Network className="w-2.5 h-2.5" />
+                                }
+                                {isLimited ? "Limited swarm" : "Swarm-ready"}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs text-xs">
+                              {isLimited
+                                ? `Limited swarm: up to ${swarmCap} workers — use a higher tier for swarm tasks`
+                                : `Swarm-ready: up to ${swarmCap} workers`
+                              }
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      );
+                    })()}
+                  </div>
                 </div>
                 <div className="flex justify-between border-t border-border/40 pt-3">
                   <span className="text-muted-foreground">Public IP</span>
@@ -1865,6 +1950,15 @@ export default function SessionDetail() {
 
       {activeTab === "team" && (
         <TeamTab sessionId={sessionId} />
+      )}
+
+      {activeTab === "swarm" && (
+        <SwarmActivityPanel
+          sessionId={sessionId}
+          isReady={isReady}
+          isSessionOwner={isSessionOwner}
+          ownerToken={session.ownerToken}
+        />
       )}
 
       {stopRatingOpen && (
