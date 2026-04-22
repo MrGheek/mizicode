@@ -206,6 +206,71 @@ function useDesignEntriesPage(
   });
 }
 
+const HEX_RE = /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+const CSS_NAMED_COLORS = new Set([
+  "aliceblue","antiquewhite","aqua","aquamarine","azure","beige","bisque","black",
+  "blanchedalmond","blue","blueviolet","brown","burlywood","cadetblue","chartreuse",
+  "chocolate","coral","cornflowerblue","cornsilk","crimson","cyan","darkblue",
+  "darkcyan","darkgoldenrod","darkgray","darkgreen","darkgrey","darkkhaki",
+  "darkmagenta","darkolivegreen","darkorange","darkorchid","darkred","darksalmon",
+  "darkseagreen","darkslateblue","darkslategray","darkslategrey","darkturquoise",
+  "darkviolet","deeppink","deepskyblue","dimgray","dimgrey","dodgerblue","firebrick",
+  "floralwhite","forestgreen","fuchsia","gainsboro","ghostwhite","gold","goldenrod",
+  "gray","green","greenyellow","grey","honeydew","hotpink","indianred","indigo",
+  "ivory","khaki","lavender","lavenderblush","lawngreen","lemonchiffon","lightblue",
+  "lightcoral","lightcyan","lightgoldenrodyellow","lightgray","lightgreen","lightgrey",
+  "lightpink","lightsalmon","lightseagreen","lightskyblue","lightslategray",
+  "lightslategrey","lightsteelblue","lightyellow","lime","limegreen","linen","magenta",
+  "maroon","mediumaquamarine","mediumblue","mediumorchid","mediumpurple","mediumseagreen",
+  "mediumslateblue","mediumspringgreen","mediumturquoise","mediumvioletred","midnightblue",
+  "mintcream","mistyrose","moccasin","navajowhite","navy","oldlace","olive","olivedrab",
+  "orange","orangered","orchid","palegoldenrod","palegreen","paleturquoise","palevioletred",
+  "papayawhip","peachpuff","peru","pink","plum","powderblue","purple","red","rosybrown",
+  "royalblue","saddlebrown","salmon","sandybrown","seagreen","seashell","sienna","silver",
+  "skyblue","slateblue","slategray","slategrey","snow","springgreen","steelblue","tan",
+  "teal","thistle","tomato","turquoise","violet","wheat","white","whitesmoke","yellow",
+  "yellowgreen",
+]);
+
+function parseColorValue(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const trimmed = v.trim();
+  if (HEX_RE.test(trimmed)) return trimmed;
+  if (CSS_NAMED_COLORS.has(trimmed.toLowerCase())) return trimmed;
+  return null;
+}
+
+const COLOR_KEYS = ["value", "color", "hex", "background", "foreground", "fill", "stroke", "primary", "secondary", "accent", "base", "light", "dark", "shade", "tint"];
+
+function extractEntryColor(data: Record<string, unknown>): string | null {
+  for (const key of COLOR_KEYS) {
+    const color = parseColorValue(data[key]);
+    if (color) return color;
+  }
+  for (const key of Object.keys(data)) {
+    const color = parseColorValue(data[key]);
+    if (color) return color;
+  }
+  return null;
+}
+
+function isColorCategory(category: string): boolean {
+  const lower = category.toLowerCase();
+  return lower.includes("color") || lower.includes("palette") || lower.includes("style");
+}
+
+function ColorSwatch({ color, size = "md" }: { color: string; size?: "sm" | "md" }) {
+  const dim = size === "sm" ? "w-3 h-3" : "w-4 h-4";
+  return (
+    <span
+      className={`inline-block ${dim} rounded-sm border border-black/10 shrink-0`}
+      style={{ backgroundColor: color }}
+      title={color}
+    />
+  );
+}
+
 function DataJsonView({ data }: { data: Record<string, unknown> }) {
   const keys = Object.keys(data);
   const previewKeys = keys.slice(0, 4);
@@ -216,6 +281,7 @@ function DataJsonView({ data }: { data: Record<string, unknown> }) {
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
         {previewKeys.map((k) => {
           const v = data[k];
+          const colorValue = parseColorValue(v);
           const display =
             typeof v === "string"
               ? v.length > 60
@@ -229,8 +295,9 @@ function DataJsonView({ data }: { data: Record<string, unknown> }) {
               ? "{…}"
               : String(v ?? "");
           return (
-            <span key={k} className="text-muted-foreground">
+            <span key={k} className="inline-flex items-center gap-1 text-muted-foreground">
               <span className="text-foreground/60 font-medium">{k}:</span>{" "}
+              {colorValue && <ColorSwatch color={colorValue} size="sm" />}
               <span>{display}</span>
             </span>
           );
@@ -254,6 +321,9 @@ function DataJsonView({ data }: { data: Record<string, unknown> }) {
 }
 
 function EntryCard({ entry }: { entry: DesignEntry }) {
+  const swatchColor =
+    isColorCategory(entry.category) ? extractEntryColor(entry.data_json) : null;
+
   return (
     <Card className="bg-card/50 border-border/50">
       <CardContent className="pt-3 pb-3">
@@ -270,7 +340,10 @@ function EntryCard({ entry }: { entry: DesignEntry }) {
             </Badge>
           ))}
         </div>
-        <p className="font-semibold text-sm mb-1.5">{entry.name}</p>
+        <div className="flex items-center gap-2 mb-1.5">
+          {swatchColor && <ColorSwatch color={swatchColor} />}
+          <p className="font-semibold text-sm">{entry.name}</p>
+        </div>
         <DataJsonView data={entry.data_json} />
       </CardContent>
     </Card>
