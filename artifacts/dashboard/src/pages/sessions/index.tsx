@@ -190,10 +190,15 @@ export default function SessionsList() {
                     </TableCell>
                     <TableCell>
                       {repoStatus ? (
-                        <RepoStatusBadge
-                          indexStatus={repoStatus.indexStatus}
-                          isStale={repoStatus.isStale}
-                        />
+                        <button
+                          onClick={() => setLocation(`/sessions/${session.id}?tab=repo`)}
+                          className="focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
+                        >
+                          <RepoStatusBadge
+                            indexStatus={repoStatus.indexStatus}
+                            isStale={repoStatus.isStale}
+                          />
+                        </button>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
@@ -224,7 +229,9 @@ export default function SessionsList() {
               <TableRow>
                 <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
                   <Terminal className="w-8 h-8 mx-auto mb-3 opacity-20" />
-                  No sessions found
+                  {teamFilter === "all"
+                    ? "No sessions found"
+                    : `No ${teamFilter} sessions found`}
                 </TableCell>
               </TableRow>
             )}
