@@ -31,11 +31,11 @@ export function SessionStatusBadge({ status }: { status: SessionStatus }) {
   );
 }
 
-export function TeamSessionBadge() {
+export function TeamSessionBadge({ count }: { count: number }) {
   return (
     <Badge variant="outline" className="bg-violet-500/20 text-violet-400 border-violet-500/30 text-xs gap-1 font-medium">
       <Users className="w-3 h-3" />
-      Team
+      Team · {count}
     </Badge>
   );
 }

@@ -58,7 +58,7 @@ export default function SessionsList() {
                   <TableCell>
                     <div className="flex items-center gap-2 flex-wrap">
                       <SessionStatusBadge status={session.status} />
-                      {session.teamMembers && session.teamMembers.length > 0 && <TeamSessionBadge />}
+                      {session.teamMembers && session.teamMembers.length > 0 && <TeamSessionBadge count={session.teamMembers.length} />}
                       <SwarmPill sessionId={session.id} isReady={session.status === "ready"} />
                     </div>
                   </TableCell>
