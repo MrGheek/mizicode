@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { useListSessions, getListSessionsQueryKey } from "@workspace/api-client-react";
+import { useListSessions } from "@workspace/api-client-react";
 import { format } from "date-fns";
 import { Terminal, Eye, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,54 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SwarmPill } from "@/components/swarm-activity-panel";
+import type { SwarmStatusResponse } from "@/components/swarm-activity-panel";
+import { useState, useEffect, useRef } from "react";
+
+const BASE_URL = import.meta.env.BASE_URL ?? "/";
+const BATCH_INTERVAL_MS = 3000;
+
+function useSwarmBatchStatus(sessionIds: number[], hasReadySessions: boolean) {
+  const [statusMap, setStatusMap] = useState<Record<number, SwarmStatusResponse>>({});
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const idsKey = sessionIds.slice().sort((a, b) => a - b).join(",");
+
+  useEffect(() => {
+    if (sessionIds.length === 0) {
+      setStatusMap({});
+      return;
+    }
+
+    const fetchBatch = async () => {
+      try {
+        const res = await fetch(`${BASE_URL}api/sessions/swarm-status-batch?ids=${idsKey}`);
+        if (!res.ok) return;
+        const json: Record<string, SwarmStatusResponse> = await res.json();
+        const coerced: Record<number, SwarmStatusResponse> = {};
+        for (const [k, v] of Object.entries(json)) {
+          coerced[Number(k)] = v;
+        }
+        setStatusMap(coerced);
+      } catch {
+        // Keep stale data on network error
+      }
+    };
+
+    // Fetch once on mount so historical swarm data is shown even for stopped sessions.
+    fetchBatch();
+
+    // Only keep a live polling interval when at least one session is ready —
+    // stopped/error sessions don't receive new swarm pushes so there's nothing to refresh.
+    if (!hasReadySessions) return;
+
+    timerRef.current = setInterval(fetchBatch, BATCH_INTERVAL_MS);
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [idsKey, hasReadySessions]);
+
+  return statusMap;
+}
 
 type TeamFilter = "all" | "team" | "solo";
 
@@ -21,6 +69,10 @@ export default function SessionsList() {
     if (teamFilter === "solo") return !session.teamMembers || session.teamMembers.length === 0;
     return true;
   });
+
+  const sessionIds = sessions?.map((s) => s.id) ?? [];
+  const hasReadySessions = sessions?.some((s) => s.status === "ready") ?? false;
+  const swarmStatusMap = useSwarmBatchStatus(sessionIds, hasReadySessions);
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
@@ -86,7 +138,11 @@ export default function SessionsList() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <SessionStatusBadge status={session.status} />
                       {session.teamMembers && session.teamMembers.length > 0 && <TeamSessionBadge count={session.teamMembers.length} />}
-                      <SwarmPill sessionId={session.id} isReady={session.status === "ready"} />
+                      <SwarmPill
+                        sessionId={session.id}
+                        isReady={session.status === "ready"}
+                        data={swarmStatusMap[session.id] ?? null}
+                      />
                     </div>
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-sm">
@@ -99,9 +155,9 @@ export default function SessionsList() {
                     ${session.totalCost?.toFixed(2) || "0.00"}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       onClick={() => setLocation(`/sessions/${session.id}`)}
                       title="View Details"
                     >

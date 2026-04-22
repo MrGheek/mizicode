@@ -283,6 +283,72 @@ router.get("/sessions/active", async (_req, res) => {
   res.json({ session: { ...redactOwnerToken(synced), teamMembers: sanitizedMembers, profileName: profile?.displayName || "" } });
 });
 
+// GET /sessions/swarm-status-batch?ids=1,2,3 — batch endpoint for the sessions list.
+// Returns a map of session-id → SwarmStatusResponse so the list can refresh all pills
+// with a single request instead of one per row.
+// NOTE: must be registered before /sessions/:sessionId to avoid being caught by that route.
+router.get("/sessions/swarm-status-batch", async (req, res) => {
+  const raw = typeof req.query["ids"] === "string" ? req.query["ids"] : "";
+  const ids = raw
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+
+  if (ids.length === 0) {
+    res.json({});
+    return;
+  }
+
+  try {
+    const rows = await db
+      .select({ id: sessionsTable.id, status: sessionsTable.status, swarmSnapshotJson: sessionsTable.swarmSnapshotJson })
+      .from(sessionsTable)
+      .where(inArray(sessionsTable.id, ids));
+
+    const result: Record<number, { availability: string; snapshot: SwarmSnapshot | null }> = {};
+
+    for (const session of rows) {
+      const sessionId = session.id;
+
+      if (["pending", "provisioning", "downloading", "starting"].includes(session.status)) {
+        result[sessionId] = { availability: "starting", snapshot: null };
+        continue;
+      }
+
+      const cached = swarmCache.get(sessionId);
+      const dbSnapshot = session.swarmSnapshotJson as SwarmSnapshot | null;
+
+      if (!cached && !dbSnapshot) {
+        result[sessionId] = { availability: "unavailable", snapshot: null };
+        continue;
+      }
+
+      if (cached) {
+        const ageMs = Date.now() - cached.receivedAt;
+        if (ageMs <= STALE_THRESHOLD_MS) {
+          result[sessionId] = { availability: "live", snapshot: cached.snapshot };
+        } else {
+          result[sessionId] = { availability: "stale", snapshot: cached.snapshot };
+        }
+        continue;
+      }
+
+      if (dbSnapshot) {
+        swarmCache.set(sessionId, { snapshot: dbSnapshot, receivedAt: 0 });
+        result[sessionId] = { availability: "stale", snapshot: dbSnapshot };
+        continue;
+      }
+
+      result[sessionId] = { availability: "unavailable", snapshot: null };
+    }
+
+    res.json(result);
+  } catch (err) {
+    logger.error(err, "Failed to fetch batch swarm status");
+    res.status(500).json({ error: "Failed to fetch batch swarm status" });
+  }
+});
+
 router.get("/sessions/:sessionId", async (req, res) => {
   const id = parseInt(req.params.sessionId);
   if (isNaN(id)) {

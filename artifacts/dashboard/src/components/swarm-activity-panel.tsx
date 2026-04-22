@@ -241,10 +241,8 @@ export function swarmTabShouldShow(data: SwarmStatusResponse | null): boolean {
   return phase !== "never" && phase !== undefined;
 }
 
-export function SwarmPill({ sessionId, isReady }: { sessionId: number; isReady: boolean }) {
+function SwarmPillUI({ sessionId, data }: { sessionId: number; data: SwarmStatusResponse | null }) {
   const [, setLocation] = useLocation();
-  const { data } = useSwarmStatus(sessionId, isReady);
-
   const label = swarmTabBadgeLabel(data);
   const phase = data?.snapshot?.phase;
   const visible = label !== null && (phase === "active" || phase === "synthesising");
@@ -277,6 +275,26 @@ export function SwarmPill({ sessionId, isReady }: { sessionId: number; isReady: 
       {label}
     </button>
   );
+}
+
+function SwarmPillWithOwnFetch({ sessionId, isReady }: { sessionId: number; isReady: boolean }) {
+  const { data } = useSwarmStatus(sessionId, isReady);
+  return <SwarmPillUI sessionId={sessionId} data={data} />;
+}
+
+export function SwarmPill({
+  sessionId,
+  isReady,
+  data,
+}: {
+  sessionId: number;
+  isReady: boolean;
+  data?: SwarmStatusResponse | null;
+}) {
+  if (data !== undefined) {
+    return <SwarmPillUI sessionId={sessionId} data={data} />;
+  }
+  return <SwarmPillWithOwnFetch sessionId={sessionId} isReady={isReady} />;
 }
 
 interface SwarmActivityPanelProps {
