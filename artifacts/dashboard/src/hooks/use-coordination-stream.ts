@@ -75,8 +75,26 @@ export function useCoordinationStream(sessionId: number | null | undefined): voi
 
     connect();
 
+    function handleVisibilityChange() {
+      if (document.visibilityState !== "visible") return;
+      invalidateAll();
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+      retryCountRef.current = 0;
+      connect();
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       if (esRef.current) {
         esRef.current.close();
