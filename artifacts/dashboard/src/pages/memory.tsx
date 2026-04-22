@@ -71,10 +71,36 @@ function useGlobalSearch(query: string, projectPath: string, offset: number) {
   });
 }
 
+const LAST_BACKUP_KEY = "omniql:last-memory-backup";
+
+function useLastBackupTime() {
+  const [lastBackup, setLastBackup] = useState<Date | null>(() => {
+    try {
+      const stored = localStorage.getItem(LAST_BACKUP_KEY);
+      return stored ? new Date(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const recordBackup = () => {
+    const now = new Date();
+    try {
+      localStorage.setItem(LAST_BACKUP_KEY, now.toISOString());
+    } catch {
+      // ignore storage errors
+    }
+    setLastBackup(now);
+  };
+
+  return { lastBackup, recordBackup };
+}
+
 function MemoryBackupCard() {
   const [restoring, setRestoring] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { lastBackup, recordBackup } = useLastBackupTime();
 
   async function handleDownload() {
     setDownloading(true);
@@ -93,6 +119,7 @@ function MemoryBackupCard() {
       a.href = url;
       a.click();
       URL.revokeObjectURL(url);
+      recordBackup();
       toast.success("Memory backup downloaded");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to download backup");
@@ -135,6 +162,12 @@ function MemoryBackupCard() {
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
           <Download className="w-4 h-4" /> Backup &amp; Restore
+          {lastBackup && (
+            <span className="ml-auto text-[10px] font-normal normal-case text-muted-foreground/70 flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              Last backed up: {format(lastBackup, "MMM d, yyyy 'at' HH:mm")}
+            </span>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
