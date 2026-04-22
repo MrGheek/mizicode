@@ -829,11 +829,13 @@ router.get("/sessions/:sessionId/memory/search", (req, res) => {
   const q = (req.query["q"] as string | undefined) || "";
   const projectPath = (req.query["projectPath"] as string | undefined) || undefined;
   if (!q.trim()) {
-    res.json({ observations: [], sessions: [] });
+    res.json({ observations: [], sessions: [], totalObservations: 0, totalSessions: 0 });
     return;
   }
+  const limit = Math.min(100, Math.max(1, parseInt((req.query["limit"] as string | undefined) || "30", 10) || 30));
+  const offset = Math.max(0, parseInt((req.query["offset"] as string | undefined) || "0", 10) || 0);
   try {
-    const results = searchMemory(MEM_USER_ID, q, 30, projectPath);
+    const results = searchMemory(MEM_USER_ID, q, limit, offset, projectPath);
     res.json(results);
   } catch (err) {
     logger.error(err, "Failed to search memory for dashboard");
@@ -845,11 +847,13 @@ router.get("/memory/search", (req, res) => {
   const q = (req.query["q"] as string | undefined) || "";
   const projectPath = (req.query["projectPath"] as string | undefined) || undefined;
   if (!q.trim()) {
-    res.json({ observations: [], sessions: [] });
+    res.json({ observations: [], sessions: [], totalObservations: 0, totalSessions: 0 });
     return;
   }
+  const limit = Math.min(100, Math.max(1, parseInt((req.query["limit"] as string | undefined) || "30", 10) || 30));
+  const offset = Math.max(0, parseInt((req.query["offset"] as string | undefined) || "0", 10) || 0);
   try {
-    const results = searchMemory(MEM_USER_ID, q, 30, projectPath);
+    const results = searchMemory(MEM_USER_ID, q, limit, offset, projectPath);
     res.json(results);
   } catch (err) {
     logger.error(err, "Failed to search global memory for dashboard");
@@ -859,8 +863,10 @@ router.get("/memory/search", (req, res) => {
 
 router.get("/memory/sessions", (req, res) => {
   const projectPath = (req.query["projectPath"] as string | undefined) || undefined;
+  const limit = Math.min(200, Math.max(1, parseInt((req.query["limit"] as string | undefined) || "100", 10) || 100));
+  const offset = Math.max(0, parseInt((req.query["offset"] as string | undefined) || "0", 10) || 0);
   try {
-    const sessions = listSessions(MEM_USER_ID, 100, 0, projectPath);
+    const sessions = listSessions(MEM_USER_ID, limit, offset, projectPath);
     res.json(sessions);
   } catch (err) {
     logger.error(err, "Failed to list all memory sessions for dashboard");

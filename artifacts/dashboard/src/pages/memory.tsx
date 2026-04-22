@@ -1,14 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Brain, Search, X, Clock, ChevronDown, ChevronRight, FolderOpen, Download, Upload, AlertTriangle } from "lucide-react";
+import { Brain, Search, X, Clock, ChevronDown, ChevronRight, FolderOpen, Download, Upload, AlertTriangle, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { toast } from "sonner";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
+const PAGE_SIZE = 30;
+const SESSIONS_PAGE_SIZE = 50;
 
 interface MemSession {
   id: string;
@@ -38,27 +40,29 @@ interface SearchResultObservation extends MemObservation {
 interface MemorySearchResult {
   observations: SearchResultObservation[];
   sessions: MemSession[];
+  totalObservations: number;
+  totalSessions: number;
 }
 
-function useAllSessions() {
+function useSessionsPage(offset: number) {
   return useQuery<MemSession[]>({
-    queryKey: ["mem-all-sessions"],
+    queryKey: ["mem-all-sessions", offset],
     queryFn: async () => {
-      const res = await fetch(`${BASE_URL}api/memory/sessions`);
+      const res = await fetch(`${BASE_URL}api/memory/sessions?limit=${SESSIONS_PAGE_SIZE}&offset=${offset}`);
       if (!res.ok) throw new Error("Failed to fetch memory sessions");
       return res.json();
     },
-    refetchInterval: 60000,
+    refetchInterval: offset === 0 ? 60000 : false,
   });
 }
 
-function useGlobalSearch(query: string, projectPath: string) {
-  const params = new URLSearchParams({ q: query });
-  if (projectPath) params.set("projectPath", projectPath);
+function useGlobalSearch(query: string, projectPath: string, offset: number) {
   return useQuery<MemorySearchResult>({
-    queryKey: ["mem-global-search", query, projectPath],
+    queryKey: ["mem-global-search", query, projectPath, offset],
     enabled: query.trim().length > 1,
     queryFn: async () => {
+      const params = new URLSearchParams({ q: query, limit: String(PAGE_SIZE), offset: String(offset) });
+      if (projectPath) params.set("projectPath", projectPath);
       const res = await fetch(`${BASE_URL}api/memory/search?${params.toString()}`);
       if (!res.ok) throw new Error("Failed to search memory");
       return res.json();
@@ -190,12 +194,37 @@ function MemoryBackupCard() {
 }
 
 export default function MemoryPage() {
-  const { data: sessions, isLoading: sessionsLoading } = useAllSessions();
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
   const [selectedProject, setSelectedProject] = useState("");
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Default sessions list pagination
+  const [sessionsOffset, setSessionsOffset] = useState(0);
+  const [allLoadedSessions, setAllLoadedSessions] = useState<MemSession[]>([]);
+  const { data: sessionsPage, isLoading: sessionsLoading, isFetching: sessionsFetching } = useSessionsPage(sessionsOffset);
+
+  useEffect(() => {
+    if (!sessionsPage) return;
+    if (sessionsOffset === 0) {
+      setAllLoadedSessions(sessionsPage);
+    } else {
+      setAllLoadedSessions(prev => {
+        const seen = new Set(prev.map(s => s.id));
+        return [...prev, ...sessionsPage.filter(s => !seen.has(s.id))];
+      });
+    }
+  }, [sessionsPage]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const hasMoreSessions = (sessionsPage?.length ?? 0) >= SESSIONS_PAGE_SIZE;
+
+  // Search pagination
+  const [searchOffset, setSearchOffset] = useState(0);
+  const [allObservations, setAllObservations] = useState<SearchResultObservation[]>([]);
+  const [allSessions, setAllSessions] = useState<MemSession[]>([]);
+  const [totalObservations, setTotalObservations] = useState(0);
+  const [totalSessions, setTotalSessions] = useState(0);
 
   useEffect(() => {
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
@@ -203,20 +232,56 @@ export default function MemoryPage() {
     return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
   }, [searchInput]);
 
+  // Reset accumulated results when query or project filter changes
+  useEffect(() => {
+    setSearchOffset(0);
+    setAllObservations([]);
+    setAllSessions([]);
+    setTotalObservations(0);
+    setTotalSessions(0);
+  }, [debouncedQuery, selectedProject]);
+
   const isSearching = debouncedQuery.trim().length > 1;
-  const { data: searchResults, isLoading: searchLoading } = useGlobalSearch(debouncedQuery, selectedProject);
+  const { data: searchResults, isLoading: searchLoading, isFetching } = useGlobalSearch(debouncedQuery, selectedProject, searchOffset);
 
   const projectPaths = useMemo(() => {
-    if (!sessions) return [];
-    const paths = [...new Set(sessions.map(s => s.projectPath).filter(Boolean))].sort();
+    const paths = [...new Set(allLoadedSessions.map(s => s.projectPath).filter(Boolean))].sort();
     return paths;
-  }, [sessions]);
+  }, [allLoadedSessions]);
 
   const filteredSessions = useMemo(() => {
-    if (!sessions) return [];
-    if (!selectedProject) return sessions;
-    return sessions.filter(s => s.projectPath === selectedProject);
-  }, [sessions, selectedProject]);
+    if (!selectedProject) return allLoadedSessions;
+    return allLoadedSessions.filter(s => s.projectPath === selectedProject);
+  }, [allLoadedSessions, selectedProject]);
+
+
+  // Accumulate results as pages load (dedup by id)
+  useEffect(() => {
+    if (!searchResults) return;
+    setTotalObservations(searchResults.totalObservations);
+    setTotalSessions(searchResults.totalSessions);
+    if (searchOffset === 0) {
+      setAllObservations(searchResults.observations);
+      setAllSessions(searchResults.sessions);
+    } else {
+      setAllObservations(prev => {
+        const seen = new Set(prev.map(o => o.id));
+        return [...prev, ...searchResults.observations.filter(o => !seen.has(o.id))];
+      });
+      setAllSessions(prev => {
+        const seen = new Set(prev.map(s => s.id));
+        return [...prev, ...searchResults.sessions.filter(s => !seen.has(s.id))];
+      });
+    }
+  }, [searchResults]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const hasMoreSearchObservations = allObservations.length < totalObservations;
+  const hasMoreSearchSessions = allSessions.length < totalSessions;
+  const hasMore = hasMoreSearchObservations || hasMoreSearchSessions;
+
+  const loadMore = () => {
+    setSearchOffset(prev => prev + PAGE_SIZE);
+  };
 
   const toggleSession = (id: string) => {
     setExpandedSessions(prev => {
@@ -314,23 +379,23 @@ export default function MemoryPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {searchLoading ? (
+            {searchLoading && searchOffset === 0 ? (
               <div className="space-y-2">
                 {Array.from({ length: 3 }).map((_, i) => (
                   <Skeleton key={i} className="h-14 w-full" />
                 ))}
               </div>
-            ) : !searchResults || (searchResults.observations.length === 0 && searchResults.sessions.length === 0) ? (
+            ) : allObservations.length === 0 && allSessions.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-6">No results found.</p>
             ) : (
               <div className="space-y-4">
-                {searchResults.sessions.length > 0 && (
+                {allSessions.length > 0 && (
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-                      Sessions ({searchResults.sessions.length})
+                      Sessions — showing {allSessions.length} of {totalSessions}
                     </p>
                     <div className="space-y-2">
-                      {searchResults.sessions.map(sess => (
+                      {allSessions.map(sess => (
                         <div key={sess.id} className="border border-primary/30 bg-primary/5 rounded p-3">
                           <div className="flex items-center gap-2 mb-1.5">
                             <span className="font-mono text-[10px] text-primary/70 bg-primary/10 rounded px-1.5 py-0.5">
@@ -357,13 +422,13 @@ export default function MemoryPage() {
                   </div>
                 )}
 
-                {searchResults.observations.length > 0 && (
+                {allObservations.length > 0 && (
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-                      Tool Observations ({searchResults.observations.length})
+                      Tool Observations — showing {allObservations.length} of {totalObservations}
                     </p>
                     <div className="space-y-1.5">
-                      {searchResults.observations.map(obs => (
+                      {allObservations.map(obs => (
                         <div key={obs.id} className="border border-border/40 rounded p-2 text-xs font-mono">
                           <div className="flex items-center justify-between mb-1">
                             <span className="text-primary font-semibold">{obs.toolName}</span>
@@ -389,6 +454,23 @@ export default function MemoryPage() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {hasMore && (
+                  <div className="flex justify-center pt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={loadMore}
+                      disabled={isFetching}
+                      className="gap-2"
+                    >
+                      {isFetching ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : null}
+                      Load more
+                    </Button>
                   </div>
                 )}
               </div>
@@ -516,6 +598,22 @@ export default function MemoryPage() {
                     ))}
                   </CardContent>
                 </Card>
+              )}
+
+              {/* Load more sessions */}
+              {hasMoreSessions && (
+                <div className="flex justify-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSessionsOffset(prev => prev + SESSIONS_PAGE_SIZE)}
+                    disabled={sessionsFetching}
+                    className="gap-2"
+                  >
+                    {sessionsFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                    Load more sessions
+                  </Button>
+                </div>
               )}
             </>
           )}

@@ -70,6 +70,8 @@ interface SearchResultObservation extends MemObservation {
 interface MemorySearchResult {
   observations: SearchResultObservation[];
   sessions: MemSession[];
+  totalObservations: number;
+  totalSessions: number;
 }
 
 function useMemSessions(sessionId: number) {
@@ -110,13 +112,15 @@ function useMemObservations(sessionId: number, isActive: boolean) {
 const RETRY_DELAYS = [3000, 10000, 30000];
 const MAX_RETRIES = RETRY_DELAYS.length;
 
-function useMemorySearch(sessionId: number, query: string, projectPath: string) {
-  const params = new URLSearchParams({ q: query });
-  if (projectPath) params.set("projectPath", projectPath);
+const MEM_PAGE_SIZE = 30;
+
+function useMemorySearch(sessionId: number, query: string, projectPath: string, offset: number) {
   return useQuery<MemorySearchResult>({
-    queryKey: ["mem-search", sessionId, query, projectPath],
+    queryKey: ["mem-search", sessionId, query, projectPath, offset],
     enabled: !!sessionId && query.trim().length > 1,
     queryFn: async () => {
+      const params = new URLSearchParams({ q: query, limit: String(MEM_PAGE_SIZE), offset: String(offset) });
+      if (projectPath) params.set("projectPath", projectPath);
       const url = `${BASE_URL}api/sessions/${sessionId}/memory/search?${params.toString()}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to search memory");
@@ -126,7 +130,23 @@ function useMemorySearch(sessionId: number, query: string, projectPath: string) 
   });
 }
 
-function SearchResults({ results, isLoading }: { results: MemorySearchResult | undefined; isLoading: boolean }) {
+function SearchResults({
+  allObservations,
+  allSessions,
+  totalObservations,
+  totalSessions,
+  isLoading,
+  isFetching,
+  onLoadMore,
+}: {
+  allObservations: SearchResultObservation[];
+  allSessions: MemSession[];
+  totalObservations: number;
+  totalSessions: number;
+  isLoading: boolean;
+  isFetching: boolean;
+  onLoadMore: () => void;
+}) {
   if (isLoading) {
     return (
       <div className="space-y-2">
@@ -136,10 +156,9 @@ function SearchResults({ results, isLoading }: { results: MemorySearchResult | u
       </div>
     );
   }
-  if (!results) return null;
 
-  const hasObs = results.observations.length > 0;
-  const hasSess = results.sessions.length > 0;
+  const hasObs = allObservations.length > 0;
+  const hasSess = allSessions.length > 0;
 
   if (!hasObs && !hasSess) {
     return (
@@ -147,15 +166,19 @@ function SearchResults({ results, isLoading }: { results: MemorySearchResult | u
     );
   }
 
+  const hasMoreObs = allObservations.length < totalObservations;
+  const hasMoreSess = allSessions.length < totalSessions;
+  const hasMore = hasMoreObs || hasMoreSess;
+
   return (
     <div className="space-y-4">
       {hasSess && (
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-            Matching Sessions ({results.sessions.length})
+            Matching Sessions — showing {allSessions.length} of {totalSessions}
           </p>
           <div className="space-y-2">
-            {results.sessions.map(sess => (
+            {allSessions.map(sess => (
               <div key={sess.id} className="border border-primary/30 bg-primary/5 rounded p-3">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="font-mono text-[10px] text-primary/60 bg-primary/10 rounded px-1">
@@ -178,10 +201,10 @@ function SearchResults({ results, isLoading }: { results: MemorySearchResult | u
       {hasObs && (
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-            Matching Observations ({results.observations.length})
+            Matching Observations — showing {allObservations.length} of {totalObservations}
           </p>
           <div className="space-y-1.5">
-            {results.observations.map(obs => (
+            {allObservations.map(obs => (
               <div key={obs.id} className="border border-border/40 rounded p-2 text-xs font-mono">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-primary font-semibold">{obs.toolName}</span>
@@ -207,6 +230,21 @@ function SearchResults({ results, isLoading }: { results: MemorySearchResult | u
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {hasMore && (
+        <div className="flex justify-center pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onLoadMore}
+            disabled={isFetching}
+            className="gap-2"
+          >
+            {isFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            Load more
+          </Button>
         </div>
       )}
     </div>
@@ -242,6 +280,11 @@ function MemoryTab({
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [searchOffset, setSearchOffset] = useState(0);
+  const [allSearchObs, setAllSearchObs] = useState<SearchResultObservation[]>([]);
+  const [allSearchSessions, setAllSearchSessions] = useState<MemSession[]>([]);
+  const [totalSearchObs, setTotalSearchObs] = useState(0);
+  const [totalSearchSessions, setTotalSearchSessions] = useState(0);
 
   useEffect(() => {
     setStreamedObservations([]);
@@ -325,8 +368,37 @@ function MemoryTab({
     return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
   }, [searchInput]);
 
+  // Reset pagination when query changes
+  useEffect(() => {
+    setSearchOffset(0);
+    setAllSearchObs([]);
+    setAllSearchSessions([]);
+    setTotalSearchObs(0);
+    setTotalSearchSessions(0);
+  }, [debouncedQuery]);
+
   const isSearching = debouncedQuery.trim().length > 1;
-  const { data: searchResults, isLoading: searchLoading } = useMemorySearch(sessionId, debouncedQuery, selectedProject);
+  const { data: searchResults, isLoading: searchLoading, isFetching: searchFetching } = useMemorySearch(sessionId, debouncedQuery, selectedProject, searchOffset);
+
+  // Accumulate search results across pages (dedup by id)
+  useEffect(() => {
+    if (!searchResults) return;
+    setTotalSearchObs(searchResults.totalObservations);
+    setTotalSearchSessions(searchResults.totalSessions);
+    if (searchOffset === 0) {
+      setAllSearchObs(searchResults.observations);
+      setAllSearchSessions(searchResults.sessions);
+    } else {
+      setAllSearchObs(prev => {
+        const seen = new Set(prev.map(o => o.id));
+        return [...prev, ...searchResults.observations.filter(o => !seen.has(o.id))];
+      });
+      setAllSearchSessions(prev => {
+        const seen = new Set(prev.map(s => s.id));
+        return [...prev, ...searchResults.sessions.filter(s => !seen.has(s.id))];
+      });
+    }
+  }, [searchResults]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Merge streamed + polled observations (deduped, sorted newest-first)
   const allObservations = (() => {
@@ -456,7 +528,15 @@ function MemoryTab({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <SearchResults results={searchResults} isLoading={searchLoading} />
+            <SearchResults
+              allObservations={allSearchObs}
+              allSessions={allSearchSessions}
+              totalObservations={totalSearchObs}
+              totalSessions={totalSearchSessions}
+              isLoading={searchLoading && searchOffset === 0}
+              isFetching={searchFetching}
+              onLoadMore={() => setSearchOffset(prev => prev + MEM_PAGE_SIZE)}
+            />
           </CardContent>
         </Card>
       )}

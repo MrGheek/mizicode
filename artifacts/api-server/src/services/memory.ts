@@ -1438,12 +1438,14 @@ export interface SearchResultObservation extends Observation {
 export interface MemorySearchResult {
   observations: SearchResultObservation[];
   sessions: SessionSummary[];
+  totalObservations: number;
+  totalSessions: number;
 }
 
-export function searchMemory(userId: string, rawQuery: string, limit = 30, projectPath?: string): MemorySearchResult {
+export function searchMemory(userId: string, rawQuery: string, limit = 30, offset = 0, projectPath?: string): MemorySearchResult {
   const db = getDb();
   const trimmed = rawQuery.trim();
-  if (!trimmed) return { observations: [], sessions: [] };
+  if (!trimmed) return { observations: [], sessions: [], totalObservations: 0, totalSessions: 0 };
 
   const ftsQuery = trimmed
     .split(/\s+/)
@@ -1451,8 +1453,20 @@ export function searchMemory(userId: string, rawQuery: string, limit = 30, proje
     .join(" ");
 
   let observations: SearchResultObservation[] = [];
+  let totalObservations = 0;
   try {
     if (projectPath) {
+      const totalRow = db.prepare(`
+        SELECT COUNT(*) as cnt
+        FROM mem_observations_fts fts
+        JOIN mem_observations o ON fts.rowid = o.id
+        JOIN mem_sessions s ON o.session_id = s.id
+        WHERE fts MATCH ?
+          AND o.user_id = ?
+          AND s.project_path = ?
+      `).get(ftsQuery, userId, projectPath) as { cnt: number } | undefined;
+      totalObservations = totalRow?.cnt ?? 0;
+
       observations = db.prepare(`
         SELECT o.id, o.session_id as sessionId, o.user_id as userId,
                o.tool_name as toolName, o.input_summary as inputSummary,
@@ -1465,9 +1479,18 @@ export function searchMemory(userId: string, rawQuery: string, limit = 30, proje
           AND o.user_id = ?
           AND s.project_path = ?
         ORDER BY o.recorded_at DESC
-        LIMIT ?
-      `).all(ftsQuery, userId, projectPath, limit) as SearchResultObservation[];
+        LIMIT ? OFFSET ?
+      `).all(ftsQuery, userId, projectPath, limit, offset) as SearchResultObservation[];
     } else {
+      const totalRow = db.prepare(`
+        SELECT COUNT(*) as cnt
+        FROM mem_observations_fts fts
+        JOIN mem_observations o ON fts.rowid = o.id
+        WHERE fts MATCH ?
+          AND o.user_id = ?
+      `).get(ftsQuery, userId) as { cnt: number } | undefined;
+      totalObservations = totalRow?.cnt ?? 0;
+
       observations = db.prepare(`
         SELECT o.id, o.session_id as sessionId, o.user_id as userId,
                o.tool_name as toolName, o.input_summary as inputSummary,
@@ -1479,17 +1502,28 @@ export function searchMemory(userId: string, rawQuery: string, limit = 30, proje
         WHERE fts MATCH ?
           AND o.user_id = ?
         ORDER BY o.recorded_at DESC
-        LIMIT ?
-      `).all(ftsQuery, userId, limit) as SearchResultObservation[];
+        LIMIT ? OFFSET ?
+      `).all(ftsQuery, userId, limit, offset) as SearchResultObservation[];
     }
   } catch (err) {
     logger.warn({ err, ftsQuery, rawQuery }, "[mem] FTS5 query parse failed — returning empty observations");
     observations = [];
+    totalObservations = 0;
   }
 
   const likePattern = `%${trimmed.replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
+  let totalSessions = 0;
   let sessions: SessionSummary[];
   if (projectPath) {
+    const totalSessionsRow = db.prepare(`
+      SELECT COUNT(*) as cnt
+      FROM mem_sessions s
+      WHERE s.user_id = ?
+        AND s.project_path = ?
+        AND s.summary LIKE ? ESCAPE '\\'
+    `).get(userId, projectPath, likePattern) as { cnt: number } | undefined;
+    totalSessions = totalSessionsRow?.cnt ?? 0;
+
     sessions = db.prepare(`
       SELECT s.id, s.user_id as userId, s.project_path as projectPath,
              s.started_at as startedAt, s.ended_at as endedAt, s.summary,
@@ -1501,9 +1535,17 @@ export function searchMemory(userId: string, rawQuery: string, limit = 30, proje
         AND s.summary LIKE ? ESCAPE '\\'
       GROUP BY s.id
       ORDER BY s.started_at DESC
-      LIMIT ?
-    `).all(userId, projectPath, likePattern, limit) as SessionSummary[];
+      LIMIT ? OFFSET ?
+    `).all(userId, projectPath, likePattern, limit, offset) as SessionSummary[];
   } else {
+    const totalSessionsRow = db.prepare(`
+      SELECT COUNT(*) as cnt
+      FROM mem_sessions s
+      WHERE s.user_id = ?
+        AND s.summary LIKE ? ESCAPE '\\'
+    `).get(userId, likePattern) as { cnt: number } | undefined;
+    totalSessions = totalSessionsRow?.cnt ?? 0;
+
     sessions = db.prepare(`
       SELECT s.id, s.user_id as userId, s.project_path as projectPath,
              s.started_at as startedAt, s.ended_at as endedAt, s.summary,
@@ -1514,11 +1556,11 @@ export function searchMemory(userId: string, rawQuery: string, limit = 30, proje
         AND s.summary LIKE ? ESCAPE '\\'
       GROUP BY s.id
       ORDER BY s.started_at DESC
-      LIMIT ?
-    `).all(userId, likePattern, limit) as SessionSummary[];
+      LIMIT ? OFFSET ?
+    `).all(userId, likePattern, limit, offset) as SessionSummary[];
   }
 
-  return { observations, sessions };
+  return { observations, sessions, totalObservations, totalSessions };
 }
 
 export function healthCheck(): boolean {
