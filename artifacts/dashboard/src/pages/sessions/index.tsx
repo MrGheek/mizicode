@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useLocation } from "wouter";
 import { useListSessions, getListSessionsQueryKey } from "@workspace/api-client-react";
 import { format } from "date-fns";
@@ -8,9 +9,18 @@ import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-statu
 import { Skeleton } from "@/components/ui/skeleton";
 import { SwarmPill } from "@/components/swarm-activity-panel";
 
+type TeamFilter = "all" | "team" | "solo";
+
 export default function SessionsList() {
   const [, setLocation] = useLocation();
   const { data: sessions, isLoading } = useListSessions();
+  const [teamFilter, setTeamFilter] = useState<TeamFilter>("all");
+
+  const filteredSessions = sessions?.filter((session) => {
+    if (teamFilter === "team") return session.teamMembers && session.teamMembers.length > 0;
+    if (teamFilter === "solo") return !session.teamMembers || session.teamMembers.length === 0;
+    return true;
+  });
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
@@ -19,9 +29,26 @@ export default function SessionsList() {
           <h1 className="text-3xl font-bold tracking-tight">Sessions</h1>
           <p className="text-muted-foreground mt-1">History of all active and past coding sessions</p>
         </div>
-        <Button onClick={() => setLocation("/")} className="gap-2">
-          <Plus className="w-4 h-4" /> New Session
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center rounded-lg border border-border/50 overflow-hidden bg-card/50 text-sm">
+            {(["all", "team", "solo"] as TeamFilter[]).map((option) => (
+              <button
+                key={option}
+                onClick={() => setTeamFilter(option)}
+                className={`px-3 py-1.5 capitalize transition-colors ${
+                  teamFilter === option
+                    ? "bg-primary text-primary-foreground font-medium"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                }`}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+          <Button onClick={() => setLocation("/")} className="gap-2">
+            <Plus className="w-4 h-4" /> New Session
+          </Button>
+        </div>
       </div>
 
       <div className="border border-border/50 rounded-lg bg-card/50 overflow-hidden">
@@ -50,8 +77,8 @@ export default function SessionsList() {
                   <TableCell className="text-right"><Skeleton className="h-8 w-8 ml-auto rounded" /></TableCell>
                 </TableRow>
               ))
-            ) : sessions?.length ? (
-              sessions.map((session) => (
+            ) : filteredSessions?.length ? (
+              filteredSessions.map((session) => (
                 <TableRow key={session.id} className="border-border/50">
                   <TableCell className="font-mono text-muted-foreground">#{session.id}</TableCell>
                   <TableCell className="font-medium">{session.profileName}</TableCell>
@@ -87,7 +114,9 @@ export default function SessionsList() {
               <TableRow>
                 <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                   <Terminal className="w-8 h-8 mx-auto mb-3 opacity-20" />
-                  No sessions found
+                  {teamFilter === "all"
+                    ? "No sessions found"
+                    : `No ${teamFilter} sessions found`}
                 </TableCell>
               </TableRow>
             )}
