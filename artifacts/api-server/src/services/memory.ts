@@ -1530,3 +1530,42 @@ export function healthCheck(): boolean {
     return false;
   }
 }
+
+/**
+ * Creates a safe backup of the memory database using better-sqlite3's
+ * built-in backup API (handles WAL mode correctly).
+ * Returns the path to the temporary backup file — caller must delete it.
+ */
+export async function backupDb(): Promise<string> {
+  const db = getDb();
+  const tmpPath = `${DB_PATH}.backup-${Date.now()}.db`;
+  await db.backup(tmpPath);
+  return tmpPath;
+}
+
+/**
+ * Restores the memory database from the provided buffer.
+ * Validates the buffer is a valid SQLite file, closes the current connection,
+ * replaces the DB file, and re-initialises the singleton.
+ */
+export function restoreDb(buf: Buffer): void {
+  const SQLITE_HEADER = "SQLite format 3\0";
+  if (buf.length < 16 || buf.slice(0, 16).toString("utf8") !== SQLITE_HEADER) {
+    throw new Error("Invalid SQLite file: header mismatch");
+  }
+
+  if (_db) {
+    _db.close();
+    _db = null;
+  }
+
+  const walPath = `${DB_PATH}-wal`;
+  const shmPath = `${DB_PATH}-shm`;
+  try { fs.unlinkSync(walPath); } catch { /* ignore */ }
+  try { fs.unlinkSync(shmPath); } catch { /* ignore */ }
+
+  fs.writeFileSync(DB_PATH, buf);
+
+  getDb();
+  logger.info({ db: DB_PATH }, "Memory database restored from backup");
+}

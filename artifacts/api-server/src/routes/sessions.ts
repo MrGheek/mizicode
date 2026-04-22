@@ -5,7 +5,8 @@ import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
-import { listObservations, listSessions, searchMemory, subscribeToObservations } from "../services/memory";
+import { listObservations, listSessions, searchMemory, subscribeToObservations, backupDb, restoreDb } from "../services/memory";
+import fs from "fs";
 import type { TeamMemberRecord, SessionRoutingStats } from "@workspace/db";
 import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles, getRepoIntelligenceForSession } from "../services/skills-bundler";
 import type { SessionContext } from "../services/skills-types";
@@ -865,6 +866,58 @@ router.get("/memory/sessions", (req, res) => {
     logger.error(err, "Failed to list all memory sessions for dashboard");
     res.status(500).json({ error: "Failed to list sessions" });
   }
+});
+
+router.get("/memory/backup", async (_req, res) => {
+  let tmpPath: string | null = null;
+  try {
+    tmpPath = await backupDb();
+    const stat = fs.statSync(tmpPath);
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="mem-backup-${new Date().toISOString().slice(0, 10)}.db"`);
+    res.setHeader("Content-Length", stat.size);
+    const stream = fs.createReadStream(tmpPath);
+    stream.on("end", () => {
+      if (tmpPath) {
+        try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+      }
+    });
+    stream.on("error", (err) => {
+      logger.error(err, "Error streaming memory backup");
+      if (!res.headersSent) res.status(500).json({ error: "Failed to stream backup" });
+    });
+    stream.pipe(res);
+  } catch (err) {
+    logger.error(err, "Failed to create memory backup");
+    if (tmpPath) {
+      try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    }
+    if (!res.headersSent) res.status(500).json({ error: "Failed to create backup" });
+  }
+});
+
+router.post("/memory/restore", (req, res) => {
+  const chunks: Buffer[] = [];
+  req.on("data", (chunk: Buffer) => chunks.push(chunk));
+  req.on("end", () => {
+    const buf = Buffer.concat(chunks);
+    if (!buf.length) {
+      res.status(400).json({ error: "No file data received" });
+      return;
+    }
+    try {
+      restoreDb(buf);
+      res.json({ ok: true, message: "Memory database restored successfully" });
+    } catch (err) {
+      logger.error(err, "Failed to restore memory database");
+      const msg = err instanceof Error ? err.message : "Failed to restore database";
+      res.status(400).json({ error: msg });
+    }
+  });
+  req.on("error", (err) => {
+    logger.error(err, "Error reading restore upload body");
+    res.status(500).json({ error: "Failed to read uploaded file" });
+  });
 });
 
 // ── Routing stats endpoints ──────────────────────────────────────────────────

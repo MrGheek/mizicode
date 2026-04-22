@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Brain, Search, X, Clock, ChevronDown, ChevronRight, FolderOpen } from "lucide-react";
+import { Brain, Search, X, Clock, ChevronDown, ChevronRight, FolderOpen, Download, Upload, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { useState, useEffect, useRef, useMemo } from "react";
+import { toast } from "sonner";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 
@@ -63,6 +65,128 @@ function useGlobalSearch(query: string, projectPath: string) {
     },
     staleTime: 5000,
   });
+}
+
+function MemoryBackupCard() {
+  const [restoring, setRestoring] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleDownload() {
+    setDownloading(true);
+    try {
+      const res = await fetch(`${BASE_URL}api/memory/backup`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error || "Download failed");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      a.download = match?.[1] ?? `mem-backup-${new Date().toISOString().slice(0, 10)}.db`;
+      a.href = url;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Memory backup downloaded");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to download backup");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  async function handleRestore(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!e.target.files) return;
+    e.target.value = "";
+    if (!file) return;
+    if (!file.name.endsWith(".db") && !file.name.endsWith(".sqlite") && !file.name.endsWith(".sqlite3")) {
+      toast.error("Please select a .db or .sqlite file");
+      return;
+    }
+    setRestoring(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const res = await fetch(`${BASE_URL}api/memory/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: buf,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error((body as { error?: string }).error || "Restore failed");
+      }
+      toast.success("Memory database restored — reload the page to see updated data");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to restore backup");
+    } finally {
+      setRestoring(false);
+    }
+  }
+
+  return (
+    <Card className="bg-card/50 border-border/50">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+          <Download className="w-4 h-4" /> Backup &amp; Restore
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex-1 space-y-1.5">
+            <p className="text-xs font-medium text-foreground">Download backup</p>
+            <p className="text-xs text-muted-foreground">
+              Export your full memory database as a <code className="font-mono text-[10px] bg-secondary/40 rounded px-1">.db</code> file.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2 gap-1.5"
+              onClick={handleDownload}
+              disabled={downloading}
+            >
+              <Download className="w-3.5 h-3.5" />
+              {downloading ? "Downloading…" : "Download .db"}
+            </Button>
+          </div>
+
+          <div className="w-px bg-border/40 hidden sm:block" />
+
+          <div className="flex-1 space-y-1.5">
+            <p className="text-xs font-medium text-foreground">Restore from backup</p>
+            <p className="text-xs text-muted-foreground">
+              Upload a previously downloaded <code className="font-mono text-[10px] bg-secondary/40 rounded px-1">.db</code> file to replace the current database.
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={restoring}
+              >
+                <Upload className="w-3.5 h-3.5" />
+                {restoring ? "Restoring…" : "Upload & Restore"}
+              </Button>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".db,.sqlite,.sqlite3"
+              className="hidden"
+              onChange={handleRestore}
+            />
+            <p className="text-[10px] text-amber-500/80 flex items-center gap-1 mt-1">
+              <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+              This overwrites all current memory data.
+            </p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function MemoryPage() {
@@ -272,6 +396,9 @@ export default function MemoryPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Backup & Restore */}
+      {!isSearching && <MemoryBackupCard />}
 
       {/* Default view */}
       {!isSearching && (
