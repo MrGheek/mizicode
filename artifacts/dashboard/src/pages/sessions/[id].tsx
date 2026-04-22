@@ -610,6 +610,20 @@ function MemoryTab({
                   <>
                     <p>No session memory recorded yet.</p>
                     <p className="text-xs mt-1 opacity-70">Memory is captured automatically as the AI uses tools during a session.</p>
+                    {(streaming || reconnecting) && (
+                      <div className="mt-3 flex items-center justify-center">
+                        {streaming && (
+                          <span className="flex items-center gap-1 text-[11px] text-emerald-500">
+                            <Radio className="w-3 h-3 animate-pulse" /> Live
+                          </span>
+                        )}
+                        {reconnecting && !streaming && (
+                          <span className="flex items-center gap-1 text-[11px] text-amber-500">
+                            <RefreshCw className="w-3 h-3 animate-spin" /> Reconnecting…
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
               </CardContent>
@@ -622,6 +636,16 @@ function MemoryTab({
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
                   <Clock className="w-4 h-4" /> Session History
+                  {!hasObservations && streaming && (
+                    <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-emerald-500 normal-case tracking-normal">
+                      <Radio className="w-3 h-3 animate-pulse" /> Live
+                    </span>
+                  )}
+                  {!hasObservations && reconnecting && !streaming && (
+                    <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-amber-500 normal-case tracking-normal">
+                      <RefreshCw className="w-3 h-3 animate-spin" /> Reconnecting…
+                    </span>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
@@ -686,6 +710,16 @@ function MemoryTab({
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
                   <Brain className="w-4 h-4" /> Recent Tool Observations
+                  {streaming && (
+                    <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-emerald-500 normal-case tracking-normal">
+                      <Radio className="w-3 h-3 animate-pulse" /> Live
+                    </span>
+                  )}
+                  {reconnecting && !streaming && (
+                    <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-amber-500 normal-case tracking-normal">
+                      <RefreshCw className="w-3 h-3 animate-spin" /> Reconnecting…
+                    </span>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
