@@ -455,6 +455,24 @@ export async function compileLaneBundles(
       }
     }
 
+    // Conditionally inject dashboard-viz-guidance for general lane when repo has frontend languages
+    if (
+      lane.laneType === "general" &&
+      laneCtx.taskMode === "build" &&
+      compiled !== null
+    ) {
+      const FRONTEND_LANGS = new Set(["typescript", "javascript", "tsx", "jsx", "css", "html", "vue", "svelte", "react"]);
+      const hasFrontend = laneCtx.repoLangs.some(l => FRONTEND_LANGS.has(l.toLowerCase()));
+      if (hasFrontend) {
+        const vizManifest = DEFAULT_SKILLS.find(s => s.id === "dashboard-viz-guidance");
+        const alreadyPresent = compiled.skills.some(s => s.id === "dashboard-viz-guidance");
+        if (vizManifest && !alreadyPresent) {
+          compiled = { ...compiled, skills: [...compiled.skills, vizManifest] };
+          logger.debug({ laneId: lane.laneId }, "Injected dashboard-viz-guidance into general lane overlay");
+        }
+      }
+    }
+
     laneOverlays.push({
       laneId: lane.laneId,
       memberIdentifier: lane.memberIdentifier,

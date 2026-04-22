@@ -218,6 +218,24 @@ export const bundleEvalsTable = pgTable("bundle_evals", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+/**
+ * Design intelligence entries ingested from curated external repos (e.g. ui-ux-pro-max-skill).
+ * SHA-aware idempotence: unique on (source_id, category, name).
+ * data_json holds the raw parsed row; tags is a string array for filtering.
+ */
+export const designIntelligenceEntriesTable = pgTable("design_intelligence_entries", {
+  id: serial("id").primaryKey(),
+  sourceId: integer("source_id").notNull().references(() => skillSourcesTable.id),
+  category: text("category").notNull(),
+  name: text("name").notNull(),
+  dataJson: jsonb("data_json").notNull(),
+  tags: jsonb("tags").notNull().default([]),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  sourceCategoryNameUnique: uniqueIndex("design_intel_source_category_name_unique")
+    .on(table.sourceId, table.category, table.name),
+}));
+
 export const insertSkillSchema = createInsertSchema(skillsTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertSkill = z.infer<typeof insertSkillSchema>;
 export type Skill = typeof skillsTable.$inferSelect;
@@ -231,3 +249,4 @@ export type EvalRun = typeof evalRunsTable.$inferSelect;
 export type EvalRunVariant = typeof evalRunVariantsTable.$inferSelect;
 export type SkillEval = typeof skillEvalsTable.$inferSelect;
 export type BundleEval = typeof bundleEvalsTable.$inferSelect;
+export type DesignIntelligenceEntry = typeof designIntelligenceEntriesTable.$inferSelect;

@@ -10,6 +10,7 @@ import memoryRouter from "./memory";
 import skillsRouter from "./skills";
 import repoRouter from "./repo";
 import coordinationRouter from "./coordination";
+import designIntelligenceRouter from "./design-intelligence";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use(memoryRouter);
 router.use(skillsRouter);
 router.use("/sessions/:sessionId/repo", repoRouter);
 router.use(coordinationRouter);
+router.use(designIntelligenceRouter);
 
 export default router;

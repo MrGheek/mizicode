@@ -4,6 +4,7 @@ import { seedProfiles } from "./services/profiles";
 import { registerDefaultTemplate } from "./services/templates";
 import { startScheduler } from "./services/scheduler";
 import { seedDefaultBundles } from "./services/skills-bundler";
+import { seedCuratedSources } from "./services/curated-sources";
 import { startEvalScheduler } from "./services/skills-evals";
 import { db, laneClaimsTable } from "@workspace/db";
 import { lt } from "drizzle-orm";
@@ -67,6 +68,13 @@ app.listen(port, async (err) => {
     logger.info("Default skill bundles seeded");
   } catch (e) {
     logger.error(e, "Failed to seed default skill bundles");
+  }
+
+  try {
+    await seedCuratedSources();
+    logger.info("Curated design intelligence sources seeded");
+  } catch (e) {
+    logger.error(e, "Failed to seed curated design intelligence sources");
   }
 
   startScheduler();
