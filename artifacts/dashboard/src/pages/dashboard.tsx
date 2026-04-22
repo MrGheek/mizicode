@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import { 
   useGetDashboardSummary, 
@@ -11,7 +11,7 @@ import {
   getGetActiveSessionQueryKey,
   getGetSchedulerConfigQueryKey,
 } from "@workspace/api-client-react";
-import type { SchedulerConfig, UpdateSchedulerRequest } from "@workspace/api-client-react";
+import type { GpuProfile, SchedulerConfig, UpdateSchedulerRequest } from "@workspace/api-client-react";
 import type { LaunchOptions } from "@/components/launch-session-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -219,35 +219,103 @@ export default function Dashboard() {
         )}
 
         {/* Quick Launch Profiles */}
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold flex items-center gap-2">
-              <Play className="w-5 h-5 text-primary" /> Quick Launch Profiles
-            </h2>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {isLoadingProfiles ? (
-              Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-64 w-full" />
-              ))
-            ) : profiles?.length ? (
-              profiles.map(profile => (
-                <ProfileCard 
-                  key={profile.id} 
-                  profile={profile} 
-                  onLaunch={handleLaunch}
-                  isLaunching={launchingProfileId === profile.id}
-                />
-              ))
-            ) : (
-              <div className="col-span-3 p-8 text-center border border-dashed rounded-lg border-border/60 text-muted-foreground">
-                No GPU profiles configured.
-              </div>
-            )}
-          </div>
-        </div>
+        <QuickLaunchProfiles
+          profiles={profiles}
+          isLoading={isLoadingProfiles}
+          launchingProfileId={launchingProfileId}
+          onLaunch={handleLaunch}
+        />
       </div>
+    </div>
+  );
+}
+
+const MODEL_BENCHMARKS: Record<string, string> = {
+  "Kimi K2.6":          "65.8% SWE-Bench Verified",
+  "Kimi K2.5":          "63.6% SWE-Bench Verified · legacy",
+  "Qwen3-Coder-Next":   "Highest open-weight SWE-Bench score per dollar",
+  "MiniMax M2.5":       "80.2% SWE-Bench Verified",
+  "GLM-5.1 (FP8)":      "58.4% SWE-Bench Pro · open-weight record",
+  "DeepSeek V3.2":      "671B MIT-licensed · strong multilingual coding",
+};
+
+interface QuickLaunchProfilesProps {
+  profiles: GpuProfile[] | undefined;
+  isLoading: boolean;
+  launchingProfileId: number | null;
+  onLaunch: (profileId: number, opts?: Omit<LaunchOptions, "profileId">) => void;
+}
+
+function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch }: QuickLaunchProfilesProps) {
+  const modelGroups = useMemo(() => {
+    if (!profiles) return [];
+    const groupMap = new Map<string, GpuProfile[]>();
+    for (const profile of profiles) {
+      const model = profile.modelDisplayName;
+      if (!groupMap.has(model)) groupMap.set(model, []);
+      groupMap.get(model)!.push(profile);
+    }
+    for (const group of groupMap.values()) {
+      group.sort((a, b) => a.estimatedCostMin - b.estimatedCostMin);
+    }
+    return Array.from(groupMap.entries()).map(([model, items]) => ({ model, items }));
+  }, [profiles]);
+
+  const isGrouped = modelGroups.length >= 2;
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-bold flex items-center gap-2">
+          <Play className="w-5 h-5 text-primary" /> Quick Launch Profiles
+        </h2>
+      </div>
+
+      {isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-64 w-full" />
+          ))}
+        </div>
+      ) : !profiles?.length ? (
+        <div className="p-8 text-center border border-dashed rounded-lg border-border/60 text-muted-foreground">
+          No GPU profiles configured.
+        </div>
+      ) : isGrouped ? (
+        <div className="space-y-8">
+          {modelGroups.map(({ model, items }) => (
+            <div key={model}>
+              <div className="flex items-baseline gap-3 mb-3 pb-2 border-b border-border/40">
+                <h3 className="text-base font-semibold">{model}</h3>
+                <span className="text-xs text-muted-foreground">
+                  {MODEL_BENCHMARKS[model] ?? "Open-weight model"}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {items.map(profile => (
+                  <ProfileCard
+                    key={profile.id}
+                    profile={profile}
+                    onLaunch={onLaunch}
+                    isLaunching={launchingProfileId === profile.id}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {profiles.map(profile => (
+            <ProfileCard
+              key={profile.id}
+              profile={profile}
+              onLaunch={onLaunch}
+              isLaunching={launchingProfileId === profile.id}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
