@@ -789,10 +789,11 @@ router.get("/sessions/:sessionId/memory/observations", (_req, res) => {
   }
 });
 
-router.get("/sessions/:sessionId/memory/sessions", (_req, res) => {
+router.get("/sessions/:sessionId/memory/sessions", (req, res) => {
   const limit = 30;
+  const projectPath = (req.query["projectPath"] as string | undefined) || undefined;
   try {
-    const sessions = listSessions(MEM_USER_ID, limit, 0);
+    const sessions = listSessions(MEM_USER_ID, limit, 0, projectPath);
     res.json(sessions);
   } catch (err) {
     logger.error(err, "Failed to list memory sessions for dashboard");
@@ -825,12 +826,13 @@ router.get("/sessions/:sessionId/memory/stream", (req, res) => {
 
 router.get("/sessions/:sessionId/memory/search", (req, res) => {
   const q = (req.query["q"] as string | undefined) || "";
+  const projectPath = (req.query["projectPath"] as string | undefined) || undefined;
   if (!q.trim()) {
     res.json({ observations: [], sessions: [] });
     return;
   }
   try {
-    const results = searchMemory(MEM_USER_ID, q);
+    const results = searchMemory(MEM_USER_ID, q, 30, projectPath);
     res.json(results);
   } catch (err) {
     logger.error(err, "Failed to search memory for dashboard");
@@ -840,12 +842,13 @@ router.get("/sessions/:sessionId/memory/search", (req, res) => {
 
 router.get("/memory/search", (req, res) => {
   const q = (req.query["q"] as string | undefined) || "";
+  const projectPath = (req.query["projectPath"] as string | undefined) || undefined;
   if (!q.trim()) {
     res.json({ observations: [], sessions: [] });
     return;
   }
   try {
-    const results = searchMemory(MEM_USER_ID, q);
+    const results = searchMemory(MEM_USER_ID, q, 30, projectPath);
     res.json(results);
   } catch (err) {
     logger.error(err, "Failed to search global memory for dashboard");
@@ -853,9 +856,10 @@ router.get("/memory/search", (req, res) => {
   }
 });
 
-router.get("/memory/sessions", (_req, res) => {
+router.get("/memory/sessions", (req, res) => {
+  const projectPath = (req.query["projectPath"] as string | undefined) || undefined;
   try {
-    const sessions = listSessions(MEM_USER_ID, 100, 0);
+    const sessions = listSessions(MEM_USER_ID, 100, 0, projectPath);
     res.json(sessions);
   } catch (err) {
     logger.error(err, "Failed to list all memory sessions for dashboard");

@@ -86,6 +86,13 @@ function useMemSessions(sessionId: number) {
   });
 }
 
+function useMemoryProjectPaths(sessions: MemSession[] | undefined): string[] {
+  return useMemo(() => {
+    if (!sessions) return [];
+    return [...new Set(sessions.map(s => s.projectPath).filter(Boolean))].sort();
+  }, [sessions]);
+}
+
 function useMemObservations(sessionId: number, isActive: boolean) {
   return useQuery<MemObservation[]>({
     queryKey: ["mem-observations", sessionId],
@@ -103,12 +110,14 @@ function useMemObservations(sessionId: number, isActive: boolean) {
 const RETRY_DELAYS = [3000, 10000, 30000];
 const MAX_RETRIES = RETRY_DELAYS.length;
 
-function useMemorySearch(sessionId: number, query: string) {
+function useMemorySearch(sessionId: number, query: string, projectPath: string) {
+  const params = new URLSearchParams({ q: query });
+  if (projectPath) params.set("projectPath", projectPath);
   return useQuery<MemorySearchResult>({
-    queryKey: ["mem-search", sessionId, query],
+    queryKey: ["mem-search", sessionId, query, projectPath],
     enabled: !!sessionId && query.trim().length > 1,
     queryFn: async () => {
-      const url = `${BASE_URL}api/sessions/${sessionId}/memory/search?q=${encodeURIComponent(query)}`;
+      const url = `${BASE_URL}api/sessions/${sessionId}/memory/search?${params.toString()}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to search memory");
       return res.json();
@@ -225,6 +234,10 @@ function MemoryTab({
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Project path filter
+  const [selectedProject, setSelectedProject] = useState("");
+  const projectPaths = useMemoryProjectPaths(sessions);
+
   // Search state
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -313,10 +326,10 @@ function MemoryTab({
   }, [searchInput]);
 
   const isSearching = debouncedQuery.trim().length > 1;
-  const { data: searchResults, isLoading: searchLoading } = useMemorySearch(sessionId, debouncedQuery);
+  const { data: searchResults, isLoading: searchLoading } = useMemorySearch(sessionId, debouncedQuery, selectedProject);
 
   // Merge streamed + polled observations (deduped, sorted newest-first)
-  const observations = (() => {
+  const allObservations = (() => {
     if (!isActive) return polledObservations || [];
     const seen = new Set<number>();
     const merged: MemObservation[] = [];
@@ -328,6 +341,19 @@ function MemoryTab({
     }
     return merged.sort((a, b) => b.recordedAt - a.recordedAt);
   })();
+
+  // Apply project path filter client-side for sessions and observations
+  const filteredSessions = useMemo(() => {
+    if (!sessions) return [];
+    if (!selectedProject) return sessions;
+    return sessions.filter(s => s.projectPath === selectedProject);
+  }, [sessions, selectedProject]);
+
+  const observations = useMemo(() => {
+    if (!selectedProject) return allObservations;
+    const sessionIds = new Set(filteredSessions.map(s => s.id));
+    return allObservations.filter(o => sessionIds.has(o.sessionId));
+  }, [allObservations, filteredSessions, selectedProject]);
 
   const toggleSession = (id: string) => {
     setExpandedSessions(prev => {
@@ -348,7 +374,7 @@ function MemoryTab({
     );
   }
 
-  const hasSessions = sessions && sessions.length > 0;
+  const hasSessions = filteredSessions.length > 0;
   const hasObservations = observations && observations.length > 0;
 
   const obsBySession = (observations || []).reduce<Record<string, MemObservation[]>>((acc, obs) => {
@@ -359,24 +385,62 @@ function MemoryTab({
 
   return (
     <div className="mt-4 space-y-3">
-      {/* Search bar */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-        <Input
-          value={searchInput}
-          onChange={e => setSearchInput(e.target.value)}
-          placeholder="Search session notes and tool observations…"
-          className="pl-9 pr-9 bg-secondary/30 border-border/50 text-sm"
-        />
-        {searchInput && (
-          <button
-            onClick={() => setSearchInput("")}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+      {/* Filter + Search row */}
+      <div className="flex gap-2 items-center">
+        {/* Project path filter dropdown */}
+        {projectPaths.length > 0 && (
+          <div className="relative flex-shrink-0">
+            <FolderOpen className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            <select
+              value={selectedProject}
+              onChange={e => setSelectedProject(e.target.value)}
+              className="pl-8 pr-8 py-2 text-xs rounded-md border border-border/50 bg-secondary/30 text-foreground appearance-none focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer min-w-[140px] max-w-[220px]"
+            >
+              <option value="">All projects</option>
+              {projectPaths.map(p => (
+                <option key={p} value={p}>{p.length > 28 ? `…${p.slice(-28)}` : p}</option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
+          </div>
         )}
+
+        {/* Search bar */}
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <Input
+            value={searchInput}
+            onChange={e => setSearchInput(e.target.value)}
+            placeholder="Search session notes and tool observations…"
+            className="pl-9 pr-9 bg-secondary/30 border-border/50 text-sm"
+          />
+          {searchInput && (
+            <button
+              onClick={() => setSearchInput("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Active project filter badge */}
+      {selectedProject && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Filtered by project:</span>
+          <span className="inline-flex items-center gap-1 text-xs font-mono bg-primary/10 text-primary rounded px-2 py-0.5 border border-primary/20">
+            <FolderOpen className="w-3 h-3" />
+            {selectedProject.length > 36 ? `…${selectedProject.slice(-36)}` : selectedProject}
+            <button
+              onClick={() => setSelectedProject("")}
+              className="ml-1 hover:text-foreground"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        </div>
+      )}
 
       {/* Search results view */}
       {isSearching && (
@@ -384,6 +448,11 @@ function MemoryTab({
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
               <Search className="w-4 h-4" /> Search Results for &ldquo;{debouncedQuery}&rdquo;
+              {selectedProject && (
+                <span className="ml-1 text-[10px] font-normal normal-case text-primary/70">
+                  in {selectedProject.length > 22 ? `…${selectedProject.slice(-22)}` : selectedProject}
+                </span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -399,8 +468,17 @@ function MemoryTab({
             <Card className="bg-card/50 border-border/50">
               <CardContent className="pt-6 pb-6 text-center text-muted-foreground text-sm">
                 <Brain className="w-8 h-8 mx-auto mb-3 opacity-30" />
-                <p>No session memory recorded yet.</p>
-                <p className="text-xs mt-1 opacity-70">Memory is captured automatically as the AI uses tools during a session.</p>
+                {selectedProject ? (
+                  <>
+                    <p>No sessions found for this project.</p>
+                    <p className="text-xs mt-1 opacity-70">Try selecting a different project or clear the filter.</p>
+                  </>
+                ) : (
+                  <>
+                    <p>No session memory recorded yet.</p>
+                    <p className="text-xs mt-1 opacity-70">Memory is captured automatically as the AI uses tools during a session.</p>
+                  </>
+                )}
               </CardContent>
             </Card>
           )}
@@ -414,7 +492,7 @@ function MemoryTab({
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                {(sessions || []).map(sess => {
+                {filteredSessions.map(sess => {
                   const isExpanded = expandedSessions.has(sess.id);
                   const sessObs = obsBySession[sess.id] || [];
                   return (
