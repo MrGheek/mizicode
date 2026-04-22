@@ -16,6 +16,7 @@ import type { LaunchOptions } from "@/components/launch-session-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight } from "lucide-react";
+import { SwarmPill } from "@/components/swarm-activity-panel";
 import { ProfileCard } from "@/components/profile-card";
 import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
 import { SchedulerConfigCard } from "@/components/scheduler-config-card";
@@ -171,10 +172,11 @@ export default function Dashboard() {
             <Card className="border-primary/50 bg-primary/5">
               <CardContent className="p-6 flex items-center justify-between">
                 <div>
-                  <div className="flex items-center gap-3 mb-2">
+                  <div className="flex items-center gap-3 mb-2 flex-wrap">
                     <h3 className="text-lg font-bold">{activeSession.profileName}</h3>
                     <SessionStatusBadge status={activeSession.status} />
                     {activeSession.teamMembers && activeSession.teamMembers.length > 0 && <TeamSessionBadge />}
+                    <SwarmPill sessionId={activeSession.id} isReady={activeSession.status === "ready"} />
                   </div>
                   <p className="text-sm text-muted-foreground font-mono">
                     {activeSession.gpuName} x{activeSession.numGpus} • ${activeSession.costPerHour?.toFixed(2) || "0.00"}/hr

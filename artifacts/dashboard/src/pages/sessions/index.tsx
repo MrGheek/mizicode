@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SwarmPill } from "@/components/swarm-activity-panel";
 
 export default function SessionsList() {
   const [, setLocation] = useLocation();
@@ -55,9 +56,10 @@ export default function SessionsList() {
                   <TableCell className="font-mono text-muted-foreground">#{session.id}</TableCell>
                   <TableCell className="font-medium">{session.profileName}</TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <SessionStatusBadge status={session.status} />
                       {session.teamMembers && session.teamMembers.length > 0 && <TeamSessionBadge />}
+                      <SwarmPill sessionId={session.id} isReady={session.status === "ready"} />
                     </div>
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-sm">

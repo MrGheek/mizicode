@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -198,6 +199,44 @@ export function swarmTabShouldShow(data: SwarmStatusResponse | null): boolean {
   if (data.availability === "unavailable" && !data.snapshot) return false;
   const phase = data.snapshot?.phase;
   return phase !== "never" && phase !== undefined;
+}
+
+export function SwarmPill({ sessionId, isReady }: { sessionId: number; isReady: boolean }) {
+  const [, setLocation] = useLocation();
+  const { data } = useSwarmStatus(sessionId, isReady);
+
+  const label = swarmTabBadgeLabel(data);
+  const phase = data?.snapshot?.phase;
+  const visible = label !== null && (phase === "active" || phase === "synthesising");
+
+  if (!visible) return null;
+
+  const isLive = phase === "active";
+
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        setLocation(`/sessions/${sessionId}?tab=swarm`);
+      }}
+      title="View Swarm activity"
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium border transition-colors
+        ${isLive
+          ? "bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
+          : "bg-secondary/60 border-border/50 text-muted-foreground hover:bg-secondary"
+        }`}
+    >
+      {isLive ? (
+        <span className="relative flex h-1.5 w-1.5">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary" />
+        </span>
+      ) : (
+        <Network className="w-3 h-3" />
+      )}
+      {label}
+    </button>
+  );
 }
 
 interface SwarmActivityPanelProps {

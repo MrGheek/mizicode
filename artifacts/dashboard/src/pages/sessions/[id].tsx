@@ -1072,7 +1072,11 @@ export default function SessionDetail() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "team" | "swarm">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "team" | "swarm">(() => {
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    const valid = ["overview", "memory", "smart-skills", "repo", "team", "swarm"];
+    return (valid.includes(tab ?? "") ? tab : "overview") as "overview" | "memory" | "smart-skills" | "repo" | "team" | "swarm";
+  });
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
   const [seenConflictFingerprint, setSeenConflictFingerprint] = useState<string>("");
