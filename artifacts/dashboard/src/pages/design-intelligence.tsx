@@ -394,12 +394,31 @@ function isPaletteCategory(category: string): boolean {
 }
 
 function ColorSwatch({ color, size = "md" }: { color: string; size?: "sm" | "md" }) {
+  const [copied, setCopied] = useState(false);
   const dim = size === "sm" ? "w-3 h-3" : "w-4 h-4";
+
+  const handleClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(color);
+      setCopied(true);
+      toast({ title: "Copied!", description: color });
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast({ title: "Copy failed", description: "Could not copy to clipboard.", variant: "destructive" });
+    }
+  };
+
   return (
-    <span
-      className={`inline-block ${dim} rounded-sm border border-black/10 shrink-0`}
+    <button
+      type="button"
+      className={`inline-block ${dim} rounded-sm border shrink-0 cursor-pointer transition-transform active:scale-90 ${
+        copied ? "border-emerald-400 ring-1 ring-emerald-400/60" : "border-black/10"
+      }`}
       style={{ backgroundColor: color }}
-      title={color}
+      title={`Click to copy ${color}`}
+      aria-label={`Copy color ${color}`}
+      onClick={handleClick}
     />
   );
 }
