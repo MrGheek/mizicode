@@ -237,6 +237,63 @@ router.get("/design-intelligence/sources", async (req, res) => {
 });
 
 /**
+ * GET /api/design-intelligence/lane-config
+ *
+ * Returns the current per-lane-type design category configuration.
+ * Shows teams what design categories are injected by default for each lane type
+ * and how to override them via bundleJson.designCategoryOverrides.
+ *
+ * Response shape:
+ * {
+ *   laneConfig: {
+ *     [laneType: string]: {
+ *       designCategories: string[];   // current defaults from lane policy
+ *       description: string;          // lane description
+ *     }
+ *   },
+ *   availableCategories: string[];    // all distinct categories in the DB
+ *   overrideInstructions: string;     // how to configure overrides
+ * }
+ */
+router.get("/design-intelligence/lane-config", async (req, res) => {
+  try {
+    const { LANE_POLICIES } = await import("../services/lane-policy");
+
+    const dbCategories = await db
+      .select({ category: designIntelligenceEntriesTable.category })
+      .from(designIntelligenceEntriesTable)
+      .groupBy(designIntelligenceEntriesTable.category)
+      .orderBy(designIntelligenceEntriesTable.category);
+
+    const availableCategories = dbCategories.map(r => r.category);
+
+    const laneConfig: Record<string, { designCategories: string[]; description: string }> = {};
+    for (const [laneType, policy] of Object.entries(LANE_POLICIES)) {
+      laneConfig[laneType] = {
+        designCategories: policy.designCategories,
+        description: policy.description,
+      };
+    }
+
+    return res.json({
+      laneConfig,
+      availableCategories,
+      overrideInstructions: [
+        "To override design categories for specific lane types, add a `designCategoryOverrides` key to your bundle's bundleJson.",
+        "Keys are lane types (ux, backend, debug, review, general). Values are arrays of category strings.",
+        "An empty array disables design context injection for that lane type.",
+        "Lane types not listed in the override map use the lane-policy defaults shown in laneConfig.",
+        "Example: { \"skillIds\": [...], \"designCategoryOverrides\": { \"ux\": [\"palette\", \"typography\"], \"debug\": [] } }",
+        "Available categories are listed in the availableCategories field. Use GET /api/design-intelligence/categories for counts.",
+      ].join(" "),
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to build lane design config");
+    return res.status(500).json({ error: "Failed to build lane design config" });
+  }
+});
+
+/**
  * POST /api/design-intelligence/sync
  *
  * Triggers an on-demand re-sync of curated design intelligence sources.

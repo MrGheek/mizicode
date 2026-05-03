@@ -6,6 +6,40 @@ import { rankSkills, buildRepoIntelligenceContext, getSkillFeedbackScores, build
 import { TOKEN_MODE_PROFILES } from "./skills-types";
 import type { FloatrSkillManifest, SessionContext, CompiledBundle, TokenMode, RepoIntelligenceContext, DesignContextEntry } from "./skills-types";
 import { logger } from "../lib/logger";
+import { LANE_POLICIES } from "./lane-policy";
+
+/**
+ * Extended bundle JSON shape. The base field `skillIds` is always present.
+ * Teams may optionally include `designCategoryOverrides` to control which design
+ * intelligence categories are injected per lane type, overriding the lane-policy defaults.
+ *
+ * Example bundle JSON to disable design context for debug lanes and restrict UX lanes
+ * to only palette and typography:
+ * ```json
+ * {
+ *   "skillIds": ["floatr-builder", "karpathy-doctrine"],
+ *   "designCategoryOverrides": {
+ *     "ux":      ["palette", "typography"],
+ *     "debug":   [],
+ *     "backend": ["stack_convention", "ux_guideline"]
+ *   }
+ * }
+ * ```
+ *
+ * Available categories can be discovered via GET /api/design-intelligence/categories.
+ * Current per-lane defaults are listed at GET /api/design-intelligence/lane-config.
+ */
+export interface BundleJsonShape {
+  skillIds?: string[];
+  /**
+   * Optional per-lane-type design category override map.
+   * Keys are lane types ("ux", "backend", "debug", "review", "general").
+   * Values are arrays of category strings to inject for that lane type.
+   * An empty array disables design context injection for that lane.
+   * Lane types not listed here use the lane-policy default categories.
+   */
+  designCategoryOverrides?: Record<string, string[]>;
+}
 
 async function getAllEnabledManifests(): Promise<FloatrSkillManifest[]> {
   const enabledSkills = await db
@@ -38,10 +72,15 @@ const MAX_SKILLS = 7;
 const FRONTEND_LANGS = new Set(["ts", "tsx", "js", "jsx", "svelte", "vue", "css", "html"]);
 
 /**
- * Categories fetched for UX lanes vs. general frontend lanes.
- * UX lanes get the full design doctrine; frontend lanes get a narrower subset.
+ * Hard-coded fallback categories used only when no lane-policy or bundle-level
+ * override exists. Teams should prefer configuring per-lane categories via:
+ *   1. bundleJson.designCategoryOverrides[laneType]  (bundle-level, highest priority)
+ *   2. LANE_POLICIES[laneType].designCategories       (lane-policy level)
+ *   3. These constants                                (last-resort fallback)
+ *
+ * @deprecated Prefer LANE_POLICIES[laneType].designCategories or bundle overrides.
  */
-const UX_LANE_CATEGORIES = [
+const UX_LANE_CATEGORIES_FALLBACK = [
   "palette",
   "typography",
   "chart_type",
@@ -50,7 +89,7 @@ const UX_LANE_CATEGORIES = [
   "anti_pattern",
   "style",
 ];
-const FRONTEND_LANE_CATEGORIES = [
+const FRONTEND_LANE_CATEGORIES_FALLBACK = [
   "palette",
   "typography",
   "stack_convention",
@@ -78,6 +117,22 @@ const DESIGN_CONTEXT_LIMIT: Partial<Record<TokenMode, number>> = {
  * - Skipped entirely for lean/ultra token modes (token budget constraint).
  */
 const MAX_CANDIDATE_ROWS = 200;
+
+/**
+ * Safely extracts and validates a `designCategoryOverrides` map from an untrusted value.
+ * Drops any entry where the value is not an array of strings, so malformed bundle JSON
+ * cannot cause runtime errors downstream.
+ */
+function safeDesignCategoryOverrides(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const result: Record<string, string[]> = {};
+  for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof key === "string" && Array.isArray(val) && val.every(v => typeof v === "string")) {
+      result[key] = val as string[];
+    }
+  }
+  return result;
+}
 
 async function queryDesignIntelligenceContext(
   categories: string[],
@@ -146,7 +201,7 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
   const [bundle] = await db.select().from(skillBundlesTable).where(eq(skillBundlesTable.id, bundleId));
   if (!bundle) throw new Error(`Bundle ${bundleId} not found`);
 
-  const bundleData = bundle.bundleJson as { skillIds?: string[] };
+  const bundleData = bundle.bundleJson as BundleJsonShape;
   const rawRequestedIds = bundleData.skillIds || [];
 
   // Normalize: map any DB slugs in skillIds to their manifest IDs.
@@ -565,6 +620,16 @@ export async function compileLaneBundles(
       ?? all.find(b => b.taskMode === laneTaskMode)
       ?? sharedRepoBundle;
 
+    // Build merged design category overrides with explicit precedence:
+    //   shared-repo bundle overrides (global baseline) ← overlayBundle overrides (lane-specific wins)
+    // This allows teams to set a global default in the shared bundle (e.g. disable debug design context)
+    // while individual lane overlay bundles can still selectively override per lane type.
+    const sharedOverrides = safeDesignCategoryOverrides((sharedRepoBundle?.bundleJson as BundleJsonShape | undefined)?.designCategoryOverrides);
+    const overlayOverrides = overlayBundle && overlayBundle !== sharedRepoBundle
+      ? safeDesignCategoryOverrides((overlayBundle.bundleJson as BundleJsonShape | undefined)?.designCategoryOverrides)
+      : {};
+    const mergedDesignCategoryOverrides: Record<string, string[]> = { ...sharedOverrides, ...overlayOverrides };
+
     let compiled: CompiledBundle | null = null;
     if (overlayBundle) {
       try {
@@ -592,15 +657,30 @@ export async function compileLaneBundles(
     }
 
     // ── Design intelligence injection ──
-    // UX lanes always receive the full design doctrine categories.
-    // Other lanes with frontend languages detected receive a narrower subset.
+    // Category resolution priority (highest to lowest):
+    //   1. bundleJson.designCategoryOverrides[laneType]  — team-level bundle override
+    //   2. LANE_POLICIES[laneType].designCategories       — lane-policy default
+    //   3. Hard-coded fallback constants                  — last resort
+    // An empty categories array means no design context is injected for this lane.
     // Injection is skipped entirely for lean/ultra token modes (token budget constraint).
     if (compiled !== null) {
       const isUxLane = lane.laneType === "ux";
       const hasFrontend = laneCtx.repoLangs.some(l => FRONTEND_LANGS.has(l.toLowerCase()));
 
-      if (isUxLane || hasFrontend) {
-        const categories = isUxLane ? UX_LANE_CATEGORIES : FRONTEND_LANE_CATEGORIES;
+      let categories: string[];
+      if (Object.prototype.hasOwnProperty.call(mergedDesignCategoryOverrides, lane.laneType)) {
+        categories = mergedDesignCategoryOverrides[lane.laneType];
+        logger.debug({ laneId: lane.laneId, laneType: lane.laneType, categories }, "Using bundle-level design category override");
+      } else if (policy.designCategories.length > 0 || Object.prototype.hasOwnProperty.call(LANE_POLICIES, lane.laneType)) {
+        categories = policy.designCategories;
+        logger.debug({ laneId: lane.laneId, laneType: lane.laneType, categories }, "Using lane-policy design categories");
+      } else {
+        // Hard-coded fallback: UX lanes get the full doctrine, frontend lanes get a narrower set
+        categories = isUxLane ? UX_LANE_CATEGORIES_FALLBACK : (hasFrontend ? FRONTEND_LANE_CATEGORIES_FALLBACK : []);
+        logger.debug({ laneId: lane.laneId, laneType: lane.laneType, categories }, "Using hard-coded fallback design categories");
+      }
+
+      if (categories.length > 0) {
         const designContext = await queryDesignIntelligenceContext(
           categories,
           laneCtx.repoLangs,

@@ -31,6 +31,12 @@ export interface LaneOverlayPolicy {
   retrievalEmphasis: string[];
   conflictEscalation: "warn" | "block";
   description: string;
+  /**
+   * Design intelligence categories to inject for this lane type.
+   * Teams can override this per bundle via bundleJson.designCategoryOverrides[laneType].
+   * An empty array means no design context is injected for this lane.
+   */
+  designCategories: string[];
 }
 
 export const LANE_POLICIES: Record<LaneType, LaneOverlayPolicy> = {
@@ -51,6 +57,7 @@ export const LANE_POLICIES: Record<LaneType, LaneOverlayPolicy> = {
     retrievalEmphasis: ["component", "style", "layout", "ui", "frontend", "design", "palette", "typography"],
     conflictEscalation: "warn",
     description: "UX/frontend lane — emphasises component and style context, warns on overlap with backend lanes.",
+    designCategories: ["palette", "typography", "chart_type", "ux_guideline", "ui_reasoning", "anti_pattern", "style"],
   },
   debug: {
     laneType: "debug",
@@ -69,6 +76,7 @@ export const LANE_POLICIES: Record<LaneType, LaneOverlayPolicy> = {
     retrievalEmphasis: ["error", "stack", "trace", "exception", "failure"],
     conflictEscalation: "warn",
     description: "Debug lane — structured debug workflow, compact output, warns on claim overlap.",
+    designCategories: [],
   },
   backend: {
     laneType: "backend",
@@ -87,6 +95,7 @@ export const LANE_POLICIES: Record<LaneType, LaneOverlayPolicy> = {
     retrievalEmphasis: ["api", "service", "database", "schema", "migration"],
     conflictEscalation: "warn",
     description: "Backend lane — fuller context budget, governance memory, shared API conventions.",
+    designCategories: ["stack_convention"],
   },
   review: {
     laneType: "review",
@@ -105,6 +114,7 @@ export const LANE_POLICIES: Record<LaneType, LaneOverlayPolicy> = {
     retrievalEmphasis: ["pr", "review", "diff", "convention", "test"],
     conflictEscalation: "warn",
     description: "Review lane — lean token mode, terse output, focuses on conventions and test coverage.",
+    designCategories: ["ux_guideline", "anti_pattern"],
   },
   general: {
     laneType: "general",
@@ -123,6 +133,7 @@ export const LANE_POLICIES: Record<LaneType, LaneOverlayPolicy> = {
     retrievalEmphasis: [],
     conflictEscalation: "warn",
     description: "General-purpose lane — balanced defaults, no specific retrieval emphasis.",
+    designCategories: ["palette", "typography", "stack_convention", "ux_guideline"],
   },
 };
 
