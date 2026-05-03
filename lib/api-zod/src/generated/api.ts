@@ -476,6 +476,52 @@ export const DeleteSessionResponse = zod.object({
 });
 
 /**
+ * Returns the launch options needed to re-create a similar session: profile,
+task mode, token mode, repo URL (if recoverable), intent text, and team-member
+names. Passwords and ownerToken are never returned. Read-only — no new
+session is created.
+
+ * @summary Get cloneable launch options from a previous session
+ */
+export const CloneSessionParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const CloneSessionResponse = zod
+  .object({
+    sessionId: zod
+      .number()
+      .describe("ID of the source session being cloned from."),
+    profileId: zod.number(),
+    profileName: zod.string().nullish(),
+    taskMode: zod.string().nullish(),
+    tokenMode: zod.string().nullish(),
+    bundleId: zod
+      .number()
+      .nullish()
+      .describe(
+        "The Smart Skills bundle that was active on the source session, if any.",
+      ),
+    repoUrl: zod
+      .string()
+      .nullish()
+      .describe(
+        "Original repo URL recovered from the source session's repo fingerprint, if available.",
+      ),
+    intentText: zod.string().nullish(),
+    teamMemberNames: zod
+      .array(zod.string())
+      .describe(
+        "Team-member display names from the source session. Passwords are never included.",
+      ),
+    stoppedAt: zod.coerce.date().nullish(),
+    totalCost: zod.number().nullish(),
+  })
+  .describe(
+    "Read-only snapshot of the launch options from a prior session, ready to pre-fill a new launch dialog.",
+  );
+
+/**
  * Returns the currently running session if any
  * @summary Get current active session
  */

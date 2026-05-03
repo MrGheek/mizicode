@@ -49,6 +49,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useListProfiles } from "@workspace/api-client-react";
 import { inferBootPhase } from "@/lib/boot-phases";
 import { BootTimeline, BootProgressStrip } from "@/components/boot-timeline";
+import { RelaunchButton } from "@/components/relaunch-button";
 import { TeamTab } from "@/components/team-tab";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 
@@ -2452,6 +2453,9 @@ export default function SessionDetail() {
               <StopCircle className="w-4 h-4 mr-1.5" />
               Destroy
             </Button>
+          )}
+          {!isActive && (
+            <RelaunchButton sessionId={session.id} variant="prominent" />
           )}
         </div>
       </div>

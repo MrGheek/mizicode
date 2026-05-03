@@ -10,6 +10,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SwarmPill } from "@/components/swarm-activity-panel";
 import type { SwarmStatusResponse } from "@/components/swarm-activity-panel";
 import { Badge } from "@/components/ui/badge";
+import { RelaunchButton } from "@/components/relaunch-button";
+
+const RELAUNCHABLE_STATUSES = new Set(["stopped", "error"]);
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 const BATCH_INTERVAL_MS = 3000;
@@ -271,14 +274,19 @@ export default function SessionsList() {
                       ${session.totalCost?.toFixed(2) || "0.00"}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setLocation(`/sessions/${session.id}`)}
-                        title="View Details"
-                      >
-                        <Eye className="w-4 h-4 text-primary" />
-                      </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        {RELAUNCHABLE_STATUSES.has(session.status) && (
+                          <RelaunchButton sessionId={session.id} variant="icon" />
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setLocation(`/sessions/${session.id}`)}
+                          title="View Details"
+                        >
+                          <Eye className="w-4 h-4 text-primary" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 );

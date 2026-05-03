@@ -205,6 +205,36 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /sessions/{sessionId}/clone:
+    get:
+      operationId: cloneSession
+      tags: [sessions]
+      summary: Get cloneable launch options from a previous session
+      description: |
+        Returns the launch options needed to re-create a similar session: profile,
+        task mode, token mode, repo URL (if recoverable), intent text, and team-member
+        names. Passwords and ownerToken are never returned. Read-only — no new
+        session is created.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Cloneable launch options
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloneSessionResponse"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /sessions/active:
     get:
       operationId: getActiveSession
@@ -2917,6 +2947,52 @@ components:
           type: string
           nullable: true
           description: Updated plain-English session intent (max 500 chars). Pass null or empty string to clear.
+
+    CloneSessionResponse:
+      type: object
+      description: Read-only snapshot of the launch options from a prior session, ready to pre-fill a new launch dialog.
+      properties:
+        sessionId:
+          type: integer
+          description: ID of the source session being cloned from.
+        profileId:
+          type: integer
+        profileName:
+          type: string
+          nullable: true
+        taskMode:
+          type: string
+          nullable: true
+        tokenMode:
+          type: string
+          nullable: true
+        bundleId:
+          type: integer
+          nullable: true
+          description: The Smart Skills bundle that was active on the source session, if any.
+        repoUrl:
+          type: string
+          nullable: true
+          description: Original repo URL recovered from the source session's repo fingerprint, if available.
+        intentText:
+          type: string
+          nullable: true
+        teamMemberNames:
+          type: array
+          description: Team-member display names from the source session. Passwords are never included.
+          items:
+            type: string
+        stoppedAt:
+          type: string
+          format: date-time
+          nullable: true
+        totalCost:
+          type: number
+          nullable: true
+      required:
+        - sessionId
+        - profileId
+        - teamMemberNames
 
     CreateSessionRequest:
       type: object

@@ -28,11 +28,22 @@ export interface LaunchOptions {
   teamMembers?: string[];
 }
 
+export interface LaunchPrefill {
+  taskMode?: string | null;
+  tokenMode?: string | null;
+  bundleId?: number | null;
+  repoUrl?: string | null;
+  intentText?: string | null;
+  teamMemberNames?: string[];
+  sourceSessionId?: number;
+}
+
 interface LaunchSessionDialogProps {
   profile: GpuProfile;
   onConfirm: (opts: LaunchOptions) => void;
   onClose: () => void;
   isLaunching?: boolean;
+  prefill?: LaunchPrefill | null;
 }
 
 const TASK_MODES = [
@@ -72,14 +83,18 @@ export function LaunchSessionDialog({
   onConfirm,
   onClose,
   isLaunching,
+  prefill,
 }: LaunchSessionDialogProps) {
-  const [taskMode, setTaskMode] = useState("build");
-  const [tokenMode, setTokenMode] = useState("core");
-  const [repoUrl, setRepoUrl] = useState("");
-  const [intentText, setIntentText] = useState("");
+  const hasPrefill = !!prefill;
+  const [taskMode, setTaskMode] = useState(() => prefill?.taskMode || "build");
+  const [tokenMode, setTokenMode] = useState(() => prefill?.tokenMode || "core");
+  const [repoUrl, setRepoUrl] = useState(() => prefill?.repoUrl ?? "");
+  const [intentText, setIntentText] = useState(() => prefill?.intentText ?? "");
   // Track whether the user has manually edited the intent so we never
-  // overwrite their text with a repo-URL-derived suggestion.
-  const intentEditedRef = useRef(false);
+  // overwrite their text with a repo-URL-derived suggestion. When pre-filling
+  // from a previous session we treat the existing intent as user-authored so
+  // it isn't replaced by the auto-suggestion based on the repo URL.
+  const intentEditedRef = useRef<boolean>(!!(prefill?.intentText));
 
   // Auto-fill a sensible default intent based on the repo URL when the user
   // hasn't typed anything yet (or has cleared the field). We extract the
@@ -102,10 +117,15 @@ export function LaunchSessionDialog({
       setIntentText(`Index and explore \`${owner}/${repo}\``);
     }
   }, [repoUrl]);
-  const [bundleOverride, setBundleOverride] = useState<number | null | "none">(null);
+  const [bundleOverride, setBundleOverride] = useState<number | null | "none">(
+    () => (prefill?.bundleId != null ? prefill.bundleId : null)
+  );
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
-  const [teamOpen, setTeamOpen] = useState(false);
-  const [memberNames, setMemberNames] = useState<string[]>([""]);
+  const initialTeam = prefill?.teamMemberNames && prefill.teamMemberNames.length > 0
+    ? prefill.teamMemberNames
+    : [""];
+  const [teamOpen, setTeamOpen] = useState(() => (prefill?.teamMemberNames?.length ?? 0) > 0);
+  const [memberNames, setMemberNames] = useState<string[]>(initialTeam);
   const [recommendedBundle, setRecommendedBundle] = useState<CompiledBundleResult | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -171,12 +191,23 @@ export function LaunchSessionDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Play className="w-4 h-4 text-primary" fill="currentColor" />
-            Launch: {profile.displayName}
+            {hasPrefill ? `Re-launch: ${profile.displayName}` : `Launch: ${profile.displayName}`}
           </DialogTitle>
           <p className="text-xs text-muted-foreground font-mono">
             {profile.gpuName} x{profile.numGpus} · ${profile.estimatedCostMin.toFixed(2)}-${profile.estimatedCostMax.toFixed(2)}/hr
           </p>
         </DialogHeader>
+
+        {hasPrefill && (
+          <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground/90 flex items-start gap-2">
+            <Info className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
+            <span>
+              Pre-filled from session
+              {prefill?.sourceSessionId ? ` #${prefill.sourceSessionId}` : ""}
+              {" "}— edit anything below to customise before launching.
+            </span>
+          </div>
+        )}
 
         <div className="space-y-5 py-2">
           {/* Repo URL — comes first because it auto-suggests session intent. */}

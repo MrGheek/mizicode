@@ -7,15 +7,20 @@ import {
   useCreateSession,
   useGetSchedulerConfig,
   useUpdateSchedulerConfig,
+  useListSessions,
   getGetDashboardSummaryQueryKey,
   getGetActiveSessionQueryKey,
   getGetSchedulerConfigQueryKey,
 } from "@workspace/api-client-react";
+import type { Session } from "@workspace/api-client-react";
+import { formatDistanceToNow } from "date-fns";
+import { RelaunchButton } from "@/components/relaunch-button";
+import { X, History } from "lucide-react";
 import type { GpuProfile, SchedulerConfig, UpdateSchedulerRequest } from "@workspace/api-client-react";
 import type { LaunchOptions } from "@/components/launch-session-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight } from "lucide-react";
+import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight, Target } from "lucide-react";
 import { SwarmPill } from "@/components/swarm-activity-panel";
 import { ProfileCard } from "@/components/profile-card";
 import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
@@ -30,12 +35,14 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [launchingProfileId, setLaunchingProfileId] = useState<number | null>(null);
   const [isSavingScheduler, setIsSavingScheduler] = useState(false);
+  const [dismissTick, setDismissTick] = useState(0);
 
   const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary();
   const { data: activeSessionResp, isLoading: isLoadingSession } = useGetActiveSession({
     query: { refetchInterval: 10000, queryKey: getGetActiveSessionQueryKey() }
   });
   const { data: profiles, isLoading: isLoadingProfiles } = useListProfiles();
+  const { data: allSessions } = useListSessions();
   const { data: schedulerConfig } = useGetSchedulerConfig({
     query: { queryKey: getGetSchedulerConfigQueryKey() }
   });
@@ -101,6 +108,48 @@ export default function Dashboard() {
 
   const activeSession = activeSessionResp?.session;
 
+  // "Continue where you left off" — most recent stopped session within the
+  // last 7 days that has an intent text worth resuming. Hidden if there's an
+  // active session, if no candidate exists, or if the user has dismissed
+  // this specific session via localStorage.
+  const continueCandidate = useMemo<Session | null>(() => {
+    if (activeSession || !allSessions) return null;
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const isDismissed = (id: number): boolean => {
+      try {
+        return localStorage.getItem(`floatr:continue-dismissed:${id}`) === "1";
+      } catch {
+        return false;
+      }
+    };
+    // Filter out dismissed sessions BEFORE picking the most recent — this way
+    // dismissing the top candidate falls through to the next eligible one.
+    const candidate = allSessions
+      .filter((s) => (s.status === "stopped" || s.status === "error") && s.intentText)
+      .filter((s) => {
+        const ts = s.stoppedAt ? new Date(s.stoppedAt).getTime() : new Date(s.createdAt).getTime();
+        return ts >= cutoff;
+      })
+      .filter((s) => !isDismissed(s.id))
+      .sort((a, b) => {
+        const ta = a.stoppedAt ? new Date(a.stoppedAt).getTime() : new Date(a.createdAt).getTime();
+        const tb = b.stoppedAt ? new Date(b.stoppedAt).getTime() : new Date(b.createdAt).getTime();
+        return tb - ta;
+      })[0];
+    return candidate ?? null;
+    // dismissTick is included so that calling dismissContinue triggers a re-evaluation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSession, allSessions, dismissTick]);
+
+  const dismissContinue = (sessionId: number) => {
+    try {
+      localStorage.setItem(`floatr:continue-dismissed:${sessionId}`, "1");
+    } catch {
+      // Ignore — dismissal is best-effort.
+    }
+    setDismissTick((n) => n + 1);
+  };
+
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8">
       <div className="flex justify-between items-end">
@@ -109,6 +158,11 @@ export default function Dashboard() {
           <p className="text-muted-foreground mt-1">Overview of your cloud GPU resources</p>
         </div>
       </div>
+
+      {/* Continue where you left off */}
+      {continueCandidate && (
+        <ContinueCard session={continueCandidate} onDismiss={() => dismissContinue(continueCandidate.id)} />
+      )}
 
       {/* Stats Row */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -228,6 +282,55 @@ export default function Dashboard() {
         />
       </div>
     </div>
+  );
+}
+
+interface ContinueCardProps {
+  session: Session;
+  onDismiss: () => void;
+}
+
+function ContinueCard({ session, onDismiss }: ContinueCardProps) {
+  const stoppedRef = session.stoppedAt ? new Date(session.stoppedAt) : new Date(session.createdAt);
+  const ago = formatDistanceToNow(stoppedRef, { addSuffix: true });
+  const cost = session.totalCost?.toFixed(2) ?? "0.00";
+  const intent = session.intentText ?? "";
+  return (
+    <Card className="border-primary/40 bg-gradient-to-br from-primary/10 via-primary/5 to-transparent relative">
+      <button
+        type="button"
+        onClick={onDismiss}
+        title="Dismiss"
+        aria-label="Dismiss continue-where-you-left-off card"
+        className="absolute top-3 right-3 text-muted-foreground hover:text-foreground transition-colors"
+        data-testid="button-dismiss-continue"
+      >
+        <X className="w-4 h-4" />
+      </button>
+      <CardContent className="p-5 flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-start gap-3 min-w-0 flex-1">
+          <div className="rounded-full bg-primary/15 p-2 mt-0.5 shrink-0">
+            <History className="w-4 h-4 text-primary" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-base font-bold">Continue where you left off</h3>
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+                {session.profileName} · {ago}
+              </span>
+            </div>
+            <p className="text-sm text-foreground/90 mt-1 flex items-start gap-1.5">
+              <Target className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
+              <span className="line-clamp-2">{intent}</span>
+            </p>
+            <p className="text-xs text-muted-foreground font-mono mt-1.5">
+              Last run cost ${cost} · Session #{session.id}
+            </p>
+          </div>
+        </div>
+        <RelaunchButton sessionId={session.id} variant="prominent" label="Re-launch" />
+      </CardContent>
+    </Card>
   );
 }
 

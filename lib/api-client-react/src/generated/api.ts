@@ -27,6 +27,7 @@ import type {
   BundleResponse,
   ClaimReleaseResponse,
   ClaimResponse,
+  CloneSessionResponse,
   CompileBundleRequest,
   CompilePreviewRequest,
   CompilePreviewResponse,
@@ -810,6 +811,98 @@ export const useDeleteSession = <
 > => {
   return useMutation(getDeleteSessionMutationOptions(options));
 };
+
+/**
+ * Returns the launch options needed to re-create a similar session: profile,
+task mode, token mode, repo URL (if recoverable), intent text, and team-member
+names. Passwords and ownerToken are never returned. Read-only — no new
+session is created.
+
+ * @summary Get cloneable launch options from a previous session
+ */
+export const getCloneSessionUrl = (sessionId: number) => {
+  return `/api/sessions/${sessionId}/clone`;
+};
+
+export const cloneSession = async (
+  sessionId: number,
+  options?: RequestInit,
+): Promise<CloneSessionResponse> => {
+  return customFetch<CloneSessionResponse>(getCloneSessionUrl(sessionId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getCloneSessionQueryKey = (sessionId: number) => {
+  return [`/api/sessions/${sessionId}/clone`] as const;
+};
+
+export const getCloneSessionQueryOptions = <
+  TData = Awaited<ReturnType<typeof cloneSession>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof cloneSession>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getCloneSessionQueryKey(sessionId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof cloneSession>>> = ({
+    signal,
+  }) => cloneSession(sessionId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!sessionId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof cloneSession>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type CloneSessionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof cloneSession>>
+>;
+export type CloneSessionQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get cloneable launch options from a previous session
+ */
+
+export function useCloneSession<
+  TData = Awaited<ReturnType<typeof cloneSession>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  sessionId: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof cloneSession>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getCloneSessionQueryOptions(sessionId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * Returns the currently running session if any

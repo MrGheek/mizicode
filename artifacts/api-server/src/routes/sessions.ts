@@ -375,6 +375,56 @@ router.get("/sessions/:sessionId", async (req, res) => {
   res.json({ ...synced, profileName: profile?.displayName || "", swarmWorkerCap: profile?.swarmWorkerCap ?? null });
 });
 
+// GET /sessions/:sessionId/clone — return the launch options needed to re-create
+// a similar session. Read-only, no new session is created. Passwords and
+// ownerToken are never returned.
+router.get("/sessions/:sessionId/clone", async (req, res) => {
+  const id = parseInt(req.params.sessionId);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
+
+  const [session] = await db
+    .select()
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, id));
+
+  if (!session) {
+    res.status(404).json({ error: "Session not found" });
+    return;
+  }
+
+  const [profile] = await db
+    .select({ displayName: gpuProfilesTable.displayName })
+    .from(gpuProfilesTable)
+    .where(eq(gpuProfilesTable.id, session.profileId));
+
+  // Recover repoUrl from the fingerprint JSON stored at launch time. Newer
+  // sessions store `{ url, branch, urlHash, langs, ... }`; older sessions may
+  // not have it.
+  const fp = session.repoFingerprintJson as Record<string, unknown> | null;
+  const repoUrl = fp && typeof fp.url === "string" ? (fp.url as string) : null;
+
+  const teamMemberNames = (session.teamMembers as TeamMemberRecord[] | null ?? [])
+    .map((m) => m.name)
+    .filter((n) => n && n !== "__shared__");
+
+  res.json({
+    sessionId: session.id,
+    profileId: session.profileId,
+    profileName: profile?.displayName ?? null,
+    taskMode: session.taskMode ?? null,
+    tokenMode: session.tokenMode ?? null,
+    bundleId: session.activeBundleId ?? null,
+    repoUrl,
+    intentText: session.intentText ?? null,
+    teamMemberNames,
+    stoppedAt: session.stoppedAt ? session.stoppedAt.toISOString() : null,
+    totalCost: session.totalCost ?? null,
+  });
+});
+
 // PATCH /sessions/:sessionId — update editable session fields. Currently only
 // supports `intentText` (the natural-language session goal). When the goal
 // changes, we also append a `session_goal` observation so the change is

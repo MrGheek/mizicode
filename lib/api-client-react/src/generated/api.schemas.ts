@@ -113,6 +113,27 @@ export interface UpdateSessionRequest {
 }
 
 /**
+ * Read-only snapshot of the launch options from a prior session, ready to pre-fill a new launch dialog.
+ */
+export interface CloneSessionResponse {
+  /** ID of the source session being cloned from. */
+  sessionId: number;
+  profileId: number;
+  profileName?: string | null;
+  taskMode?: string | null;
+  tokenMode?: string | null;
+  /** The Smart Skills bundle that was active on the source session, if any. */
+  bundleId?: number | null;
+  /** Original repo URL recovered from the source session's repo fingerprint, if available. */
+  repoUrl?: string | null;
+  intentText?: string | null;
+  /** Team-member display names from the source session. Passwords are never included. */
+  teamMemberNames: string[];
+  stoppedAt?: string | null;
+  totalCost?: number | null;
+}
+
+/**
  * Pre-computed repo fingerprint (langs, frameworks, etc.) for Smart Skills ranking. Derived from repoUrl if absent.
  */
 export type CreateSessionRequestRepoFingerprint = {
@@ -221,12 +242,6 @@ export interface SchedulerConfig {
   daysOfWeek: string[];
   /** IANA timezone (e.g. America/New_York) */
   timezone: string;
-  /**
-   * Pre-configured team member names for collaborative scheduled sessions (max 4).
-   * Always returned as an array — empty array when no members are configured (solo mode).
-   * Names are sanitized to lowercase alphanumeric/hyphen/underscore before storage.
-   */
-  teamMemberNames: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -244,8 +259,6 @@ export interface UpdateSchedulerRequest {
   daysOfWeek?: string[];
   /** IANA timezone (e.g. America/New_York) */
   timezone?: string;
-  /** Optional list of member names (max 4) for team workspaces in scheduled sessions */
-  teamMemberNames?: string[];
 }
 
 export interface NotImplementedResponse {
