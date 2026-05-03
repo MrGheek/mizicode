@@ -1323,6 +1323,16 @@ export default function MemoryPage() {
                                 {sess.observationCount} obs
                               </span>
                             </button>
+                            {sess.projectPath && !selectedProject && (
+                              <button
+                                onClick={() => setSelectedProject(sess.projectPath)}
+                                title={sess.projectPath}
+                                className="inline-flex items-center gap-1 flex-shrink-0 text-[10px] font-mono text-muted-foreground/60 bg-secondary/30 rounded px-1.5 py-0.5 border border-border/30 hover:bg-secondary/60 hover:text-muted-foreground transition-colors max-w-[160px]"
+                              >
+                                <FolderOpen className="w-2.5 h-2.5 flex-shrink-0" />
+                                <span className="truncate">{sess.projectPath.length > 22 ? `…${sess.projectPath.slice(-22)}` : sess.projectPath}</span>
+                              </button>
+                            )}
                             {!isEditing && (
                               <button
                                 onClick={() => startEdit(sess)}
@@ -1413,6 +1423,16 @@ export default function MemoryPage() {
                             <span className="font-mono text-muted-foreground">
                               {format(new Date(sess.startedAt * 1000), "MMM d, HH:mm")}
                             </span>
+                            {sess.projectPath && !selectedProject && (
+                              <button
+                                onClick={() => setSelectedProject(sess.projectPath)}
+                                title={sess.projectPath}
+                                className="inline-flex items-center gap-1 flex-shrink-0 text-[10px] font-mono text-muted-foreground/60 bg-secondary/30 rounded px-1.5 py-0.5 border border-border/30 hover:bg-secondary/60 hover:text-muted-foreground transition-colors max-w-[160px]"
+                              >
+                                <FolderOpen className="w-2.5 h-2.5 flex-shrink-0" />
+                                <span className="truncate">{sess.projectPath.length > 22 ? `…${sess.projectPath.slice(-22)}` : sess.projectPath}</span>
+                              </button>
+                            )}
                             <span className="text-muted-foreground/60 text-[10px] ml-auto">
                               {sess.observationCount} obs · no summary
                             </span>
