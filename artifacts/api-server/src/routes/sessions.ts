@@ -1538,10 +1538,51 @@ router.get("/sessions/:sessionId/swarm-status", async (req, res) => {
 // The client subscribes once; every time the runner posts a new snapshot via
 // swarm-push the server pushes it directly over this stream, replacing the 3-second poll.
 // On connection error the dashboard falls back to polling swarm-status.
+//
+// AUTHORIZATION: requires ?token=<ownerToken|memberPassword> query parameter.
+// EventSource does not support custom request headers, so we accept the credential
+// as a URL query parameter instead. The token is validated against:
+//   1. The session's ownerToken (full owner access)
+//   2. Any team member's password (read-only viewer access)
+// Unauthorized callers receive a 401 response before the SSE stream is opened;
+// the dashboard falls back to polling swarm-status (no auth required for reads).
 router.get("/sessions/:sessionId/swarm-stream", async (req, res) => {
   const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid sessionId" });
+    return;
+  }
+
+  // Verify caller is session owner or an authorized team member before opening stream.
+  const providedToken = typeof req.query["token"] === "string" ? req.query["token"].trim() : "";
+  if (!providedToken) {
+    res.status(401).json({ error: "Unauthorized: token query parameter is required" });
+    return;
+  }
+
+  try {
+    const [sessionAuth] = await db
+      .select({ ownerToken: sessionsTable.ownerToken, teamMembers: sessionsTable.teamMembers })
+      .from(sessionsTable)
+      .where(eq(sessionsTable.id, sessionId));
+
+    if (!sessionAuth) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    const isOwner = !!sessionAuth.ownerToken && providedToken === sessionAuth.ownerToken;
+    const memberPasswords = (sessionAuth.teamMembers as TeamMemberRecord[] | null ?? []).map((m) => m.password).filter(Boolean);
+    const isMember = memberPasswords.some((pw) => pw === providedToken);
+
+    if (!isOwner && !isMember) {
+      logger.warn({ sessionId }, "swarm-stream: rejected unauthorized connection attempt");
+      res.status(403).json({ error: "Forbidden: valid owner token or member password required" });
+      return;
+    }
+  } catch (authErr) {
+    logger.error({ err: authErr, sessionId }, "swarm-stream: auth check failed");
+    res.status(500).json({ error: "Internal server error during auth check" });
     return;
   }
 

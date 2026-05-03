@@ -154,7 +154,7 @@ function buildTabBadgeLabel(snapshot: SwarmSnapshot | null, availability: SwarmS
   return null;
 }
 
-export function useSwarmStatus(sessionId: number, isReady: boolean) {
+export function useSwarmStatus(sessionId: number, isReady: boolean, ownerToken?: string | null) {
   const [data, setData] = useState<SwarmStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   // Incrementing this forces the SSE effect to tear down and reconnect.
@@ -189,7 +189,10 @@ export function useSwarmStatus(sessionId: number, isReady: boolean) {
     }
 
     // Session is ready — open an SSE stream for instant push updates.
-    // Fall back to 3-second polling if the connection cannot be established.
+    // Fall back to 3-second polling if the connection cannot be established or auth fails.
+    // NOTE: EventSource does not support custom headers, so the token is passed as a
+    // query parameter. Without a token the server returns 401/403 and onerror fires,
+    // which gracefully degrades to the unauthenticated polling endpoint.
     let es: EventSource | null = null;
     let fallbackInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -200,7 +203,11 @@ export function useSwarmStatus(sessionId: number, isReady: boolean) {
     };
 
     try {
-      es = new EventSource(`${BASE_URL}api/sessions/${sessionId}/swarm-stream`);
+      const streamUrl = ownerToken
+        ? `${BASE_URL}api/sessions/${sessionId}/swarm-stream?token=${encodeURIComponent(ownerToken)}`
+        : `${BASE_URL}api/sessions/${sessionId}/swarm-stream`;
+
+      es = new EventSource(streamUrl);
 
       es.onmessage = (event) => {
         try {
@@ -215,7 +222,7 @@ export function useSwarmStatus(sessionId: number, isReady: boolean) {
       es.onerror = () => {
         es?.close();
         es = null;
-        // Connection failed — degrade gracefully to polling
+        // Connection failed or auth rejected — degrade gracefully to polling
         startPollingFallback();
       };
     } catch {
@@ -227,7 +234,7 @@ export function useSwarmStatus(sessionId: number, isReady: boolean) {
       es?.close();
       if (fallbackInterval) clearInterval(fallbackInterval);
     };
-  }, [sessionId, isReady, fetchStatus, reconnectKey]);
+  }, [sessionId, isReady, ownerToken, fetchStatus, reconnectKey]);
 
   return { data, loading };
 }
@@ -315,7 +322,7 @@ interface SwarmActivityPanelProps {
 }
 
 export function SwarmActivityPanel({ sessionId, isReady, isSessionOwner, ownerToken }: SwarmActivityPanelProps) {
-  const { data, loading } = useSwarmStatus(sessionId, isReady);
+  const { data, loading } = useSwarmStatus(sessionId, isReady, ownerToken);
   const [abortDialogOpen, setAbortDialogOpen] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
   const { toast } = useToast();

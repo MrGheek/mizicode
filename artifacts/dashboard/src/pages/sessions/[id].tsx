@@ -2091,7 +2091,7 @@ export default function SessionDetail() {
   // Swarm status — polled every 3 seconds when session is ready
   // Must be called unconditionally before early returns (rules of hooks)
   const sessionIsReady = session?.status === "ready";
-  const { data: swarmData } = useSwarmStatus(sessionId, sessionIsReady);
+  const { data: swarmData } = useSwarmStatus(sessionId, sessionIsReady, session?.ownerToken);
 
   // Fetch routing stats in the background so they are ready when the session stops.
   // bytesAvoided is passed to complete-feedback to signal context-shield-core effectiveness.
