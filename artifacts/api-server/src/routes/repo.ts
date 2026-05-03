@@ -926,10 +926,10 @@ function hybridSearch(opts: HybridSearchOptions) {
   const avgSymDocLen = 5;
   const avgFileDocLen = 4;
 
-  // Minimum semantic score to admit a candidate even when lexical score is near zero.
-  // Only applies when n-gram-compatible stored embeddings are present, so the semantic
-  // score carries richer signal (computed from code content + docstrings at index time).
-  const SEMANTIC_ADMISSION_THRESHOLD = 0.15;
+  // Minimum combined score to admit a candidate. Replaces the old per-signal lexical
+  // gate so that pure-semantic matches (e.g. verifyJwt for "authentication flow") can
+  // surface even when the query shares no lexical tokens with the symbol/file name.
+  const COMBINED_ADMISSION_THRESHOLD = 0.05;
 
   if (!typeFilter || typeFilter === "symbol") {
     for (const sym of symbolsJson || []) {
@@ -957,12 +957,6 @@ function hybridSearch(opts: HybridSearchOptions) {
       }
       const semantic = cosineSim(qVec, docVec);
 
-      // Admission: always require some signal. When stored embeddings are present,
-      // allow semantic-only matches (items with different wording but related meaning).
-      // Without embeddings, fall back to the original pure-lexical gate.
-      const admitted = lexical >= 0.02 || (usingStoredVec && semantic >= SEMANTIC_ADMISSION_THRESHOLD);
-      if (!admitted) continue;
-
       // Graph (zero on symbol level — centrality is file-level)
       const graph = 0;
 
@@ -971,6 +965,12 @@ function hybridSearch(opts: HybridSearchOptions) {
       const combined = usingStoredVec
         ? lexical * 0.45 + semantic * 0.45 + graph * 0.1
         : lexical * 0.55 + semantic * 0.35 + graph * 0.1;
+
+      // Gate on combined score: a high semantic score can compensate for zero lexical
+      // overlap, while exact-term matches naturally score higher and rank above
+      // pure-semantic results.
+      if (combined < COMBINED_ADMISSION_THRESHOLD) continue;
+
       const confidence = lexical > 0.5 ? 0.9 : 0.5;
 
       results.push({
@@ -990,7 +990,6 @@ function hybridSearch(opts: HybridSearchOptions) {
 
       const pathStr = file.path || "";
       const lexical = lexicalBm25(pathStr, q);
-      if (lexical < 0.02) continue;
 
       // Semantic
       const docVec = charNgramVec(pathStr + " " + (file.lang || ""));
@@ -1002,6 +1001,10 @@ function hybridSearch(opts: HybridSearchOptions) {
       const graph = centralityNorm * 0.6 + degreeNorm * 0.4;
 
       const combined = lexical * 0.50 + semantic * 0.25 + graph * 0.25;
+
+      // Gate on combined score so files with strong graph centrality or semantic
+      // relevance surface even when the path shares no tokens with the query.
+      if (combined < COMBINED_ADMISSION_THRESHOLD) continue;
       const confidence = graph > 0.3 ? 0.8 : 0.6;
 
       results.push({
@@ -1035,13 +1038,20 @@ function hybridSearch(opts: HybridSearchOptions) {
       }
       const semantic = cosineSim(qVec, chunkDocVec);
 
-      // Semantic admission: admit chunk if it has lexical overlap OR strong semantic match
-      const chunkAdmitted = lexical >= 0.02 || (chunkUsesStoredVec && semantic >= SEMANTIC_ADMISSION_THRESHOLD);
-      if (!chunkAdmitted) continue;
+      // Compute the signal-only score (no baseline) for admission gating.
+      // The full combined score adds a +0.10 baseline to boost chunks in ranking
+      // relative to symbols; that constant must not participate in the gate or
+      // every chunk would pass regardless of actual relevance.
+      const signalScore = chunkUsesStoredVec
+        ? lexical * 0.40 + semantic * 0.50
+        : lexical * 0.50 + semantic * 0.40;
 
-      const combined = chunkUsesStoredVec
-        ? lexical * 0.40 + semantic * 0.50 + 0.10
-        : lexical * 0.50 + semantic * 0.40 + 0.10;
+      // Gate: require meaningful signal before admitting the chunk. A high semantic
+      // score (e.g. 0.10+ semantic * 0.50 = 0.05) passes even with zero lexical overlap.
+      if (signalScore < COMBINED_ADMISSION_THRESHOLD) continue;
+
+      // Full combined score (signal + baseline) used only for sorting.
+      const combined = signalScore + 0.10;
 
       results.push({
         type: "chunk",
