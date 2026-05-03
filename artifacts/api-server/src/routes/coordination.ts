@@ -18,7 +18,7 @@ import {
   sessionsTable,
   sessionRepoContextTable,
 } from "@workspace/db";
-import { eq, and, or, lt, desc, inArray, asc, sql } from "drizzle-orm";
+import { eq, and, desc, inArray, asc, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import {
   getLanePolicy,
@@ -26,7 +26,6 @@ import {
   computeClaimOverlap,
   estimateBlastRadiusOverlap,
   LANE_DEFAULT_TTL_SECONDS,
-  LANE_HEARTBEAT_WINDOW_SECONDS,
 } from "../services/lane-policy";
 import {
   enqueueHeavyJob,
@@ -175,30 +174,6 @@ function serializeJob(job: LaneHeavyJob) {
   };
 }
 
-// ─── Claim expiry helper ───────────────────────────────────────────────────────
-
-async function expireStaleClaimsForSession(sessionId: number): Promise<void> {
-  const lanes = await db.select({ id: sessionLanesTable.id })
-    .from(sessionLanesTable)
-    .where(eq(sessionLanesTable.sessionId, sessionId));
-
-  if (lanes.length === 0) return;
-  const laneIds = lanes.map(l => l.id);
-  const now = new Date();
-  const heartbeatCutoff = new Date(Date.now() - LANE_HEARTBEAT_WINDOW_SECONDS * 1000);
-
-  await db.update(laneClaimsTable)
-    .set({ active: false })
-    .where(and(
-      inArray(laneClaimsTable.laneId, laneIds),
-      eq(laneClaimsTable.active, true),
-      or(
-        lt(laneClaimsTable.expiresAt, now),
-        lt(laneClaimsTable.lastHeartbeatAt, heartbeatCutoff),
-      ),
-    ));
-}
-
 // ─── ID parser ────────────────────────────────────────────────────────────────
 
 function getSessionId(req: { params: Record<string, string> }): number | null {
@@ -215,8 +190,6 @@ router.get("/sessions/:id/lanes", async (req, res) => {
   const [session] = await db.select({ id: sessionsTable.id })
     .from(sessionsTable).where(eq(sessionsTable.id, sessionId));
   if (!session) { res.status(404).json({ error: "Session not found" }); return; }
-
-  await expireStaleClaimsForSession(sessionId);
 
   const lanes = await db.select().from(sessionLanesTable)
     .where(eq(sessionLanesTable.sessionId, sessionId))
@@ -498,8 +471,7 @@ router.delete("/sessions/:id/lanes/:laneId/claim/:claimId", async (req, res) => 
     return;
   }
 
-  await db.update(laneClaimsTable)
-    .set({ active: false })
+  await db.delete(laneClaimsTable)
     .where(eq(laneClaimsTable.id, claimId));
 
   broadcastCoordinationUpdate(sessionId);
@@ -608,8 +580,6 @@ router.get("/sessions/:id/coordination", async (req, res) => {
   const sessionId = getSessionId(req);
   if (!sessionId) { res.status(400).json({ error: "Invalid session ID" }); return; }
 
-  await expireStaleClaimsForSession(sessionId);
-
   const lanes = await db.select().from(sessionLanesTable)
     .where(eq(sessionLanesTable.sessionId, sessionId))
     .orderBy(asc(sessionLanesTable.createdAt));
@@ -674,8 +644,6 @@ router.get("/sessions/:id/coordination", async (req, res) => {
 router.get("/sessions/:id/conflicts", async (req, res) => {
   const sessionId = getSessionId(req);
   if (!sessionId) { res.status(400).json({ error: "Invalid session ID" }); return; }
-
-  await expireStaleClaimsForSession(sessionId);
 
   const lanes = await db.select().from(sessionLanesTable)
     .where(eq(sessionLanesTable.sessionId, sessionId));

@@ -1,15 +1,13 @@
 /**
  * Claim Sweeper Service
  *
- * Background job that deactivates ghost claims left by lanes that crashed or
+ * Background job that hard-deletes ghost claims left by lanes that crashed or
  * disconnected without sending a release. Runs on a short interval so the
  * window during which stale claims block other lanes is minimised.
  *
  * A claim is considered expired if either:
  *   - its `expires_at` timestamp has passed, OR
  *   - its `last_heartbeat_at` timestamp is older than LANE_HEARTBEAT_WINDOW_SECONDS
- *
- * We set `active = false` rather than deleting so that audit history is preserved.
  */
 
 import { db, laneClaimsTable } from "@workspace/db";
@@ -18,21 +16,20 @@ import { logger } from "../lib/logger";
 import { LANE_HEARTBEAT_WINDOW_SECONDS } from "./lane-policy";
 
 export interface SweepResult {
-  deactivated: number;
+  deleted: number;
   sweptAt: string;
 }
 
 /**
- * Mark all globally expired or heartbeat-stale active claims as inactive.
+ * Hard-delete all globally expired or heartbeat-stale active claims.
  * Safe to call concurrently — the WHERE filter is idempotent.
  */
 export async function sweepExpiredClaims(): Promise<SweepResult> {
   const now = new Date();
   const heartbeatCutoff = new Date(Date.now() - LANE_HEARTBEAT_WINDOW_SECONDS * 1000);
 
-  const deactivated = await db
-    .update(laneClaimsTable)
-    .set({ active: false })
+  const deleted = await db
+    .delete(laneClaimsTable)
     .where(
       and(
         eq(laneClaimsTable.active, true),
@@ -44,7 +41,7 @@ export async function sweepExpiredClaims(): Promise<SweepResult> {
     )
     .returning({ id: laneClaimsTable.id });
 
-  return { deactivated: deactivated.length, sweptAt: now.toISOString() };
+  return { deleted: deleted.length, sweptAt: now.toISOString() };
 }
 
 const SWEEP_INTERVAL_MS = 30_000;
@@ -61,8 +58,8 @@ export function startClaimSweeper(): void {
   _sweepTimer = setInterval(async () => {
     try {
       const result = await sweepExpiredClaims();
-      if (result.deactivated > 0) {
-        logger.info(result, "Claim sweeper deactivated ghost claims");
+      if (result.deleted > 0) {
+        logger.info(result, "Claim sweeper hard-deleted ghost claims");
       }
     } catch (err) {
       logger.error({ err }, "Claim sweeper failed");
