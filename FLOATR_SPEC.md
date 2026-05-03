@@ -1596,11 +1596,15 @@ GitHub CodeQL static analysis for JavaScript/TypeScript. Triggers:
 Push-to-main and scheduled scans use a unique `run_id` concurrency key so they are never cancelled.
 
 ### `docker-build.yml`
-Builds and pushes `docker/Dockerfile` to Docker Hub automatically on every push to `main` that touches `docker/**`, and on `workflow_dispatch`. There is no PR-only validation job — the workflow does not run on pull requests.
+Builds and pushes `docker/Dockerfile` to Docker Hub automatically on every push to `main` that touches `docker/**`, and on `workflow_dispatch`. Additionally, any pull request that touches `docker/**` triggers a build-only validation job so broken Dockerfiles are caught before merge.
+
+**PR validation**: on `pull_request` events the workflow runs the full build (no push) without logging in to Docker Hub and without writing to the registry cache. This ensures the Dockerfile compiles correctly before the PR is merged, without publishing any image or polluting the build cache.
+
+**Publish gate**: the Docker Hub login, image push (`push: true`), registry cache writes, and SLSA attestation steps are all conditioned on `github.event_name != 'pull_request'`, so they only execute on `push` to `main` or `workflow_dispatch`.
 
 **Tags published on each run**: `gheeklabs/coding-env:cuda12.4`, `:a100`, `:h100`, `:latest` (all pointing to the same image digest). Registry-based layer caching (`gheeklabs/coding-env:buildcache`) is used instead of the GHA cache to avoid the 10 GB GHA cache limit.
 
-**SLSA provenance**: on every workflow run (both `push` to `main` and `workflow_dispatch`) the workflow attests build provenance via `actions/attest-build-provenance` (OIDC token), producing a signed SLSA Level 2 attestation attached to the registry image. Verify with:
+**SLSA provenance**: on every non-PR workflow run (both `push` to `main` and `workflow_dispatch`) the workflow attests build provenance via `actions/attest-build-provenance` (OIDC token), producing a signed SLSA Level 2 attestation attached to the registry image. Verify with:
 ```
 gh attestation verify oci://docker.io/gheeklabs/coding-env:latest --owner gheeklabs
 ```
