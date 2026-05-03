@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -154,11 +154,25 @@ function buildTabBadgeLabel(snapshot: SwarmSnapshot | null, availability: SwarmS
   return null;
 }
 
+const SSE_RECONNECT_INTERVAL_MS = 15_000;
+
 export function useSwarmStatus(sessionId: number, isReady: boolean, ownerToken?: string | null) {
   const [data, setData] = useState<SwarmStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [connectionMode, setConnectionMode] = useState<"sse" | "polling">("sse");
   // Incrementing this forces the SSE effect to tear down and reconnect.
   const [reconnectKey, setReconnectKey] = useState(0);
+
+  // Refs so callbacks can read current state without stale closures
+  const connectionModeRef = useRef<"sse" | "polling">("sse");
+  const fallbackIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+
+  const setMode = useCallback((mode: "sse" | "polling") => {
+    connectionModeRef.current = mode;
+    setConnectionMode(mode);
+  }, []);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -193,50 +207,89 @@ export function useSwarmStatus(sessionId: number, isReady: boolean, ownerToken?:
     // NOTE: EventSource does not support custom headers, so the token is passed as a
     // query parameter. Without a token the server returns 401/403 and onerror fires,
     // which gracefully degrades to the unauthenticated polling endpoint.
-    let es: EventSource | null = null;
-    let fallbackInterval: ReturnType<typeof setInterval> | null = null;
+    // Retries SSE reconnection every SSE_RECONNECT_INTERVAL_MS while in polling mode.
 
-    const startPollingFallback = () => {
-      if (fallbackInterval) return;
-      fetchStatus();
-      fallbackInterval = setInterval(fetchStatus, 3000);
+    const stopPolling = () => {
+      if (fallbackIntervalRef.current) {
+        clearInterval(fallbackIntervalRef.current);
+        fallbackIntervalRef.current = null;
+      }
     };
 
-    try {
-      const streamUrl = ownerToken
-        ? `${BASE_URL}api/sessions/${sessionId}/swarm-stream?token=${encodeURIComponent(ownerToken)}`
-        : `${BASE_URL}api/sessions/${sessionId}/swarm-stream`;
+    const stopReconnectTimer = () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+    };
 
-      es = new EventSource(streamUrl);
+    const openSSE = () => {
+      try {
+        const streamUrl = ownerToken
+          ? `${BASE_URL}api/sessions/${sessionId}/swarm-stream?token=${encodeURIComponent(ownerToken)}`
+          : `${BASE_URL}api/sessions/${sessionId}/swarm-stream`;
+        const es = new EventSource(streamUrl);
+        esRef.current = es;
 
-      es.onmessage = (event) => {
-        try {
-          const json: SwarmStatusResponse = JSON.parse(event.data);
-          setData(json);
-          setLoading(false);
-        } catch {
-          // Ignore malformed SSE events
+        es.onmessage = (event) => {
+          try {
+            const json: SwarmStatusResponse = JSON.parse(event.data);
+            setData(json);
+            setLoading(false);
+            // If we were in polling mode, SSE has reconnected — switch back
+            if (connectionModeRef.current === "polling") {
+              setMode("sse");
+              stopPolling();
+              stopReconnectTimer();
+            }
+          } catch {
+            // Ignore malformed SSE events
+          }
+        };
+
+        es.onerror = () => {
+          es.close();
+          esRef.current = null;
+          // Connection failed — degrade gracefully to polling
+          if (connectionModeRef.current !== "polling") {
+            setMode("polling");
+            fetchStatus();
+            fallbackIntervalRef.current = setInterval(fetchStatus, 3000);
+          }
+          // Schedule a reconnect attempt
+          stopReconnectTimer();
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectTimeoutRef.current = null;
+            openSSE();
+          }, SSE_RECONNECT_INTERVAL_MS);
+        };
+      } catch {
+        // EventSource constructor failed (very unusual) — fall back immediately
+        if (connectionModeRef.current !== "polling") {
+          setMode("polling");
+          fetchStatus();
+          fallbackIntervalRef.current = setInterval(fetchStatus, 3000);
         }
-      };
+        stopReconnectTimer();
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectTimeoutRef.current = null;
+          openSSE();
+        }, SSE_RECONNECT_INTERVAL_MS);
+      }
+    };
 
-      es.onerror = () => {
-        es?.close();
-        es = null;
-        // Connection failed or auth rejected — degrade gracefully to polling
-        startPollingFallback();
-      };
-    } catch {
-      // EventSource constructor failed (very unusual) — fall back immediately
-      startPollingFallback();
-    }
+    setMode("sse");
+    openSSE();
 
     return () => {
-      es?.close();
-      if (fallbackInterval) clearInterval(fallbackInterval);
+      esRef.current?.close();
+      esRef.current = null;
+      stopPolling();
+      stopReconnectTimer();
     };
-  }, [sessionId, isReady, ownerToken, fetchStatus, reconnectKey]);
+  }, [sessionId, isReady, ownerToken, fetchStatus, setMode, reconnectKey]);
 
-  return { data, loading };
+  return { data, loading, connectionMode };
 }
 
 export function swarmTabBadgeLabel(data: SwarmStatusResponse | null): string | null {
@@ -322,7 +375,7 @@ interface SwarmActivityPanelProps {
 }
 
 export function SwarmActivityPanel({ sessionId, isReady, isSessionOwner, ownerToken }: SwarmActivityPanelProps) {
-  const { data, loading } = useSwarmStatus(sessionId, isReady, ownerToken);
+  const { data, loading, connectionMode } = useSwarmStatus(sessionId, isReady, ownerToken);
   const [abortDialogOpen, setAbortDialogOpen] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
   const { toast } = useToast();
@@ -481,6 +534,15 @@ export function SwarmActivityPanel({ sessionId, isReady, isSessionOwner, ownerTo
               {isActive && (
                 <Badge className="text-[10px] px-1.5 py-0 bg-primary/20 text-primary border-primary/30 animate-pulse">
                   Live
+                </Badge>
+              )}
+              {isActive && connectionMode === "polling" && (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] px-1.5 py-0 text-yellow-500 border-yellow-500/40 bg-yellow-500/10"
+                  title="SSE stream unavailable — refreshing every 3 seconds"
+                >
+                  Polling
                 </Badge>
               )}
               {isSessionOwner && (isActive || isSynthesising) && (
