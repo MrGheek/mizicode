@@ -491,6 +491,26 @@ paths:
               schema:
                 $ref: "#/components/schemas/DashboardSummary"
 
+  /admin/claim-cleanup-stats:
+    get:
+      operationId: getClaimCleanupStats
+      tags: [coordination]
+      summary: Claim cleanup statistics
+      description: Returns cumulative purge statistics and recent purge run history for the inactive-claim purge job.
+      responses:
+        "200":
+          description: Claim cleanup stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimCleanupStats"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /skills:
     get:
       operationId: listSkills
@@ -1091,6 +1111,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SkillFeedbackHistoryResponse"
+        "404":
+          description: Skill not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: clearAllSkillFeedback
+      tags: [skills]
+      summary: Clear all feedback for a skill
+      description: Permanently deletes all feedback entries for the given skill.
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Feedback cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  deletedCount:
+                    type: integer
+                required: [success, deletedCount]
         "404":
           description: Skill not found
           content:
@@ -3199,6 +3249,47 @@ components:
         - totalCost
         - totalHours
         - profileCounts
+
+    ClaimPurgeRun:
+      type: object
+      description: A single execution of the inactive-claim purge job
+      properties:
+        id:
+          type: integer
+        purgedAt:
+          type: string
+          format: date-time
+        rowsDeleted:
+          type: integer
+        retentionDays:
+          type: integer
+      required: [id, purgedAt, rowsDeleted, retentionDays]
+
+    ClaimCleanupStats:
+      type: object
+      description: Cumulative and recent purge statistics for the inactive-claim purge job
+      properties:
+        totalRuns:
+          type: integer
+          description: Total number of purge job executions recorded
+        totalRowsDeleted:
+          type: integer
+          description: Cumulative count of claim rows deleted across all purge runs
+        lastPurgedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp of the most recent purge run
+        lastRowsDeleted:
+          type: integer
+          nullable: true
+          description: Number of rows deleted in the most recent purge run
+        recentRuns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClaimPurgeRun"
+          description: Up to 30 most recent purge runs, newest first
+      required: [totalRuns, totalRowsDeleted, lastPurgedAt, lastRowsDeleted, recentRuns]
 
     SchedulerConfig:
       type: object

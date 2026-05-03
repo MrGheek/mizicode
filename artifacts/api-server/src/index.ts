@@ -8,7 +8,7 @@ import { seedCuratedSources } from "./services/curated-sources";
 import { startEvalScheduler } from "./services/skills-evals";
 import { validateMemoryDataDir } from "./services/memory";
 import { startClaimSweeper, sweepExpiredClaims, recordExternalSweep } from "./services/claim-sweeper";
-import { db, laneClaimsTable } from "@workspace/db";
+import { db, laneClaimsTable, claimPurgeLogsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
 
 const CLAIM_RETENTION_DAYS = parseInt(process.env["CLAIM_RETENTION_DAYS"] ?? "7", 10);
@@ -37,8 +37,13 @@ async function purgeOldInactiveClaims(): Promise<void> {
         lt(laneClaimsTable.expiresAt, retentionCutoff),
       ))
       .returning({ id: laneClaimsTable.id });
-    if (deleted.length > 0) {
-      logger.info({ count: deleted.length, retentionDays: CLAIM_RETENTION_DAYS }, "Old inactive lane claims purged");
+    const count = deleted.length;
+    await db.insert(claimPurgeLogsTable).values({
+      rowsDeleted: count,
+      retentionDays: CLAIM_RETENTION_DAYS,
+    });
+    if (count > 0) {
+      logger.info({ count, retentionDays: CLAIM_RETENTION_DAYS }, "Old inactive lane claims purged");
     }
   } catch (err) {
     logger.error({ err }, "Failed to purge old inactive lane claims");

@@ -925,6 +925,43 @@ export const GetDashboardSummaryResponse = zod.object({
 });
 
 /**
+ * Returns cumulative purge statistics and recent purge run history for the inactive-claim purge job.
+ * @summary Claim cleanup statistics
+ */
+export const GetClaimCleanupStatsResponse = zod
+  .object({
+    totalRuns: zod
+      .number()
+      .describe("Total number of purge job executions recorded"),
+    totalRowsDeleted: zod
+      .number()
+      .describe("Cumulative count of claim rows deleted across all purge runs"),
+    lastPurgedAt: zod.coerce
+      .date()
+      .nullable()
+      .describe("Timestamp of the most recent purge run"),
+    lastRowsDeleted: zod
+      .number()
+      .nullable()
+      .describe("Number of rows deleted in the most recent purge run"),
+    recentRuns: zod
+      .array(
+        zod
+          .object({
+            id: zod.number(),
+            purgedAt: zod.coerce.date(),
+            rowsDeleted: zod.number(),
+            retentionDays: zod.number(),
+          })
+          .describe("A single execution of the inactive-claim purge job"),
+      )
+      .describe("Up to 30 most recent purge runs, newest first"),
+  })
+  .describe(
+    "Cumulative and recent purge statistics for the inactive-claim purge job",
+  );
+
+/**
  * Returns imported skills and built-in skill metadata
  * @summary List all skills
  */
@@ -1709,6 +1746,19 @@ export const GetSkillFeedbackHistoryResponse = zod.object({
     offset: zod.number(),
     count: zod.number(),
   }),
+});
+
+/**
+ * Permanently deletes all feedback entries for the given skill.
+ * @summary Clear all feedback for a skill
+ */
+export const ClearAllSkillFeedbackParams = zod.object({
+  skillId: zod.coerce.number(),
+});
+
+export const ClearAllSkillFeedbackResponse = zod.object({
+  success: zod.boolean(),
+  deletedCount: zod.number(),
 });
 
 /**

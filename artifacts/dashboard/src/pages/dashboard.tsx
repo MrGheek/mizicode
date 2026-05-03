@@ -9,12 +9,13 @@ import {
   useUpdateSchedulerConfig,
   useListSessions,
   useCloneSession,
+  useGetClaimCleanupStats,
   getGetDashboardSummaryQueryKey,
   getGetActiveSessionQueryKey,
   getGetSchedulerConfigQueryKey,
   getCloneSessionQueryKey,
 } from "@workspace/api-client-react";
-import type { Session } from "@workspace/api-client-react";
+import type { Session, ClaimCleanupStats } from "@workspace/api-client-react";
 import { formatDistanceToNow } from "date-fns";
 import { RelaunchButton } from "@/components/relaunch-button";
 import { X, History } from "lucide-react";
@@ -22,7 +23,7 @@ import type { GpuProfile, SchedulerConfig, UpdateSchedulerRequest } from "@works
 import type { LaunchOptions } from "@/components/launch-session-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight, Target } from "lucide-react";
+import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight, Target, Trash2 } from "lucide-react";
 import { SwarmPill } from "@/components/swarm-activity-panel";
 import { ProfileCard } from "@/components/profile-card";
 import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
@@ -40,6 +41,7 @@ export default function Dashboard() {
   const [dismissTick, setDismissTick] = useState(0);
 
   const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary();
+  const { data: cleanupStats } = useGetClaimCleanupStats({ query: { refetchInterval: 300000 } });
   const { data: activeSessionResp, isLoading: isLoadingSession } = useGetActiveSession({
     query: { refetchInterval: 10000, queryKey: getGetActiveSessionQueryKey() }
   });
@@ -282,6 +284,9 @@ export default function Dashboard() {
           launchingProfileId={launchingProfileId}
           onLaunch={handleLaunch}
         />
+
+        {/* Claim Cleanup Health */}
+        {cleanupStats && <ClaimCleanupCard stats={cleanupStats} />}
       </div>
     </div>
   );
@@ -488,6 +493,69 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ClaimCleanupCard({ stats }: { stats: ClaimCleanupStats }) {
+  const lastRun = stats.lastPurgedAt ? formatDistanceToNow(new Date(stats.lastPurgedAt), { addSuffix: true }) : null;
+
+  return (
+    <div>
+      <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+        <Trash2 className="w-5 h-5 text-primary" /> Claim Cleanup Health
+      </h2>
+      <Card className="bg-card/50">
+        <CardContent className="p-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-4">
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Total Purge Runs</p>
+              <p className="text-2xl font-bold font-mono">{stats.totalRuns}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Total Rows Deleted</p>
+              <p className="text-2xl font-bold font-mono">{stats.totalRowsDeleted.toLocaleString()}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Last Run</p>
+              <p className="text-sm font-mono font-semibold">{lastRun ?? "—"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Last Rows Deleted</p>
+              <p className="text-2xl font-bold font-mono">{stats.lastRowsDeleted ?? "—"}</p>
+            </div>
+          </div>
+          {stats.recentRuns.length > 0 && (
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Recent Runs</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border/40 text-muted-foreground text-xs">
+                      <th className="text-left pb-1 pr-4 font-medium">Time</th>
+                      <th className="text-right pb-1 pr-4 font-medium">Rows Deleted</th>
+                      <th className="text-right pb-1 font-medium">Retention (days)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.recentRuns.slice(0, 10).map((run) => (
+                      <tr key={run.id} className="border-b border-border/20 last:border-0">
+                        <td className="py-1.5 pr-4 font-mono text-xs text-muted-foreground">
+                          {formatDistanceToNow(new Date(run.purgedAt), { addSuffix: true })}
+                        </td>
+                        <td className={`py-1.5 pr-4 text-right font-mono font-semibold ${run.rowsDeleted > 0 ? "text-foreground" : "text-muted-foreground"}`}>
+                          {run.rowsDeleted}
+                        </td>
+                        <td className="py-1.5 text-right font-mono text-muted-foreground">{run.retentionDays}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -72,7 +72,15 @@ export const laneHeavyJobsTable = pgTable("lane_heavy_jobs", {
   deferredUntil: timestamp("deferred_until"),
 });
 
+export const claimPurgeLogsTable = pgTable("claim_purge_logs", {
+  id: serial("id").primaryKey(),
+  purgedAt: timestamp("purged_at").notNull().defaultNow(),
+  rowsDeleted: integer("rows_deleted").notNull(),
+  retentionDays: integer("retention_days").notNull(),
+});
+
 export type SessionLane = typeof sessionLanesTable.$inferSelect;
 export type LaneClaim = typeof laneClaimsTable.$inferSelect;
 export type LaneHandoff = typeof laneHandoffsTable.$inferSelect;
 export type LaneHeavyJob = typeof laneHeavyJobsTable.$inferSelect;
+export type ClaimPurgeLog = typeof claimPurgeLogsTable.$inferSelect;

@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import request from "supertest";
 import app from "../app";
-import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneHandoffsTable, laneHeavyJobsTable } from "@workspace/db";
+import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneHandoffsTable, laneHeavyJobsTable, claimPurgeLogsTable } from "@workspace/db";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { sweepExpiredClaims, expireStaleClaimsForSession } from "../services/claim-sweeper";
 import { LANE_HEARTBEAT_WINDOW_SECONDS } from "../services/lane-policy";
@@ -1368,5 +1368,80 @@ describe("POST /api/admin/sweep-claims authentication", () => {
       .set("X-Admin-Token", REAL_TOKEN);
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("sweptAt");
+  });
+});
+
+// ─── Claim cleanup stats ───────────────────────────────────────────────────────
+
+describe("GET /api/admin/claim-cleanup-stats", () => {
+  let insertedIds: number[] = [];
+
+  beforeAll(async () => {
+    // Seed a couple of known purge log rows so assertions are deterministic
+    const rows = await db
+      .insert(claimPurgeLogsTable)
+      .values([
+        { rowsDeleted: 5, retentionDays: 7 },
+        { rowsDeleted: 0, retentionDays: 7 },
+      ])
+      .returning({ id: claimPurgeLogsTable.id });
+    insertedIds = rows.map((r) => r.id);
+  });
+
+  afterAll(async () => {
+    if (insertedIds.length > 0) {
+      for (const id of insertedIds) {
+        await db.delete(claimPurgeLogsTable).where(eq(claimPurgeLogsTable.id, id));
+      }
+    }
+  });
+
+  it("returns 200 with the expected shape", async () => {
+    const res = await request(app).get("/api/admin/claim-cleanup-stats");
+    expect(res.status).toBe(200);
+    expect(typeof res.body.totalRuns).toBe("number");
+    expect(typeof res.body.totalRowsDeleted).toBe("number");
+    expect(Array.isArray(res.body.recentRuns)).toBe(true);
+  });
+
+  it("totalRuns reflects the seeded rows", async () => {
+    const res = await request(app).get("/api/admin/claim-cleanup-stats");
+    expect(res.status).toBe(200);
+    expect(res.body.totalRuns).toBeGreaterThanOrEqual(2);
+  });
+
+  it("totalRowsDeleted is the sum of all rowsDeleted values", async () => {
+    const res = await request(app).get("/api/admin/claim-cleanup-stats");
+    expect(res.status).toBe(200);
+    // At minimum the 5 rows we seeded should be accounted for
+    expect(res.body.totalRowsDeleted).toBeGreaterThanOrEqual(5);
+  });
+
+  it("recentRuns entries have the correct shape", async () => {
+    const res = await request(app).get("/api/admin/claim-cleanup-stats");
+    expect(res.status).toBe(200);
+    const run = res.body.recentRuns[0];
+    expect(typeof run.id).toBe("number");
+    expect(typeof run.purgedAt).toBe("string");
+    expect(typeof run.rowsDeleted).toBe("number");
+    expect(typeof run.retentionDays).toBe("number");
+  });
+
+  it("lastPurgedAt is a non-null ISO string when runs exist", async () => {
+    const res = await request(app).get("/api/admin/claim-cleanup-stats");
+    expect(res.status).toBe(200);
+    expect(res.body.lastPurgedAt).not.toBeNull();
+    expect(new Date(res.body.lastPurgedAt).getTime()).not.toBeNaN();
+  });
+
+  it("recentRuns is ordered newest-first", async () => {
+    const res = await request(app).get("/api/admin/claim-cleanup-stats");
+    expect(res.status).toBe(200);
+    const runs: Array<{ purgedAt: string }> = res.body.recentRuns;
+    for (let i = 1; i < runs.length; i++) {
+      expect(new Date(runs[i - 1]!.purgedAt).getTime()).toBeGreaterThanOrEqual(
+        new Date(runs[i]!.purgedAt).getTime(),
+      );
+    }
   });
 });

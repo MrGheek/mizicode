@@ -17,6 +17,7 @@ import {
   laneHeavyJobsTable,
   sessionsTable,
   sessionRepoContextTable,
+  claimPurgeLogsTable,
 } from "@workspace/db";
 import { eq, and, desc, inArray, asc, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
@@ -899,6 +900,45 @@ router.patch("/sessions/:id/heavy-jobs/:jobId", async (req, res) => {
 
   broadcastCoordinationUpdate(sessionId);
   res.json(serializeJob(updated));
+});
+
+// ─── GET /api/admin/claim-cleanup-stats ───────────────────────────────────────
+// Returns cumulative purge statistics and the 30 most recent purge run records.
+// Lets operators verify the purge job is running and detect abnormal accumulation.
+
+router.get("/admin/claim-cleanup-stats", async (_req, res) => {
+  try {
+    const [aggregate] = await db
+      .select({
+        totalRuns: sql<number>`count(*)::int`,
+        totalRowsDeleted: sql<number>`coalesce(sum(${claimPurgeLogsTable.rowsDeleted}), 0)::int`,
+        lastPurgedAt: sql<string | null>`max(${claimPurgeLogsTable.purgedAt})`,
+        lastRowsDeleted: sql<number | null>`(array_agg(${claimPurgeLogsTable.rowsDeleted} order by ${claimPurgeLogsTable.purgedAt} desc))[1]`,
+      })
+      .from(claimPurgeLogsTable);
+
+    const recentRuns = await db
+      .select()
+      .from(claimPurgeLogsTable)
+      .orderBy(desc(claimPurgeLogsTable.purgedAt))
+      .limit(30);
+
+    res.json({
+      totalRuns: aggregate?.totalRuns ?? 0,
+      totalRowsDeleted: aggregate?.totalRowsDeleted ?? 0,
+      lastPurgedAt: aggregate?.lastPurgedAt ?? null,
+      lastRowsDeleted: aggregate?.lastRowsDeleted ?? null,
+      recentRuns: recentRuns.map(r => ({
+        id: r.id,
+        purgedAt: r.purgedAt.toISOString(),
+        rowsDeleted: r.rowsDeleted,
+        retentionDays: r.retentionDays,
+      })),
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to fetch claim cleanup stats");
+    res.status(500).json({ error: "Failed to fetch claim cleanup stats" });
+  }
 });
 
 // ─── POST /api/admin/sweep-claims ─────────────────────────────────────────────

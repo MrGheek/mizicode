@@ -228,6 +228,32 @@ export interface DashboardSummary {
   profileCounts: DashboardSummaryProfileCounts;
 }
 
+/**
+ * A single execution of the inactive-claim purge job
+ */
+export interface ClaimPurgeRun {
+  id: number;
+  purgedAt: string;
+  rowsDeleted: number;
+  retentionDays: number;
+}
+
+/**
+ * Cumulative and recent purge statistics for the inactive-claim purge job
+ */
+export interface ClaimCleanupStats {
+  /** Total number of purge job executions recorded */
+  totalRuns: number;
+  /** Cumulative count of claim rows deleted across all purge runs */
+  totalRowsDeleted: number;
+  /** Timestamp of the most recent purge run */
+  lastPurgedAt: string | null;
+  /** Number of rows deleted in the most recent purge run */
+  lastRowsDeleted: number | null;
+  /** Up to 30 most recent purge runs, newest first */
+  recentRuns: ClaimPurgeRun[];
+}
+
 export interface SchedulerConfig {
   id: number;
   enabled: boolean;
@@ -466,20 +492,11 @@ export type SessionSkillsResponseActiveManifestsItem = {
   [key: string]: unknown;
 };
 
-export interface DesignContextEntry {
-  category: string;
-  name: string;
-  data: { [key: string]: string };
-  tags: string[];
-}
-
 export interface SessionSkillsResponse {
   activations: SessionSkillActivation[];
   activeBundle?: SkillBundle | null;
   /** Full skill manifests from the latest activation */
   activeManifests?: SessionSkillsResponseActiveManifestsItem[];
-  /** Design intelligence entries injected at activation time. Null for lean/ultra token modes or older sessions. */
-  designContext?: DesignContextEntry[] | null;
 }
 
 export interface SkillFeedbackRequest {
@@ -526,17 +543,11 @@ export interface SkillFeedbackScore {
   totalCount: number;
   helpfulCount: number;
   unhelpfulCount: number;
-  /** Recency-weighted helpful rate in [0, 1] */
+  /** Rate from 0.0 to 1.0 */
   helpfulRate: number;
-  /** Raw (unweighted) helpful rate in [0, 1] */
-  rawHelpfulRate: number;
   /** Normalized to [-1.0, +1.0] centered at 0.5 helpfulRate */
   normalizedScore: number;
   avgTaskSuccessScore?: number | null;
-  /** Sum of recency decay weights — effective sample size after time-discounting */
-  decayedTotalWeight: number;
-  /** Sum of decay weights for helpful rows */
-  decayedHelpfulWeight: number;
 }
 
 export interface SkillFeedbackScoresResponse {
@@ -2054,6 +2065,11 @@ export type GetSkillFeedbackHistoryParams = {
    */
   limit?: number;
   offset?: number;
+};
+
+export type ClearAllSkillFeedback200 = {
+  success: boolean;
+  deletedCount: number;
 };
 
 export type GetBundleLeaderboardParams = {
