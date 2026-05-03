@@ -2142,6 +2142,7 @@ export default function SessionDetail() {
       }
       setMemStreaming(false);
       setMemReconnecting(false);
+      setMemGaveUp(false);
     }, MEM_FEED_CONFIRM_MS);
 
     return () => {
