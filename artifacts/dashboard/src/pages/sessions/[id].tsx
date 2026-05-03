@@ -1877,19 +1877,43 @@ export default function SessionDetail() {
   const { pref: handoffNotifPref, setPref: setHandoffNotifPref, browserPermission } = useHandoffNotificationPref();
   const [notifPopoverOpen, setNotifPopoverOpen] = useState(false);
   const queryClient = useQueryClient();
+  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm"] as const;
+  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" => {
+    const settled = validTabs.includes(raw as typeof validTabs[number]) ? raw : "overview";
+    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm";
+  };
+
   const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm">(() => {
-    const tab = new URLSearchParams(window.location.search).get("tab");
-    const valid = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm"];
-    const resolved = valid.includes(tab ?? "") ? tab : "overview";
-    return (resolved === "team" ? "coordination" : resolved) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm";
+    const stored = sessionStorage.getItem(`session-tab-${id}`);
+    const urlTab = new URLSearchParams(window.location.search).get("tab");
+    const validStored = stored && (validTabs as readonly string[]).includes(stored) ? stored : null;
+    return resolveTab(validStored ?? urlTab);
   });
 
+  // Use a ref so the persistence effect always writes to the current session's key
+  // without `id` in its dependency array (which would cause stale-tab cross-session writes).
+  const idRef = useRef(id);
+  idRef.current = id;
+
+  // Rehydrate activeTab whenever the user navigates to a different session
+  // (component is reused across :id changes rather than unmounted/remounted).
   useEffect(() => {
+    const stored = sessionStorage.getItem(`session-tab-${id}`);
+    const urlTab = new URLSearchParams(window.location.search).get("tab");
+    const validStored = stored && (validTabs as readonly string[]).includes(stored) ? stored : null;
+    setActiveTab(resolveTab(validStored ?? urlTab));
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist to sessionStorage and sync the URL whenever the active tab changes.
+  // idRef (not id) is used so this effect never re-runs solely because id changed,
+  // preventing the old tab from being written into the newly-loaded session's key.
+  useEffect(() => {
+    sessionStorage.setItem(`session-tab-${idRef.current}`, activeTab);
     const params = new URLSearchParams(window.location.search);
     params.set("tab", activeTab);
     const newUrl = `${window.location.pathname}?${params.toString()}`;
     window.history.replaceState(null, "", newUrl);
-  }, [activeTab]);
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
   const [seenConflictFingerprint, setSeenConflictFingerprint] = useState<string>("");
