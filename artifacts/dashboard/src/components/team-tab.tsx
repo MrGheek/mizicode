@@ -922,7 +922,12 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
                   handoff={handoff}
                   lanes={lanes}
                   sessionId={sessionId}
-                  onAction={() => queryClient.invalidateQueries({ queryKey: getGetSessionCoordinationQueryKey(sessionId) })}
+                  onAction={() => {
+                    queryClient.invalidateQueries({ queryKey: getGetSessionCoordinationQueryKey(sessionId) });
+                    if (pendingHandoffs.length <= 1) {
+                      setShowResolvedHandoffs(false);
+                    }
+                  }}
                 />
               ))
             )}
