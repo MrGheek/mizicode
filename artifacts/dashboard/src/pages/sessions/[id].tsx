@@ -1782,7 +1782,7 @@ export default function SessionDetail() {
   const [conflictBadgePulseKey, setConflictBadgePulseKey] = useState(0);
   const prevConflictFingerprintRef = useRef<string>("");
   const [dismissedConflictFingerprint, setDismissedConflictFingerprint] = useState<string>(() =>
-    sessionId ? (sessionStorage.getItem(`conflict-dismissed:${sessionId}`) ?? "") : ""
+    sessionId ? (localStorage.getItem(`conflict-dismissed:${sessionId}`) ?? "") : ""
   );
   const [seenHandoffCount, setSeenHandoffCount] = useState(0);
   const toastedHandoffIdsRef = useRef<Set<number>>(new Set());
@@ -2080,16 +2080,29 @@ export default function SessionDetail() {
   useEffect(() => {
     setSeenConflictFingerprint("");
     setDismissedConflictFingerprint(
-      sessionId ? (sessionStorage.getItem(`conflict-dismissed:${sessionId}`) ?? "") : ""
+      sessionId ? (localStorage.getItem(`conflict-dismissed:${sessionId}`) ?? "") : ""
     );
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const key = `conflict-dismissed:${sessionId}`;
+    function onStorage(e: StorageEvent) {
+      if (e.key === key) {
+        setDismissedConflictFingerprint(e.newValue ?? "");
+      }
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, [sessionId]);
 
   useEffect(() => {
     if (!hasAnyConflict) {
       setSeenConflictFingerprint("");
       setDismissedConflictFingerprint("");
+      if (sessionId) localStorage.removeItem(`conflict-dismissed:${sessionId}`);
     }
-  }, [hasAnyConflict]);
+  }, [hasAnyConflict, sessionId]);
 
   useEffect(() => {
     if (activeTab === "coordination" && hasAnyConflict) {
@@ -2737,7 +2750,7 @@ export default function SessionDetail() {
                 aria-label="Dismiss conflict banner"
                 className="text-red-400 hover:text-red-200 transition-colors ml-1 shrink-0"
                 onClick={() => {
-                  sessionStorage.setItem(`conflict-dismissed:${sessionId}`, blockingConflictFingerprint);
+                  localStorage.setItem(`conflict-dismissed:${sessionId}`, blockingConflictFingerprint);
                   setDismissedConflictFingerprint(blockingConflictFingerprint);
                 }}
               >
