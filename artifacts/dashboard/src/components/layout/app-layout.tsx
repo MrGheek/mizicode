@@ -100,13 +100,14 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto bg-background focus:outline-none relative">
-        {/* Floating notification bell — top-right of every page */}
-        <div className="absolute top-4 right-6 z-30">
-          <NotificationBell />
-        </div>
+      <main className="flex-1 overflow-y-auto bg-background focus:outline-none">
         {children}
       </main>
+
+      {/* Floating notification bell — fixed top-right, always visible across pages */}
+      <div className="fixed top-4 right-6 z-50">
+        <NotificationBell />
+      </div>
 
       {/* Global notification watchers — emit notifications for async events */}
       <NotificationWatchers />

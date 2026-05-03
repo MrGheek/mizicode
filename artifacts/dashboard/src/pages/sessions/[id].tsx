@@ -51,7 +51,6 @@ import { inferBootPhase } from "@/lib/boot-phases";
 import { BootTimeline, BootProgressStrip } from "@/components/boot-timeline";
 import { RelaunchButton } from "@/components/relaunch-button";
 import { isTypingTarget } from "@/lib/shortcuts";
-import { addNotification } from "@/lib/notification-store";
 import { TeamTab } from "@/components/team-tab";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 
@@ -2113,72 +2112,9 @@ export default function SessionDetail() {
     }
   }, [showConflictBadge]);
 
-  // Persist new conflicts to the notification center. On first load the
-  // existing conflicts are seeded into a `seen` set so we never fire
-  // retroactive notifications for conflicts that pre-existed the session
-  // page mount; only conflicts that appear later trigger an entry.
-  const seenConflictIdsRef = useRef<Set<string> | null>(null);
-  useEffect(() => {
-    // Reset on session change so a new session starts fresh.
-    seenConflictIdsRef.current = null;
-  }, [sessionId]);
-  useEffect(() => {
-    if (!sessionId || !bgConflictsData) return;
-    const keys = activeConflicts.map((c) => {
-      const [a, b] = [c.laneIdA, c.laneIdB].sort((x, y) => x - y);
-      return { c, key: `${a}:${b}:${c.recommendation}`, a, b };
-    });
-    if (seenConflictIdsRef.current === null) {
-      seenConflictIdsRef.current = new Set(keys.map((k) => k.key));
-      return;
-    }
-    const seen = seenConflictIdsRef.current;
-    for (const { c, key, a, b } of keys) {
-      if (seen.has(key)) continue;
-      seen.add(key);
-      addNotification({
-        id: `conflict:${sessionId}:${key}`,
-        type: "conflict",
-        title: c.recommendation === "block" ? "Blocking conflict detected" : "Conflict detected",
-        subtitle: `Lanes ${a} ↔ ${b}`,
-        href: `/sessions/${sessionId}?tab=coordination`,
-        sessionId,
-      });
-    }
-  }, [activeConflicts, bgConflictsData, sessionId]);
-
-  // Persist swarm phase transitions (completed / aborted) to the
-  // notification center. Tracks previous phase per session so we only
-  // emit once per transition.
-  const prevSwarmPhaseRef = useRef<string | null>(null);
-  useEffect(() => {
-    const phase = swarmData?.snapshot?.phase ?? null;
-    const prev = prevSwarmPhaseRef.current;
-    prevSwarmPhaseRef.current = phase;
-    if (!sessionId || !phase || phase === prev) return;
-    // synthesising → idle (or any non-active terminal phase) means run completed.
-    if (prev === "synthesising" && phase !== "synthesising" && phase !== "active" && phase !== "aborted") {
-      const done = swarmData?.snapshot?.doneCount ?? 0;
-      const total = swarmData?.snapshot?.totalWorkers ?? 0;
-      addNotification({
-        id: `swarm-completed:${sessionId}:${swarmData?.snapshot?.timestamp ?? Date.now()}`,
-        type: "swarm_completed",
-        title: "Swarm run finished",
-        subtitle: `${done}/${total} workers completed · session #${sessionId}`,
-        href: `/sessions/${sessionId}?tab=swarm`,
-        sessionId,
-      });
-    } else if (phase === "aborted" && prev !== "aborted") {
-      addNotification({
-        id: `swarm-aborted:${sessionId}:${swarmData?.snapshot?.timestamp ?? Date.now()}`,
-        type: "swarm_aborted",
-        title: "Swarm run aborted",
-        subtitle: `Session #${sessionId}`,
-        href: `/sessions/${sessionId}?tab=swarm`,
-        sessionId,
-      });
-    }
-  }, [swarmData, sessionId]);
+  // Note: swarm/handoff/conflict notifications are emitted globally by
+  // the per-session watchers in `notification-watchers.tsx` so they fire
+  // regardless of which page the user is currently viewing.
 
   // When the Coordination tab is opened, mark current pending handoffs as seen.
   // When handoffs are all resolved (count hits 0), reset seen count too.
@@ -2224,19 +2160,6 @@ export default function SessionDetail() {
       watch_files: "Watch Files",
       related_lane: "Related Lane",
     };
-    // Persist each new handoff to the notification center (Coordination
-    // tab inactive — matches spec for non-current-context delivery).
-    for (const h of newHandoffs) {
-      const label = typeLabels[h.handoffType] ?? h.handoffType;
-      addNotification({
-        id: `handoff:${sessionId}:${h.id}`,
-        type: "handoff",
-        title: `Handoff: ${label}`,
-        subtitle: h.message ?? `Session #${sessionId}`,
-        href: `/sessions/${sessionId}?tab=coordination`,
-        sessionId,
-      });
-    }
     if (newHandoffs.length === 1) {
       const h = newHandoffs[0];
       const label = typeLabels[h.handoffType] ?? h.handoffType;
