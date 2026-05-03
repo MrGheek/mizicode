@@ -5,7 +5,7 @@ import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
-import { listObservations, listSessions, searchMemory, subscribeToObservations, backupDb, restoreDb, addObservation } from "../services/memory";
+import { listObservations, listSessions, searchMemory, subscribeToObservations, backupDb, restoreDb, addObservation, addSummary } from "../services/memory";
 import fs from "fs";
 import type { TeamMemberRecord, SessionRoutingStats } from "@workspace/db";
 import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles, getRepoIntelligenceForSession } from "../services/skills-bundler";
@@ -1019,6 +1019,22 @@ router.get("/sessions/:sessionId/memory/search", (req, res) => {
   }
 });
 
+router.patch("/sessions/:sessionId/memory/sessions/:memSessionId/summary", (req, res) => {
+  const { memSessionId } = req.params;
+  const { summary } = req.body as { summary?: string };
+  if (typeof summary !== "string") {
+    res.status(400).json({ error: "summary (string) is required" });
+    return;
+  }
+  try {
+    addSummary(memSessionId, MEM_USER_ID, summary.trim());
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error(err, "Failed to update mem session summary");
+    res.status(500).json({ error: "Failed to update summary" });
+  }
+});
+
 router.get("/memory/search", (req, res) => {
   const q = (req.query["q"] as string | undefined) || "";
   const projectPath = (req.query["projectPath"] as string | undefined) || undefined;
@@ -1034,6 +1050,22 @@ router.get("/memory/search", (req, res) => {
   } catch (err) {
     logger.error(err, "Failed to search global memory for dashboard");
     res.status(500).json({ error: "Failed to search memory" });
+  }
+});
+
+router.patch("/memory/sessions/:memSessionId/summary", (req, res) => {
+  const { memSessionId } = req.params;
+  const { summary } = req.body as { summary?: string };
+  if (typeof summary !== "string") {
+    res.status(400).json({ error: "summary (string) is required" });
+    return;
+  }
+  try {
+    addSummary(memSessionId, MEM_USER_ID, summary.trim());
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error(err, "Failed to update mem session summary (global proxy)");
+    res.status(500).json({ error: "Failed to update summary" });
   }
 });
 

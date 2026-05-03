@@ -285,9 +285,42 @@ function MemoryTab({
   streamedObservations: MemObservation[];
   onReconnect: () => void;
 }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const { data: sessions, isLoading: sessionsLoading } = useMemSessions(sessionId);
   const { data: polledObservations, isLoading: obsLoading } = useMemObservations(sessionId, isActive);
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
+
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [savingSessionId, setSavingSessionId] = useState<string | null>(null);
+
+  async function handleSaveSummary(memSessId: string) {
+    setSavingSessionId(memSessId);
+    try {
+      const res = await fetch(`${BASE_URL}api/sessions/${sessionId}/memory/sessions/${encodeURIComponent(memSessId)}/summary`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary: editDraft }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error || "Failed to save");
+      }
+      queryClient.invalidateQueries({ queryKey: ["mem-sessions", sessionId] });
+      toast({ title: "Session note saved" });
+      setEditingSessionId(null);
+    } catch (err) {
+      toast({ title: err instanceof Error ? err.message : "Failed to save note", variant: "destructive" });
+    } finally {
+      setSavingSessionId(null);
+    }
+  }
+
+  function startEdit(sess: MemSession) {
+    setEditingSessionId(sess.id);
+    setEditDraft(sess.summary ?? "");
+  }
 
   // Project path filter
   const [selectedProject, setSelectedProject] = useState("");
@@ -571,35 +604,82 @@ function MemoryTab({
                 {filteredSessions.map(sess => {
                   const isExpanded = expandedSessions.has(sess.id);
                   const sessObs = obsBySession[sess.id] || [];
+                  const isEditing = editingSessionId === sess.id;
+                  const isSaving = savingSessionId === sess.id;
                   return (
                     <div key={sess.id} className="border border-border/40 rounded">
-                      <button
-                        onClick={() => toggleSession(sess.id)}
-                        className="w-full flex items-center justify-between p-2 text-left hover:bg-secondary/20 transition-colors"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          {isExpanded ? (
-                            <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-                          ) : (
-                            <ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-                          )}
-                          <span className="font-mono text-[10px] text-primary/60 flex-shrink-0 bg-primary/10 rounded px-1">
-                            {sess.id.length > 16 ? `${sess.id.slice(0, 16)}…` : sess.id}
+                      <div className="flex items-center gap-2 p-2">
+                        <button
+                          onClick={() => toggleSession(sess.id)}
+                          className="flex items-center gap-2 flex-1 justify-between text-left hover:bg-secondary/20 transition-colors rounded min-w-0"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {isExpanded ? (
+                              <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                            ) : (
+                              <ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                            )}
+                            <span className="font-mono text-[10px] text-primary/60 flex-shrink-0 bg-primary/10 rounded px-1">
+                              {sess.id.length > 16 ? `${sess.id.slice(0, 16)}…` : sess.id}
+                            </span>
+                            <span className="font-mono text-xs text-muted-foreground flex-shrink-0">
+                              {format(new Date(sess.startedAt * 1000), "MMM d, HH:mm")}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground flex-shrink-0 ml-2">
+                            {sess.observationCount} obs
                           </span>
-                          <span className="font-mono text-xs text-muted-foreground flex-shrink-0">
-                            {format(new Date(sess.startedAt * 1000), "MMM d, HH:mm")}
-                          </span>
-                        </div>
-                        <span className="text-[10px] text-muted-foreground flex-shrink-0 ml-2">
-                          {sess.observationCount} obs
-                        </span>
-                      </button>
+                        </button>
+                        {!isEditing && (
+                          <button
+                            onClick={() => startEdit(sess)}
+                            title={sess.summary ? "Edit session note" : "Add session note"}
+                            className="flex-shrink-0 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-secondary/40 transition-colors"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
 
-                      {/* Summary block — always visible below header when summary exists */}
-                      {sess.summary && (
-                        <div className="mx-2 mb-2 px-2 py-1.5 bg-primary/5 border border-primary/20 rounded text-xs text-foreground/90 leading-relaxed">
-                          {sess.summary}
+                      {/* Inline edit area */}
+                      {isEditing ? (
+                        <div className="mx-2 mb-2 space-y-1.5">
+                          <textarea
+                            value={editDraft}
+                            onChange={e => setEditDraft(e.target.value)}
+                            rows={4}
+                            className="w-full text-xs rounded border border-primary/40 bg-primary/5 px-2.5 py-2 text-foreground/90 leading-relaxed resize-y focus:outline-none focus:ring-1 focus:ring-primary/50"
+                            placeholder="Write your session notes here…"
+                            autoFocus
+                          />
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              className="h-6 text-xs px-2 gap-1"
+                              onClick={() => handleSaveSummary(sess.id)}
+                              disabled={isSaving}
+                            >
+                              {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                              Save
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 text-xs px-2"
+                              onClick={() => setEditingSessionId(null)}
+                              disabled={isSaving}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
                         </div>
+                      ) : (
+                        /* Summary block — always visible below header when summary exists */
+                        sess.summary && (
+                          <div className="mx-2 mb-2 px-2 py-1.5 bg-primary/5 border border-primary/20 rounded text-xs text-foreground/90 leading-relaxed">
+                            {sess.summary}
+                          </div>
+                        )
                       )}
 
                       {isExpanded && (

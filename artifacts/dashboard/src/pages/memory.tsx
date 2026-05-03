@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Brain, Search, X, Clock, ChevronDown, ChevronRight, FolderOpen, Download, Upload, AlertTriangle, Loader2 } from "lucide-react";
+import { Brain, Search, X, Clock, ChevronDown, ChevronRight, FolderOpen, Download, Upload, AlertTriangle, Loader2, Pencil, Check } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -235,11 +235,46 @@ function MemoryBackupCard() {
 }
 
 export default function MemoryPage() {
+  const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
   const [selectedProject, setSelectedProject] = useState("");
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [savingSessionId, setSavingSessionId] = useState<string | null>(null);
+
+  async function handleSaveSummary(sessId: string) {
+    setSavingSessionId(sessId);
+    try {
+      const res = await fetch(`${BASE_URL}api/memory/sessions/${encodeURIComponent(sessId)}/summary`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary: editDraft }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error || "Failed to save");
+      }
+      setAllLoadedSessions(prev =>
+        prev.map(s => s.id === sessId ? { ...s, summary: editDraft || null } : s)
+      );
+      queryClient.invalidateQueries({ queryKey: ["mem-all-sessions"] });
+      toast.success("Session note saved");
+      setEditingSessionId(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save note");
+    } finally {
+      setSavingSessionId(null);
+    }
+  }
+
+  function startEdit(sess: MemSession) {
+    setEditingSessionId(sess.id);
+    setEditDraft(sess.summary ?? "");
+  }
 
   // Default sessions list pagination
   const [sessionsOffset, setSessionsOffset] = useState(0);
@@ -569,33 +604,80 @@ export default function MemoryPage() {
                   <CardContent className="space-y-2">
                     {sessionsWithSummaries.map(sess => {
                       const isExpanded = expandedSessions.has(sess.id);
+                      const isEditing = editingSessionId === sess.id;
+                      const isSaving = savingSessionId === sess.id;
                       return (
                         <div key={sess.id} className="border border-border/40 rounded">
-                          <button
-                            onClick={() => toggleSession(sess.id)}
-                            className="w-full flex items-center gap-2 p-2 text-left hover:bg-secondary/20 transition-colors"
-                          >
-                            {isExpanded ? (
-                              <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-                            ) : (
-                              <ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                          <div className="flex items-center gap-2 p-2">
+                            <button
+                              onClick={() => toggleSession(sess.id)}
+                              className="flex items-center gap-2 flex-1 text-left hover:bg-secondary/20 transition-colors rounded min-w-0"
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                              ) : (
+                                <ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                              )}
+                              <span className="font-mono text-[10px] text-primary/60 flex-shrink-0 bg-primary/10 rounded px-1">
+                                {sess.id.length > 16 ? `${sess.id.slice(0, 16)}…` : sess.id}
+                              </span>
+                              <span className="font-mono text-xs text-muted-foreground flex-shrink-0">
+                                {format(new Date(sess.startedAt * 1000), "MMM d, HH:mm")}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground ml-auto flex-shrink-0">
+                                {sess.observationCount} obs
+                              </span>
+                            </button>
+                            {!isEditing && (
+                              <button
+                                onClick={() => startEdit(sess)}
+                                title="Edit session note"
+                                className="flex-shrink-0 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-secondary/40 transition-colors"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
                             )}
-                            <span className="font-mono text-[10px] text-primary/60 flex-shrink-0 bg-primary/10 rounded px-1">
-                              {sess.id.length > 16 ? `${sess.id.slice(0, 16)}…` : sess.id}
-                            </span>
-                            <span className="font-mono text-xs text-muted-foreground flex-shrink-0">
-                              {format(new Date(sess.startedAt * 1000), "MMM d, HH:mm")}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground ml-auto flex-shrink-0">
-                              {sess.observationCount} obs
-                            </span>
-                          </button>
+                          </div>
 
-                          {/* Summary — always shown as a note block */}
-                          {sess.summary && (
-                            <div className="mx-2 mb-2 px-3 py-2 bg-primary/5 border border-primary/20 rounded text-xs text-foreground/90 leading-relaxed">
-                              {sess.summary}
+                          {/* Inline edit area */}
+                          {isEditing ? (
+                            <div className="mx-2 mb-2 space-y-1.5">
+                              <textarea
+                                value={editDraft}
+                                onChange={e => setEditDraft(e.target.value)}
+                                rows={4}
+                                className="w-full text-xs rounded border border-primary/40 bg-primary/5 px-2.5 py-2 text-foreground/90 leading-relaxed resize-y focus:outline-none focus:ring-1 focus:ring-primary/50"
+                                placeholder="Write your session notes here…"
+                                autoFocus
+                              />
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  className="h-6 text-xs px-2 gap-1"
+                                  onClick={() => handleSaveSummary(sess.id)}
+                                  disabled={isSaving}
+                                >
+                                  {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                                  Save
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 text-xs px-2"
+                                  onClick={() => setEditingSessionId(null)}
+                                  disabled={isSaving}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
                             </div>
+                          ) : (
+                            /* Summary — always shown as a note block */
+                            sess.summary && (
+                              <div className="mx-2 mb-2 px-3 py-2 bg-primary/5 border border-primary/20 rounded text-xs text-foreground/90 leading-relaxed">
+                                {sess.summary}
+                              </div>
+                            )
                           )}
 
                           {isExpanded && sess.projectPath && (
@@ -624,19 +706,66 @@ export default function MemoryPage() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-1">
-                    {sessionsWithoutSummaries.map(sess => (
-                      <div key={sess.id} className="flex items-center gap-2 px-2 py-1.5 rounded border border-border/30 text-xs">
-                        <span className="font-mono text-[10px] text-primary/50 bg-primary/10 rounded px-1 flex-shrink-0">
-                          {sess.id.length > 16 ? `${sess.id.slice(0, 16)}…` : sess.id}
-                        </span>
-                        <span className="font-mono text-muted-foreground">
-                          {format(new Date(sess.startedAt * 1000), "MMM d, HH:mm")}
-                        </span>
-                        <span className="text-muted-foreground/60 text-[10px] ml-auto">
-                          {sess.observationCount} obs · no summary
-                        </span>
-                      </div>
-                    ))}
+                    {sessionsWithoutSummaries.map(sess => {
+                      const isEditing = editingSessionId === sess.id;
+                      const isSaving = savingSessionId === sess.id;
+                      return (
+                        <div key={sess.id} className="rounded border border-border/30">
+                          <div className="flex items-center gap-2 px-2 py-1.5 text-xs">
+                            <span className="font-mono text-[10px] text-primary/50 bg-primary/10 rounded px-1 flex-shrink-0">
+                              {sess.id.length > 16 ? `${sess.id.slice(0, 16)}…` : sess.id}
+                            </span>
+                            <span className="font-mono text-muted-foreground">
+                              {format(new Date(sess.startedAt * 1000), "MMM d, HH:mm")}
+                            </span>
+                            <span className="text-muted-foreground/60 text-[10px] ml-auto">
+                              {sess.observationCount} obs · no summary
+                            </span>
+                            {!isEditing && (
+                              <button
+                                onClick={() => startEdit(sess)}
+                                title="Add session note"
+                                className="flex-shrink-0 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-secondary/40 transition-colors"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                          {isEditing && (
+                            <div className="mx-2 mb-2 space-y-1.5">
+                              <textarea
+                                value={editDraft}
+                                onChange={e => setEditDraft(e.target.value)}
+                                rows={4}
+                                className="w-full text-xs rounded border border-primary/40 bg-primary/5 px-2.5 py-2 text-foreground/90 leading-relaxed resize-y focus:outline-none focus:ring-1 focus:ring-primary/50"
+                                placeholder="Write your session notes here…"
+                                autoFocus
+                              />
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  className="h-6 text-xs px-2 gap-1"
+                                  onClick={() => handleSaveSummary(sess.id)}
+                                  disabled={isSaving}
+                                >
+                                  {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                                  Save
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 text-xs px-2"
+                                  onClick={() => setEditingSessionId(null)}
+                                  disabled={isSaving}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </CardContent>
                 </Card>
               )}
