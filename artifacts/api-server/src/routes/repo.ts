@@ -372,6 +372,17 @@ router.get("/search", async (req, res) => {
     return;
   }
 
+  // Embed the search query into the same vector space as stored embeddings.
+  // When embeddingDim === 384 (real MiniLM vectors), we attempt a remote call so
+  // that cosine similarity is meaningful. Falls back to n-gram on any failure.
+  const storedDim = ctx.embeddingDim ?? 0;
+  const { vec: queryVec, isRemote: queryVecIsRemote } = await getQueryEmbedding(q, storedDim);
+
+  logger.debug(
+    { sessionId, storedDim, queryVecIsRemote, queryVecLen: queryVec.length },
+    "Repo search: query embedding resolved",
+  );
+
   const results = approximateSearch({
     q,
     typeFilter,
@@ -384,6 +395,8 @@ router.get("/search", async (req, res) => {
     chunksJson: ctx.chunksJson as RepoChunkRaw[] | null,
     embeddingsJson: ctx.embeddingsJson as RepoEmbeddingRaw[] | null,
     embeddingDim: ctx.embeddingDim ?? null,
+    queryVec,
+    queryVecIsRemote,
   });
 
   res.json({
@@ -763,6 +776,10 @@ interface HybridSearchOptions {
   chunksJson: RepoChunkRaw[] | null;
   embeddingsJson: RepoEmbeddingRaw[] | null;
   embeddingDim: number | null;
+  /** Pre-computed query embedding vector (same dim as stored embeddings). */
+  queryVec?: number[];
+  /** True when queryVec was produced by the remote embedding API (real MiniLM space). */
+  queryVecIsRemote?: boolean;
 }
 
 type SearchResult = {
@@ -775,6 +792,63 @@ type SearchResult = {
   line?: number | null;
   scores: { combined: number; lexical: number; semantic: number; graph: number; confidence: number };
 };
+
+// ─── Remote query embedding for real MiniLM vectors ─────────────────────────
+
+const REMOTE_EMBEDDINGS_URL = process.env["FLOATR_REMOTE_EMBEDDINGS_URL"] || "";
+const REMOTE_EMBEDDINGS_TOKEN =
+  process.env["FLOATR_REMOTE_EMBEDDINGS_TOKEN"] ||
+  process.env["OMNIQL_MEM_AUTH_TOKEN"] ||
+  "";
+const MINILM_DIM = 384;
+
+async function embedQueryRemote(text: string): Promise<number[]> {
+  if (!REMOTE_EMBEDDINGS_URL) throw new Error("FLOATR_REMOTE_EMBEDDINGS_URL not configured");
+  const res = await fetch(REMOTE_EMBEDDINGS_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(REMOTE_EMBEDDINGS_TOKEN ? { Authorization: `Bearer ${REMOTE_EMBEDDINGS_TOKEN}` } : {}),
+    },
+    body: JSON.stringify({ input: text }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`Remote embeddings HTTP ${res.status}`);
+  const data = await res.json() as Record<string, unknown>;
+  const raw =
+    (data?.data as { embedding: number[] }[] | undefined)?.[0]?.embedding ??
+    (data?.embedding as number[] | undefined) ??
+    data;
+  if (!Array.isArray(raw)) throw new Error("Remote embeddings: unexpected response shape");
+  return raw as number[];
+}
+
+/**
+ * Embed a search query into the same vector space as the stored embeddings.
+ * - When storedDim === 384 (MiniLM), attempt a remote call to get a real 384-dim vector.
+ *   Falls back to n-gram on any failure.
+ * - Otherwise returns a 512-dim n-gram vector.
+ */
+async function getQueryEmbedding(
+  q: string,
+  storedDim: number,
+): Promise<{ vec: number[]; isRemote: boolean }> {
+  if (storedDim === MINILM_DIM) {
+    try {
+      const vec = await embedQueryRemote(q);
+      if (vec.length === MINILM_DIM) {
+        return { vec, isRemote: true };
+      }
+      logger.warn(
+        { storedDim, remoteLen: vec.length },
+        "Remote query embedding dimension mismatch — falling back to n-gram",
+      );
+    } catch (err) {
+      logger.warn({ err }, "Remote query embedding failed — falling back to n-gram for search");
+    }
+  }
+  return { vec: charNgramVec(q), isRemote: false };
+}
 
 // ─── Hybrid Retrieval: BM25 lexical + n-gram semantic + graph centrality ─────
 
@@ -823,16 +897,19 @@ function lexicalBm25(doc: string, query: string): number {
 }
 
 function hybridSearch(opts: HybridSearchOptions) {
-  const { q, typeFilter, limit, offset, langFilter, pathPrefix, symbolsJson, filesJson, chunksJson, embeddingsJson, embeddingDim } = opts;
+  const { q, typeFilter, limit, offset, langFilter, pathPrefix, symbolsJson, filesJson, chunksJson, embeddingsJson, embeddingDim, queryVec, queryVecIsRemote } = opts;
 
   // Build a ref → vec lookup from stored embeddings.
-  // When stored dim matches the n-gram query dim (512), we use the stored vector directly.
-  // When stored dim is different (e.g., 384 from MiniLM), stored vectors are still used:
-  //   the query is encoded in n-gram 512-dim space, so cross-dim cosine is avoided —
-  //   instead we fall back to computing the doc vec with n-gram on-the-fly.
+  // Stored vectors are usable only when the query vector lives in the same space:
+  //   - storedDim === 512 AND queryVec is an n-gram vector (not remote) → n-gram compatible
+  //   - storedDim === 384 AND queryVec is a real MiniLM remote vector   → MiniLM compatible
+  // In any other case (e.g. remote embedding failed and fell back to n-gram while stored dim
+  // is 384) we skip the stored vectors to avoid cross-dim cosine noise.
   const embeddingLookup = new Map<string, number[]>();
   const storedDim = embeddingDim ?? 0;
-  const ngramCompatible = storedDim === NGRAM_DIM_SEARCH;
+  const ngramCompatible = storedDim === NGRAM_DIM_SEARCH && !queryVecIsRemote;
+  const miniLmCompatible = storedDim === MINILM_DIM && queryVecIsRemote === true;
+  const storedVecCompatible = ngramCompatible || miniLmCompatible;
   if (embeddingsJson && embeddingsJson.length > 0) {
     for (const e of embeddingsJson) {
       if (e.ref && Array.isArray(e.vec) && e.vec.length > 0) {
@@ -841,7 +918,9 @@ function hybridSearch(opts: HybridSearchOptions) {
     }
   }
 
-  const qVec = charNgramVec(q);
+  // Use the pre-computed query vector when provided (real MiniLM or n-gram), otherwise
+  // fall back to on-the-fly n-gram (preserves backward-compat when called without queryVec).
+  const qVec = queryVec ?? charNgramVec(q);
   const results: SearchResult[] = [];
 
   const avgSymDocLen = 5;
@@ -869,7 +948,7 @@ function hybridSearch(opts: HybridSearchOptions) {
       const symRef = `sym:${sym.name || ""}:${sym.path || ""}`;
       let docVec: number[];
       let usingStoredVec = false;
-      if (ngramCompatible && embeddingLookup.has(symRef)) {
+      if (storedVecCompatible && embeddingLookup.has(symRef)) {
         docVec = embeddingLookup.get(symRef)!;
         usingStoredVec = true;
       } else {
@@ -948,7 +1027,7 @@ function hybridSearch(opts: HybridSearchOptions) {
       const chunkRef = `sym:${chunk.symbolName || ""}:${chunk.path || ""}`;
       let chunkDocVec: number[];
       let chunkUsesStoredVec = false;
-      if (ngramCompatible && embeddingLookup.has(chunkRef)) {
+      if (storedVecCompatible && embeddingLookup.has(chunkRef)) {
         chunkDocVec = embeddingLookup.get(chunkRef)!;
         chunkUsesStoredVec = true;
       } else {
