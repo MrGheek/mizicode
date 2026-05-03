@@ -4,6 +4,7 @@ import fs from "fs";
 import os from "os";
 import { EventEmitter } from "events";
 import { logger } from "../lib/logger";
+import { computeSemanticSimilarityBatch } from "./memory-semantic";
 
 const observationEmitter = new EventEmitter();
 observationEmitter.setMaxListeners(200);
@@ -477,7 +478,7 @@ function checkAutoPromotion(
   logger.info({ itemId, fromType: item.memory_type, toType: newType, promotionStatus: newPromotionStatus }, "[mem] Auto-promotion candidate created");
 }
 
-export function saveMemoryItem(params: {
+export async function saveMemoryItem(params: {
   userId: string;
   sessionId?: string;
   /** Session type ("team" | "solo") drives default scope when scope is not explicitly provided. */
@@ -489,7 +490,7 @@ export function saveMemoryItem(params: {
   symbolRef?: string;
   symbolContentHash?: string;
   metadata?: Record<string, unknown>;
-}): { itemId: number; conflictGroupId: number | null; contradictions: number[] } {
+}): Promise<{ itemId: number; conflictGroupId: number | null; contradictions: number[] }> {
   const db = getDb();
   const { userId, sessionId, sessionType, memoryType, content, symbolRef, symbolContentHash, metadata } = params;
   // Derive scope: caller-provided wins; fall back to session-type-aware default
@@ -531,20 +532,30 @@ export function saveMemoryItem(params: {
   const CONTRADICTION_THRESHOLD = 0.4;
   // Feature flag: set OMNIQL_MEM_SEMANTIC_CONTRADICTION=1 to enable embedding-based
   // semantic overlap as a secondary signal alongside lexical Jaccard.
-  // When enabled (future), semantic similarity will be computed via an embedding API call
-  // and averaged with the lexical score before threshold comparison.
+  // When enabled, semantic similarity is computed via the OpenAI embeddings API
+  // (text-embedding-3-small) with a TF-IDF cosine fallback if the API is unavailable.
   const semanticContradictionEnabled = process.env["OMNIQL_MEM_SEMANTIC_CONTRADICTION"] === "1";
 
-  for (const candidate of candidateRows) {
+  // Semantic path: fetch all candidate embeddings in one batched API call to
+  // avoid N sequential network round-trips (up to 50 candidates per save).
+  // Falls back to TF-IDF cosine per pair if the embeddings endpoint is unavailable.
+  let semScores: number[] = [];
+  if (semanticContradictionEnabled && candidateRows.length > 0) {
+    semScores = await computeSemanticSimilarityBatch(
+      content,
+      candidateRows.map(c => c.content),
+    );
+  }
+
+  for (let i = 0; i < candidateRows.length; i++) {
+    const candidate = candidateRows[i];
     const lexScore = lexicalOverlapScore(content, candidate.content);
-    // IMPORTANT: Contradiction detection is currently lexical-only (Jaccard).
-    // Semantic path: currently a stub (returns 0); when enabled but unavailable (semScore = 0),
-    // fall back to lexical-only so detection is NOT diluted. Only blend when semantic data
-    // is actually available (semScore > 0). TODO: replace 0 with real embedding API call.
-    const semScore = semanticContradictionEnabled ? 0 : 0; // TODO: embedding API call when enabled
+    // semScore > 0 only when the batch call succeeded and returned data.
+    // Never blend a zero semScore — that would dilute a real lexical signal.
+    const semScore = semScores[i] ?? 0;
     const finalScore = semanticContradictionEnabled && semScore > 0
-      ? (lexScore + semScore) / 2  // blend only when semantic result is available
-      : lexScore;                  // lexical-only fallback (default and stub path)
+      ? (lexScore + semScore) / 2  // blend lexical + semantic
+      : lexScore;                  // lexical-only fallback
     if (finalScore >= CONTRADICTION_THRESHOLD) {
       contradictions.push(candidate.id);
     }
@@ -1163,8 +1174,9 @@ export function getGovernanceStats(params: {
   avgInjectedTokensEstimate: number;
   hitRate: number;
   budgetProfile: MemoryBudgetProfile;
-  /** True only when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1 AND a real embedding backend is wired.
-   *  Currently always false because the semantic path is a stub (semScore always 0). */
+  /** True when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1. computeSemanticSimilarity attempts
+   *  the OpenAI embeddings API (text-embedding-3-small) and falls back to TF-IDF cosine,
+   *  so blending is always functional when the flag is set. */
   semanticContradictionActive: boolean;
 } {
   const db = getDb();
@@ -1243,9 +1255,10 @@ export function getGovernanceStats(params: {
     avgInjectedTokensEstimate,
     hitRate,
     budgetProfile,
-    // Semantic path is a deliberate stub until embedding backend is wired.
-    // Even with the env flag on, semScore is always 0, so blending is never triggered.
-    semanticContradictionActive: false,
+    // Semantic path is active when the flag is set. computeSemanticSimilarity
+    // attempts the OpenAI embeddings API and falls back to TF-IDF cosine, so
+    // blending is always functional when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1.
+    semanticContradictionActive: process.env["OMNIQL_MEM_SEMANTIC_CONTRADICTION"] === "1",
   };
 }
 

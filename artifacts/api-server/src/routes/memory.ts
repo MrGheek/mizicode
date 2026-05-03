@@ -341,7 +341,7 @@ router.get("/mem/item/:itemId", (req, res) => {
 
 // ─── Governance: Save item with contradiction check ───────────────────────────
 
-router.post("/mem/item", (req, res) => {
+router.post("/mem/item", async (req, res) => {
   if (!verifyMemToken(req, res)) return;
   const {
     userId,
@@ -390,7 +390,7 @@ router.post("/mem/item", (req, res) => {
   const resolvedType: MemoryType = (memoryType as MemoryType) || "observation";
 
   try {
-    const result = saveMemoryItem({
+    const result = await saveMemoryItem({
       userId,
       sessionId,
       sessionType: validatedSessionType ?? undefined,
