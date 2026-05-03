@@ -14,45 +14,103 @@ import { Badge } from "@/components/ui/badge";
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 const BATCH_INTERVAL_MS = 3000;
 
-function useSwarmBatchStatus(sessionIds: number[], hasReadySessions: boolean) {
-  const [statusMap, setStatusMap] = useState<Record<number, SwarmStatusResponse>>({});
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const idsKey = sessionIds.slice().sort((a, b) => a - b).join(",");
+async function fetchBatchStatus(idsKey: string): Promise<Record<number, SwarmStatusResponse>> {
+  const res = await fetch(`${BASE_URL}api/sessions/swarm-status-batch?ids=${idsKey}`);
+  if (!res.ok) throw new Error("batch fetch failed");
+  const json: Record<string, SwarmStatusResponse> = await res.json();
+  const coerced: Record<number, SwarmStatusResponse> = {};
+  for (const [k, v] of Object.entries(json)) coerced[Number(k)] = v;
+  return coerced;
+}
 
+function useSwarmBatchSse(sessionIds: number[], readySessionIds: number[]) {
+  const [statusMap, setStatusMap] = useState<Record<number, SwarmStatusResponse>>({});
+  const allIdsKey = sessionIds.slice().sort((a, b) => a - b).join(",");
+  const readyIdsKey = readySessionIds.slice().sort((a, b) => a - b).join(",");
+
+  // Keep a mutable ref so fallback callbacks always use the freshest allIdsKey
+  // even when the SSE effect hasn't re-run yet.
+  const allIdsKeyRef = useRef(allIdsKey);
+  useEffect(() => { allIdsKeyRef.current = allIdsKey; }, [allIdsKey]);
+
+  // Initial batch fetch — populates historical data for all sessions including stopped ones.
   useEffect(() => {
     if (sessionIds.length === 0) {
       setStatusMap({});
       return;
     }
+    fetchBatchStatus(allIdsKey)
+      .then((data) => setStatusMap(data))
+      .catch(() => {});
+  }, [allIdsKey]);
 
-    const fetchBatch = async () => {
-      try {
-        const res = await fetch(`${BASE_URL}api/sessions/swarm-status-batch?ids=${idsKey}`);
-        if (!res.ok) return;
-        const json: Record<string, SwarmStatusResponse> = await res.json();
-        const coerced: Record<number, SwarmStatusResponse> = {};
-        for (const [k, v] of Object.entries(json)) {
-          coerced[Number(k)] = v;
-        }
-        setStatusMap(coerced);
-      } catch {
-        // Keep stale data on network error
+  // SSE streams for ready sessions; degrade to batch polling on any stream error.
+  useEffect(() => {
+    if (readySessionIds.length === 0) return;
+
+    const streams: EventSource[] = [];
+    let fallbackInterval: ReturnType<typeof setInterval> | null = null;
+    // Track per-session SSE health so we can stop polling once all streams recover.
+    const sseHealthy = new Set<number>();
+
+    // Start batch polling as an immediate fallback — called on the first SSE error
+    // so no pill goes stale while EventSource is reconnecting.
+    const startPollingFallback = () => {
+      if (fallbackInterval) return;
+      const doFetch = () => {
+        const key = allIdsKeyRef.current;
+        if (!key) return;
+        fetchBatchStatus(key)
+          .then((data) => setStatusMap((prev) => ({ ...prev, ...data })))
+          .catch(() => {});
+      };
+      doFetch();
+      fallbackInterval = setInterval(doFetch, BATCH_INTERVAL_MS);
+    };
+
+    // Stop polling once every ready session has a healthy SSE stream again.
+    const maybeStopPollingFallback = () => {
+      if (!fallbackInterval) return;
+      if (sseHealthy.size >= readySessionIds.length) {
+        clearInterval(fallbackInterval);
+        fallbackInterval = null;
       }
     };
 
-    // Fetch once on mount so historical swarm data is shown even for stopped sessions.
-    fetchBatch();
+    for (const id of readySessionIds) {
+      try {
+        const es = new EventSource(`${BASE_URL}api/sessions/${id}/swarm-stream`);
+        streams.push(es);
 
-    // Only keep a live polling interval when at least one session is ready —
-    // stopped/error sessions don't receive new swarm pushes so there's nothing to refresh.
-    if (!hasReadySessions) return;
+        es.onmessage = (event) => {
+          try {
+            const json: SwarmStatusResponse = JSON.parse(event.data);
+            setStatusMap((prev) => ({ ...prev, [id]: json }));
+            // Stream is delivering data — mark healthy and cancel polling if all recovered.
+            sseHealthy.add(id);
+            maybeStopPollingFallback();
+          } catch {
+            // Ignore malformed events
+          }
+        };
 
-    timerRef.current = setInterval(fetchBatch, BATCH_INTERVAL_MS);
+        es.onerror = () => {
+          // Do NOT close — let EventSource reconnect automatically.
+          // Start polling immediately so the pill doesn't go stale during reconnect.
+          sseHealthy.delete(id);
+          startPollingFallback();
+        };
+      } catch {
+        // EventSource constructor failed — start polling right away.
+        startPollingFallback();
+      }
+    }
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      for (const es of streams) es.close();
+      if (fallbackInterval) clearInterval(fallbackInterval);
     };
-  }, [idsKey, hasReadySessions]);
+  }, [readyIdsKey]); // allIdsKey tracked via ref so fallback always uses current IDs
 
   return statusMap;
 }
@@ -98,8 +156,8 @@ export default function SessionsList() {
   });
 
   const sessionIds = useMemo(() => sessions?.map(s => s.id) ?? [], [sessions]);
-  const hasReadySessions = sessions?.some((s) => s.status === "ready") ?? false;
-  const swarmStatusMap = useSwarmBatchStatus(sessionIds, hasReadySessions);
+  const readySessionIds = useMemo(() => sessions?.filter(s => s.status === "ready").map(s => s.id) ?? [], [sessions]);
+  const swarmStatusMap = useSwarmBatchSse(sessionIds, readySessionIds);
 
   const idsParam = useMemo(
     () => sessionIds.length > 0 ? sessionIds.join(",") : undefined,
