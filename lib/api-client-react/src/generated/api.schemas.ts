@@ -517,11 +517,17 @@ export interface SkillFeedbackScore {
   totalCount: number;
   helpfulCount: number;
   unhelpfulCount: number;
-  /** Rate from 0.0 to 1.0 */
+  /** Recency-weighted helpful rate in [0, 1] */
   helpfulRate: number;
+  /** Raw (unweighted) helpful rate in [0, 1] */
+  rawHelpfulRate: number;
   /** Normalized to [-1.0, +1.0] centered at 0.5 helpfulRate */
   normalizedScore: number;
   avgTaskSuccessScore?: number | null;
+  /** Sum of recency decay weights — effective sample size after time-discounting */
+  decayedTotalWeight: number;
+  /** Sum of decay weights for helpful rows */
+  decayedHelpfulWeight: number;
 }
 
 export interface SkillFeedbackScoresResponse {

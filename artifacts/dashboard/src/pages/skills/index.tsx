@@ -31,7 +31,8 @@ import {
 } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
-import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge, SkillEffectivenessBadge } from "@/components/skill-badges";
+import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge, SkillEffectivenessBadge, FreshnessBadge, getFreshnessInfo } from "@/components/skill-badges";
+import type { FeedbackScoreEntry } from "@/components/skill-badges";
 
 type LibTab = "installed" | "pending" | "disabled" | "bundles";
 
@@ -171,7 +172,7 @@ function SkillCard({
   onReject?: () => void;
   onToggle?: () => void;
   isActioning?: boolean;
-  feedbackScores?: Record<string, { helpfulRate: number; totalCount: number }>;
+  feedbackScores?: Record<string, FeedbackScoreEntry>;
   onClick?: () => void;
 }) {
   const isHighRisk = skill.installRisk === "hooked" || skill.installRisk === "binary";
@@ -406,7 +407,7 @@ function SkillDesignCategoriesPanel({ skillId }: { skillId: number }) {
   );
 }
 
-function FeedbackHistoryPanel({ skillId }: { skillId: number }) {
+function FeedbackHistoryPanel({ skillId, feedbackScore }: { skillId: number; feedbackScore?: FeedbackScoreEntry }) {
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useGetSkillFeedbackHistory(skillId);
   const deleteMutation = useDeleteSkillFeedbackEntry();
@@ -441,30 +442,54 @@ function FeedbackHistoryPanel({ skillId }: { skillId: number }) {
 
   const { helpfulRate, totalCount, helpfulCount, unhelpfulCount, history } = data;
 
+  const decayedTotalWeight = feedbackScore?.decayedTotalWeight ?? totalCount;
+  const freshnessInfo = totalCount > 0 ? getFreshnessInfo(decayedTotalWeight, totalCount) : null;
+
   return (
     <div className="space-y-4">
       {/* Aggregate stats */}
       {totalCount > 0 ? (
-        <div className="grid grid-cols-3 gap-2">
-          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 text-center">
-            <p className="text-xs text-muted-foreground mb-0.5">Helpful Rate</p>
-            <p className={`text-xl font-bold ${helpfulRate >= 0.7 ? "text-emerald-400" : helpfulRate >= 0.4 ? "text-amber-400" : "text-red-400"}`}>
-              {Math.round(helpfulRate * 100)}%
-            </p>
+        <>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 text-center">
+              <p className="text-xs text-muted-foreground mb-0.5">Helpful Rate <span className="text-[9px] opacity-60">(raw)</span></p>
+              <p className={`text-xl font-bold ${helpfulRate >= 0.7 ? "text-emerald-400" : helpfulRate >= 0.4 ? "text-amber-400" : "text-red-400"}`}>
+                {Math.round(helpfulRate * 100)}%
+              </p>
+            </div>
+            <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 text-center">
+              <p className="text-xs text-muted-foreground mb-0.5">Helpful</p>
+              <p className="text-xl font-bold text-emerald-400 flex items-center justify-center gap-1">
+                <ThumbsUp className="w-4 h-4" /> {helpfulCount}
+              </p>
+            </div>
+            <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 text-center">
+              <p className="text-xs text-muted-foreground mb-0.5">Not Helpful</p>
+              <p className="text-xl font-bold text-red-400 flex items-center justify-center gap-1">
+                <ThumbsDown className="w-4 h-4" /> {unhelpfulCount}
+              </p>
+            </div>
           </div>
-          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 text-center">
-            <p className="text-xs text-muted-foreground mb-0.5">Helpful</p>
-            <p className="text-xl font-bold text-emerald-400 flex items-center justify-center gap-1">
-              <ThumbsUp className="w-4 h-4" /> {helpfulCount}
-            </p>
-          </div>
-          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 text-center">
-            <p className="text-xs text-muted-foreground mb-0.5">Not Helpful</p>
-            <p className="text-xl font-bold text-red-400 flex items-center justify-center gap-1">
-              <ThumbsDown className="w-4 h-4" /> {unhelpfulCount}
-            </p>
-          </div>
-        </div>
+          {/* Freshness / recency indicator */}
+          {freshnessInfo && (
+            <div className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-xs ${
+              freshnessInfo.icon === "fresh"
+                ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-400"
+                : freshnessInfo.icon === "aging"
+                  ? "bg-amber-500/5 border-amber-500/20 text-amber-400"
+                  : "bg-orange-500/5 border-orange-500/20 text-orange-400"
+            }`}>
+              <span className="shrink-0 mt-0.5">
+                {freshnessInfo.icon === "stale" ? "⚠" : "🕐"}
+              </span>
+              <div className="min-w-0">
+                <span className="font-medium capitalize">{freshnessInfo.icon === "fresh" ? "Fresh signal" : freshnessInfo.icon === "aging" ? "Aging signal" : "Stale signal"}</span>
+                <span className="text-muted-foreground ml-1">—</span>
+                <span className="ml-1">{freshnessInfo.tip}</span>
+              </div>
+            </div>
+          )}
+        </>
       ) : (
         <div className="rounded-lg border border-border/40 bg-secondary/20 p-4 text-center text-muted-foreground text-xs">
           <MessageSquare className="w-6 h-6 mx-auto mb-2 opacity-30" />
@@ -539,7 +564,7 @@ function SkillDetailSheet({
 }: {
   skill: SkillRecord | null;
   onClose: () => void;
-  feedbackScores?: Record<string, { helpfulRate: number; totalCount: number }>;
+  feedbackScores?: Record<string, FeedbackScoreEntry>;
   onToggle?: () => void;
   isActioning?: boolean;
 }) {
@@ -562,6 +587,12 @@ function SkillDetailSheet({
             )}
             {feedbackScores && (
               <SkillEffectivenessBadge slug={skill.slug} feedbackScores={feedbackScores} />
+            )}
+            {feedbackScores?.[skill.slug] && (
+              <FreshnessBadge
+                decayedTotalWeight={feedbackScores[skill.slug].decayedTotalWeight}
+                totalCount={feedbackScores[skill.slug].totalCount}
+              />
             )}
           </div>
           {skill.description && (
@@ -610,7 +641,7 @@ function SkillDetailSheet({
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
               Feedback History
             </p>
-            <FeedbackHistoryPanel skillId={skill.id} />
+            <FeedbackHistoryPanel skillId={skill.id} feedbackScore={feedbackScores?.[skill.slug]} />
           </div>
         </div>
       </SheetContent>
@@ -788,9 +819,14 @@ export default function SkillsLibrary() {
   const enableSkill = useEnableSkill();
   const disableSkill = useDisableSkill();
 
-  const feedbackScoresMap: Record<string, { helpfulRate: number; totalCount: number }> = {};
+  const feedbackScoresMap: Record<string, { helpfulRate: number; totalCount: number; decayedTotalWeight: number; decayedHelpfulWeight: number }> = {};
   for (const s of feedbackScoresData?.scores ?? []) {
-    feedbackScoresMap[s.slug] = { helpfulRate: s.helpfulRate, totalCount: s.totalCount };
+    feedbackScoresMap[s.slug] = {
+      helpfulRate: s.helpfulRate,
+      totalCount: s.totalCount,
+      decayedTotalWeight: s.decayedTotalWeight ?? s.totalCount,
+      decayedHelpfulWeight: s.decayedHelpfulWeight ?? s.helpfulCount,
+    };
   }
 
   const invalidateSkills = () => {

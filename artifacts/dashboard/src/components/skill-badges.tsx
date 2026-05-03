@@ -1,4 +1,4 @@
-import { ThumbsUp, ThumbsDown, Minus } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Minus, Clock, AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -67,14 +67,63 @@ export function InstallRiskBadge({ installRisk }: { installRisk: string }) {
   );
 }
 
+export interface FeedbackScoreEntry {
+  helpfulRate: number;
+  totalCount: number;
+  decayedTotalWeight: number;
+  decayedHelpfulWeight: number;
+}
+
 export interface SkillEffectivenessProps {
   slug: string;
-  feedbackScores?: Record<string, { helpfulRate: number; totalCount: number }>;
+  feedbackScores?: Record<string, FeedbackScoreEntry>;
+}
+
+/**
+ * Returns a human-readable freshness label based on how much the decay-weighted
+ * effective sample size has shrunk compared to the raw count.
+ *
+ * - Fresh:    decayedTotalWeight ≥ 80% of totalCount (recent signals dominate)
+ * - Aging:    50–79% (mix of recent + older signals)
+ * - Stale:    < 50% (feedback is mostly old and heavily discounted)
+ */
+export function getFreshnessInfo(decayedTotalWeight: number, totalCount: number): {
+  label: string;
+  tip: string;
+  cls: string;
+  icon: "fresh" | "aging" | "stale";
+} {
+  if (totalCount === 0) return { label: "No data", tip: "No feedback recorded yet.", cls: "text-muted-foreground/50", icon: "stale" };
+  const ratio = decayedTotalWeight / totalCount;
+  const recentN = Math.round(decayedTotalWeight);
+  if (ratio >= 0.8) {
+    return {
+      label: `~${recentN} recent signals`,
+      tip: `Signal is fresh — based on ~${recentN} recent signals out of ${totalCount} total. Recent feedback counts more in rankings.`,
+      cls: "text-emerald-400",
+      icon: "fresh",
+    };
+  }
+  if (ratio >= 0.5) {
+    return {
+      label: `~${recentN} recent signals`,
+      tip: `Signal is aging — effective weight is ~${recentN} out of ${totalCount} total ratings. Older feedback is time-discounted.`,
+      cls: "text-amber-400",
+      icon: "aging",
+    };
+  }
+  return {
+    label: `~${recentN} recent signals`,
+    tip: `Signal is stale — older ratings are heavily discounted (effective weight ~${recentN} out of ${totalCount} total). Recency decay applied.`,
+    cls: "text-orange-400",
+    icon: "stale",
+  };
 }
 
 /**
  * Shows an effectiveness badge based on aggregate feedback data.
  * Green = >70% helpful, Red = <40% helpful, Neutral = unknown or mixed.
+ * Tooltip includes freshness information from time-decay weighting.
  */
 export function SkillEffectivenessBadge({ slug, feedbackScores }: SkillEffectivenessProps) {
   const score = feedbackScores?.[slug];
@@ -96,6 +145,8 @@ export function SkillEffectivenessBadge({ slug, feedbackScores }: SkillEffective
   }
 
   const pct = Math.round(score.helpfulRate * 100);
+  const freshness = getFreshnessInfo(score.decayedTotalWeight, score.totalCount);
+  const freshnessNote = `${freshness.label} (${score.totalCount} total)`;
 
   if (score.helpfulRate >= 0.7) {
     return (
@@ -106,8 +157,9 @@ export function SkillEffectivenessBadge({ slug, feedbackScores }: SkillEffective
             {pct}% effective
           </Badge>
         </TooltipTrigger>
-        <TooltipContent side="top" className="text-xs">
-          Helpful in {pct}% of sessions ({score.totalCount} ratings)
+        <TooltipContent side="top" className="text-xs max-w-[220px]">
+          <p>Helpful in {pct}% of sessions</p>
+          <p className={`mt-0.5 ${freshness.cls}`}>{freshnessNote}</p>
         </TooltipContent>
       </Tooltip>
     );
@@ -122,8 +174,9 @@ export function SkillEffectivenessBadge({ slug, feedbackScores }: SkillEffective
             {pct}% effective
           </Badge>
         </TooltipTrigger>
-        <TooltipContent side="top" className="text-xs">
-          Only helpful in {pct}% of sessions ({score.totalCount} ratings) — may hurt more than help
+        <TooltipContent side="top" className="text-xs max-w-[220px]">
+          <p>Only helpful in {pct}% of sessions — may hurt more than help</p>
+          <p className={`mt-0.5 ${freshness.cls}`}>{freshnessNote}</p>
         </TooltipContent>
       </Tooltip>
     );
@@ -137,8 +190,40 @@ export function SkillEffectivenessBadge({ slug, feedbackScores }: SkillEffective
           {pct}% effective
         </Badge>
       </TooltipTrigger>
-      <TooltipContent side="top" className="text-xs">
-        Helpful in {pct}% of sessions ({score.totalCount} ratings) — mixed results
+      <TooltipContent side="top" className="text-xs max-w-[220px]">
+        <p>Helpful in {pct}% of sessions — mixed results</p>
+        <p className={`mt-0.5 ${freshness.cls}`}>{freshnessNote}</p>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * Standalone freshness badge — shows whether a skill's feedback signals are
+ * fresh, aging, or stale based on time-decay effective sample size.
+ */
+export function FreshnessBadge({ decayedTotalWeight, totalCount }: { decayedTotalWeight: number; totalCount: number }) {
+  if (totalCount < 2) return null;
+  const info = getFreshnessInfo(decayedTotalWeight, totalCount);
+
+  const badgeCls = info.icon === "fresh"
+    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+    : info.icon === "aging"
+      ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+      : "bg-orange-500/10 text-orange-400 border-orange-500/20";
+
+  const Icon = info.icon === "fresh" ? Clock : info.icon === "aging" ? Clock : AlertCircle;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant="outline" className={`text-[10px] px-1.5 py-0 cursor-default gap-0.5 ${badgeCls}`}>
+          <Icon className="w-2.5 h-2.5" />
+          {info.label}
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs max-w-[240px]">
+        {info.tip}
       </TooltipContent>
     </Tooltip>
   );
