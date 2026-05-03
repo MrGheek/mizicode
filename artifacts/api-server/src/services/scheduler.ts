@@ -1,10 +1,50 @@
 import { db, schedulerConfigTable, sessionsTable, gpuProfilesTable, templatesTable } from "@workspace/db";
+import type { TeamMemberRecord } from "@workspace/db";
 import { inArray, desc, eq } from "drizzle-orm";
+import { randomBytes } from "crypto";
 import { logger } from "../lib/logger";
 import * as vastai from "./vastai";
 import { getProfileById } from "./profiles";
 import type { VastOffer } from "./vastai";
 import { seedCuratedSources, fetchCurrentHeadSha, getStoredCommitSha } from "./curated-sources";
+import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles } from "./skills-bundler";
+import type { SessionContext } from "./skills-types";
+
+// ─── Credential helpers (mirrors sessions.ts) ────────────────────────────────
+
+function generatePassword(length = 12): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const buf = randomBytes(length);
+  return Array.from(buf, (b) => chars[b % chars.length]).join("");
+}
+
+const RESERVED_NAMES = new Set(["__shared__", "owner", "admin", "root", "shared"]);
+const SAFE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,30}$/;
+
+function sanitizeMemberName(raw: string): string | null {
+  const cleaned = raw.trim().toLowerCase();
+  if (!SAFE_NAME_RE.test(cleaned)) return null;
+  if (RESERVED_NAMES.has(cleaned)) return null;
+  return cleaned;
+}
+
+function buildTeamMemberRecords(rawNames: string[]): TeamMemberRecord[] {
+  const sanitizedNames = [...new Set(
+    rawNames.map(sanitizeMemberName).filter((n): n is string => n !== null)
+  )].slice(0, 4);
+
+  if (sanitizedNames.length === 0) return [];
+
+  return [
+    { name: "__shared__", password: generatePassword(), path: "/shared/", ideUrl: null },
+    ...sanitizedNames.map((name) => ({
+      name,
+      password: generatePassword(),
+      path: `/ide/${name}/`,
+      ideUrl: null,
+    })),
+  ];
+}
 
 // ─── Design Sync Scheduler ───────────────────────────────────────────────────
 
@@ -189,7 +229,7 @@ async function getActiveSession() {
   return session || null;
 }
 
-async function launchScheduledSession(profileId: number): Promise<void> {
+async function launchScheduledSession(profileId: number, teamMemberNames: string[] = []): Promise<void> {
   const profile = await getProfileById(profileId);
   if (!profile) {
     logger.warn({ profileId }, "Scheduler: profile not found, skipping launch");
@@ -221,6 +261,10 @@ async function launchScheduledSession(profileId: number): Promise<void> {
 
   const selectedOfferId = (offers[0] as VastOffer).id;
 
+  // Build team member records from the scheduler-configured names (max 4)
+  const teamMemberRecords = buildTeamMemberRecords(teamMemberNames);
+
+  // Create the session row before launching so we have a sessionId for the boot script
   const [session] = await db
     .insert(sessionsTable)
     .values({
@@ -231,56 +275,134 @@ async function launchScheduledSession(profileId: number): Promise<void> {
       statusMessage: "Auto-launched by scheduler — model download will begin.",
       gpuName: profile.gpuName,
       numGpus: profile.numGpus,
+      teamMembers: teamMemberRecords.length > 0 ? teamMemberRecords : null,
+      taskMode: teamMemberRecords.length > 0 ? "team" : "build",
+      tokenMode: "core",
+      ownerToken: generatePassword(32),
     })
     .returning();
 
-  const MODEL_REPO = profile.modelRepo;
-  const MODEL_QUANT = profile.defaultQuant;
-  const SERVED_MODEL_NAME = profile.servedModelName;
+  const insertedSessionId = session.id;
 
-  const onstart = vastai.buildOnStartScript({
-    modelRepo: MODEL_REPO,
-    modelQuant: MODEL_QUANT,
-    servedModelName: SERVED_MODEL_NAME,
-    llamaCtxSize: profile.llamaCtxSize,
-    llamaBatchSize: profile.llamaBatchSize,
-    llamaExtraArgs: profile.llamaExtraArgs || "",
-    numGpus: profile.numGpus,
-    swarmWorkerCap: profile.swarmWorkerCap,
-  });
+  try {
+    const MODEL_REPO = profile.modelRepo;
+    const MODEL_QUANT = profile.defaultQuant;
+    const SERVED_MODEL_NAME = profile.servedModelName;
 
-  const result = await vastai.createInstance({
-    offerId: selectedOfferId,
-    image: profile.dockerImageTag,
-    onstart,
-    disk: profile.diskSizeGb,
-    templateHashId: templateHash,
-    env: {
-      MODEL_REPO,
-      MODEL_QUANT,
-      SERVED_MODEL_NAME,
-      VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
-      VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
-      NUM_GPUS: String(profile.numGpus),
-    },
-  });
+    // Resolve memory proxy and callback credentials (same logic as manual launch)
+    const memProxyUrl = process.env["OMNIQL_MEM_PROXY_URL"]
+      || (process.env["REPLIT_DEV_DOMAIN"]
+        ? `https://${process.env["REPLIT_DEV_DOMAIN"]}`
+        : undefined);
 
-  await db
-    .update(sessionsTable)
-    .set({
-      vastInstanceId: result.new_contract,
-      status: "provisioning",
-      statusMessage: "Scheduler-launched — waiting for startup and model download...",
-      startedAt: new Date(),
-      costPerHour: result.expected_price || null,
-      updatedAt: new Date(),
-    })
-    .where(eq(sessionsTable.id, session.id));
+    const memUserId = process.env["OMNIQL_MEM_USER_ID"] || "operator";
+    // Support both OMNIQL_MEM_AUTH_TOKEN (task contract) and OMNIQL_MEM_TOKEN (current manual launch name)
+    const memAuthToken = process.env["OMNIQL_MEM_AUTH_TOKEN"] || process.env["OMNIQL_MEM_TOKEN"];
+    const callbackBaseUrl = memProxyUrl;
 
-  logger.info(
-    { sessionId: session.id, vastInstanceId: result.new_contract },
-    "Scheduler: session launched successfully"
-  );
+    // Compile the active skills bundle (same logic as manual launch)
+    let activeBundleB64: string | undefined;
+    let resolvedBundleId: number | undefined;
+    let pendingCompiled: Awaited<ReturnType<typeof compileBundle>> | undefined;
+    try {
+      await seedDefaultBundles();
+      const sessionCtx: SessionContext = {
+        sessionType: teamMemberRecords.length > 0 ? "team" : "solo",
+        taskMode: teamMemberRecords.length > 0 ? "team" : "build",
+        modelProfile: profile.servedModelName || "kimi",
+        repoLangs: [],
+        tokenMode: "core",
+        repoIntelligence: undefined,
+      };
+
+      const bundle = await getDefaultBundleForContext(sessionCtx, false);
+      if (bundle) {
+        resolvedBundleId = bundle.id;
+        const compiled = await compileBundle(bundle.id, sessionCtx);
+        activeBundleB64 = buildActiveBundleEnvPayload(compiled, "core");
+        pendingCompiled = compiled;
+        logger.info({ sessionId: insertedSessionId, bundleId: bundle.id, bundleSlug: bundle.slug }, "Scheduler: Smart Skills bundle compiled for session");
+      }
+    } catch (skillsErr) {
+      logger.warn({ err: skillsErr, sessionId: insertedSessionId }, "Scheduler: Smart Skills compilation failed — session will launch without skills bundle");
+    }
+
+    if (resolvedBundleId) {
+      await db.update(sessionsTable).set({ activeBundleId: resolvedBundleId, updatedAt: new Date() }).where(eq(sessionsTable.id, insertedSessionId));
+    }
+
+    const onstart = vastai.buildOnStartScript({
+      modelRepo: MODEL_REPO,
+      modelQuant: MODEL_QUANT,
+      servedModelName: SERVED_MODEL_NAME,
+      llamaCtxSize: profile.llamaCtxSize,
+      llamaBatchSize: profile.llamaBatchSize,
+      llamaExtraArgs: profile.llamaExtraArgs || "",
+      numGpus: profile.numGpus,
+      swarmWorkerCap: profile.swarmWorkerCap,
+      memProxyUrl,
+      memAuthToken,
+      memUserId,
+      teamMembers: teamMemberRecords,
+      sessionId: insertedSessionId,
+      callbackBaseUrl,
+      activeBundleB64,
+    });
+
+    const result = await vastai.createInstance({
+      offerId: selectedOfferId,
+      image: profile.dockerImageTag,
+      onstart,
+      disk: profile.diskSizeGb,
+      templateHashId: templateHash,
+      env: {
+        MODEL_REPO,
+        MODEL_QUANT,
+        SERVED_MODEL_NAME,
+        VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
+        VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
+        NUM_GPUS: String(profile.numGpus),
+      },
+    });
+
+    // Record Skills activation now that instance creation succeeded
+    if (pendingCompiled) {
+      try {
+        await recordSessionActivation(insertedSessionId, pendingCompiled, "core");
+      } catch (activationErr) {
+        logger.warn({ err: activationErr, sessionId: insertedSessionId }, "Scheduler: failed to record session activation (non-fatal)");
+      }
+    }
+
+    await db
+      .update(sessionsTable)
+      .set({
+        vastInstanceId: result.new_contract,
+        status: "provisioning",
+        statusMessage: "Scheduler-launched — waiting for startup and model download...",
+        startedAt: new Date(),
+        costPerHour: result.expected_price || null,
+        updatedAt: new Date(),
+      })
+      .where(eq(sessionsTable.id, insertedSessionId));
+
+    logger.info(
+      { sessionId: insertedSessionId, vastInstanceId: result.new_contract },
+      "Scheduler: session launched successfully"
+    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error({ err, sessionId: insertedSessionId }, "Scheduler: failed to provision instance — marking session as error");
+    await db
+      .update(sessionsTable)
+      .set({
+        status: "error",
+        statusMessage: `Scheduler provisioning failed: ${message}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(sessionsTable.id, insertedSessionId))
+      .catch((e) => logger.warn(e, "Scheduler: failed to mark session as error after provisioning failure"));
+  }
 }
 
 async function stopActiveSession(): Promise<void> {
@@ -341,7 +463,7 @@ async function checkSchedule(): Promise<void> {
             { launchTime: config.launchTime, timezone: config.timezone },
             "Scheduler: auto-launching session"
           );
-          await launchScheduledSession(config.profileId);
+          await launchScheduledSession(config.profileId, config.teamMemberNames ?? []);
         } else {
           logger.info({ sessionId: active.id }, "Scheduler: session already running, skipping auto-launch");
         }

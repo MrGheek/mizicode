@@ -33,6 +33,7 @@ router.put("/scheduler", async (req, res) => {
       secondReminderTime,
       daysOfWeek,
       timezone,
+      teamMemberNames,
     } = req.body;
 
     const config = await getOrCreateConfig();
@@ -48,6 +49,7 @@ router.put("/scheduler", async (req, res) => {
     if (secondReminderTime !== undefined) updates.secondReminderTime = secondReminderTime;
     if (daysOfWeek !== undefined) updates.daysOfWeek = daysOfWeek;
     if (timezone !== undefined) updates.timezone = timezone;
+    if (Array.isArray(teamMemberNames)) updates.teamMemberNames = teamMemberNames.map(String).slice(0, 4);
 
     const [updated] = await db
       .update(schedulerConfigTable)

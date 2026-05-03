@@ -14,6 +14,10 @@ export const schedulerConfigTable = pgTable("scheduler_config", {
     .notNull()
     .default(sql`ARRAY['mon','tue','wed','thu','fri']::text[]`),
   timezone: text("timezone").notNull().default("America/New_York"),
+  // Optional list of member names (max 4) for team workspaces in scheduled sessions.
+  // When set, launchScheduledSession generates credentials and passes them through
+  // to buildOnStartScript, matching the team member flow from the manual sessions route.
+  teamMemberNames: text("team_member_names").array().notNull().default(sql`ARRAY[]::text[]`),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
