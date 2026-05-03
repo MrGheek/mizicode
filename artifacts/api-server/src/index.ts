@@ -7,7 +7,7 @@ import { seedDefaultBundles } from "./services/skills-bundler";
 import { seedCuratedSources } from "./services/curated-sources";
 import { startEvalScheduler } from "./services/skills-evals";
 import { validateMemoryDataDir } from "./services/memory";
-import { startClaimSweeper } from "./services/claim-sweeper";
+import { startClaimSweeper, sweepExpiredClaims } from "./services/claim-sweeper";
 import { db, laneClaimsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
 
@@ -107,6 +107,14 @@ app.listen(port, async (err) => {
   }
 
   startScheduler();
+
+  try {
+    const bootSweep = await sweepExpiredClaims();
+    logger.info({ deactivated: bootSweep.deactivated }, "Startup claim sweep complete");
+  } catch (err) {
+    logger.error({ err }, "Startup claim sweep failed");
+  }
+
   startClaimSweeper();
   startClaimPurger();
   startEvalScheduler(60);
