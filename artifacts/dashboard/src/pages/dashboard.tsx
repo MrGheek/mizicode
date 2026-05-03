@@ -23,7 +23,7 @@ import type { GpuProfile, SchedulerConfig, UpdateSchedulerRequest } from "@works
 import type { LaunchOptions } from "@/components/launch-session-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight, Target, Trash2, Star } from "lucide-react";
+import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight, Target, Trash2, Star, Network } from "lucide-react";
 import { SwarmPill } from "@/components/swarm-activity-panel";
 import { ProfileCard } from "@/components/profile-card";
 import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
@@ -427,19 +427,22 @@ function isSwarmConstrained(profile: GpuProfile): boolean {
 }
 
 function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch, pinnedIds, onTogglePin }: QuickLaunchProfilesProps) {
-  const sortedProfiles = useMemo(() => {
-    if (!profiles) return [];
-    return [...profiles].sort((a, b) => {
+  const [swarmOnly, setSwarmOnly] = useState(false);
+
+  const filteredProfiles = useMemo(() => {
+    if (!profiles) return undefined;
+    const base = swarmOnly ? profiles.filter((p) => (p.swarmWorkerCap ?? 0) > 8) : profiles;
+    return [...base].sort((a, b) => {
       const ac = isSwarmConstrained(a) ? 1 : 0;
       const bc = isSwarmConstrained(b) ? 1 : 0;
       return ac - bc;
     });
-  }, [profiles]);
+  }, [profiles, swarmOnly]);
 
   const modelGroups = useMemo(() => {
-    if (!profiles) return [];
+    if (!filteredProfiles) return [];
     const groupMap = new Map<string, GpuProfile[]>();
-    for (const profile of profiles) {
+    for (const profile of filteredProfiles) {
       const model = profile.modelDisplayName;
       if (!groupMap.has(model)) groupMap.set(model, []);
       groupMap.get(model)!.push(profile);
@@ -459,7 +462,7 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
       return aAllConstrained - bAllConstrained;
     });
     return groups;
-  }, [profiles]);
+  }, [filteredProfiles]);
 
   const isGrouped = modelGroups.length >= 2;
 
@@ -478,6 +481,20 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
         <h2 className="text-xl font-bold flex items-center gap-2">
           <Play className="w-5 h-5 text-primary" /> Quick Launch Profiles
         </h2>
+        <button
+          type="button"
+          onClick={() => setSwarmOnly((v) => !v)}
+          data-testid="filter-swarm-ready"
+          aria-pressed={swarmOnly}
+          className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
+            swarmOnly
+              ? "bg-primary text-primary-foreground border-primary"
+              : "bg-transparent text-muted-foreground border-border hover:border-primary/50 hover:text-foreground"
+          }`}
+        >
+          <Network className="w-3.5 h-3.5" />
+          Swarm-ready only
+        </button>
       </div>
 
       {isLoading ? (
@@ -486,9 +503,9 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
             <Skeleton key={i} className="h-64 w-full" />
           ))}
         </div>
-      ) : !profiles?.length ? (
+      ) : !filteredProfiles?.length ? (
         <div className="p-8 text-center border border-dashed rounded-lg border-border/60 text-muted-foreground">
-          No GPU profiles configured.
+          {swarmOnly ? "No swarm-ready profiles available." : "No GPU profiles configured."}
         </div>
       ) : (
         <div className="space-y-8">
@@ -544,7 +561,7 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
             ))
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {sortedProfiles.map((profile, idx) => (
+              {filteredProfiles.map((profile, idx) => (
                 <ProfileCard
                   key={profile.id}
                   profile={profile}
