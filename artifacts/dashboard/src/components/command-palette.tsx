@@ -1,15 +1,22 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useLocation } from "wouter";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   useListSessions,
   useGetActiveSession,
   useEnqueueRepoIndex,
   useCloneSession,
+  useListProfiles,
+  useCreateSession,
+  cloneSession,
   getGetRepoSummaryQueryKey,
   getGetRepoFingerprintQueryKey,
   getCloneSessionQueryKey,
+  getGetActiveSessionQueryKey,
+  getGetDashboardSummaryQueryKey,
 } from "@workspace/api-client-react";
+import type { CloneSessionResponse } from "@workspace/api-client-react";
+import { LaunchSessionDialog, type LaunchOptions, type LaunchPrefill } from "@/components/launch-session-dialog";
 import {
   Github,
   LayoutDashboard,
@@ -72,6 +79,19 @@ export function CommandPalette() {
   const activeSession = activeSessionResp?.session ?? null;
 
   const enqueueRepoIndex = useEnqueueRepoIndex();
+  const { data: profiles } = useListProfiles();
+  const createSession = useCreateSession();
+  const cloneMutation = useMutation<CloneSessionResponse, Error, number>({
+    mutationFn: (id: number) => cloneSession(id),
+  });
+
+  // Re-launch flow state — mirrors RelaunchButton so the palette runs the
+  // same clone → prefill → LaunchSessionDialog → createSession path.
+  const [relaunchPrefill, setRelaunchPrefill] = useState<LaunchPrefill | null>(null);
+  const [relaunchProfileId, setRelaunchProfileId] = useState<number | null>(null);
+  const [isRelaunching, setIsRelaunching] = useState(false);
+  const relaunchProfile =
+    relaunchProfileId != null ? profiles?.find((p) => p.id === relaunchProfileId) ?? null : null;
 
   // Detect "on a session detail page" — wouter passes routed location like
   // "/sessions/123". Extract the id if present.
@@ -143,6 +163,87 @@ export function CommandPalette() {
   const handleStopSession = useCallback(() => {
     window.dispatchEvent(new CustomEvent("floatr:request-stop-session"));
   }, []);
+
+  const handleRelaunch = useCallback(
+    (sourceSessionId: number) => {
+      cloneMutation.mutate(sourceSessionId, {
+        onSuccess: (clone) => {
+          const profilesLoaded = Array.isArray(profiles);
+          const profileMissing =
+            profilesLoaded && !profiles!.some((p) => p.id === clone.profileId);
+          if (profileMissing) {
+            toast({
+              title: "Profile no longer available",
+              description:
+                "The GPU profile from the source session can't be found. Pick a profile from the dashboard instead.",
+              variant: "destructive",
+            });
+            return;
+          }
+          setRelaunchProfileId(clone.profileId);
+          setRelaunchPrefill({
+            taskMode: clone.taskMode,
+            tokenMode: clone.tokenMode,
+            bundleId: clone.bundleId,
+            repoUrl: clone.repoUrl,
+            intentText: clone.intentText,
+            teamMemberNames: clone.teamMemberNames,
+            sourceSessionId: clone.sessionId,
+          });
+        },
+        onError: (err) => {
+          toast({
+            title: "Could not load session",
+            description: err?.message || "Failed to fetch the previous session details.",
+            variant: "destructive",
+          });
+        },
+      });
+    },
+    [cloneMutation, profiles, toast],
+  );
+
+  const handleRelaunchConfirm = useCallback(
+    (opts: LaunchOptions) => {
+      setIsRelaunching(true);
+      createSession.mutate(
+        {
+          data: {
+            profileId: opts.profileId,
+            teamMembers: opts.teamMembers ?? null,
+            taskMode: opts.taskMode ?? null,
+            tokenMode: opts.tokenMode ?? null,
+            bundleId: opts.bundleId ?? null,
+            repoUrl: opts.repoUrl ?? null,
+            intentText: opts.intentText ?? null,
+          },
+        },
+        {
+          onSuccess: (session) => {
+            toast({
+              title: "Session re-launched",
+              description: "Pre-filled from your previous session.",
+            });
+            queryClient.invalidateQueries({ queryKey: getGetActiveSessionQueryKey() });
+            queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+            setIsRelaunching(false);
+            setRelaunchPrefill(null);
+            setRelaunchProfileId(null);
+            setLocation(`/sessions/${session.id}`);
+          },
+          onError: (err) => {
+            toast({
+              title: "Re-launch failed",
+              description: err?.message || "Failed to start a new session.",
+              variant: "destructive",
+            });
+            setIsRelaunching(false);
+          },
+        },
+      );
+    },
+    [createSession, queryClient, setLocation, toast],
+  );
 
   // "New Session" — navigates to the dashboard and asks the first profile
   // card to open its launch dialog. Using a window event avoids lifting state
@@ -297,9 +398,7 @@ export function CommandPalette() {
                 {lastStoppedSession && (
                   <CommandItem
                     onSelect={() =>
-                      runCommand(() =>
-                        setLocation(`/sessions/${lastStoppedSession.id}?relaunch=1`),
-                      )
+                      runCommand(() => handleRelaunch(lastStoppedSession.id))
                     }
                     keywords={["relaunch", "re-launch", "resume", "last"]}
                   >
@@ -417,6 +516,20 @@ export function CommandPalette() {
       </Dialog>
 
       <KeyboardShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} location={location} />
+
+      {relaunchPrefill && relaunchProfile && (
+        <LaunchSessionDialog
+          profile={relaunchProfile}
+          prefill={relaunchPrefill}
+          onConfirm={handleRelaunchConfirm}
+          onClose={() => {
+            if (isRelaunching) return;
+            setRelaunchPrefill(null);
+            setRelaunchProfileId(null);
+          }}
+          isLaunching={isRelaunching}
+        />
+      )}
     </>
   );
 }
