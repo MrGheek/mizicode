@@ -10,7 +10,7 @@ import {
 } from "@workspace/api-client-react";
 import type { CloneSessionResponse } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
-import { RotateCcw, Loader2 } from "lucide-react";
+import { RefreshCw, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { LaunchSessionDialog, type LaunchOptions, type LaunchPrefill } from "@/components/launch-session-dialog";
 
@@ -155,7 +155,7 @@ export function RelaunchButton({
           className={className}
           data-testid={`button-relaunch-${sessionId}`}
         >
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4 text-primary" />}
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4 text-primary" />}
         </Button>
       ) : variant === "prominent" ? (
         <Button
@@ -164,7 +164,7 @@ export function RelaunchButton({
           className={`gap-2 ${className ?? ""}`}
           data-testid={`button-relaunch-${sessionId}`}
         >
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
           {label ?? "Re-launch Session"}
         </Button>
       ) : (
@@ -176,7 +176,7 @@ export function RelaunchButton({
           className={`gap-1.5 ${className ?? ""}`}
           data-testid={`button-relaunch-${sessionId}`}
         >
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
           {label ?? "Re-launch"}
         </Button>
       )}
