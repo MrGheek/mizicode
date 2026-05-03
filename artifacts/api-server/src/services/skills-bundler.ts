@@ -452,6 +452,7 @@ export async function recordSessionActivation(sessionId: number, compiled: Compi
     bundleId: compiled.bundleId,
     activatedSkillsJson: compiled.skills as unknown as Record<string, unknown>[],
     rationaleJson: compiled.reasoning as unknown as Record<string, unknown>,
+    designContextJson: compiled.designContext ? (compiled.designContext as unknown as Record<string, unknown>[]) : null,
     tokenMode,
     activationMode: "boot",
   });

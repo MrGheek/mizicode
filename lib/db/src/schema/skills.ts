@@ -61,6 +61,7 @@ export const sessionSkillsTable = pgTable("session_skills", {
   bundleId: integer("bundle_id").references(() => skillBundlesTable.id),
   activatedSkillsJson: jsonb("activated_skills_json").notNull(),
   rationaleJson: jsonb("rationale_json"),
+  designContextJson: jsonb("design_context_json"),
   tokenMode: text("token_mode").notNull().default("core"),
   activationMode: text("activation_mode").notNull().default("boot"),
   activatedAt: timestamp("activated_at").notNull().defaultNow(),

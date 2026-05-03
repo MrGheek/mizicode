@@ -972,7 +972,10 @@ router.get("/sessions/:sessionId/skills", async (req, res) => {
   // Active skill manifests from the latest activation
   const activeManifests = (latest?.activatedSkillsJson as unknown as Array<{ id: string }>) || [];
 
-  res.json({ activations, activeBundle, activeManifests });
+  // Design context entries injected at activation time (null for lean/ultra or old records)
+  const designContext = (latest?.designContextJson as unknown as Array<{ category: string; name: string; data: Record<string, string>; tags: string[] }> | null) ?? null;
+
+  res.json({ activations, activeBundle, activeManifests, designContext });
 });
 
 router.post("/sessions/:sessionId/skills/feedback", async (req, res) => {

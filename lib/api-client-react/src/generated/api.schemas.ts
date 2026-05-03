@@ -466,11 +466,20 @@ export type SessionSkillsResponseActiveManifestsItem = {
   [key: string]: unknown;
 };
 
+export interface DesignContextEntry {
+  category: string;
+  name: string;
+  data: { [key: string]: string };
+  tags: string[];
+}
+
 export interface SessionSkillsResponse {
   activations: SessionSkillActivation[];
   activeBundle?: SkillBundle | null;
   /** Full skill manifests from the latest activation */
   activeManifests?: SessionSkillsResponseActiveManifestsItem[];
+  /** Design intelligence entries injected at activation time. Null for lean/ultra token modes or older sessions. */
+  designContext?: DesignContextEntry[] | null;
 }
 
 export interface SkillFeedbackRequest {

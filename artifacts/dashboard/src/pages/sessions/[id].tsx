@@ -29,7 +29,7 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
   Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw, Users, Copy, Check, Eye, EyeOff, FolderOpen,
-  Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap, Network, Target, Pencil,
+  Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap, Network, Target, Pencil, Palette,
   Bell, BellOff, BellRing, MonitorSmartphone,
   // RotateCcw was used by the legacy disk-full retry button; the new BootTimeline owns that CTA.
 } from "lucide-react";
@@ -781,6 +781,7 @@ function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?:
   const [votedSkills, setVotedSkills] = useState<Record<string | number, "up" | "down">>({});
   const [expandedSkills, setExpandedSkills] = useState<Set<string | number>>(new Set());
   const [comingSoonOpen, setComingSoonOpen] = useState(false);
+  const [designContextExpanded, setDesignContextExpanded] = useState(false);
 
   if (isLoading) {
     return (
@@ -793,6 +794,9 @@ function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?:
   const latestActivation = data?.activations?.[0] ?? null;
   const activeBundle = data?.activeBundle ?? null;
   const manifests = (data?.activeManifests ?? []) as ManifestItem[];
+  const designContext = data?.designContext ?? null;
+  const tokenMode = latestActivation?.tokenMode ?? null;
+  const showDesignContext = designContext && designContext.length > 0 && tokenMode !== "lean" && tokenMode !== "ultra";
 
   if (!latestActivation && manifests.length === 0) {
     return (
@@ -991,6 +995,54 @@ function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?:
           );
         })}
       </div>
+
+      {/* Design Context sub-panel */}
+      {showDesignContext && (
+        <Card className="bg-card/50 border-border/50">
+          <button
+            onClick={() => setDesignContextExpanded(prev => !prev)}
+            className="w-full px-4 py-3 text-left flex items-center justify-between gap-2 hover:bg-secondary/20 transition-colors rounded-t-lg"
+          >
+            <div className="flex items-center gap-2">
+              <Palette className="w-4 h-4 text-primary" />
+              <span className="font-semibold text-sm">Design Context</span>
+              <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20">
+                {designContext!.length} {designContext!.length === 1 ? "entry" : "entries"}
+              </Badge>
+            </div>
+            {designContextExpanded ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+          </button>
+          {designContextExpanded && (
+            <CardContent className="pt-0 pb-4">
+              <div className="border-t border-border/40 pt-3 space-y-2">
+                {designContext!.map((entry, i) => {
+                  const dataEntries = Object.entries(entry.data).filter(([, v]) => v && v.trim().length > 0);
+                  return (
+                    <div key={i} className="rounded border border-border/40 bg-secondary/20 p-2.5 text-xs space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge variant="outline" className="text-[10px] capitalize bg-violet-500/10 text-violet-400 border-violet-500/20">
+                          {entry.category}
+                        </Badge>
+                        <span className="font-medium text-foreground/90">{entry.name}</span>
+                      </div>
+                      {dataEntries.length > 0 && (
+                        <ul className="space-y-0.5 mt-1">
+                          {dataEntries.map(([k, v]) => (
+                            <li key={k} className="flex items-start gap-1.5 text-muted-foreground">
+                              <span className="text-primary/60 shrink-0">{k}:</span>
+                              <span className="text-foreground/70 break-all">{v}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          )}
+        </Card>
+      )}
 
       {/* Coming soon sheet */}
       <Sheet open={comingSoonOpen} onOpenChange={setComingSoonOpen}>
