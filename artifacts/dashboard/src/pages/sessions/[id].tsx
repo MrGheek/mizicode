@@ -20,6 +20,7 @@ import {
   useGetRepoFingerprint,
   useSearchRepo,
   useGetRepoBlastRadius,
+  useGetRepoSymbol,
   getGetRepoSummaryQueryKey,
   getGetRepoFingerprintQueryKey,
 } from "@workspace/api-client-react";
@@ -1057,6 +1058,15 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
     { query: { enabled: searchEnabled } },
   );
 
+  // Symbol detail drawer
+  const [selectedSymbol, setSelectedSymbol] = useState<{ name: string; path: string } | null>(null);
+  const { data: symbolDetailData, isLoading: symbolDetailLoading } = useGetRepoSymbol(
+    sessionId,
+    selectedSymbol ? { name: selectedSymbol.name, path: selectedSymbol.path } : {},
+    { query: { enabled: !!selectedSymbol } },
+  );
+  const symbolDetail = symbolDetailData?.symbols?.[0] ?? null;
+
   // Blast-radius lookup
   const [blastInput, setBlastInput] = useState("");
   const [blastFile, setBlastFile] = useState("");
@@ -1323,33 +1333,40 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
                       {searchData.total.toLocaleString()} result{searchData.total !== 1 ? "s" : ""} — showing {searchData.results.length}
                       {searchFetching && <Loader2 className="inline w-3 h-3 ml-1 animate-spin" />}
                     </p>
-                    {searchData.results.map((r, i) => (
-                      <div key={i} className="border border-border/40 rounded px-2.5 py-2 text-xs font-mono">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Badge variant="outline" className="text-[9px] px-1 py-0 capitalize shrink-0">
-                            {r.type}
-                          </Badge>
-                          {r.kind && (
-                            <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-primary/5 border-primary/20 text-primary/80">
-                              {r.kind}
+                    {searchData.results.map((r, i) => {
+                      const isSymbol = r.type === "symbol";
+                      return (
+                        <div
+                          key={i}
+                          className={`border border-border/40 rounded px-2.5 py-2 text-xs font-mono${isSymbol ? " cursor-pointer hover:bg-secondary/30 hover:border-border/70 transition-colors" : ""}`}
+                          onClick={isSymbol && r.name ? () => setSelectedSymbol({ name: r.name!, path: r.path }) : undefined}
+                        >
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 capitalize shrink-0">
+                              {r.type}
                             </Badge>
+                            {r.kind && (
+                              <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-primary/5 border-primary/20 text-primary/80">
+                                {r.kind}
+                              </Badge>
+                            )}
+                            {r.lang && (
+                              <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">
+                                {r.lang}
+                              </Badge>
+                            )}
+                            {r.name && (
+                              <span className="font-semibold text-foreground truncate">{r.name}</span>
+                            )}
+                            <span className="text-muted-foreground truncate flex-1">{r.path}{r.line != null ? `:${r.line}` : ""}</span>
+                            <span className="text-muted-foreground/60 shrink-0 ml-auto">{Math.round((r.scores.combined ?? 0) * 100)}%</span>
+                          </div>
+                          {r.snippet && (
+                            <p className="mt-1 text-muted-foreground/80 truncate text-[10px]">{r.snippet}</p>
                           )}
-                          {r.lang && (
-                            <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">
-                              {r.lang}
-                            </Badge>
-                          )}
-                          {r.name && (
-                            <span className="font-semibold text-foreground truncate">{r.name}</span>
-                          )}
-                          <span className="text-muted-foreground truncate flex-1">{r.path}{r.line != null ? `:${r.line}` : ""}</span>
-                          <span className="text-muted-foreground/60 shrink-0 ml-auto">{Math.round((r.scores.combined ?? 0) * 100)}%</span>
                         </div>
-                        {r.snippet && (
-                          <p className="mt-1 text-muted-foreground/80 truncate text-[10px]">{r.snippet}</p>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </>
@@ -1526,6 +1543,103 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
           </CardContent>
         </Card>
       )}
+
+      {/* Symbol detail drawer */}
+      <Sheet open={!!selectedSymbol} onOpenChange={(open) => { if (!open) setSelectedSymbol(null); }}>
+        <SheetContent side="right" className="w-[420px] sm:w-[500px] overflow-y-auto">
+          <SheetHeader className="pb-4">
+            <SheetTitle className="flex items-center gap-2 font-mono text-base">
+              {symbolDetail?.kind && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 capitalize bg-primary/5 border-primary/20 text-primary/80 font-sans">
+                  {symbolDetail.kind}
+                </Badge>
+              )}
+              <span className="truncate">{selectedSymbol?.name}</span>
+            </SheetTitle>
+          </SheetHeader>
+
+          {symbolDetailLoading && (
+            <div className="space-y-3 mt-2">
+              <Skeleton className="h-5 w-full" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-5 w-3/4" />
+            </div>
+          )}
+
+          {!symbolDetailLoading && symbolDetail && (
+            <div className="space-y-5 mt-1">
+              {/* Path */}
+              <div>
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Path</p>
+                <p className="text-xs font-mono text-foreground/80 break-all">
+                  {symbolDetail.path}{symbolDetail.line != null ? `:${symbolDetail.line}` : ""}
+                </p>
+              </div>
+
+              {/* Signature */}
+              {symbolDetail.signature && (
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Signature</p>
+                  <pre className="text-xs font-mono bg-secondary/30 rounded p-2.5 whitespace-pre-wrap break-all text-foreground/90 border border-border/40">
+                    {symbolDetail.signature}
+                  </pre>
+                </div>
+              )}
+
+              {/* Docstring */}
+              {symbolDetail.docstring && (
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Docstring</p>
+                  <p className="text-xs text-foreground/80 bg-secondary/20 rounded p-2.5 leading-relaxed whitespace-pre-wrap border border-border/40">
+                    {symbolDetail.docstring}
+                  </p>
+                </div>
+              )}
+
+              {/* Callers */}
+              {symbolDetail.callers.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
+                    Callers ({symbolDetail.callers.length})
+                  </p>
+                  <div className="space-y-1">
+                    {symbolDetail.callers.map((caller, i) => (
+                      <div key={i} className="flex items-center gap-2 text-[11px] font-mono bg-secondary/20 rounded px-2 py-1.5 border border-border/30">
+                        <span className="truncate text-foreground/80">{caller}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Callees */}
+              {symbolDetail.callees.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
+                    Callees ({symbolDetail.callees.length})
+                  </p>
+                  <div className="space-y-1">
+                    {symbolDetail.callees.map((callee, i) => (
+                      <div key={i} className="flex items-center gap-2 text-[11px] font-mono bg-secondary/20 rounded px-2 py-1.5 border border-border/30">
+                        <span className="truncate text-foreground/80">{callee}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Empty state for no extra data */}
+              {!symbolDetail.signature && !symbolDetail.docstring && symbolDetail.callers.length === 0 && symbolDetail.callees.length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-4">No additional details available for this symbol.</p>
+              )}
+            </div>
+          )}
+
+          {!symbolDetailLoading && !symbolDetail && selectedSymbol && (
+            <p className="text-sm text-muted-foreground mt-4 text-center">Symbol not found in the index.</p>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
