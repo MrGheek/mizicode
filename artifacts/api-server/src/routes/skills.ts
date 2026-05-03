@@ -8,7 +8,7 @@ import { eq, and, desc, or, like, sql, inArray } from "drizzle-orm";
 import { importSkillFromUrl } from "../services/skills-import";
 import { seedDefaultBundles, compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext } from "../services/skills-bundler";
 import { DEFAULT_SKILLS } from "../services/default-skills";
-import { getSkillFeedbackScores, getSkillFeedbackScoreById } from "../services/skills-ranker";
+import { getSkillFeedbackScores, getSkillFeedbackScoreById, invalidateFeedbackScoresCache } from "../services/skills-ranker";
 import {
   scheduleEvalRun,
   listEvalRuns,
@@ -469,6 +469,7 @@ router.delete("/skills/:skillId/feedback/:feedbackId", async (req, res) => {
   }
 
   await db.delete(skillFeedbackTable).where(eq(skillFeedbackTable.id, feedbackId));
+  invalidateFeedbackScoresCache();
   logger.info({ skillId, feedbackId }, "Skill feedback entry deleted");
   res.json({ success: true });
 });
@@ -1019,6 +1020,7 @@ router.post("/sessions/:sessionId/skills/feedback", async (req, res) => {
   })
   .returning();
 
+  invalidateFeedbackScoresCache();
   logger.info({ sessionId, skillId, helpful }, "Skill feedback recorded");
   res.status(201).json({ feedback });
 });
@@ -1135,6 +1137,7 @@ router.post("/sessions/:sessionId/skills/complete-feedback", async (req, res) =>
     if (inserted) recorded.push({ skillSlug: manifest.id, helpful, signal: notes ?? "implicit" });
   }
 
+  if (recorded.length > 0) invalidateFeedbackScoresCache();
   logger.info({ sessionId, bytesAvoided, taskSuccessScore, recordedCount: recorded.length }, "Implicit skill feedback recorded on session completion");
   res.status(201).json({ recorded });
 });

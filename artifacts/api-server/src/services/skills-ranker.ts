@@ -307,6 +307,34 @@ export interface SkillFeedbackScore {
 }
 
 /**
+ * Cache TTL in milliseconds — configurable via FEEDBACK_SCORES_CACHE_TTL_MS env var (default 5 min).
+ * Must be a positive integer; non-positive or non-numeric values fall back to the default.
+ *
+ * NOTE: This cache is process-local (in-memory). In multi-instance deployments each instance
+ * maintains its own cache independently, so scores may be up to TTL seconds stale on instances
+ * that have not yet received a write and had their cache invalidated.
+ */
+const _parsedTtl = parseInt(process.env["FEEDBACK_SCORES_CACHE_TTL_MS"] ?? "", 10);
+const FEEDBACK_SCORES_CACHE_TTL_MS = Number.isFinite(_parsedTtl) && _parsedTtl > 0
+  ? _parsedTtl
+  : 5 * 60 * 1000;
+
+interface FeedbackScoresCache {
+  scores: SkillFeedbackScore[];
+  expiresAt: number;
+}
+
+let feedbackScoresCache: FeedbackScoresCache | null = null;
+
+/**
+ * Invalidate the feedback scores cache. Call this whenever new feedback is written
+ * so that the next request re-fetches fresh data from the DB.
+ */
+export function invalidateFeedbackScoresCache(): void {
+  feedbackScoresCache = null;
+}
+
+/**
  * Load aggregate feedback scores for all skills from the DB, applying
  * time-based decay so that outdated signals do not dominate ranking forever.
  *
@@ -315,8 +343,15 @@ export interface SkillFeedbackScore {
  *   - Older: exponential decay with 90-day half-life
  *
  * helpfulRate and normalizedScore reflect recency-weighted averages.
+ *
+ * Results are cached in-memory for FEEDBACK_SCORES_CACHE_TTL_MS (default 5 minutes)
+ * to avoid redundant DB reads. The cache is invalidated when new feedback is written.
  */
 export async function getSkillFeedbackScores(): Promise<SkillFeedbackScore[]> {
+  const now = Date.now();
+  if (feedbackScoresCache && now < feedbackScoresCache.expiresAt) {
+    return feedbackScoresCache.scores;
+  }
   const rows = await db
     .select({
       skillId: skillFeedbackTable.skillId,
@@ -373,7 +408,7 @@ export async function getSkillFeedbackScores(): Promise<SkillFeedbackScore[]> {
     }
   }
 
-  return Array.from(bySkill.values()).map(e => {
+  const scores = Array.from(bySkill.values()).map(e => {
     const rawHelpfulRate = e.totalCount > 0 ? e.helpfulCount / e.totalCount : 0.5;
     const helpfulRate = e.decayedTotalWeight > 0
       ? e.decayedHelpfulWeight / e.decayedTotalWeight
@@ -393,6 +428,9 @@ export async function getSkillFeedbackScores(): Promise<SkillFeedbackScore[]> {
       decayedHelpfulWeight: e.decayedHelpfulWeight,
     };
   });
+
+  feedbackScoresCache = { scores, expiresAt: Date.now() + FEEDBACK_SCORES_CACHE_TTL_MS };
+  return scores;
 }
 
 /**
