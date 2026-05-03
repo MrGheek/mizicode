@@ -6,7 +6,7 @@ import { startScheduler, markDesignSyncComplete } from "./services/scheduler";
 import { seedDefaultBundles } from "./services/skills-bundler";
 import { seedCuratedSources } from "./services/curated-sources";
 import { startEvalScheduler } from "./services/skills-evals";
-import { validateMemoryDataDir } from "./services/memory";
+import { validateMemoryDataDir, startMemoryDiskMonitor } from "./services/memory";
 import { startClaimSweeper, sweepExpiredClaims, recordExternalSweep } from "./services/claim-sweeper";
 import { db, laneClaimsTable, claimPurgeLogsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
@@ -133,4 +133,5 @@ app.listen(port, async (err) => {
   startClaimSweeper();
   startClaimPurger();
   startEvalScheduler(60);
+  startMemoryDiskMonitor();
 });

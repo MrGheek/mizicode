@@ -18,6 +18,117 @@ export function subscribeToObservations(userId: string, handler: (obs: Observati
 const DATA_DIR = process.env["MEM_DATA_DIR"] || path.join(os.homedir(), "omniql-memory");
 const DB_PATH = path.join(DATA_DIR, "mem.db");
 
+// Disk space monitoring thresholds (configurable via env vars).
+// All three values are validated at module-load time; invalid values throw so
+// that misconfiguration is caught immediately rather than silently disabling alerts.
+function parseDiskEnvMb(name: string, defaultMb: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return defaultMb * 1024 * 1024;
+  const val = parseInt(raw, 10);
+  if (isNaN(val) || val <= 0) {
+    throw new Error(
+      `[mem] Invalid value for ${name}: "${raw}". Must be a positive integer (megabytes).`
+    );
+  }
+  return val * 1024 * 1024;
+}
+function parseDiskEnvMs(name: string, defaultMs: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return defaultMs;
+  const val = parseInt(raw, 10);
+  if (isNaN(val) || val <= 0) {
+    throw new Error(
+      `[mem] Invalid value for ${name}: "${raw}". Must be a positive integer (milliseconds).`
+    );
+  }
+  return val;
+}
+
+const DISK_WARN_THRESHOLD_BYTES = parseDiskEnvMb("MEM_DISK_WARN_MB", 200);
+const DISK_CRITICAL_THRESHOLD_BYTES = parseDiskEnvMb("MEM_DISK_CRITICAL_MB", 50);
+const DISK_CHECK_INTERVAL_MS = parseDiskEnvMs("MEM_DISK_CHECK_INTERVAL_MS", 5 * 60 * 1000);
+
+export type DiskStatus = "ok" | "warn" | "critical";
+
+let _diskStatus: DiskStatus = "ok";
+let _diskFreeBytes: number | null = null;
+
+/**
+ * Returns the latest disk-space health snapshot for the memory data directory.
+ * Consumed by the health endpoint to surface degraded state to operators.
+ */
+export function getMemoryDiskHealth(): { status: DiskStatus; freeBytes: number | null } {
+  return { status: _diskStatus, freeBytes: _diskFreeBytes };
+}
+
+/**
+ * Measure free space on the MEM_DATA_DIR filesystem and update the in-process
+ * disk status.  Emits WARN below the warn threshold and ERROR below the
+ * critical threshold so that log-based alerting rules can fire.
+ *
+ * Tolerates environments where statfsSync is unavailable (Node < 18.15) by
+ * catching and logging the error without crashing.
+ */
+export function checkMemoryDiskSpace(): void {
+  try {
+    // fs.statfsSync was added in Node 18.15 / 19.6; use a cast to avoid
+    // TypeScript errors on older @types/node versions.
+    // bavail is the space available to unprivileged processes — the correct
+    // signal for write-failure risk.  Fall back to bfree if bavail is absent.
+    const stats = (fs as unknown as { statfsSync(path: string): { bfree: number; bavail?: number; bsize: number } }).statfsSync(DATA_DIR);
+    const freeBlocks = stats.bavail ?? stats.bfree;
+    const freeBytes = freeBlocks * stats.bsize;
+    _diskFreeBytes = freeBytes;
+    const freeMb = Math.floor(freeBytes / 1024 / 1024);
+
+    if (freeBytes < DISK_CRITICAL_THRESHOLD_BYTES) {
+      _diskStatus = "critical";
+      logger.error(
+        {
+          freeBytes,
+          freeMb,
+          DATA_DIR,
+          criticalThresholdMb: Math.floor(DISK_CRITICAL_THRESHOLD_BYTES / 1024 / 1024),
+        },
+        "[mem] CRITICAL: Memory database disk space is critically low — write failures are imminent"
+      );
+    } else if (freeBytes < DISK_WARN_THRESHOLD_BYTES) {
+      _diskStatus = "warn";
+      logger.warn(
+        {
+          freeBytes,
+          freeMb,
+          DATA_DIR,
+          warnThresholdMb: Math.floor(DISK_WARN_THRESHOLD_BYTES / 1024 / 1024),
+        },
+        "[mem] WARN: Memory database disk space is running low"
+      );
+    } else {
+      _diskStatus = "ok";
+    }
+  } catch (err) {
+    logger.warn({ err, DATA_DIR }, "[mem] Could not check disk space for memory data directory — statfsSync may be unavailable");
+  }
+}
+
+/**
+ * Start the periodic disk-space monitor.  Runs an immediate check and then
+ * repeats on the configured interval (default: every 5 minutes).
+ * Called once from index.ts after the server is up.
+ */
+export function startMemoryDiskMonitor(): void {
+  checkMemoryDiskSpace();
+  setInterval(checkMemoryDiskSpace, DISK_CHECK_INTERVAL_MS);
+  logger.info(
+    {
+      intervalMs: DISK_CHECK_INTERVAL_MS,
+      warnThresholdMb: Math.floor(DISK_WARN_THRESHOLD_BYTES / 1024 / 1024),
+      criticalThresholdMb: Math.floor(DISK_CRITICAL_THRESHOLD_BYTES / 1024 / 1024),
+    },
+    "[mem] Disk space monitor started"
+  );
+}
+
 /**
  * Validate that the memory data directory is writable at startup.
  *

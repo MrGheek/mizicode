@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { HealthCheckResponse } from "@workspace/api-zod";
 import { getSweeperHealth } from "../services/claim-sweeper";
-import { probeMemoryDb } from "../services/memory";
+import { probeMemoryDb, getMemoryDiskHealth } from "../services/memory";
 
 const router: IRouter = Router();
 
@@ -20,9 +20,15 @@ router.get("/healthz", (_req, res) => {
 });
 
 router.get("/admin/status", (_req, res) => {
+  const diskHealth = getMemoryDiskHealth();
+  const overallStatus = diskHealth.status === "critical" ? "degraded" : "ok";
   res.json({
-    status: "ok",
+    status: overallStatus,
     sweeper: getSweeperHealth(),
+    memoryDisk: {
+      status: diskHealth.status,
+      freeBytes: diskHealth.freeBytes,
+    },
   });
 });
 
