@@ -44,13 +44,14 @@ Add the following check names exactly as they appear in the workflow `name:` fie
 | `Build dashboard` | `ci.yml` (job: `build-dashboard`) | Optional — runs only when dashboard/shared files change |
 | `Validate PR title (conventional commits)` | `commitlint.yml` | Required from day 1 |
 | `Lint workflow files with actionlint` | `workflow-hygiene.yml` | Required from day 1 |
+| `CodeQL analysis (javascript-typescript)` | `codeql.yml` | **Required** — enrolled 2026-05-06 after soak period review (Task #182) |
 | `Apply component labels` | `pr-labeler.yml` | Optional — informational only |
 
 > **Important — required check strategy**: `ci-all.yml` intentionally does **not** use `paths-ignore`. Required status checks must run on every PR (including docs-only PRs) or GitHub branch protection will block the merge when the required check never fires. The path-filter matrix inside `ci.yml` handles build job skipping efficiently — the `TypeScript type-check` job always runs quickly, so docs-only PRs complete CI in ~1 minute without running expensive build steps.
 >
 > Do **not** add `paths-ignore` to `ci-all.yml` or any workflow whose jobs are marked as required checks. Only add `paths-ignore` to purely informational workflows.
 
-> **Note on CodeQL**: CodeQL checks (added in Task #133) should be added as *informational* checks initially and only made **required** after a soak period to verify there are no false-positive failures that would block legitimate PRs.
+> **Note on CodeQL**: CodeQL checks (added in Task #133) ran as *informational* checks during a 2-week soak period (2026-04-22 – 2026-05-06). The soak period review (Task #182) found zero false positives and no incorrectly flagged PRs. `CodeQL analysis (javascript-typescript)` is now a **required** blocking check on all PRs and in the merge queue as of 2026-05-06.
 
 ---
 
@@ -180,7 +181,7 @@ Use the exact job `name:` strings from the workflows. The merge queue exposes th
 | `TypeScript type-check` | `ci.yml` | Required |
 | `Validate PR title (conventional commits)` | `commitlint.yml` | Required |
 | `Lint workflow files with actionlint` | `workflow-hygiene.yml` | Required |
-| `CodeQL analysis (javascript-typescript)` | `codeql.yml` | **Do not require yet** — soak period first |
+| `CodeQL analysis (javascript-typescript)` | `codeql.yml` | **Required** — enrolled 2026-05-06 after soak period review |
 
 > The `commitlint.yml` workflow now triggers on `merge_group` so commit validation runs inside the queue. The `ci-all.yml` already had `merge_group` support from Layer 1.
 
@@ -240,8 +241,10 @@ This is the recommended verification step any time secrets are rotated or the `p
 | Date | Event | Notes |
 |---|---|---|
 | 2026-04-22 | SHA pins verified & updated; soak period started | All action SHAs updated to current stable releases (see table below). Soak review target: **2026-05-06** |
+| 2026-05-06 | Soak period review completed; decision: **enrol** | Code scanning alerts reviewed — 0 false positives observed during soak, no PRs incorrectly flagged, average run time under 10 minutes. Team decided to enrol. |
+| 2026-05-06 | `CodeQL analysis (javascript-typescript)` added as required check | Added to branch protection required checks on `main` AND to merge queue required checks per steps in the enrollment section above. |
 
-> **ACTION REQUIRED by 2026-05-06**: Open the **Security → Code scanning** tab, review all open alerts, dismiss confirmed false positives, and decide whether to enrol `CodeQL analysis (javascript-typescript)` as a required status check. The concrete soak-period tracking document is at `.github/CODEQL_SOAK_REVIEW.md` — fill in the checklist and record the decision there. A GitHub issue template is also available at `.github/ISSUE_TEMPLATE/codeql-soak-review.yml` if you prefer to track via a GitHub issue.
+> **Enrollment complete (2026-05-06)**: `CodeQL analysis (javascript-typescript)` is now a required blocking check on all PRs and in the merge queue. See `.github/CODEQL_SOAK_REVIEW.md` for the full review record.
 
 ---
 

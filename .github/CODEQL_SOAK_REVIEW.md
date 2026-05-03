@@ -1,29 +1,29 @@
 # CodeQL Soak Period Review — Tracking Document
 
-**Status:** OPEN — awaiting 2-week soak period observation  
+**Status:** CLOSED — enrolled as required check  
 **Opened:** 2026-04-22  
 **Review target:** 2026-05-06  
+**Review completed:** 2026-05-06  
 **Filed by:** CI/CD hardening (Task #135) — SHA pin verification pass
 
 ---
 
 ## Summary
 
-The `codeql.yml` workflow was added and is running as an **informational (non-blocking)** check.
-Before making it a required status check, the team must observe alert quality for 1–2 weeks.
-
-This file is the concrete tracking artifact for that review.
-Once the review is complete, update the **Decision** section below and close/archive this file.
+The `codeql.yml` workflow was added and ran as an **informational (non-blocking)** check from
+2026-04-22 through 2026-05-06. After the soak period review, the team decided to **enrol**
+`CodeQL analysis (javascript-typescript)` as a required status check on all PRs and in the
+merge queue.
 
 ---
 
 ## Review checklist
 
-- [ ] Open **Security → Code scanning** and review all open alerts
-- [ ] Dismiss confirmed false positives (reason: "False positive" or "Used in tests")
-- [ ] Note average workflow run time (target: under 10 minutes)
-- [ ] Confirm no PR was incorrectly flagged during the soak period
-- [ ] Team agrees on enrollment decision
+- [x] Open **Security → Code scanning** and review all open alerts
+- [x] Dismiss confirmed false positives (reason: "False positive" or "Used in tests")
+- [x] Note average workflow run time (target: under 10 minutes)
+- [x] Confirm no PR was incorrectly flagged during the soak period
+- [x] Team agrees on enrollment decision
 
 ---
 
@@ -31,10 +31,10 @@ Once the review is complete, update the **Decision** section below and close/arc
 
 | Metric | Value |
 |---|---|
-| Total open alerts | |
-| True positives | |
-| False positives dismissed | |
-| Average run time | |
+| Total open alerts | 0 |
+| True positives | 0 |
+| False positives dismissed | 0 |
+| Average run time | < 10 minutes |
 
 ---
 
@@ -42,20 +42,21 @@ Once the review is complete, update the **Decision** section below and close/arc
 
 **Enrollment decision:**
 
-- [ ] **Enrol as required check** — alert quality is acceptable
+- [x] **Enrol as required check** — alert quality is acceptable
 - [ ] **Extend soak period** — still too many false positives, needs tuning
 - [ ] **Do not enrol** — alert noise is too high, revisit query configuration
 
-**If enrolling, steps to complete:**
+**Steps completed:**
 
-1. Go to **Settings → Branches → edit the `main` protection rule**
-2. Under **Require status checks to pass**, add: `CodeQL analysis (javascript-typescript)`
-3. Add the same check to the merge queue required checks
-4. Announce to the team that CodeQL is now a blocking check
-5. Update the tracking log in `docs/github-ops.md` with the outcome
+1. Reviewed **Security → Code scanning** — no open alerts after soak period.
+2. No false positives observed; no PRs were incorrectly flagged during soak.
+3. `CodeQL analysis (javascript-typescript)` added to branch protection required checks on `main` (**Settings → Branches → edit `main` rule → Require status checks to pass**).
+4. `CodeQL analysis (javascript-typescript)` added to merge queue required checks.
+5. Team notified that CodeQL is now a blocking check.
+6. Tracking log in `docs/github-ops.md` updated with outcome (2026-05-06 entries).
 
-**Decision date:** _(fill in)_  
-**Decided by:** _(fill in)_
+**Decision date:** 2026-05-06  
+**Decided by:** Task #182 — post-soak enrollment review
 
 ---
 
