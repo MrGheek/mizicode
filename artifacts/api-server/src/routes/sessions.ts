@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
 import { getProfileById } from "../services/profiles";
@@ -1115,10 +1115,19 @@ const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 // When the runner posts a new snapshot via swarm-push, it is broadcast to all open streams.
 const swarmSseSubscribers = new Map<number, Set<(snapshot: SwarmSnapshot) => void>>();
 
-// POST /sessions/:sessionId/swarm-push — Claw Runner pushes a new snapshot.
-// Requires the runner callback token (OMNIQL_MEM_TOKEN) as Bearer auth.
-// Persists snapshot both to the in-memory cache (fast) and DB (durable).
-router.post("/sessions/:sessionId/swarm-push", async (req, res) => {
+// Shared handler for swarm snapshot ingestion.
+// Mounted on two paths:
+//   POST /sessions/:id/swarm-push   — canonical receiver (preferred)
+//   POST /sessions/:id/swarm-status — alias for Claw Runner compatibility
+//
+// The Claw Runner derives its push URL by replacing /status with /swarm-status
+// on OMNIQL_CALLBACK_URL, so it always POSTs to /swarm-status rather than
+// /swarm-push.  Registering both routes here ensures snapshots are never silently
+// dropped without requiring an external proxy rewrite.
+//
+// GET /sessions/:id/swarm-status (below) is the dashboard reader and is unaffected
+// — Express matches routes by method, so the GET and POST on the same path coexist.
+const handleSwarmPush: RequestHandler = async (req, res) => {
   const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid sessionId" });
@@ -1165,7 +1174,15 @@ router.post("/sessions/:sessionId/swarm-push", async (req, res) => {
 
   logger.info({ sessionId, phase: snapshot.phase }, "Swarm snapshot cached");
   res.json({ ok: true });
-});
+};
+
+// POST /sessions/:sessionId/swarm-push — canonical swarm snapshot receiver.
+router.post("/sessions/:sessionId/swarm-push", handleSwarmPush);
+
+// POST /sessions/:sessionId/swarm-status — alias used by the Claw Runner.
+// The runner replaces /status with /swarm-status on OMNIQL_CALLBACK_URL, so
+// without this alias every runner snapshot would 404 and be silently dropped.
+router.post("/sessions/:sessionId/swarm-status", handleSwarmPush);
 
 // GET /sessions/:sessionId/swarm-status — cockpit polls this every 3 seconds.
 // Returns one of four availability states:
