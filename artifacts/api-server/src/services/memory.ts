@@ -65,6 +65,23 @@ export function validateMemoryDataDir(): void {
   );
 }
 
+/**
+ * Probe whether the memory database file is still reachable and writable.
+ *
+ * Used by the /health endpoint for ongoing liveness checks.
+ * Returns { ok: true, dbPath } on success, or { ok: false, dbPath, error } on failure.
+ */
+export function probeMemoryDb(): { ok: true; dbPath: string } | { ok: false; dbPath: string; error: string } {
+  const probe = path.join(DATA_DIR, `.health-probe-${process.pid}-${Date.now()}`);
+  try {
+    fs.writeFileSync(probe, "ok");
+    fs.unlinkSync(probe);
+    return { ok: true, dbPath: DB_PATH };
+  } catch (err) {
+    return { ok: false, dbPath: DB_PATH, error: String(err) };
+  }
+}
+
 let _db: Database.Database | null = null;
 
 function getDb(): Database.Database {
