@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { useListSessions, useGetBatchRepoStatus, getGetBatchRepoStatusQueryKey } from "@workspace/api-client-react";
 import { format } from "date-fns";
 import { Terminal, Eye, Plus } from "lucide-react";
@@ -154,10 +154,60 @@ function RepoStatusBadge({ indexStatus, isStale }: { indexStatus: string; isStal
   );
 }
 
+const VALID_FILTERS = new Set<TeamFilter>(["all", "team", "solo"]);
+const LS_FILTER_KEY = "sessions:teamFilter";
+
+function readStoredFilter(): TeamFilter {
+  try {
+    const stored = localStorage.getItem(LS_FILTER_KEY);
+    if (stored && VALID_FILTERS.has(stored as TeamFilter)) return stored as TeamFilter;
+  } catch {}
+  return "all";
+}
+
+function writeStoredFilter(value: TeamFilter) {
+  try {
+    if (value === "all") {
+      localStorage.removeItem(LS_FILTER_KEY);
+    } else {
+      localStorage.setItem(LS_FILTER_KEY, value);
+    }
+  } catch {}
+}
+
+function getFilterFromSearch(search: string): TeamFilter | null {
+  const params = new URLSearchParams(search);
+  const raw = params.get("filter");
+  return raw && VALID_FILTERS.has(raw as TeamFilter) ? (raw as TeamFilter) : null;
+}
+
 export default function SessionsList() {
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
+  const search = useSearch();
   const { data: sessions, isLoading } = useListSessions();
-  const [teamFilter, setTeamFilter] = useState<TeamFilter>("all");
+
+  const urlFilter = getFilterFromSearch(search);
+  const teamFilter: TeamFilter = urlFilter ?? readStoredFilter();
+
+  // Sync URL-derived filter into localStorage so that returning via bare /sessions
+  // (e.g. sidebar navigation) always restores the last viewed filter, including
+  // those set by opening a shared link.
+  useEffect(() => {
+    if (urlFilter !== null) writeStoredFilter(urlFilter);
+  }, [urlFilter]);
+
+  const setTeamFilter = (value: TeamFilter) => {
+    writeStoredFilter(value);
+    const params = new URLSearchParams(search);
+    if (value === "all") {
+      params.delete("filter");
+    } else {
+      params.set("filter", value);
+    }
+    const qs = params.toString();
+    const basePath = location.split("?")[0];
+    setLocation(basePath + (qs ? `?${qs}` : ""));
+  };
 
   const filteredSessions = sessions?.filter((session) => {
     if (teamFilter === "team") return session.teamMembers && session.teamMembers.length > 0;
