@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
@@ -9,6 +11,101 @@ use crate::hooks::{HookRunResult, HookRunner};
 use crate::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter};
 use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
+
+/// A pending user message that arrived mid-turn and is waiting to be injected
+/// into the conversation history at the next safe boundary.
+#[derive(Debug, Clone)]
+struct PendingUserMessage {
+    text: String,
+    enqueued_at: Instant,
+}
+
+/// Telemetry record emitted whenever a queued message is injected into history.
+/// Captured so the runner / API server can log soft-interrupt events
+/// (queued -> injected, time-in-queue) without re-deriving the timing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SoftInterruptEvent {
+    /// Time the message spent waiting in the soft-interrupt queue before being
+    /// appended to history at the next safe injection point.
+    pub time_in_queue: Duration,
+    /// Number of messages drained together at the same injection point
+    /// (i.e. how many messages were coalesced in send order).
+    pub coalesced_with: usize,
+}
+
+/// Shared, thread-safe handle to a session's soft-interrupt queue.
+///
+/// `enqueue` is callable from any thread (e.g. an HTTP handler that received
+/// a user message during an active turn) while the agent loop owns the
+/// `ConversationRuntime` on another thread. The runtime drains the queue at
+/// the next safe injection point — after the assistant message is committed
+/// to history and before the next provider call begins — so the in-flight
+/// generation completes without being cancelled.
+#[derive(Debug, Clone, Default)]
+pub struct SoftInterruptQueue {
+    inner: Arc<Mutex<SoftInterruptQueueInner>>,
+}
+
+#[derive(Debug, Default)]
+struct SoftInterruptQueueInner {
+    pending: Vec<PendingUserMessage>,
+    events: Vec<SoftInterruptEvent>,
+}
+
+impl SoftInterruptQueue {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Queue a user message to be injected at the next safe boundary.
+    /// Returns the queued position (1-based) for visibility into ordering.
+    pub fn enqueue(&self, text: impl Into<String>) -> usize {
+        let mut inner = self.inner.lock().expect("soft-interrupt queue poisoned");
+        inner.pending.push(PendingUserMessage {
+            text: text.into(),
+            enqueued_at: Instant::now(),
+        });
+        inner.pending.len()
+    }
+
+    /// Returns the number of messages currently waiting to be injected.
+    #[must_use]
+    pub fn pending_len(&self) -> usize {
+        self.inner
+            .lock()
+            .expect("soft-interrupt queue poisoned")
+            .pending
+            .len()
+    }
+
+    /// Drain all pending messages and record a `SoftInterruptEvent` per
+    /// message for telemetry. Returns the drained messages in send order.
+    fn drain_for_injection(&self) -> Vec<PendingUserMessage> {
+        let mut inner = self.inner.lock().expect("soft-interrupt queue poisoned");
+        if inner.pending.is_empty() {
+            return Vec::new();
+        }
+        let drained = std::mem::take(&mut inner.pending);
+        let coalesced_with = drained.len();
+        let now = Instant::now();
+        for msg in &drained {
+            inner.events.push(SoftInterruptEvent {
+                time_in_queue: now.saturating_duration_since(msg.enqueued_at),
+                coalesced_with,
+            });
+        }
+        drained
+    }
+
+    /// Drain and return any soft-interrupt events recorded since the last
+    /// call. Intended for the runner to forward to the API server / logger.
+    #[must_use]
+    pub fn take_events(&self) -> Vec<SoftInterruptEvent> {
+        let mut inner = self.inner.lock().expect("soft-interrupt queue poisoned");
+        std::mem::take(&mut inner.events)
+    }
+}
 
 const DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD: u32 = 200_000;
 const AUTO_COMPACTION_THRESHOLD_ENV_VAR: &str = "CLAUDE_CODE_AUTO_COMPACT_INPUT_TOKENS";
@@ -107,6 +204,7 @@ pub struct ConversationRuntime<C, T> {
     usage_tracker: UsageTracker,
     hook_runner: HookRunner,
     auto_compaction_input_tokens_threshold: u32,
+    soft_interrupt_queue: SoftInterruptQueue,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -152,6 +250,7 @@ where
             usage_tracker,
             hook_runner: HookRunner::from_feature_config(&feature_config),
             auto_compaction_input_tokens_threshold: auto_compaction_threshold_from_env(),
+            soft_interrupt_queue: SoftInterruptQueue::new(),
         }
     }
 
@@ -165,6 +264,24 @@ where
     pub fn with_auto_compaction_input_tokens_threshold(mut self, threshold: u32) -> Self {
         self.auto_compaction_input_tokens_threshold = threshold;
         self
+    }
+
+    /// Replace the soft-interrupt queue with one shared from outside the
+    /// runtime. The caller should hold a clone of the same queue and use it
+    /// to enqueue user messages that arrive while a turn is in progress.
+    #[must_use]
+    pub fn with_soft_interrupt_queue(mut self, queue: SoftInterruptQueue) -> Self {
+        self.soft_interrupt_queue = queue;
+        self
+    }
+
+    /// Returns a clone of the runtime's soft-interrupt queue handle. Holders
+    /// can call `enqueue` on this handle from any thread to inject a user
+    /// message at the next safe boundary instead of hard-cancelling the
+    /// in-flight turn.
+    #[must_use]
+    pub fn soft_interrupt_queue(&self) -> SoftInterruptQueue {
+        self.soft_interrupt_queue.clone()
     }
 
     pub fn run_turn(
@@ -210,6 +327,16 @@ where
 
             self.session.messages.push(assistant_message.clone());
             assistant_messages.push(assistant_message);
+
+            // Safe injection point: the assistant message has been committed
+            // to history. Drain any user messages that arrived mid-stream and
+            // append them in send order so the agent picks them up on the
+            // next loop iteration without being cancelled. We drain at every
+            // boundary (whether we're about to break or run another tool
+            // turn) so that messages queued while the final assistant reply
+            // streamed still extend the conversation instead of starting a
+            // brand-new (cold-cache) turn.
+            self.drain_soft_interrupts();
 
             if pending_tool_uses.is_empty() {
                 break;
@@ -305,6 +432,20 @@ where
     #[must_use]
     pub fn into_session(self) -> Session {
         self.session
+    }
+
+    /// Drain any queued soft-interrupt user messages and append them to
+    /// conversation history in send order. Called from inside the agent loop
+    /// at a safe boundary — after the just-streamed assistant message has
+    /// been pushed onto history and before the next provider call (or the
+    /// turn ends). Cache-warm by construction: history is only extended,
+    /// never rewound.
+    fn drain_soft_interrupts(&mut self) {
+        for msg in self.soft_interrupt_queue.drain_for_injection() {
+            self.session
+                .messages
+                .push(ConversationMessage::user_text(msg.text));
+        }
     }
 
     fn maybe_auto_compact(&mut self) -> Option<AutoCompactionEvent> {
@@ -459,8 +600,8 @@ impl ToolExecutor for StaticToolExecutor {
 mod tests {
     use super::{
         parse_auto_compaction_threshold, ApiClient, ApiRequest, AssistantEvent,
-        AutoCompactionEvent, ConversationRuntime, RuntimeError, StaticToolExecutor,
-        DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD,
+        AutoCompactionEvent, ConversationRuntime, RuntimeError, SoftInterruptQueue,
+        StaticToolExecutor, DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD,
     };
     use crate::compact::CompactionConfig;
     use crate::config::{RuntimeFeatureConfig, RuntimeHookConfig};
@@ -955,6 +1096,148 @@ mod tests {
             .expect("turn should succeed");
         assert_eq!(summary.auto_compaction, None);
         assert_eq!(runtime.session().messages.len(), 2);
+    }
+
+    #[test]
+    fn soft_interrupt_messages_are_injected_at_safe_boundary_in_send_order() {
+        // Two-call API where, while the first assistant message is being
+        // produced, two user messages get queued via a shared
+        // SoftInterruptQueue handle. The runtime must drain them in send
+        // order between iterations and the second API call must see them
+        // appended to history without the first turn being cancelled.
+        struct QueuingApi {
+            calls: usize,
+            queue: SoftInterruptQueue,
+        }
+
+        impl ApiClient for QueuingApi {
+            fn stream(
+                &mut self,
+                request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                self.calls += 1;
+                match self.calls {
+                    1 => {
+                        // Simulate the user sending two messages while the
+                        // assistant is mid-stream.
+                        self.queue.enqueue("follow up A");
+                        self.queue.enqueue("follow up B");
+                        Ok(vec![
+                            AssistantEvent::ToolUse {
+                                id: "tool-1".to_string(),
+                                name: "noop".to_string(),
+                                input: "{}".to_string(),
+                            },
+                            AssistantEvent::MessageStop,
+                        ])
+                    }
+                    2 => {
+                        // After the tool result, the queued messages should
+                        // already be present in history (drained at the safe
+                        // injection point after the assistant message).
+                        let user_texts: Vec<String> = request
+                            .messages
+                            .iter()
+                            .filter(|m| {
+                                m.role == crate::session::MessageRole::User
+                                    && m.blocks.iter().any(|b| {
+                                        matches!(b, crate::session::ContentBlock::Text { .. })
+                                    })
+                            })
+                            .flat_map(|m| {
+                                m.blocks.iter().filter_map(|b| {
+                                    if let crate::session::ContentBlock::Text { text } = b {
+                                        Some(text.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .collect();
+                        assert_eq!(
+                            user_texts,
+                            vec![
+                                "initial".to_string(),
+                                "follow up A".to_string(),
+                                "follow up B".to_string(),
+                            ],
+                            "queued messages must be drained in send order"
+                        );
+                        Ok(vec![
+                            AssistantEvent::TextDelta("done".to_string()),
+                            AssistantEvent::MessageStop,
+                        ])
+                    }
+                    _ => Err(RuntimeError::new("unexpected extra API call")),
+                }
+            }
+        }
+
+        let queue = SoftInterruptQueue::new();
+        let api_client = QueuingApi {
+            calls: 0,
+            queue: queue.clone(),
+        };
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            api_client,
+            StaticToolExecutor::new().register("noop", |_input| Ok("ok".to_string())),
+            PermissionPolicy::new(PermissionMode::DangerFullAccess),
+            vec!["system".to_string()],
+        )
+        .with_soft_interrupt_queue(queue.clone());
+
+        let summary = runtime
+            .run_turn("initial", None)
+            .expect("turn should succeed without hard cancel");
+
+        // Two API iterations (no cancellation), and history should now end
+        // with both queued user messages preserved.
+        assert_eq!(summary.iterations, 2);
+        assert_eq!(queue.pending_len(), 0, "queue should be drained");
+
+        let events = queue.take_events();
+        assert_eq!(events.len(), 2, "telemetry: one event per injected msg");
+        assert!(events.iter().all(|e| e.coalesced_with == 2));
+    }
+
+    #[test]
+    fn soft_interrupt_queue_is_a_no_op_when_no_messages_are_queued() {
+        struct OneShotApi;
+        impl ApiClient for OneShotApi {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                Ok(vec![
+                    AssistantEvent::TextDelta("hello".to_string()),
+                    AssistantEvent::MessageStop,
+                ])
+            }
+        }
+
+        let queue = SoftInterruptQueue::new();
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            OneShotApi,
+            StaticToolExecutor::new(),
+            PermissionPolicy::new(PermissionMode::DangerFullAccess),
+            vec!["system".to_string()],
+        )
+        .with_soft_interrupt_queue(queue.clone());
+
+        runtime.run_turn("hi", None).expect("turn succeeds");
+
+        assert_eq!(runtime.session().messages.len(), 2);
+        assert!(queue.take_events().is_empty());
+    }
+
+    #[test]
+    fn soft_interrupt_queue_handle_is_shared_across_clones() {
+        let queue = SoftInterruptQueue::new();
+        let clone = queue.clone();
+        clone.enqueue("hello");
+        assert_eq!(queue.pending_len(), 1);
     }
 
     #[test]
