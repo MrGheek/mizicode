@@ -2101,8 +2101,6 @@ export default function SessionDetail() {
   useEffect(() => {
     if (!hasAnyConflict) {
       setSeenConflictFingerprint("");
-      setDismissedConflictFingerprint("");
-      if (sessionId) localStorage.removeItem(`conflict-dismissed:${sessionId}`);
     }
   }, [hasAnyConflict, sessionId]);
 
