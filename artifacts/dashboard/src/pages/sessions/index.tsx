@@ -130,6 +130,8 @@ type StatusFilter = "all" | "active" | "stopped" | "error";
 
 const ACTIVE_STATUSES = new Set(["pending", "provisioning", "downloading", "starting", "ready", "stopping"]);
 
+const TERMINAL_REPO_STATUSES = new Set(["ready", "error"]);
+
 const REPO_STATUS_LABELS: Record<string, string> = {
   queued: "Queued",
   scanning: "Scanning",
@@ -279,7 +281,18 @@ export default function SessionsList() {
 
   const { data: repoStatuses } = useGetBatchRepoStatus(
     { ids: idsParam! },
-    { query: { enabled: !!idsParam, queryKey: getGetBatchRepoStatusQueryKey(idsParam ? { ids: idsParam } : undefined) } }
+    {
+      query: {
+        enabled: !!idsParam,
+        queryKey: getGetBatchRepoStatusQueryKey(idsParam ? { ids: idsParam } : undefined),
+        refetchInterval: (query) => {
+          const statuses = Object.values(
+            (query.state.data as { statuses?: Record<string, { indexStatus: string }> } | undefined)?.statuses ?? {}
+          );
+          return statuses.some((s) => !TERMINAL_REPO_STATUSES.has(s.indexStatus)) ? 10_000 : false;
+        },
+      },
+    }
   );
 
   const repoStatusMap = repoStatuses?.statuses ?? {};
