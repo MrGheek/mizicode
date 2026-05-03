@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   getListSessionLanesQueryKey,
@@ -12,17 +12,24 @@ const BASE_URL = import.meta.env.BASE_URL ?? "/";
 const RETRY_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000];
 const MAX_BACKOFF_DELAY = 30000;
 
+export type CoordinationStreamStatus = "connected" | "reconnecting" | "polling";
+
 /**
  * Opens an SSE connection to /api/sessions/:id/coordination/stream.
  * When a `coordination_update` event arrives, it invalidates the React Query
  * caches for lanes, conflicts, coordination, and heavy jobs so the Team tab
  * refreshes immediately without waiting for the polling interval.
+ *
+ * Returns the current connection status so callers can render a live indicator.
  */
-export function useCoordinationStream(sessionId: number | null | undefined): void {
+export function useCoordinationStream(
+  sessionId: number | null | undefined
+): CoordinationStreamStatus {
   const queryClient = useQueryClient();
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  const [status, setStatus] = useState<CoordinationStreamStatus>("polling");
 
   useEffect(() => {
     if (!sessionId) return;
@@ -46,6 +53,7 @@ export function useCoordinationStream(sessionId: number | null | undefined): voi
       es.onopen = () => {
         if (cancelled) { es.close(); return; }
         retryCountRef.current = 0;
+        setStatus("connected");
       };
 
       es.onmessage = (event) => {
@@ -63,6 +71,7 @@ export function useCoordinationStream(sessionId: number | null | undefined): voi
         if (cancelled) return;
         es.close();
         esRef.current = null;
+        setStatus("reconnecting");
 
         const delay = RETRY_DELAYS[retryCountRef.current] ?? MAX_BACKOFF_DELAY;
         if (retryCountRef.current < RETRY_DELAYS.length) retryCountRef.current += 1;
@@ -87,6 +96,7 @@ export function useCoordinationStream(sessionId: number | null | undefined): voi
         esRef.current = null;
       }
       retryCountRef.current = 0;
+      setStatus("reconnecting");
       connect();
     }
 
@@ -102,4 +112,6 @@ export function useCoordinationStream(sessionId: number | null | undefined): voi
       }
     };
   }, [sessionId, queryClient]);
+
+  return status;
 }

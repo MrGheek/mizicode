@@ -674,8 +674,40 @@ function HandoffFeedItem({
   );
 }
 
+function StreamStatusBadge({ status }: { status: import("@/hooks/use-coordination-stream").CoordinationStreamStatus }) {
+  if (status === "connected") {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400">
+        <span className="relative flex h-1.5 w-1.5">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
+        </span>
+        Live
+      </span>
+    );
+  }
+  if (status === "reconnecting") {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-400">
+        <span className="relative flex h-1.5 w-1.5">
+          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-400 animate-pulse" />
+        </span>
+        Reconnecting
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground/60">
+      <span className="relative flex h-1.5 w-1.5">
+        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-muted-foreground/40" />
+      </span>
+      Polling
+    </span>
+  );
+}
+
 export function TeamTab({ sessionId }: { sessionId: number }) {
-  useCoordinationStream(sessionId);
+  const streamStatus = useCoordinationStream(sessionId);
   const queryClient = useQueryClient();
 
   const { data: lanesData, isLoading: lanesLoading, isError: lanesError } = useListSessionLanes(sessionId, {
@@ -751,7 +783,13 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
 
   if (noData && !hasError) {
     return (
-      <div className="mt-4">
+      <div className="mt-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+            <Users className="w-3.5 h-3.5" /> Team Coordination
+          </p>
+          <StreamStatusBadge status={streamStatus} />
+        </div>
         <Card className="bg-card/50 border-border/50">
           <CardContent className="py-12 text-center text-muted-foreground">
             <Users className="w-8 h-8 mx-auto mb-3 opacity-20" />
@@ -767,7 +805,13 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
 
   if (noData && hasError) {
     return (
-      <div className="mt-4">
+      <div className="mt-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+            <Users className="w-3.5 h-3.5" /> Team Coordination
+          </p>
+          <StreamStatusBadge status={streamStatus} />
+        </div>
         <div className="flex items-center gap-2 border border-red-500/30 bg-red-500/10 rounded-md px-3 py-2 text-sm text-red-400">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           <span>Could not load team coordination data. Will retry automatically.</span>
@@ -778,6 +822,14 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
 
   return (
     <div className="mt-4 space-y-5">
+
+      {/* Stream status header */}
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+          <Users className="w-3.5 h-3.5" /> Team Coordination
+        </p>
+        <StreamStatusBadge status={streamStatus} />
+      </div>
 
       {/* Error banner */}
       {hasError && (
