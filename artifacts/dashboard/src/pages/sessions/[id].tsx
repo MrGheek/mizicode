@@ -29,6 +29,7 @@ import { format, formatDistanceToNow } from "date-fns";
 import {
   Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw, Users, Copy, Check, Eye, EyeOff, FolderOpen,
   Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap, Network, Target, Pencil,
+  // RotateCcw was used by the legacy disk-full retry button; the new BootTimeline owns that CTA.
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -45,6 +46,9 @@ import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
 import { useState, useEffect, useRef, useMemo } from "react";
+import { useListProfiles } from "@workspace/api-client-react";
+import { inferBootPhase } from "@/lib/boot-phases";
+import { BootTimeline, BootProgressStrip } from "@/components/boot-timeline";
 import { TeamTab } from "@/components/team-tab";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 
@@ -1827,6 +1831,8 @@ export default function SessionDetail() {
   const refreshStatus = useRefreshSessionStatus();
   const createSession = useCreateSession();
   const updateSession = useUpdateSession();
+  // Profiles power the "Usually ~N min" hint in the BootTimeline footer.
+  const { data: profiles } = useListProfiles();
   const [isRetrying, setIsRetrying] = useState(false);
   const [stopRatingOpen, setStopRatingOpen] = useState(false);
   const [goalEditOpen, setGoalEditOpen] = useState(false);
@@ -2170,6 +2176,23 @@ export default function SessionDetail() {
 
   const isActive = session.status !== "stopped" && session.status !== "error";
   const isReady = session.status === "ready";
+  // Boot timeline derivation — phases are inferred from the (status, statusMessage)
+  // pair plus the accumulated bootLog. The compact progress strip is rendered
+  // below the tab bar while the session is still booting; it disappears once
+  // status reaches ready/stopped/error.
+  const isBooting = ["pending", "provisioning", "downloading", "starting"].includes(session.status);
+  const bootPhases = useMemo(
+    () => inferBootPhase({
+      status: session.status,
+      statusMessage: session.statusMessage,
+      bootLog,
+    }),
+    [session.status, session.statusMessage, bootLog],
+  );
+  const profileStartupMin = profiles?.find(p => p.id === session.profileId)?.startupTimeMin ?? null;
+  const sessionStartedAt = session.startedAt
+    ? new Date(session.startedAt)
+    : (session.createdAt ? new Date(session.createdAt) : null);
 
   // Keep the new-observation badge callback in sync without causing re-renders.
   // Only fire it when the Memory tab is not currently visible.
@@ -2320,45 +2343,8 @@ export default function SessionDetail() {
         </div>
       </div>
 
-      {/* Boot log / status message */}
-      {bootLog.length > 0 ? (
-        <div className="bg-secondary/30 border border-secondary rounded-md font-mono text-sm overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-secondary/60 text-xs text-muted-foreground/60 uppercase tracking-wider">
-            <span className="inline-block w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
-            Boot log
-          </div>
-          <div className="px-4 py-3 space-y-0.5 max-h-48 overflow-y-auto">
-            {bootLog.map((line, i) => (
-              <div key={i} className={`text-muted-foreground ${i === bootLog.length - 1 ? "text-foreground" : "opacity-60"}`}>
-                <span className="text-primary/50 mr-2 select-none">›</span>{line}
-              </div>
-            ))}
-          </div>
-          {bootLog.some(l => l.toLowerCase().includes("no space left on device")) && (
-            <div className="border-t border-yellow-500/30 bg-yellow-500/10 px-4 py-3 flex items-start gap-3">
-              <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-yellow-400 text-xs font-semibold">Host disk full</p>
-                <p className="text-muted-foreground text-xs mt-0.5">The rented machine ran out of disk space pulling the Docker image. Destroy this session and retry — Vast.ai will pick a different host.</p>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/20 shrink-0"
-                onClick={handleDestroyAndRetry}
-                disabled={isRetrying}
-              >
-                <RotateCcw className={`w-3.5 h-3.5 mr-1.5 ${isRetrying ? "animate-spin" : ""}`} />
-                {isRetrying ? "Retrying…" : "Destroy & Retry"}
-              </Button>
-            </div>
-          )}
-        </div>
-      ) : session.statusMessage ? (
-        <div className="bg-secondary/30 border border-secondary p-4 rounded-md font-mono text-sm text-muted-foreground">
-          {'>'} {session.statusMessage}
-        </div>
-      ) : null}
+      {/* Compact progress strip below header — visible across all tabs while booting. */}
+      {isBooting && <BootProgressStrip phases={bootPhases} />}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-border/50">
@@ -2471,6 +2457,20 @@ export default function SessionDetail() {
 
       {activeTab === "overview" && (
         <>
+          {/* Boot Timeline — replaces the legacy raw-status block. Shown while
+              booting OR if the session ended before reaching ready, so users
+              can see where it stopped. */}
+          {(isBooting || (!isReady && bootLog.length > 0)) && (
+            <BootTimeline
+              phases={bootPhases}
+              startedAt={sessionStartedAt}
+              estimateMinutes={profileStartupMin}
+              rawStatusMessage={session.statusMessage}
+              bootLog={bootLog}
+              diskFullAction={{ onRetry: handleDestroyAndRetry, isRetrying }}
+            />
+          )}
+
           {/* Blocking conflict banner */}
           {hasBlockingConflict && dismissedConflictFingerprint !== blockingConflictFingerprint && (
             <div className="flex items-start gap-3 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm">
