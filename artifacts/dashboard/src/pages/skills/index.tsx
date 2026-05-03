@@ -33,6 +33,7 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge, SkillEffectivenessBadge, FreshnessBadge, getFreshnessInfo } from "@/components/skill-badges";
+import { categoryIcon } from "@/lib/design-intelligence";
 import type { FeedbackScoreEntry } from "@/components/skill-badges";
 
 type LibTab = "installed" | "pending" | "disabled" | "bundles";
@@ -354,22 +355,6 @@ function BundleSkillAccordion({ skill, index }: { skill: CompiledSkill; index: n
       )}
     </div>
   );
-}
-
-const CATEGORY_ICONS: Record<string, string> = {
-  colors: "🎨",
-  typography: "Aa",
-  charts: "📊",
-  "ui-patterns": "⬜",
-  fonts: "T",
-  icons: "✦",
-  palette: "🎨",
-  style: "◈",
-};
-
-function categoryIcon(cat: string) {
-  const key = Object.keys(CATEGORY_ICONS).find((k) => cat.toLowerCase().includes(k));
-  return key ? CATEGORY_ICONS[key] : "◆";
 }
 
 function SkillDesignCategoriesPanel({ skillId }: { skillId: number }) {

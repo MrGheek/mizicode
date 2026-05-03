@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
+import { categoryIcon, SKILL_CLASS_COLORS } from "@/lib/design-intelligence";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 const PAGE_SIZE = 20;
@@ -488,14 +489,6 @@ function DataJsonView({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-const SKILL_CLASS_COLORS: Record<string, string> = {
-  design: "text-purple-400 border-purple-500/30",
-  ui: "text-indigo-400 border-indigo-500/30",
-  frontend: "text-sky-400 border-sky-500/30",
-  backend: "text-emerald-400 border-emerald-500/30",
-  devops: "text-amber-400 border-amber-500/30",
-};
-
 function RelatedSkillsBadges({ skills }: { skills: SkillSummary[] }) {
   if (skills.length === 0) return null;
   const shown = skills.slice(0, 3);
@@ -593,24 +586,6 @@ function EntryCard({
       </CardContent>
     </Card>
   );
-}
-
-const CATEGORY_ICONS: Record<string, string> = {
-  colors: "🎨",
-  typography: "Aa",
-  charts: "📊",
-  "ui-patterns": "⬜",
-  fonts: "T",
-  icons: "✦",
-  palette: "🎨",
-  style: "◈",
-};
-
-function categoryIcon(cat: string) {
-  const key = Object.keys(CATEGORY_ICONS).find((k) =>
-    cat.toLowerCase().includes(k),
-  );
-  return key ? CATEGORY_ICONS[key] : "◆";
 }
 
 export default function DesignIntelligence() {
