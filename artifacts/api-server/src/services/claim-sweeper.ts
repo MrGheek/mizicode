@@ -91,6 +91,43 @@ const SWEEP_INTERVAL_MS = 30_000;
 
 let _sweepTimer: ReturnType<typeof setInterval> | null = null;
 
+export interface SweeperHealth {
+  lastRunAt: string | null;
+  lastCleared: number;
+  totalCleared: number;
+  intervalMs: number;
+}
+
+let _lastRunAt: string | null = null;
+let _lastCleared = 0;
+let _totalCleared = 0;
+
+function recordSweepResult(result: SweepResult): void {
+  _lastRunAt = result.sweptAt;
+  _lastCleared = result.deleted;
+  _totalCleared += result.deleted;
+}
+
+/**
+ * Returns in-memory health metrics for the claim sweeper.
+ */
+export function getSweeperHealth(): SweeperHealth {
+  return {
+    lastRunAt: _lastRunAt,
+    lastCleared: _lastCleared,
+    totalCleared: _totalCleared,
+    intervalMs: SWEEP_INTERVAL_MS,
+  };
+}
+
+/**
+ * Record a sweep result that happened outside the interval (e.g. startup sweep).
+ * Keeps health metrics consistent regardless of where the sweep was triggered.
+ */
+export function recordExternalSweep(result: SweepResult): void {
+  recordSweepResult(result);
+}
+
 /**
  * Start the background sweeper interval. Safe to call once at startup.
  * Calling more than once is a no-op.
@@ -101,6 +138,7 @@ export function startClaimSweeper(): void {
   _sweepTimer = setInterval(async () => {
     try {
       const result = await sweepExpiredClaims();
+      recordSweepResult(result);
       if (result.deleted > 0) {
         logger.info(result, "Claim sweeper hard-deleted ghost claims");
       }
