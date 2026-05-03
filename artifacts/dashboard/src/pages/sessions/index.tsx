@@ -19,6 +19,10 @@ const RELAUNCHABLE_STATUSES = new Set(["stopped"]);
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 const BATCH_INTERVAL_MS = 3000;
+// When SSE is unavailable we fall back to polling, but at a much lower
+// frequency than the SSE update rate — there is no point hammering the
+// endpoint when no sessions are actively running.
+const IDLE_POLL_INTERVAL_MS = 30_000;
 
 async function fetchBatchStatus(idsKey: string): Promise<Record<number, SwarmStatusResponse>> {
   const res = await fetch(`${BASE_URL}api/sessions/swarm-status-batch?ids=${idsKey}`);
@@ -75,19 +79,24 @@ function useSwarmBatchSse(sessionIds: number[], readySessionIds: number[], initi
     // Track per-session SSE health so we can stop polling once all streams recover.
     const sseHealthy = new Set<number>();
 
-    // Start batch polling as an immediate fallback — called on the first SSE error
-    // so no pill goes stale while EventSource is reconnecting.
+    // Start batch polling as a fallback — called on the first SSE error so no
+    // pill goes stale while EventSource is reconnecting.  We intentionally use
+    // the longer idle interval here: SSE is the primary real-time channel, so
+    // the fallback only needs to keep data roughly fresh, not match the SSE
+    // cadence.  If there are no ready sessions the effect returns early (above)
+    // so this function is never reached in that case.
     const startPollingFallback = () => {
       if (fallbackInterval) return;
       const doFetch = () => {
         const key = allIdsKeyRef.current;
-        if (!key) return;
+        // Extra guard: skip the network call when there are no active sessions.
+        if (!key || readySessionIds.length === 0) return;
         fetchBatchStatus(key)
           .then((data) => setStatusMap((prev) => ({ ...prev, ...data })))
           .catch(() => {});
       };
       doFetch();
-      fallbackInterval = setInterval(doFetch, BATCH_INTERVAL_MS);
+      fallbackInterval = setInterval(doFetch, IDLE_POLL_INTERVAL_MS);
     };
 
     // Stop polling once every ready session has a healthy SSE stream again.
