@@ -11,6 +11,7 @@ import { SwarmPill } from "@/components/swarm-activity-panel";
 import type { SwarmStatusResponse } from "@/components/swarm-activity-panel";
 import { Badge } from "@/components/ui/badge";
 import { RelaunchButton } from "@/components/relaunch-button";
+import { isTypingTarget } from "@/lib/shortcuts";
 
 const RELAUNCHABLE_STATUSES = new Set(["stopped"]);
 
@@ -174,6 +175,59 @@ export default function SessionsList() {
 
   const repoStatusMap = repoStatuses?.statuses ?? {};
 
+  // Keyboard navigation: j/k move focus, Enter opens, n creates new.
+  // focusedIndex is bounded by the visible (filtered) row list.
+  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
+  const visibleCount = filteredSessions?.length ?? 0;
+
+  // Reset focus when filter changes or rows disappear.
+  useEffect(() => {
+    if (focusedIndex >= visibleCount) setFocusedIndex(visibleCount > 0 ? 0 : -1);
+  }, [visibleCount, focusedIndex]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!filteredSessions || filteredSessions.length === 0) {
+        if (e.key === "n") {
+          e.preventDefault();
+          setLocation("/");
+        }
+        return;
+      }
+      if (e.key === "j") {
+        e.preventDefault();
+        setFocusedIndex((i) => {
+          const next = i < 0 ? 0 : Math.min(i + 1, filteredSessions.length - 1);
+          return next;
+        });
+      } else if (e.key === "k") {
+        e.preventDefault();
+        setFocusedIndex((i) => {
+          const next = i < 0 ? 0 : Math.max(i - 1, 0);
+          return next;
+        });
+      } else if (e.key === "Enter") {
+        if (focusedIndex >= 0 && focusedIndex < filteredSessions.length) {
+          e.preventDefault();
+          setLocation(`/sessions/${filteredSessions[focusedIndex].id}`);
+        }
+      } else if (e.key === "n") {
+        e.preventDefault();
+        setLocation("/");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [filteredSessions, focusedIndex, setLocation]);
+
+  // Scroll focused row into view when it changes.
+  const focusedRowRef = useRef<HTMLTableRowElement | null>(null);
+  useEffect(() => {
+    focusedRowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [focusedIndex]);
+
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
       <div className="flex justify-between items-end">
@@ -232,10 +286,16 @@ export default function SessionsList() {
                 </TableRow>
               ))
             ) : filteredSessions?.length ? (
-              filteredSessions.map((session) => {
+              filteredSessions.map((session, idx) => {
                 const repoStatus = repoStatusMap[session.id];
+                const isFocused = idx === focusedIndex;
                 return (
-                  <TableRow key={session.id} className="border-border/50">
+                  <TableRow
+                    key={session.id}
+                    ref={isFocused ? focusedRowRef : undefined}
+                    data-focused={isFocused ? "true" : undefined}
+                    className={`border-border/50 ${isFocused ? "bg-primary/10 outline outline-1 outline-primary/40" : ""}`}
+                  >
                     <TableCell className="font-mono text-muted-foreground">#{session.id}</TableCell>
                     <TableCell className="font-medium">{session.profileName}</TableCell>
                     <TableCell>

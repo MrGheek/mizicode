@@ -50,6 +50,7 @@ import { useListProfiles } from "@workspace/api-client-react";
 import { inferBootPhase } from "@/lib/boot-phases";
 import { BootTimeline, BootProgressStrip } from "@/components/boot-timeline";
 import { RelaunchButton } from "@/components/relaunch-button";
+import { isTypingTarget } from "@/lib/shortcuts";
 import { TeamTab } from "@/components/team-tab";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 
@@ -2232,6 +2233,104 @@ export default function SessionDetail() {
   const handleStop = () => {
     setStopRatingOpen(true);
   };
+
+  // Top-level re-index handler — used both by the cockpit "r" shortcut and the
+  // command palette. Mirrors the per-tab handler in RepoIndexTab but lives here
+  // so it's available even when the user is on a different tab.
+  const reindexFromShortcut = useEnqueueRepoIndex();
+  const handleReindexShortcut = () => {
+    reindexFromShortcut.mutate(
+      { sessionId, data: {} },
+      {
+        onSuccess: () => {
+          toast({ title: "Re-index triggered", description: "Indexing job enqueued — this may take a few minutes." });
+          queryClient.invalidateQueries({ queryKey: getGetRepoSummaryQueryKey(sessionId) });
+          queryClient.invalidateQueries({ queryKey: getGetRepoFingerprintQueryKey(sessionId) });
+        },
+        onError: () => toast({ title: "Failed to trigger re-index", variant: "destructive" }),
+      },
+    );
+  };
+
+  // Listen for "stop session" requests from the command palette so the
+  // palette's "Stop Session" command goes through the same feedback dialog.
+  useEffect(() => {
+    const onStopRequest = () => {
+      const sess = session;
+      if (!sess) return;
+      if (sess.status === "stopped" || sess.status === "error") return;
+      handleStop();
+    };
+    window.addEventListener("floatr:request-stop-session", onStopRequest);
+    return () => window.removeEventListener("floatr:request-stop-session", onStopRequest);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
+  // Cockpit keyboard shortcuts: 1–6 switch tabs, r triggers repo re-index,
+  // s opens the stop/feedback dialog. Disabled while typing in inputs/textareas.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Skip when modifier keys are held (Cmd+K etc. are owned by the palette).
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e)) return;
+
+      const sess = session;
+      if (!sess) return;
+
+      // Tab visibility — must match the JSX render conditions.
+      const teamMembers = (sess.teamMembers ?? []) as Array<{ name: string }>;
+      const hasTeam = teamMembers.some((m) => m.name !== "__shared__");
+      const isReadyNow = sess.status === "ready";
+      const showSwarm = isReadyNow || swarmTabShouldShow(swarmData);
+      const isSessActive = sess.status !== "stopped" && sess.status !== "error";
+
+      switch (e.key) {
+        case "1":
+          e.preventDefault();
+          setActiveTab("overview");
+          break;
+        case "2":
+          e.preventDefault();
+          setActiveTab("memory");
+          setNewObsCount(0);
+          setBadgePulseKey(0);
+          break;
+        case "3":
+          e.preventDefault();
+          setActiveTab("smart-skills");
+          break;
+        case "4":
+          e.preventDefault();
+          setActiveTab("repo");
+          break;
+        case "5":
+          if (hasTeam) {
+            e.preventDefault();
+            setActiveTab("coordination");
+          }
+          break;
+        case "6":
+          if (showSwarm) {
+            e.preventDefault();
+            setActiveTab("swarm");
+          }
+          break;
+        case "r":
+          e.preventDefault();
+          handleReindexShortcut();
+          break;
+        case "s":
+          if (isSessActive) {
+            e.preventDefault();
+            handleStop();
+          }
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, swarmData]);
 
   const handleRefresh = () => {
     refreshStatus.mutate({ sessionId }, {

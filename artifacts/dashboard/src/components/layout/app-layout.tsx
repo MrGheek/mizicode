@@ -10,6 +10,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { StopCountdownModal } from "@/components/stop-countdown-modal";
+import { CommandPalette } from "@/components/command-palette";
 import { useToast } from "@/hooks/use-toast";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
@@ -107,6 +108,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         activeSession={activeSession}
         onStop={handleScheduledStop}
       />
+
+      {/* Global command palette + keyboard shortcuts help (Cmd/Ctrl+K, ?) */}
+      <CommandPalette />
     </div>
   );
 }
