@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useListSessions, useGetBatchRepoStatus, getGetBatchRepoStatusQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Terminal, Eye, Plus } from "lucide-react";
+import { Terminal, Eye, Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
@@ -217,6 +218,8 @@ export default function SessionsList() {
   const [location, setLocation] = useLocation();
   const search = useSearch();
   const { data: sessions, isLoading } = useListSessions();
+  const queryClient = useQueryClient();
+  const [indexingIds, setIndexingIds] = useState<Set<number>>(new Set());
 
   const urlTeamFilter = getTeamFilterFromSearch(search);
   const teamFilter: TeamFilter = urlTeamFilter ?? readStoredTeamFilter();
@@ -296,6 +299,32 @@ export default function SessionsList() {
   );
 
   const repoStatusMap = repoStatuses?.statuses ?? {};
+
+  async function handleStartIndexing(sessionId: number) {
+    setIndexingIds((prev) => new Set(prev).add(sessionId));
+    try {
+      const res = await fetch(`${BASE_URL}api/sessions/${sessionId}/repo/index`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (res.ok) {
+        const batchKey = getGetBatchRepoStatusQueryKey(idsParam ? { ids: idsParam } : undefined);
+        queryClient.setQueryData(batchKey, (old: { statuses: Record<number, { indexStatus: string; isStale: boolean; confidenceLevel: string }> } | undefined) => ({
+          statuses: {
+            ...(old?.statuses ?? {}),
+            [sessionId]: { indexStatus: "queued", isStale: false, confidenceLevel: "none" },
+          },
+        }));
+      }
+    } finally {
+      setIndexingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
+      });
+    }
+  }
 
   // Keyboard navigation: j/k move focus, Enter opens, n creates new.
   // focusedIndex is bounded by the visible (filtered) row list.
@@ -468,7 +497,17 @@ export default function SessionsList() {
                           />
                         </button>
                       ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-xs gap-1"
+                          disabled={indexingIds.has(session.id)}
+                          onClick={(e) => { e.stopPropagation(); handleStartIndexing(session.id); }}
+                          title="Start indexing this session's repo"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${indexingIds.has(session.id) ? "animate-spin" : ""}`} />
+                          Index
+                        </Button>
                       )}
                     </TableCell>
                     <TableCell className="text-muted-foreground font-mono text-sm">
