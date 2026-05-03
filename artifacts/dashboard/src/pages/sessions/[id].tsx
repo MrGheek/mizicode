@@ -37,6 +37,7 @@ import { SessionStatusBadge } from "@/components/session-status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
@@ -2023,27 +2024,154 @@ export default function SessionDetail() {
             Session #{session.id} · {session.gpuName} x{session.numGpus}
             {session.vastInstanceId ? ` · Vast #${session.vastInstanceId}` : ""}
           </p>
-          {/* Session goal — natural-language intent, editable mid-session. */}
-          <button
-            type="button"
-            onClick={() => {
-              setGoalDraft(session.intentText ?? "");
-              setGoalEditOpen(true);
-            }}
-            className="mt-2 inline-flex items-start gap-2 max-w-2xl text-left rounded-md border border-border/40 bg-secondary/20 hover:bg-secondary/30 hover:border-border transition-colors px-2.5 py-1.5 group"
-            data-testid="button-edit-session-goal"
-          >
-            <Target className="w-3.5 h-3.5 text-primary mt-0.5 shrink-0" />
-            <span className="text-xs leading-snug flex-1 min-w-0">
-              <span className="text-muted-foreground/70 uppercase tracking-wider text-[9px] font-semibold mr-1.5">Goal</span>
-              {session.intentText ? (
-                <span className="text-foreground/90">{session.intentText}</span>
-              ) : (
-                <span className="text-muted-foreground italic">Add a one-line description of what you're working on</span>
-              )}
-            </span>
-            <Pencil className="w-3 h-3 text-muted-foreground/50 group-hover:text-foreground mt-0.5 shrink-0" />
-          </button>
+          {/* Session goal — compact badge, only shown when set. Truncated to
+              80 chars with hover tooltip showing the full text. Click to edit
+              inline via popover. */}
+          {session.intentText ? (
+            (() => {
+              const fullGoal = session.intentText;
+              const TRUNCATE = 80;
+              const display = fullGoal.length > TRUNCATE
+                ? `${fullGoal.slice(0, TRUNCATE).trimEnd()}…`
+                : fullGoal;
+              return (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Popover
+                        open={goalEditOpen}
+                        onOpenChange={(open) => {
+                          if (open) setGoalDraft(fullGoal);
+                          setGoalEditOpen(open);
+                        }}
+                      >
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className="mt-2 inline-flex items-center gap-1.5 max-w-xl text-left rounded-md border border-primary/30 bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-colors px-2 py-1 group"
+                            data-testid="button-edit-session-goal"
+                          >
+                            <Target className="w-3 h-3 text-primary shrink-0" />
+                            <span className="text-[11px] leading-tight text-foreground/90 truncate">{display}</span>
+                            <Pencil className="w-2.5 h-2.5 text-muted-foreground/60 group-hover:text-foreground shrink-0" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-80 space-y-2" align="start">
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Session goal</p>
+                          <Textarea
+                            value={goalDraft}
+                            onChange={e => setGoalDraft(e.target.value.slice(0, 500))}
+                            rows={4}
+                            placeholder="e.g. Add Stripe checkout to the billing page"
+                            className="text-sm resize-none"
+                            data-testid="textarea-session-goal"
+                            autoFocus
+                          />
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-mono text-muted-foreground/60">{goalDraft.length}/500</span>
+                            <div className="flex gap-1">
+                              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setGoalEditOpen(false)} disabled={updateSession.isPending}>
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={() => {
+                                  const next = goalDraft.trim();
+                                  updateSession.mutate(
+                                    { sessionId, data: { intentText: next.length > 0 ? next : null } },
+                                    {
+                                      onSuccess: () => {
+                                        toast({ title: "Session goal updated" });
+                                        queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+                                        setGoalEditOpen(false);
+                                      },
+                                      onError: () => toast({ title: "Failed to update goal", variant: "destructive" }),
+                                    },
+                                  );
+                                }}
+                                disabled={updateSession.isPending}
+                                data-testid="button-save-session-goal"
+                              >
+                                {updateSession.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Save"}
+                              </Button>
+                            </div>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    </TooltipTrigger>
+                    {fullGoal.length > TRUNCATE && (
+                      <TooltipContent side="bottom" className="max-w-md text-xs">
+                        {fullGoal}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                </TooltipProvider>
+              );
+            })()
+          ) : (
+            <Popover
+              open={goalEditOpen}
+              onOpenChange={(open) => {
+                if (open) setGoalDraft("");
+                setGoalEditOpen(open);
+              }}
+            >
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="mt-2 inline-flex items-center gap-1.5 text-left rounded-md border border-dashed border-border/60 hover:border-border hover:bg-secondary/30 transition-colors px-2 py-1 text-[11px] text-muted-foreground"
+                  data-testid="button-add-session-goal"
+                >
+                  <Target className="w-3 h-3 shrink-0" />
+                  <span>Add session goal</span>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80 space-y-2" align="start">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Session goal</p>
+                <Textarea
+                  value={goalDraft}
+                  onChange={e => setGoalDraft(e.target.value.slice(0, 500))}
+                  rows={4}
+                  placeholder="e.g. Add Stripe checkout to the billing page"
+                  className="text-sm resize-none"
+                  data-testid="textarea-session-goal"
+                  autoFocus
+                />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-mono text-muted-foreground/60">{goalDraft.length}/500</span>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setGoalEditOpen(false)} disabled={updateSession.isPending}>
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => {
+                        const next = goalDraft.trim();
+                        if (!next) { setGoalEditOpen(false); return; }
+                        updateSession.mutate(
+                          { sessionId, data: { intentText: next } },
+                          {
+                            onSuccess: () => {
+                              toast({ title: "Session goal saved" });
+                              queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+                              setGoalEditOpen(false);
+                            },
+                            onError: () => toast({ title: "Failed to save goal", variant: "destructive" }),
+                          },
+                        );
+                      }}
+                      disabled={updateSession.isPending}
+                      data-testid="button-save-session-goal"
+                    >
+                      {updateSession.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Save"}
+                    </Button>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshStatus.isPending || !isActive}>
@@ -2607,62 +2735,6 @@ export default function SessionDetail() {
                 disabled={deleteSession.isPending}
               >
                 Stop without rating
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {goalEditOpen && (
-        <Dialog open onOpenChange={(open) => { if (!open) setGoalEditOpen(false); }}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Target className="w-4 h-4 text-primary" />
-                Session goal
-              </DialogTitle>
-            </DialogHeader>
-            <div className="py-2 space-y-2">
-              <p className="text-xs text-muted-foreground">
-                What are you working on in this session? Saved as a memory note and shown in the cockpit header.
-              </p>
-              <Textarea
-                value={goalDraft}
-                onChange={e => setGoalDraft(e.target.value.slice(0, 500))}
-                rows={4}
-                placeholder="e.g. Add Stripe checkout to the billing page"
-                className="text-sm resize-none"
-                data-testid="textarea-session-goal"
-                autoFocus
-              />
-              <div className="flex justify-end text-[10px] font-mono text-muted-foreground/60">
-                {goalDraft.length}/500
-              </div>
-            </div>
-            <DialogFooter className="gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setGoalEditOpen(false)} disabled={updateSession.isPending}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => {
-                  const next = goalDraft.trim();
-                  updateSession.mutate(
-                    { sessionId, data: { intentText: next.length > 0 ? next : null } },
-                    {
-                      onSuccess: () => {
-                        toast({ title: "Session goal updated" });
-                        queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
-                        setGoalEditOpen(false);
-                      },
-                      onError: () => toast({ title: "Failed to update goal", variant: "destructive" }),
-                    },
-                  );
-                }}
-                disabled={updateSession.isPending}
-                data-testid="button-save-session-goal"
-              >
-                {updateSession.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Saving…</> : "Save"}
               </Button>
             </DialogFooter>
           </DialogContent>

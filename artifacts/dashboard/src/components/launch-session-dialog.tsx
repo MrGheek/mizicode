@@ -77,6 +77,31 @@ export function LaunchSessionDialog({
   const [tokenMode, setTokenMode] = useState("core");
   const [repoUrl, setRepoUrl] = useState("");
   const [intentText, setIntentText] = useState("");
+  // Track whether the user has manually edited the intent so we never
+  // overwrite their text with a repo-URL-derived suggestion.
+  const intentEditedRef = useRef(false);
+
+  // Auto-fill a sensible default intent based on the repo URL when the user
+  // hasn't typed anything yet (or has cleared the field). We extract the
+  // owner/repo from the URL and only suggest a string of the form
+  // "Index and explore `owner/repo`".
+  useEffect(() => {
+    if (intentEditedRef.current) return;
+    const trimmed = repoUrl.trim();
+    if (!trimmed) {
+      // Clearing the repo URL clears the auto-suggestion (only when the user
+      // hasn't manually edited intent).
+      setIntentText("");
+      return;
+    }
+    // Match `github.com/<owner>/<repo>` (and similar) tolerantly.
+    const match = trimmed.match(/[/:]([^/\s]+)\/([^/\s.]+)(?:\.git)?\/?$/);
+    if (match) {
+      const owner = match[1];
+      const repo = match[2];
+      setIntentText(`Index and explore \`${owner}/${repo}\``);
+    }
+  }, [repoUrl]);
   const [bundleOverride, setBundleOverride] = useState<number | null | "none">(null);
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
@@ -154,6 +179,24 @@ export function LaunchSessionDialog({
         </DialogHeader>
 
         <div className="space-y-5 py-2">
+          {/* Repo URL — comes first because it auto-suggests session intent. */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              Repo URL
+              <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground/60">(optional)</span>
+            </Label>
+            <Input
+              placeholder="https://github.com/org/repo"
+              value={repoUrl}
+              onChange={e => setRepoUrl(e.target.value)}
+              className="text-sm font-mono"
+            />
+            <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+              <Info className="w-3 h-3 shrink-0" />
+              Used to recommend the best skill bundle for your repo
+            </p>
+          </div>
+
           {/* Session intent — what are you working on? */}
           <div className="space-y-1.5">
             <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -163,7 +206,10 @@ export function LaunchSessionDialog({
             <Textarea
               placeholder="e.g. Add Stripe checkout to the billing page, or refactor the auth middleware to support API keys"
               value={intentText}
-              onChange={e => setIntentText(e.target.value.slice(0, 500))}
+              onChange={e => {
+                intentEditedRef.current = true;
+                setIntentText(e.target.value.slice(0, 500));
+              }}
               rows={3}
               className="text-sm resize-none"
             />
@@ -218,24 +264,6 @@ export function LaunchSessionDialog({
             </div>
             <p className="text-[10px] text-muted-foreground">
               {TOKEN_MODES.find(m => m.value === tokenMode)?.desc}
-            </p>
-          </div>
-
-          {/* Repo URL */}
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              Repo URL
-              <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground/60">(optional)</span>
-            </Label>
-            <Input
-              placeholder="https://github.com/org/repo"
-              value={repoUrl}
-              onChange={e => setRepoUrl(e.target.value)}
-              className="text-sm font-mono"
-            />
-            <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-              <Info className="w-3 h-3 shrink-0" />
-              Used to recommend the best skill bundle for your repo
             </p>
           </div>
 
