@@ -30,6 +30,7 @@ import { format, formatDistanceToNow } from "date-fns";
 import {
   Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw, Users, Copy, Check, Eye, EyeOff, FolderOpen,
   Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap, Network, Target, Pencil,
+  Bell, BellOff, BellRing, MonitorSmartphone,
   // RotateCcw was used by the legacy disk-full retry button; the new BootTimeline owns that CTA.
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,6 +46,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
+import { useHandoffNotificationPref } from "@/hooks/use-handoff-notification-pref";
 import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useListProfiles } from "@workspace/api-client-react";
@@ -1769,6 +1771,8 @@ export default function SessionDetail() {
   const sessionId = id ? parseInt(id, 10) : 0;
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { pref: handoffNotifPref, setPref: setHandoffNotifPref, browserPermission } = useHandoffNotificationPref();
+  const [notifPopoverOpen, setNotifPopoverOpen] = useState(false);
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm">(() => {
     const tab = new URLSearchParams(window.location.search).get("tab");
@@ -2169,8 +2173,8 @@ export default function SessionDetail() {
     handoffDataInitializedRef.current = false;
   }, [sessionId]);
 
-  // Fire a toast when new pending handoffs arrive and the Coordination tab is not active.
-  // On first data load, we seed the seen-set without toasting (avoid false positives
+  // Fire a notification when new pending handoffs arrive and the Coordination tab is not active.
+  // On first data load, we seed the seen-set without notifying (avoid false positives
   // for handoffs that were already pending before the user opened this session page).
   useEffect(() => {
     const handoffs = bgCoordData?.recentHandoffs ?? [];
@@ -2185,6 +2189,7 @@ export default function SessionDetail() {
     if (newHandoffs.length === 0) return;
     newHandoffs.forEach((h) => toastedHandoffIdsRef.current.add(h.id));
     if (activeTab === "coordination") return;
+    if (handoffNotifPref === "none") return;
     const typeLabels: Record<string, string> = {
       blocked: "Blocked",
       needs_review: "Needs Review",
@@ -2200,33 +2205,17 @@ export default function SessionDetail() {
         )
       );
     };
-    if (newHandoffs.length === 1) {
-      const h = newHandoffs[0];
-      const label = typeLabels[h.handoffType] ?? h.handoffType;
+    const title = newHandoffs.length === 1
+      ? `Handoff: ${typeLabels[newHandoffs[0].handoffType] ?? newHandoffs[0].handoffType}`
+      : `${newHandoffs.length} new handoff signals`;
+    const description = newHandoffs.length === 1
+      ? (newHandoffs[0].message ?? "A teammate sent a handoff signal.")
+      : newHandoffs.map((h) => typeLabels[h.handoffType] ?? h.handoffType).join(", ");
+    if (handoffNotifPref === "toast") {
       let viewClicked = false;
       toast({
-        title: `Handoff: ${label}`,
-        description: h.message ?? "A teammate sent a handoff signal.",
-        onOpenChange: (open) => {
-          if (!open && !viewClicked) ackHandoffs([h]);
-        },
-        action: (
-          <ToastAction altText="Open Coordination tab" onClick={() => {
-            viewClicked = true;
-            setActiveTab("coordination");
-            ackHandoffs([h]);
-          }}>
-            View
-          </ToastAction>
-        ),
-      });
-    } else {
-      let viewClicked = false;
-      toast({
-        title: `${newHandoffs.length} new handoff signals`,
-        description: newHandoffs
-          .map((h) => typeLabels[h.handoffType] ?? h.handoffType)
-          .join(", "),
+        title,
+        description,
         onOpenChange: (open) => {
           if (!open && !viewClicked) ackHandoffs(newHandoffs);
         },
@@ -2240,8 +2229,39 @@ export default function SessionDetail() {
           </ToastAction>
         ),
       });
+    } else if (handoffNotifPref === "browser") {
+      if ("Notification" in window && Notification.permission === "granted") {
+        let acked = false;
+        const n = new Notification(title, { body: description, icon: "/favicon.ico" });
+        n.onclick = () => {
+          window.focus();
+          setActiveTab("coordination");
+          if (!acked) { acked = true; ackHandoffs(newHandoffs); }
+        };
+        n.onclose = () => {
+          if (!acked) { acked = true; ackHandoffs(newHandoffs); }
+        };
+      } else {
+        let viewClicked = false;
+        toast({
+          title,
+          description,
+          onOpenChange: (open) => {
+            if (!open && !viewClicked) ackHandoffs(newHandoffs);
+          },
+          action: (
+            <ToastAction altText="Open Coordination tab" onClick={() => {
+              viewClicked = true;
+              setActiveTab("coordination");
+              ackHandoffs(newHandoffs);
+            }}>
+              View
+            </ToastAction>
+          ),
+        });
+      }
     }
-  }, [bgCoordData?.recentHandoffs, activeTab, toast]);
+  }, [bgCoordData?.recentHandoffs, activeTab, toast, handoffNotifPref]);
 
   const pendingHandoffBadgeCount = bgPendingHandoffs > seenHandoffCount
     ? bgPendingHandoffs - seenHandoffCount
@@ -2729,6 +2749,62 @@ export default function SessionDetail() {
             )}
           </button>
         )}
+        <div className="ml-auto flex items-center pr-1">
+          <Popover open={notifPopoverOpen} onOpenChange={setNotifPopoverOpen}>
+            <PopoverTrigger asChild>
+              <button
+                className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                title="Handoff notification settings"
+              >
+                {handoffNotifPref === "none" ? (
+                  <BellOff className="w-3.5 h-3.5" />
+                ) : handoffNotifPref === "browser" ? (
+                  <BellRing className="w-3.5 h-3.5" />
+                ) : (
+                  <Bell className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-64 p-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Handoff Notifications</p>
+              <div className="space-y-1">
+                {(
+                  [
+                    { value: "toast", label: "Toast", description: "Show an in-app toast", icon: <Bell className="w-4 h-4" /> },
+                    { value: "browser", label: "Browser notification", description: "Native alert, works in background", icon: <MonitorSmartphone className="w-4 h-4" /> },
+                    { value: "none", label: "None", description: "Silence all handoff alerts", icon: <BellOff className="w-4 h-4" /> },
+                  ] as const
+                ).map(({ value, label, description, icon }) => (
+                  <button
+                    key={value}
+                    onClick={async () => {
+                      const ok = await setHandoffNotifPref(value);
+                      if (ok) setNotifPopoverOpen(false);
+                      else if (value === "browser") {
+                        toast({ title: "Browser notifications blocked", description: "Please allow notifications for this site in your browser settings.", variant: "destructive" });
+                        setNotifPopoverOpen(false);
+                      }
+                    }}
+                    className={`w-full flex items-start gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors ${
+                      handoffNotifPref === value
+                        ? "bg-primary/10 text-foreground"
+                        : "hover:bg-accent text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <span className="mt-0.5 shrink-0">{icon}</span>
+                    <span>
+                      <span className="block font-medium leading-tight">{label}</span>
+                      <span className="block text-xs text-muted-foreground leading-snug">{description}</span>
+                      {value === "browser" && browserPermission === "denied" && (
+                        <span className="block text-xs text-destructive leading-snug mt-0.5">Blocked by browser</span>
+                      )}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
       </div>
 
       {activeTab === "overview" && (
