@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CalendarClock, Save, Loader2 } from "lucide-react";
+import { CalendarClock, Save, Loader2, UserPlus, X } from "lucide-react";
 import type { GpuProfile, SchedulerConfig } from "@workspace/api-client-react";
 
 const COMMON_TIMEZONES = [
@@ -44,6 +44,17 @@ const DAYS = [
   { key: "sun", label: "Su" },
 ];
 
+const MAX_TEAM_MEMBERS = 4;
+const SAFE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,30}$/;
+const RESERVED_NAMES = new Set(["__shared__", "owner", "admin", "root", "shared"]);
+
+function sanitizeMemberName(raw: string): string | null {
+  const cleaned = raw.trim().toLowerCase();
+  if (!SAFE_NAME_RE.test(cleaned)) return null;
+  if (RESERVED_NAMES.has(cleaned)) return null;
+  return cleaned;
+}
+
 interface SchedulerConfigCardProps {
   config: SchedulerConfig;
   profiles: GpuProfile[];
@@ -59,6 +70,9 @@ export function SchedulerConfigCard({ config, profiles, onSave, isSaving }: Sche
   const [stopTime, setStopTime] = useState(config.stopTime);
   const [secondReminderTime, setSecondReminderTime] = useState(config.secondReminderTime);
   const [daysOfWeek, setDaysOfWeek] = useState<string[]>(config.daysOfWeek);
+  const [teamMemberNames, setTeamMemberNames] = useState<string[]>(config.teamMemberNames ?? []);
+  const [newMemberInput, setNewMemberInput] = useState("");
+  const [memberInputError, setMemberInputError] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
@@ -69,6 +83,7 @@ export function SchedulerConfigCard({ config, profiles, onSave, isSaving }: Sche
     setStopTime(config.stopTime);
     setSecondReminderTime(config.secondReminderTime);
     setDaysOfWeek(config.daysOfWeek);
+    setTeamMemberNames(config.teamMemberNames ?? []);
     setIsDirty(false);
   }, [config]);
 
@@ -81,8 +96,40 @@ export function SchedulerConfigCard({ config, profiles, onSave, isSaving }: Sche
     markDirty();
   };
 
+  const addMember = () => {
+    const sanitized = sanitizeMemberName(newMemberInput);
+    if (!sanitized) {
+      setMemberInputError("Name must be lowercase letters, numbers, hyphens, or underscores (no spaces).");
+      return;
+    }
+    if (teamMemberNames.includes(sanitized)) {
+      setMemberInputError("This name is already in the list.");
+      return;
+    }
+    if (teamMemberNames.length >= MAX_TEAM_MEMBERS) {
+      setMemberInputError(`Maximum ${MAX_TEAM_MEMBERS} team members allowed.`);
+      return;
+    }
+    setTeamMemberNames((prev) => [...prev, sanitized]);
+    setNewMemberInput("");
+    setMemberInputError(null);
+    markDirty();
+  };
+
+  const removeMember = (name: string) => {
+    setTeamMemberNames((prev) => prev.filter((n) => n !== name));
+    markDirty();
+  };
+
+  const handleMemberKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addMember();
+    }
+  };
+
   const handleSave = async () => {
-    await onSave({ enabled, profileId, timezone, launchTime, stopTime, secondReminderTime, daysOfWeek });
+    await onSave({ enabled, profileId, timezone, launchTime, stopTime, secondReminderTime, daysOfWeek, teamMemberNames });
     setIsDirty(false);
   };
 
@@ -224,11 +271,79 @@ export function SchedulerConfigCard({ config, profiles, onSave, isSaving }: Sche
           </div>
         </div>
 
+        {/* Team Members */}
+        <div className="space-y-3 pt-1">
+          <div>
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
+              Team Members
+            </Label>
+            <p className="text-xs text-muted-foreground mt-1">
+              Pre-configure up to {MAX_TEAM_MEMBERS} members for collaborative sessions. Each member gets their own IDE workspace and credentials.
+            </p>
+          </div>
+
+          {teamMemberNames.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {teamMemberNames.map((name) => (
+                <span
+                  key={name}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-secondary text-sm font-mono text-foreground"
+                >
+                  {name}
+                  <button
+                    type="button"
+                    onClick={() => removeMember(name)}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label={`Remove ${name}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {teamMemberNames.length < MAX_TEAM_MEMBERS && (
+            <div className="flex gap-2">
+              <div className="flex-1 space-y-1">
+                <Input
+                  placeholder="e.g. alice"
+                  value={newMemberInput}
+                  onChange={(e) => { setNewMemberInput(e.target.value); setMemberInputError(null); }}
+                  onKeyDown={handleMemberKeyDown}
+                  className="h-9 font-mono"
+                />
+                {memberInputError && (
+                  <p className="text-xs text-destructive">{memberInputError}</p>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addMember}
+                className="h-9 gap-1.5 shrink-0"
+                disabled={!newMemberInput.trim()}
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                Add
+              </Button>
+            </div>
+          )}
+
+          {teamMemberNames.length === 0 && (
+            <p className="text-xs text-muted-foreground italic">
+              No team members configured — session will launch in solo mode.
+            </p>
+          )}
+        </div>
+
         <div className="flex items-center justify-between pt-2 border-t border-border/40">
           <p className="text-xs text-muted-foreground">
             {enabled && profileId ? (
               <>
                 Scheduled: launch {launchTime} · stop {stopTime} · {daysOfWeek.join(", ")} · {timezone.replace(/_/g, " ")}
+                {teamMemberNames.length > 0 && ` · ${teamMemberNames.length} team member${teamMemberNames.length > 1 ? "s" : ""}`}
               </>
             ) : (
               !enabled ? "Scheduler is disabled" : "Select a GPU profile to enable"

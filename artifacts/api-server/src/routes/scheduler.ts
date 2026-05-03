@@ -3,6 +3,30 @@ import { db, schedulerConfigTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
 
+const RESERVED_NAMES = new Set(["__shared__", "owner", "admin", "root", "shared"]);
+const SAFE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,30}$/;
+
+function sanitizeMemberName(raw: string): string | null {
+  const cleaned = String(raw).trim().toLowerCase();
+  if (!SAFE_NAME_RE.test(cleaned)) return null;
+  if (RESERVED_NAMES.has(cleaned)) return null;
+  return cleaned;
+}
+
+function sanitizeTeamMemberNames(raw: unknown[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of raw) {
+    const name = sanitizeMemberName(String(item));
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      result.push(name);
+    }
+    if (result.length >= 4) break;
+  }
+  return result;
+}
+
 const router = Router();
 
 async function getOrCreateConfig() {
@@ -50,7 +74,7 @@ router.put("/scheduler", async (req, res) => {
     if (secondReminderTime !== undefined) updates.secondReminderTime = secondReminderTime;
     if (daysOfWeek !== undefined) updates.daysOfWeek = daysOfWeek;
     if (timezone !== undefined) updates.timezone = timezone;
-    if (Array.isArray(teamMemberNames)) updates.teamMemberNames = teamMemberNames.map(String).slice(0, 4);
+    if (Array.isArray(teamMemberNames)) updates.teamMemberNames = sanitizeTeamMemberNames(teamMemberNames);
     if (repoUrl !== undefined) updates.repoUrl = typeof repoUrl === "string" && repoUrl.trim() ? repoUrl.trim() : null;
 
     const [updated] = await db

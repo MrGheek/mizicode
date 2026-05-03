@@ -221,6 +221,12 @@ export interface SchedulerConfig {
   daysOfWeek: string[];
   /** IANA timezone (e.g. America/New_York) */
   timezone: string;
+  /**
+   * Pre-configured team member names for collaborative scheduled sessions (max 4).
+   * Always returned as an array — empty array when no members are configured (solo mode).
+   * Names are sanitized to lowercase alphanumeric/hyphen/underscore before storage.
+   */
+  teamMemberNames: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -238,6 +244,8 @@ export interface UpdateSchedulerRequest {
   daysOfWeek?: string[];
   /** IANA timezone (e.g. America/New_York) */
   timezone?: string;
+  /** Optional list of member names (max 4) for team workspaces in scheduled sessions */
+  teamMemberNames?: string[];
 }
 
 export interface NotImplementedResponse {
