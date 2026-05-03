@@ -110,6 +110,13 @@ function SyncStatusBar({ sync, onSyncNow, isSyncing, syncAlreadyRunning }: {
   isSyncing: boolean;
   syncAlreadyRunning: boolean;
 }) {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 60000);
+    return () => clearInterval(id);
+  }, []);
+
   const hasError = !!sync.lastError;
   const isActive = sync.isRunning || isSyncing;
 
