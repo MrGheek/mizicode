@@ -110,11 +110,11 @@ The hosted dashboard (this app) handles instance provisioning, status tracking, 
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React 18, Vite 7, Tailwind CSS, shadcn/ui, Wouter, TanStack Query |
+| Frontend | React 19.1.0, Vite 7, Tailwind CSS, shadcn/ui, Wouter, TanStack Query |
 | API server | Express 5, Node.js 24, TypeScript 5.9 |
 | Database | PostgreSQL (Drizzle ORM), SQLite FTS5 (memory) |
 | Build | esbuild (API), Vite (frontend) |
-| Validation | Zod v4, drizzle-zod |
+| Validation | Zod v3.25.x, drizzle-zod |
 | API contract | OpenAPI 3.1 → Orval codegen → React Query hooks + Zod schemas |
 | Monorepo | pnpm workspaces |
 | GPU compute | Vast.ai REST API |
@@ -1596,11 +1596,16 @@ GitHub CodeQL static analysis for JavaScript/TypeScript. Triggers:
 Push-to-main and scheduled scans use a unique `run_id` concurrency key so they are never cancelled.
 
 ### `docker-build.yml`
-Builds `docker/Dockerfile` on push to `main` and on pull requests touching `docker/**`. Validates that the multi-stage build (claw-builder + runtime) succeeds.
+Builds and pushes `docker/Dockerfile` to Docker Hub automatically on every push to `main` that touches `docker/**`, and on `workflow_dispatch`. There is no PR-only validation job — the workflow does not run on pull requests.
 
-**SLSA provenance**: when building on `push` to `main`, the workflow attests build provenance via `actions/attest-build-provenance` (OIDC token), producing a signed SLSA provenance attestation for the produced image.
+**Tags published on each run**: `gheeklabs/coding-env:cuda12.4`, `:a100`, `:h100`, `:latest` (all pointing to the same image digest). Registry-based layer caching (`gheeklabs/coding-env:buildcache`) is used instead of the GHA cache to avoid the 10 GB GHA cache limit.
 
-Does not push to Docker Hub automatically; push is a manual or separate deploy step.
+**SLSA provenance**: on every workflow run (both `push` to `main` and `workflow_dispatch`) the workflow attests build provenance via `actions/attest-build-provenance` (OIDC token), producing a signed SLSA Level 2 attestation attached to the registry image. Verify with:
+```
+gh attestation verify oci://docker.io/gheeklabs/coding-env:latest --owner gheeklabs
+```
+
+Docker Hub credentials are supplied via `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets. All `uses:` references are commit-SHA pinned (supply-chain hardening).
 
 ### `pr-labeler.yml`
 Auto-labels PRs based on file paths changed, using `.github/labeler.yml` rules (e.g. `area: api-server`, `area: dashboard`, `area: docker`, `area: db`).
