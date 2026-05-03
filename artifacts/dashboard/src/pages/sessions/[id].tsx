@@ -1287,10 +1287,11 @@ export default function SessionDetail() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "team" | "swarm">(() => {
+  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm">(() => {
     const tab = new URLSearchParams(window.location.search).get("tab");
-    const valid = ["overview", "memory", "smart-skills", "repo", "team", "swarm"];
-    return (valid.includes(tab ?? "") ? tab : "overview") as "overview" | "memory" | "smart-skills" | "repo" | "team" | "swarm";
+    const valid = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm"];
+    const resolved = valid.includes(tab ?? "") ? tab : "overview";
+    return (resolved === "team" ? "coordination" : resolved) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm";
   });
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
@@ -1460,7 +1461,7 @@ export default function SessionDetail() {
   const { data: routingStatsData } = useGetSessionRoutingStats(sessionId);
   const bytesAvoided = routingStatsData?.stats?.totalBytesAvoided;
 
-  // Background conflict polling for the Team tab badge
+  // Background conflict polling for the Coordination tab badge
   const { data: bgConflictsData } = useGetSessionConflicts(sessionId, {
     query: {
       enabled: !!sessionId,
@@ -1526,7 +1527,7 @@ export default function SessionDetail() {
   }, [hasAnyConflict]);
 
   useEffect(() => {
-    if (activeTab === "team" && hasAnyConflict) {
+    if (activeTab === "coordination" && hasAnyConflict) {
       setSeenConflictFingerprint(conflictFingerprint);
     }
   }, [activeTab, conflictFingerprint, hasAnyConflict]);
@@ -1548,10 +1549,10 @@ export default function SessionDetail() {
     }
   }, [showConflictBadge]);
 
-  // When the Team tab is opened, mark current pending handoffs as seen.
+  // When the Coordination tab is opened, mark current pending handoffs as seen.
   // When handoffs are all resolved (count hits 0), reset seen count too.
   useEffect(() => {
-    if (activeTab === "team") {
+    if (activeTab === "coordination") {
       setSeenHandoffCount(bgPendingHandoffs);
     }
   }, [activeTab, bgPendingHandoffs]);
@@ -1569,7 +1570,7 @@ export default function SessionDetail() {
     handoffDataInitializedRef.current = false;
   }, [sessionId]);
 
-  // Fire a toast when new pending handoffs arrive and the Team tab is not active.
+  // Fire a toast when new pending handoffs arrive and the Coordination tab is not active.
   // On first data load, we seed the seen-set without toasting (avoid false positives
   // for handoffs that were already pending before the user opened this session page).
   useEffect(() => {
@@ -1584,7 +1585,7 @@ export default function SessionDetail() {
     );
     if (newHandoffs.length === 0) return;
     newHandoffs.forEach((h) => toastedHandoffIdsRef.current.add(h.id));
-    if (activeTab === "team") return;
+    if (activeTab === "coordination") return;
     const typeLabels: Record<string, string> = {
       blocked: "Blocked",
       needs_review: "Needs Review",
@@ -1599,7 +1600,7 @@ export default function SessionDetail() {
         title: `Handoff: ${label}`,
         description: h.message ?? "A teammate sent a handoff signal.",
         action: (
-          <ToastAction altText="Open Team tab" onClick={() => setActiveTab("team")}>
+          <ToastAction altText="Open Coordination tab" onClick={() => setActiveTab("coordination")}>
             View
           </ToastAction>
         ),
@@ -1611,7 +1612,7 @@ export default function SessionDetail() {
           .map((h) => typeLabels[h.handoffType] ?? h.handoffType)
           .join(", "),
         action: (
-          <ToastAction altText="Open Team tab" onClick={() => setActiveTab("team")}>
+          <ToastAction altText="Open Coordination tab" onClick={() => setActiveTab("coordination")}>
             View
           </ToastAction>
         ),
@@ -1622,7 +1623,7 @@ export default function SessionDetail() {
   const pendingHandoffBadgeCount = bgPendingHandoffs > seenHandoffCount
     ? bgPendingHandoffs - seenHandoffCount
     : 0;
-  const showHandoffBadge = pendingHandoffBadgeCount > 0 && activeTab !== "team";
+  const showHandoffBadge = pendingHandoffBadgeCount > 0 && activeTab !== "coordination";
 
   const doStop = (taskSuccessScore?: number) => {
     if (taskSuccessScore !== undefined) {
@@ -1884,34 +1885,36 @@ export default function SessionDetail() {
           <GitBranch className="w-3.5 h-3.5" />
           Repo Intelligence
         </button>
-        <button
-          onClick={() => { setActiveTab("team"); setSeenConflictFingerprint(conflictFingerprint); setSeenHandoffCount(bgPendingHandoffs); }}
-          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
-            activeTab === "team"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Users className="w-3.5 h-3.5" />
-          Team
-          {showConflictBadge && (
-            <span
-              key={conflictBadgePulseKey}
-              className={`ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-semibold leading-none ${conflictBadgePulseKey === 0 ? "animate-badge-pop" : "animate-badge-pulse"} ${
-                hasBlockingConflict
-                  ? "bg-red-500 text-white"
-                  : "bg-yellow-500 text-black"
-              }`}
-            >
-              {hasBlockingConflict ? activeConflicts.filter(c => c.recommendation === "block").length : activeConflicts.length}
-            </span>
-          )}
-          {showHandoffBadge && (
-            <span className="ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none animate-badge-pop">
-              {pendingHandoffBadgeCount > 99 ? "99+" : pendingHandoffBadgeCount}
-            </span>
-          )}
-        </button>
+        {hasNamedTeamMembers && (
+          <button
+            onClick={() => { setActiveTab("coordination"); setSeenConflictFingerprint(conflictFingerprint); setSeenHandoffCount(bgPendingHandoffs); }}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
+              activeTab === "coordination"
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            Coordination
+            {showConflictBadge && (
+              <span
+                key={conflictBadgePulseKey}
+                className={`ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-semibold leading-none ${conflictBadgePulseKey === 0 ? "animate-badge-pop" : "animate-badge-pulse"} ${
+                  hasBlockingConflict
+                    ? "bg-red-500 text-white"
+                    : "bg-yellow-500 text-black"
+                }`}
+              >
+                {hasBlockingConflict ? activeConflicts.filter(c => c.recommendation === "block").length : activeConflicts.length}
+              </span>
+            )}
+            {showHandoffBadge && (
+              <span className="ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none animate-badge-pop">
+                {pendingHandoffBadgeCount > 99 ? "99+" : pendingHandoffBadgeCount}
+              </span>
+            )}
+          </button>
+        )}
         {showSwarmTab && (
           <button
             onClick={() => setActiveTab("swarm")}
@@ -1951,9 +1954,9 @@ export default function SessionDetail() {
                 Team members are working on overlapping files.{" "}
                 <button
                   className="underline underline-offset-2 font-medium text-red-200 hover:text-white transition-colors"
-                  onClick={() => { setActiveTab("team"); setSeenConflictFingerprint(conflictFingerprint); }}
+                  onClick={() => { setActiveTab("coordination"); setSeenConflictFingerprint(conflictFingerprint); }}
                 >
-                  View in Team tab
+                  View in Coordination tab
                 </button>
               </span>
               <button
@@ -2282,7 +2285,7 @@ export default function SessionDetail() {
         <RepoIndexTab sessionId={sessionId} />
       )}
 
-      {activeTab === "team" && (
+      {activeTab === "coordination" && hasNamedTeamMembers && (
         <TeamTab sessionId={sessionId} />
       )}
 
