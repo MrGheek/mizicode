@@ -1415,6 +1415,34 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
             </div>
           )}
 
+          {/* Entry Points */}
+          {fingerprint && fingerprint.entryPoints.length > 0 && (
+            <div>
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Entry Points</p>
+              <div className="flex flex-wrap gap-1">
+                {fingerprint.entryPoints.map((ep) => (
+                  <Badge key={ep} variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
+                    {ep}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Test Tooling */}
+          {fingerprint && fingerprint.testTooling.length > 0 && (
+            <div>
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Test Tooling</p>
+              <div className="flex flex-wrap gap-1">
+                {fingerprint.testTooling.map((tool) => (
+                  <Badge key={tool} variant="outline" className="text-[10px] px-1.5 py-0 bg-emerald-500/5 border-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                    {tool}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Last indexed */}
           {summary?.indexedAt && (
             <p className="text-xs text-muted-foreground">
