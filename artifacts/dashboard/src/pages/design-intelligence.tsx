@@ -337,6 +337,8 @@ function parseColorValue(v: unknown): string | null {
 
 const COLOR_KEYS = ["value", "color", "hex", "background", "foreground", "fill", "stroke", "primary", "secondary", "accent", "base", "light", "dark", "shade", "tint"];
 
+const PALETTE_PRIORITY_KEYS = ["primary", "secondary", "accent", "background", "foreground", "tertiary", "surface", "base", "light", "dark", "shade", "tint", "muted", "neutral"];
+
 function extractEntryColor(data: Record<string, unknown>): string | null {
   for (const key of COLOR_KEYS) {
     const color = parseColorValue(data[key]);
@@ -349,9 +351,46 @@ function extractEntryColor(data: Record<string, unknown>): string | null {
   return null;
 }
 
+function extractAllPaletteColors(data: Record<string, unknown>): { key: string; color: string }[] {
+  const result: { key: string; color: string }[] = [];
+  const usedOriginalKeys = new Set<string>();
+
+  const lowerToOriginal = new Map<string, string>();
+  for (const k of Object.keys(data)) {
+    lowerToOriginal.set(k.toLowerCase(), k);
+  }
+
+  for (const priorityKey of PALETTE_PRIORITY_KEYS) {
+    const originalKey = lowerToOriginal.get(priorityKey);
+    if (originalKey && !usedOriginalKeys.has(originalKey)) {
+      const color = parseColorValue(data[originalKey]);
+      if (color) {
+        result.push({ key: originalKey, color });
+      }
+      usedOriginalKeys.add(originalKey);
+    }
+  }
+
+  for (const originalKey of Object.keys(data)) {
+    if (usedOriginalKeys.has(originalKey)) continue;
+    const color = parseColorValue(data[originalKey]);
+    if (color) {
+      result.push({ key: originalKey, color });
+    }
+    usedOriginalKeys.add(originalKey);
+  }
+
+  return result;
+}
+
 function isColorCategory(category: string): boolean {
   const lower = category.toLowerCase();
   return lower.includes("color") || lower.includes("palette") || lower.includes("style");
+}
+
+function isPaletteCategory(category: string): boolean {
+  const lower = category.toLowerCase();
+  return lower.includes("palette");
 }
 
 function ColorSwatch({ color, size = "md" }: { color: string; size?: "sm" | "md" }) {
@@ -362,6 +401,22 @@ function ColorSwatch({ color, size = "md" }: { color: string; size?: "sm" | "md"
       style={{ backgroundColor: color }}
       title={color}
     />
+  );
+}
+
+function PaletteColorStrip({ chips }: { chips: { key: string; color: string }[] }) {
+  if (chips.length === 0) return null;
+  return (
+    <div className="flex items-center gap-0.5 flex-nowrap overflow-x-auto">
+      {chips.map(({ key, color }) => (
+        <span
+          key={key}
+          className="inline-block w-5 h-5 rounded-sm border border-black/10 shrink-0 cursor-default"
+          style={{ backgroundColor: color }}
+          title={`${key}: ${color}`}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -462,8 +517,10 @@ function EntryCard({
   bookmarked?: boolean;
   onToggleBookmark?: (entryId: number, currently: boolean) => void;
 }) {
+  const ispalette = isPaletteCategory(entry.category);
+  const paletteChips = ispalette ? extractAllPaletteColors(entry.data_json) : [];
   const swatchColor =
-    isColorCategory(entry.category) ? extractEntryColor(entry.data_json) : null;
+    !ispalette && isColorCategory(entry.category) ? extractEntryColor(entry.data_json) : null;
   return (
     <Card className="bg-card/50 border-border/50">
       <CardContent className="pt-3 pb-3">
@@ -486,6 +543,11 @@ function EntryCard({
               {swatchColor && <ColorSwatch color={swatchColor} />}
               <p className="font-semibold text-sm">{entry.name}</p>
             </div>
+            {paletteChips.length > 0 && (
+              <div className="mb-1.5">
+                <PaletteColorStrip chips={paletteChips} />
+              </div>
+            )}
             <DataJsonView data={entry.data_json} />
             {relatedSkills && relatedSkills.length > 0 && (
               <RelatedSkillsBadges skills={relatedSkills} />
