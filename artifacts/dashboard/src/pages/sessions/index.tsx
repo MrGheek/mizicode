@@ -126,6 +126,9 @@ function useSwarmBatchSse(sessionIds: number[], readySessionIds: number[]) {
 }
 
 type TeamFilter = "all" | "team" | "solo";
+type StatusFilter = "all" | "active" | "stopped" | "error";
+
+const ACTIVE_STATUSES = new Set(["pending", "provisioning", "downloading", "starting", "ready", "stopping"]);
 
 const REPO_STATUS_LABELS: Record<string, string> = {
   queued: "Queued",
@@ -154,31 +157,58 @@ function RepoStatusBadge({ indexStatus, isStale }: { indexStatus: string; isStal
   );
 }
 
-const VALID_FILTERS = new Set<TeamFilter>(["all", "team", "solo"]);
-const LS_FILTER_KEY = "sessions:teamFilter";
+const VALID_TEAM_FILTERS = new Set<TeamFilter>(["all", "team", "solo"]);
+const LS_TEAM_FILTER_KEY = "sessions:teamFilter";
 
-function readStoredFilter(): TeamFilter {
+function readStoredTeamFilter(): TeamFilter {
   try {
-    const stored = localStorage.getItem(LS_FILTER_KEY);
-    if (stored && VALID_FILTERS.has(stored as TeamFilter)) return stored as TeamFilter;
+    const stored = localStorage.getItem(LS_TEAM_FILTER_KEY);
+    if (stored && VALID_TEAM_FILTERS.has(stored as TeamFilter)) return stored as TeamFilter;
   } catch {}
   return "all";
 }
 
-function writeStoredFilter(value: TeamFilter) {
+function writeStoredTeamFilter(value: TeamFilter) {
   try {
     if (value === "all") {
-      localStorage.removeItem(LS_FILTER_KEY);
+      localStorage.removeItem(LS_TEAM_FILTER_KEY);
     } else {
-      localStorage.setItem(LS_FILTER_KEY, value);
+      localStorage.setItem(LS_TEAM_FILTER_KEY, value);
     }
   } catch {}
 }
 
-function getFilterFromSearch(search: string): TeamFilter | null {
+function getTeamFilterFromSearch(search: string): TeamFilter | null {
   const params = new URLSearchParams(search);
   const raw = params.get("filter");
-  return raw && VALID_FILTERS.has(raw as TeamFilter) ? (raw as TeamFilter) : null;
+  return raw && VALID_TEAM_FILTERS.has(raw as TeamFilter) ? (raw as TeamFilter) : null;
+}
+
+const VALID_STATUS_FILTERS = new Set<StatusFilter>(["all", "active", "stopped", "error"]);
+const LS_STATUS_FILTER_KEY = "sessions:statusFilter";
+
+function readStoredStatusFilter(): StatusFilter {
+  try {
+    const stored = localStorage.getItem(LS_STATUS_FILTER_KEY);
+    if (stored && VALID_STATUS_FILTERS.has(stored as StatusFilter)) return stored as StatusFilter;
+  } catch {}
+  return "all";
+}
+
+function writeStoredStatusFilter(value: StatusFilter) {
+  try {
+    if (value === "all") {
+      localStorage.removeItem(LS_STATUS_FILTER_KEY);
+    } else {
+      localStorage.setItem(LS_STATUS_FILTER_KEY, value);
+    }
+  } catch {}
+}
+
+function getStatusFilterFromSearch(search: string): StatusFilter | null {
+  const params = new URLSearchParams(search);
+  const raw = params.get("status");
+  return raw && VALID_STATUS_FILTERS.has(raw as StatusFilter) ? (raw as StatusFilter) : null;
 }
 
 export default function SessionsList() {
@@ -186,18 +216,25 @@ export default function SessionsList() {
   const search = useSearch();
   const { data: sessions, isLoading } = useListSessions();
 
-  const urlFilter = getFilterFromSearch(search);
-  const teamFilter: TeamFilter = urlFilter ?? readStoredFilter();
+  const urlTeamFilter = getTeamFilterFromSearch(search);
+  const teamFilter: TeamFilter = urlTeamFilter ?? readStoredTeamFilter();
 
-  // Sync URL-derived filter into localStorage so that returning via bare /sessions
-  // (e.g. sidebar navigation) always restores the last viewed filter, including
+  const urlStatusFilter = getStatusFilterFromSearch(search);
+  const statusFilter: StatusFilter = urlStatusFilter ?? readStoredStatusFilter();
+
+  // Sync URL-derived filters into localStorage so that returning via bare /sessions
+  // (e.g. sidebar navigation) always restores the last viewed filters, including
   // those set by opening a shared link.
   useEffect(() => {
-    if (urlFilter !== null) writeStoredFilter(urlFilter);
-  }, [urlFilter]);
+    if (urlTeamFilter !== null) writeStoredTeamFilter(urlTeamFilter);
+  }, [urlTeamFilter]);
+
+  useEffect(() => {
+    if (urlStatusFilter !== null) writeStoredStatusFilter(urlStatusFilter);
+  }, [urlStatusFilter]);
 
   const setTeamFilter = (value: TeamFilter) => {
-    writeStoredFilter(value);
+    writeStoredTeamFilter(value);
     const params = new URLSearchParams(search);
     if (value === "all") {
       params.delete("filter");
@@ -209,9 +246,25 @@ export default function SessionsList() {
     setLocation(basePath + (qs ? `?${qs}` : ""));
   };
 
+  const setStatusFilter = (value: StatusFilter) => {
+    writeStoredStatusFilter(value);
+    const params = new URLSearchParams(search);
+    if (value === "all") {
+      params.delete("status");
+    } else {
+      params.set("status", value);
+    }
+    const qs = params.toString();
+    const basePath = location.split("?")[0];
+    setLocation(basePath + (qs ? `?${qs}` : ""));
+  };
+
   const filteredSessions = sessions?.filter((session) => {
-    if (teamFilter === "team") return session.teamMembers && session.teamMembers.length > 0;
-    if (teamFilter === "solo") return !session.teamMembers || session.teamMembers.length === 0;
+    if (teamFilter === "team" && !(session.teamMembers && session.teamMembers.length > 0)) return false;
+    if (teamFilter === "solo" && !(!session.teamMembers || session.teamMembers.length === 0)) return false;
+    if (statusFilter === "active" && !ACTIVE_STATUSES.has(session.status)) return false;
+    if (statusFilter === "stopped" && session.status !== "stopped") return false;
+    if (statusFilter === "error" && session.status !== "error") return false;
     return true;
   });
 
@@ -302,6 +355,21 @@ export default function SessionsList() {
           <p className="text-muted-foreground mt-1">History of all active and past coding sessions</p>
         </div>
         <div className="flex items-center gap-3">
+          <div className="flex items-center rounded-lg border border-border/50 overflow-hidden bg-card/50 text-sm">
+            {(["all", "active", "stopped", "error"] as StatusFilter[]).map((option) => (
+              <button
+                key={option}
+                onClick={() => setStatusFilter(option)}
+                className={`px-3 py-1.5 capitalize transition-colors ${
+                  statusFilter === option
+                    ? "bg-primary text-primary-foreground font-medium"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                }`}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
           <div className="flex items-center rounded-lg border border-border/50 overflow-hidden bg-card/50 text-sm">
             {(["all", "team", "solo"] as TeamFilter[]).map((option) => (
               <button
@@ -421,9 +489,9 @@ export default function SessionsList() {
               <TableRow>
                 <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
                   <Terminal className="w-8 h-8 mx-auto mb-3 opacity-20" />
-                  {teamFilter === "all"
+                  {teamFilter === "all" && statusFilter === "all"
                     ? "No sessions found"
-                    : `No ${teamFilter} sessions found`}
+                    : `No ${statusFilter === "all" ? "" : statusFilter + " "}${teamFilter === "all" ? "" : teamFilter + " "}sessions found`.replace(/\s+/g, " ").trim()}
                 </TableCell>
               </TableRow>
             )}
