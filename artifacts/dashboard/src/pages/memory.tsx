@@ -71,13 +71,21 @@ function useGlobalSearch(query: string, projectPath: string, offset: number) {
   });
 }
 
-const LAST_BACKUP_KEY = "omniql:last-memory-backup";
+const LAST_BACKUP_KEY = "floatr:last-memory-backup";
+const LAST_BACKUP_KEY_LEGACY = "omniql:last-memory-backup";
 
 function useLastBackupTime() {
   const [lastBackup, setLastBackup] = useState<Date | null>(() => {
     try {
       const stored = localStorage.getItem(LAST_BACKUP_KEY);
-      return stored ? new Date(stored) : null;
+      if (stored) return new Date(stored);
+      const legacy = localStorage.getItem(LAST_BACKUP_KEY_LEGACY);
+      if (legacy) {
+        localStorage.setItem(LAST_BACKUP_KEY, legacy);
+        localStorage.removeItem(LAST_BACKUP_KEY_LEGACY);
+        return new Date(legacy);
+      }
+      return null;
     } catch {
       return null;
     }

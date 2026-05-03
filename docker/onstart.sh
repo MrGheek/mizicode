@@ -13,7 +13,7 @@ set_status() {
     log "STATUS: $1"
 }
 
-# Report phase to the OmniQL dashboard API so the boot log updates in real time.
+# Report phase to the FLOATR dashboard API so the boot log updates in real time.
 # OMNIQL_CALLBACK_URL and OMNIQL_MEM_AUTH_TOKEN are injected by the API server
 # into the onstart environment. Safe no-op if not set.
 report_status() {
@@ -91,7 +91,7 @@ TEAM_MEMBERS_JSON="${TEAM_MEMBERS_JSON:-}"
 TEAM_MEMBER_INTERNAL_PORTS=(8093 8094 8095 8096)
 SHARED_INTERNAL_PORT=8097
 
-log "=== OmniQL Coding Environment Starting ==="
+log "=== FLOATR Coding Environment Starting ==="
 log "Model: $MODEL_REPO (cached as $MODEL_QUANT)"
 log "GPUs: $NUM_GPUS | vLLM max-model-len: $VLLM_MAX_MODEL_LEN | max-num-seqs: $VLLM_MAX_NUM_SEQS"
 
@@ -161,7 +161,7 @@ cat > /etc/nginx/sites-available/preview << 'NGINX'
 server {
     listen 3000;
     server_name _;
-    auth_basic "OmniQL Preview";
+    auth_basic "FLOATR Preview";
     auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
@@ -179,7 +179,7 @@ server {
 server {
     listen 5180;
     server_name _;
-    auth_basic "OmniQL Bolt.diy";
+    auth_basic "FLOATR Bolt.diy";
     auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
@@ -197,7 +197,7 @@ server {
 server {
     listen 5181;
     server_name _;
-    auth_basic "OmniQL Claw Runner";
+    auth_basic "FLOATR Claw Runner";
     auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
@@ -238,7 +238,7 @@ server {
 
     # Owner IDE at /
     location / {
-        auth_basic "OmniQL";
+        auth_basic "FLOATR";
         auth_basic_user_file /etc/nginx/.htpasswd;
         proxy_pass http://localhost:8090;
         proxy_http_version 1.1;
@@ -314,11 +314,11 @@ MEMBER_ENV
 
         if [ "$_TM_NAME" = "__shared__" ]; then
             # /shared/ uses the combined htpasswd (populated after all named members are processed)
-            printf '    location /shared/ {\n        auth_basic "OmniQL Shared";\n        auth_basic_user_file %s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
+            printf '    location /shared/ {\n        auth_basic "FLOATR Shared";\n        auth_basic_user_file %s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
                 "$_SHARED_HTPASSWD" "$_TM_INT_PORT" \
                 >> /etc/nginx/sites-available/team-ide
         else
-            printf '    location %s {\n        auth_basic "OmniQL - %s";\n        auth_basic_user_file /etc/nginx/.htpasswd-%s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
+            printf '    location %s {\n        auth_basic "FLOATR - %s";\n        auth_basic_user_file /etc/nginx/.htpasswd-%s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
                 "$_TM_PATH" "$_TM_NAME" "$_TM_NAME" "$_TM_INT_PORT" \
                 >> /etc/nginx/sites-available/team-ide
         fi
@@ -699,7 +699,7 @@ print(shlex.join(result))
 
     echo "llm_ready" > "$STATUS_FILE"
     report_status "llm_ready"
-    log "=== OmniQL Coding Environment Fully Ready (vLLM online) ==="
+    log "=== FLOATR Coding Environment Fully Ready (vLLM online) ==="
     log "  vLLM API:      http://localhost:$VLLM_INTERNAL_PORT/v1 (OpenAI format)"
     log "  LLM Proxy:     http://localhost:$VLLM_PORT (OpenAI + Anthropic via litellm)"
     log "  Bolt.diy:      http://localhost:$BOLT_PORT (proxied on 5180)"

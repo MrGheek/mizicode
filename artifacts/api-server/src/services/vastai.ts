@@ -215,7 +215,7 @@ export async function createTemplate(params: VastTemplateParams) {
     env: params.env || "",
     disk_space: params.disk_space || 400,
     readme: params.readme || "",
-    tag_name: "omniql-coding",
+    tag_name: "floatr-coding",
     allow_ssh: true,
   };
 
