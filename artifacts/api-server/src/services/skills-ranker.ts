@@ -66,6 +66,44 @@ function repoFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
   return Math.min(score, 1.5);
 }
 
+/**
+ * Intent fit — lexical overlap between the user's natural-language session
+ * intent and the manifest's name / summary / task triggers. Gated on
+ * `intentText.length > 10` so short or absent intents contribute zero and
+ * cannot perturb existing recommendations.
+ *
+ * Returns a score in [0, 1] based on the number of intent tokens (length ≥ 4)
+ * that appear in the manifest's searchable text.
+ */
+function intentFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
+  const intent = ctx.intentText?.trim();
+  if (!intent || intent.length <= 10) return 0;
+  const STOP = new Set([
+    "the","and","for","with","that","this","from","into","have","been","will",
+    "your","you","are","but","not","all","any","can","want","need","add","use",
+    "make","just","also","then","than","when","what","does","over","into","onto",
+  ]);
+  const tokens = Array.from(
+    new Set(
+      intent
+        .toLowerCase()
+        .replace(/`[^`]*`/g, " ")
+        .split(/[^a-z0-9]+/)
+        .filter(t => t.length >= 4 && !STOP.has(t)),
+    ),
+  );
+  if (tokens.length === 0) return 0;
+  const haystack = [
+    manifest.name,
+    manifest.summary,
+    ...manifest.triggers.tasks,
+    ...(manifest.triggers.repoKinds || []),
+  ].join(" ").toLowerCase();
+  let hits = 0;
+  for (const t of tokens) if (haystack.includes(t)) hits += 1;
+  return Math.min(1.0, hits / Math.max(3, tokens.length));
+}
+
 function modelFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
   const compat = manifest.compatibility.models;
   if (compat.includes("all")) return 1.0;
@@ -218,8 +256,12 @@ export function rankSkills(
     const installPenalty = INSTALL_RISK_PENALTY[manifest.install.type] || 0;
     const conflict = conflictRisk(manifest, alreadySelected);
     const lift = measuredLiftBonus(manifest, ctx);
+    // Intent fit blends in at 0.6 weight — large enough to break ties between
+    // similarly-scored skills when the user has expressed a clear intent, but
+    // small enough not to dominate trust/task/repo signals.
+    const intent = intentFit(manifest, ctx) * 0.6;
 
-    const score = tf + rf + mf + trust + fresh - tokenPenalty - installPenalty - conflict * 2 + lift;
+    const score = tf + rf + mf + trust + fresh - tokenPenalty - installPenalty - conflict * 2 + lift + intent;
     return { manifest, score };
   });
 
