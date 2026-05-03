@@ -538,6 +538,143 @@ router.get("/skills/:skillId", async (req, res) => {
   res.json({ skill, latestManifest: latestVersion?.manifestJson || null, designCategories, feedbackStats });
 });
 
+/**
+ * GET /skills/:skillId/design-categories
+ *
+ * Returns all known design categories with their link status for this skill:
+ * - isManual: explicitly linked via the skill_design_categories table (matchMethod = "manual")
+ * - isComputed: matched via keyword analysis of the skill's name/description/class/slug
+ */
+router.get("/skills/:skillId/design-categories", async (req, res) => {
+  const id = parseInt(req.params.skillId);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid skill ID" });
+    return;
+  }
+
+  const [skill] = await db.select().from(skillsTable).where(eq(skillsTable.id, id));
+  if (!skill) {
+    res.status(404).json({ error: "Skill not found" });
+    return;
+  }
+
+  const [allCategories, manualLinks] = await Promise.all([
+    db
+      .select({ category: designIntelligenceEntriesTable.category })
+      .from(designIntelligenceEntriesTable)
+      .groupBy(designIntelligenceEntriesTable.category)
+      .orderBy(designIntelligenceEntriesTable.category),
+    db
+      .select({ category: skillDesignCategoriesTable.category })
+      .from(skillDesignCategoriesTable)
+      .where(and(eq(skillDesignCategoriesTable.skillId, id), eq(skillDesignCategoriesTable.matchMethod, "manual"))),
+  ]);
+
+  const manualSet = new Set(manualLinks.map((l) => l.category));
+  const haystack = `${skill.name} ${skill.description} ${skill.class} ${skill.slug}`.toLowerCase();
+
+  const categories = allCategories.map(({ category }) => {
+    const keywords = category.toLowerCase().split(/[-_\s]+/);
+    const isComputed = keywords.some((kw) => kw.length >= 3 && haystack.includes(kw));
+    return {
+      name: category,
+      isManual: manualSet.has(category),
+      isComputed,
+    };
+  });
+
+  res.json({ categories });
+});
+
+/**
+ * POST /skills/:skillId/design-categories
+ *
+ * Creates an explicit (manual) link between a skill and a design category.
+ * Body: { category: string }
+ * Idempotent — linking an already-linked category is a no-op.
+ */
+router.post("/skills/:skillId/design-categories", async (req, res) => {
+  const id = parseInt(req.params.skillId);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid skill ID" });
+    return;
+  }
+
+  const { category } = req.body as { category?: string };
+  if (!category || typeof category !== "string" || !category.trim()) {
+    res.status(400).json({ error: "category (string) is required" });
+    return;
+  }
+  const cat = category.trim();
+
+  const [skill] = await db.select({ id: skillsTable.id }).from(skillsTable).where(eq(skillsTable.id, id));
+  if (!skill) {
+    res.status(404).json({ error: "Skill not found" });
+    return;
+  }
+
+  const [exists] = await db
+    .select({ category: designIntelligenceEntriesTable.category })
+    .from(designIntelligenceEntriesTable)
+    .where(eq(designIntelligenceEntriesTable.category, cat))
+    .limit(1);
+  if (!exists) {
+    res.status(400).json({ error: `Unknown design category: "${cat}"` });
+    return;
+  }
+
+  await db
+    .insert(skillDesignCategoriesTable)
+    .values({ skillId: id, category: cat, matchMethod: "manual" })
+    .onConflictDoUpdate({
+      target: [skillDesignCategoriesTable.skillId, skillDesignCategoriesTable.category],
+      set: { matchMethod: "manual" },
+    });
+
+  logger.info({ skillId: id, category: cat }, "Manual skill–design-category link created");
+  res.status(201).json({ ok: true, skillId: id, category: cat, matchMethod: "manual" });
+});
+
+/**
+ * DELETE /skills/:skillId/design-categories/:category
+ *
+ * Removes a manual link between a skill and a design category.
+ * Only removes rows where matchMethod = "manual"; computed/keyword links are unaffected.
+ */
+router.delete("/skills/:skillId/design-categories/:category", async (req, res) => {
+  const id = parseInt(req.params.skillId);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid skill ID" });
+    return;
+  }
+
+  const cat = req.params.category;
+  if (!cat) {
+    res.status(400).json({ error: "category path parameter is required" });
+    return;
+  }
+
+  const [skill] = await db.select({ id: skillsTable.id }).from(skillsTable).where(eq(skillsTable.id, id));
+  if (!skill) {
+    res.status(404).json({ error: "Skill not found" });
+    return;
+  }
+
+  const result = await db
+    .delete(skillDesignCategoriesTable)
+    .where(
+      and(
+        eq(skillDesignCategoriesTable.skillId, id),
+        eq(skillDesignCategoriesTable.category, cat),
+        eq(skillDesignCategoriesTable.matchMethod, "manual"),
+      ),
+    );
+
+  const deletedCount = result.rowCount ?? 0;
+  logger.info({ skillId: id, category: cat, deletedCount }, "Manual skill–design-category link removed");
+  res.json({ ok: true, skillId: id, category: cat, deletedCount });
+});
+
 router.post("/skills/import", async (req, res) => {
   const { url } = req.body as { url?: string };
   if (!url || typeof url !== "string") {

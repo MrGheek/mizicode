@@ -357,9 +357,55 @@ function BundleSkillAccordion({ skill, index }: { skill: CompiledSkill; index: n
   );
 }
 
+type DesignCategoryEntry = { name: string; isManual: boolean; isComputed: boolean };
+
+
 function SkillDesignCategoriesPanel({ skillId }: { skillId: number }) {
-  const { data, isLoading } = useGetSkill(skillId);
-  const designCategories: string[] = ((data as unknown as { designCategories?: string[] }) ?? {}).designCategories ?? [];
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [pendingCat, setPendingCat] = useState<string | null>(null);
+
+  const queryKey = ["skill-design-categories", skillId];
+  const { data, isLoading } = useQuery<{ categories: DesignCategoryEntry[] }>({
+    queryKey,
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/skills/${skillId}/design-categories`);
+      if (!res.ok) throw new Error("Failed to load design categories");
+      return res.json();
+    },
+    staleTime: 30000,
+  });
+
+  const categories = data?.categories ?? [];
+  const hasAny = categories.some((c) => c.isManual || c.isComputed);
+
+  const handleToggle = async (cat: DesignCategoryEntry) => {
+    if (pendingCat) return;
+    setPendingCat(cat.name);
+    try {
+      if (cat.isManual) {
+        const res = await fetch(`${BASE_URL}api/skills/${skillId}/design-categories/${encodeURIComponent(cat.name)}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) throw new Error("Failed to remove link");
+        toast({ title: `Removed manual link: "${cat.name}"` });
+      } else {
+        const res = await fetch(`${BASE_URL}api/skills/${skillId}/design-categories`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ category: cat.name }),
+        });
+        if (!res.ok) throw new Error("Failed to add link");
+        toast({ title: `Linked "${cat.name}" to this skill` });
+      }
+      queryClient.invalidateQueries({ queryKey });
+      queryClient.invalidateQueries({ queryKey: ["getSkill", skillId] });
+    } catch (err) {
+      toast({ title: (err as Error).message || "Action failed", variant: "destructive" });
+    } finally {
+      setPendingCat(null);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -369,26 +415,83 @@ function SkillDesignCategoriesPanel({ skillId }: { skillId: number }) {
     );
   }
 
-  if (designCategories.length === 0) {
+  if (categories.length === 0) {
     return (
       <p className="text-xs text-muted-foreground italic">
-        No design categories matched for this skill.
+        No design categories available. Sync design intelligence data first.
       </p>
     );
   }
 
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {designCategories.map((cat) => (
-        <Badge
-          key={cat}
-          variant="outline"
-          className="text-[10px] py-0 h-5 gap-1 border-primary/30 text-primary/80"
-        >
-          <span>{categoryIcon(cat)}</span>
-          <span className="capitalize">{cat}</span>
-        </Badge>
-      ))}
+    <div className="space-y-2">
+      <p className="text-[10px] text-muted-foreground/70">
+        Check categories to manually link them. Auto-detected links are shown with{" "}
+        <span className="text-sky-400">auto</span> and cannot be unchecked here.
+      </p>
+      {!hasAny && (
+        <p className="text-xs text-muted-foreground/60 italic py-1">
+          No categories currently linked. Check any below to add a manual link.
+        </p>
+      )}
+      <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
+        {categories.map((cat) => {
+          const isLinked = cat.isManual || cat.isComputed;
+          const isBusy = pendingCat === cat.name;
+          return (
+            <div
+              key={cat.name}
+              className={`flex items-center gap-2.5 px-2 py-1.5 rounded text-xs transition-colors ${
+                isLinked
+                  ? "bg-primary/5 border border-primary/20"
+                  : "border border-transparent hover:bg-secondary/30"
+              } ${cat.isComputed && !cat.isManual ? "opacity-80" : ""}`}
+            >
+              {cat.isComputed && !cat.isManual ? (
+                <span className="w-4 h-4 shrink-0 flex items-center justify-center">
+                  <span className="w-2.5 h-2.5 rounded-sm bg-sky-500/30 border border-sky-500/50" />
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={!!pendingCat}
+                  onClick={() => handleToggle(cat)}
+                  className={`w-4 h-4 shrink-0 rounded-sm border flex items-center justify-center transition-colors focus:outline-none ${
+                    cat.isManual
+                      ? "bg-primary border-primary text-primary-foreground"
+                      : "border-border/60 hover:border-primary/60"
+                  } ${!!pendingCat ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                  aria-label={cat.isManual ? `Remove manual link for ${cat.name}` : `Add manual link for ${cat.name}`}
+                >
+                  {isBusy ? (
+                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                  ) : cat.isManual ? (
+                    <svg className="w-2.5 h-2.5" viewBox="0 0 10 10" fill="none">
+                      <path d="M2 5l2.5 2.5L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : null}
+                </button>
+              )}
+              <span className={`flex items-center gap-1.5 min-w-0 flex-1 ${isLinked ? "text-foreground" : "text-muted-foreground"}`}>
+                <span className="shrink-0">{categoryIcon(cat.name)}</span>
+                <span className="capitalize truncate">{cat.name}</span>
+              </span>
+              <div className="flex items-center gap-1 shrink-0">
+                {cat.isManual && (
+                  <Badge variant="outline" className="text-[9px] py-0 h-4 border-primary/40 text-primary/70">
+                    manual
+                  </Badge>
+                )}
+                {cat.isComputed && (
+                  <Badge variant="outline" className="text-[9px] py-0 h-4 border-sky-500/40 text-sky-400">
+                    auto
+                  </Badge>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
