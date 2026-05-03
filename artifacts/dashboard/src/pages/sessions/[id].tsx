@@ -118,6 +118,11 @@ function useMemObservations(sessionId: number, isActive: boolean) {
 
 const RETRY_DELAYS = [3000, 10000, 30000];
 const MAX_RETRIES = RETRY_DELAYS.length;
+// Polling cadence for active sessions (must match refetchInterval in useGetSession).
+const SESSION_POLL_MS = 5000;
+// How long terminal status must persist before the SSE feed is closed.
+// Must be > SESSION_POLL_MS so a genuine transition survives at least one extra poll.
+const MEM_FEED_CONFIRM_MS = SESSION_POLL_MS + 2000;
 
 const MEM_PAGE_SIZE = 30;
 
@@ -1564,10 +1569,21 @@ export default function SessionDetail() {
   const memRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const memConnectRef = useRef<(() => void) | null>(null);
   const memOnNewObsRef = useRef<(() => void) | undefined>(undefined);
+  // Latches to true only after terminal status is confirmed for a full polling interval.
+  const memSessionEndedRef = useRef(false);
+  // Pending confirmation timer — fires once we've seen terminal status long enough.
+  const memEndConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Always-current mirror of session.status for use inside timer callbacks.
+  const sessionStatusRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     setStreamedObservations([]);
     memRetryCountRef.current = 0;
+    memSessionEndedRef.current = false;
+    if (memEndConfirmTimerRef.current) {
+      clearTimeout(memEndConfirmTimerRef.current);
+      memEndConfirmTimerRef.current = null;
+    }
   }, [sessionId]);
 
   useEffect(() => {
@@ -1609,6 +1625,11 @@ export default function SessionDetail() {
         memEsRef.current = null;
         setMemStreaming(false);
 
+        if (memSessionEndedRef.current) {
+          setMemReconnecting(false);
+          return;
+        }
+
         if (memRetryCountRef.current >= MAX_RETRIES) {
           setMemReconnecting(false);
           setMemGaveUp(true);
@@ -1620,7 +1641,7 @@ export default function SessionDetail() {
         setMemReconnecting(true);
 
         memRetryTimerRef.current = setTimeout(() => {
-          if (!cancelled) connect();
+          if (!cancelled && !memSessionEndedRef.current) connect();
         }, delay);
       };
     }
@@ -1683,7 +1704,7 @@ export default function SessionDetail() {
       queryKey: getGetSessionQueryKey(sessionId),
       refetchInterval: (q) => {
         const s = q.state.data?.status;
-        return s === "ready" || s === "stopped" || s === "error" ? false : 5000;
+        return s === "ready" || s === "stopped" || s === "error" ? false : SESSION_POLL_MS;
       },
     }
   });
@@ -1697,6 +1718,66 @@ export default function SessionDetail() {
   const [goalEditOpen, setGoalEditOpen] = useState(false);
   const [goalDraft, setGoalDraft] = useState("");
   const completeFeedback = useSessionCompleteFeedback();
+
+  // Two-phase SSE shutdown: close the feed only after the session status has been
+  // observed as terminal (stopped/errored) for at least one full polling interval.
+  // This prevents a single transient status flip from permanently killing the stream.
+  //
+  // Phase 1 — terminal first seen: start a confirmation timer (> polling interval).
+  // Phase 2 — timer fires: if status is still terminal, latch and close the SSE.
+  // Cancel  — if status returns non-terminal before the timer fires: cancel timer,
+  //           unlatch the ref (reconnects remain allowed).
+  //
+  // MEM_FEED_CONFIRM_MS is intentionally > SESSION_POLL_MS so a genuine transition
+  // always survives at least one extra poll before the stream is closed.
+  const sessionStatus = session?.status;
+  // Keep sessionStatusRef in sync so the async timer callback reads current value.
+  sessionStatusRef.current = sessionStatus;
+
+  useEffect(() => {
+    const isTerminal = sessionStatus === "stopped" || sessionStatus === "error";
+
+    if (!isTerminal) {
+      // Status no longer terminal — cancel any pending confirmation and unlatch.
+      if (memEndConfirmTimerRef.current) {
+        clearTimeout(memEndConfirmTimerRef.current);
+        memEndConfirmTimerRef.current = null;
+      }
+      memSessionEndedRef.current = false;
+      return;
+    }
+
+    // Already confirmed ended or confirmation already in flight — nothing to do.
+    if (memSessionEndedRef.current || memEndConfirmTimerRef.current) return;
+
+    // Start the confirmation window.
+    memEndConfirmTimerRef.current = setTimeout(() => {
+      memEndConfirmTimerRef.current = null;
+      const stillTerminal =
+        sessionStatusRef.current === "stopped" || sessionStatusRef.current === "error";
+      if (!stillTerminal) return;
+
+      // Confirmed — latch and tear down cleanly.
+      memSessionEndedRef.current = true;
+      if (memRetryTimerRef.current) {
+        clearTimeout(memRetryTimerRef.current);
+        memRetryTimerRef.current = null;
+      }
+      if (memEsRef.current) {
+        memEsRef.current.close();
+        memEsRef.current = null;
+      }
+      setMemStreaming(false);
+      setMemReconnecting(false);
+    }, MEM_FEED_CONFIRM_MS);
+
+    return () => {
+      if (memEndConfirmTimerRef.current) {
+        clearTimeout(memEndConfirmTimerRef.current);
+        memEndConfirmTimerRef.current = null;
+      }
+    };
+  }, [sessionStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Swarm status — polled every 3 seconds when session is ready
   // Must be called unconditionally before early returns (rules of hooks)
