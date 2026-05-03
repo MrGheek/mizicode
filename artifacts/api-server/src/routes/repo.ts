@@ -6,6 +6,53 @@ import { markSymbolsStaleForSession } from "../services/memory";
 
 export const batchRepoRouter = Router();
 
+/**
+ * Auto-enqueue a repo indexing job for a session that just became ready,
+ * if no index or active job already exists.
+ * Safe to call fire-and-forget; logs but never throws.
+ * Uses the shared createRepoIndexJob helper to guarantee consistent DB behaviour
+ * with the manual POST /sessions/:id/repo/index route.
+ */
+export async function autoEnqueueRepoIndexIfNeeded(sessionId: number): Promise<void> {
+  try {
+    const repoPath = DEFAULT_REPO_PATH;
+
+    const activeJobs = await db
+      .select({ id: repoGraphJobsTable.id })
+      .from(repoGraphJobsTable)
+      .where(
+        and(
+          eq(repoGraphJobsTable.sessionId, sessionId),
+          inArray(repoGraphJobsTable.status, ACTIVE_JOB_STATUSES)
+        )
+      )
+      .limit(1);
+
+    if (activeJobs.length > 0) {
+      logger.debug({ sessionId }, "Auto-index: active job already exists, skipping");
+      return;
+    }
+
+    const existingCtx = await db
+      .select({ id: sessionRepoContextTable.id, indexStatus: sessionRepoContextTable.indexStatus })
+      .from(sessionRepoContextTable)
+      .where(eq(sessionRepoContextTable.sessionId, sessionId))
+      .orderBy(desc(sessionRepoContextTable.updatedAt))
+      .limit(1);
+
+    if (existingCtx.length > 0 && existingCtx[0].indexStatus !== "error") {
+      logger.debug({ sessionId, indexStatus: existingCtx[0].indexStatus }, "Auto-index: repo context already exists, skipping");
+      return;
+    }
+
+    const { jobId } = await createRepoIndexJob(sessionId, repoPath, null);
+
+    logger.info({ sessionId, jobId, repoPath }, "Auto-index: repo indexing job enqueued on session ready");
+  } catch (err) {
+    logger.warn({ err, sessionId }, "Auto-index: failed to auto-enqueue repo indexing job (non-fatal)");
+  }
+}
+
 batchRepoRouter.get("/status", async (req, res) => {
   const raw = (req.query["ids"] as string | undefined)?.trim() || "";
   if (!raw) {
@@ -108,6 +155,51 @@ async function getRepoContext(sessionId: number) {
   return ctx || null;
 }
 
+/**
+ * Core repo-index enqueue logic shared by both the manual POST /index route
+ * and the automatic session-ready trigger.
+ *
+ * Inserts a queued job row and upserts the session_repo_context row.
+ * Returns the new job id and whether the existing context was stale.
+ */
+async function createRepoIndexJob(
+  sessionId: number,
+  repoPath: string,
+  repoUrl?: string | null,
+): Promise<{ jobId: number; isStale: boolean }> {
+  const [newJob] = await db
+    .insert(repoGraphJobsTable)
+    .values({
+      sessionId,
+      repoPath,
+      status: "queued",
+      indexVersion: 1,
+      lastRunAt: new Date(),
+    })
+    .returning();
+
+  const ctx = await getRepoContext(sessionId);
+  const isStale = ctx !== null && ctx.indexStatus === "ready";
+
+  if (ctx) {
+    await db
+      .update(sessionRepoContextTable)
+      .set({ indexStatus: "queued", isStale: true, updatedAt: new Date() })
+      .where(eq(sessionRepoContextTable.id, ctx.id));
+  } else {
+    await db.insert(sessionRepoContextTable).values({
+      sessionId,
+      repoPath,
+      repoUrl: repoUrl || null,
+      indexStatus: "queued",
+      isStale: false,
+      confidenceLevel: "none",
+    });
+  }
+
+  return { jobId: newJob.id, isStale };
+}
+
 router.post("/index", async (req, res) => {
   const sessionId = Number(getParam(req, "sessionId"));
   if (!Number.isFinite(sessionId)) {
@@ -148,39 +240,11 @@ router.post("/index", async (req, res) => {
     return;
   }
 
-  const [newJob] = await db
-    .insert(repoGraphJobsTable)
-    .values({
-      sessionId,
-      repoPath,
-      status: "queued",
-      indexVersion: 1,
-      lastRunAt: new Date(),
-    })
-    .returning();
+  const { jobId, isStale } = await createRepoIndexJob(sessionId, repoPath, repoUrl);
 
-  const ctx = await getRepoContext(sessionId);
-  const isStale = ctx !== null && ctx.indexStatus === "ready";
-
-  if (ctx) {
-    await db
-      .update(sessionRepoContextTable)
-      .set({ indexStatus: "queued", isStale: true, updatedAt: new Date() })
-      .where(eq(sessionRepoContextTable.id, ctx.id));
-  } else {
-    await db.insert(sessionRepoContextTable).values({
-      sessionId,
-      repoPath,
-      repoUrl: repoUrl || null,
-      indexStatus: "queued",
-      isStale: false,
-      confidenceLevel: "none",
-    });
-  }
-
-  logger.info({ sessionId, jobId: newJob.id, repoPath }, "Repo index: job enqueued");
+  logger.info({ sessionId, jobId, repoPath }, "Repo index: job enqueued");
   res.status(202).json({
-    jobId: newJob.id,
+    jobId,
     status: "queued",
     isExisting: false,
     isStale,

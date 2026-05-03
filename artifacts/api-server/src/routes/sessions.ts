@@ -10,6 +10,7 @@ import fs from "fs";
 import type { TeamMemberRecord, SessionRoutingStats } from "@workspace/db";
 import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles, getRepoIntelligenceForSession } from "../services/skills-bundler";
 import type { SessionContext } from "../services/skills-types";
+import { autoEnqueueRepoIndexIfNeeded } from "./repo";
 
 import { randomBytes } from "crypto";
 
@@ -152,6 +153,10 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
       .where(eq(sessionsTable.id, session.id))
       .returning();
 
+    if (status === "ready" && session.status !== "ready") {
+      autoEnqueueRepoIndexIfNeeded(session.id).catch(() => {});
+    }
+
     return updated;
   } catch (err) {
     logger.warn({ err, sessionId: session.id }, "Failed to auto-sync session from Vast.ai");
@@ -206,10 +211,16 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
 
   logger.info({ sessionId, instanceStatus, dbStatus: mapped.status, statusMessage }, "Instance status callback received");
 
+  const [prevSession] = await db.select({ status: sessionsTable.status }).from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+
   await db
     .update(sessionsTable)
     .set({ status: mapped.status, statusMessage, updatedAt: new Date() })
     .where(eq(sessionsTable.id, sessionId));
+
+  if (mapped.status === "ready" && prevSession?.status !== "ready") {
+    autoEnqueueRepoIndexIfNeeded(sessionId).catch(() => {});
+  }
 
   res.json({ ok: true, status: mapped.status });
 });
