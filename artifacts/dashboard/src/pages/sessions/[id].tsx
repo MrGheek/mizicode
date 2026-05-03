@@ -23,6 +23,7 @@ import {
   useGetRepoSymbol,
   getGetRepoSummaryQueryKey,
   getGetRepoFingerprintQueryKey,
+  useAcknowledgeLaneHandoff,
 } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
@@ -1786,6 +1787,7 @@ export default function SessionDetail() {
   const [seenHandoffCount, setSeenHandoffCount] = useState(0);
   const toastedHandoffIdsRef = useRef<Set<number>>(new Set());
   const handoffDataInitializedRef = useRef(false);
+  const acknowledgeHandoff = useAcknowledgeLaneHandoff();
   const [bootLog, setBootLog] = useState<string[]>([]);
   const lastBootMsgRef = useRef<string>("");
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -2160,26 +2162,50 @@ export default function SessionDetail() {
       watch_files: "Watch Files",
       related_lane: "Related Lane",
     };
+    const ackHandoffs = (handoffs: typeof newHandoffs) => {
+      handoffs.forEach((h) =>
+        acknowledgeHandoff.mutate(
+          { id: sessionId, laneId: h.fromLaneId, handoffId: h.id, data: { status: "acknowledged" } },
+          { onSettled: () => queryClient.invalidateQueries({ queryKey: getGetSessionCoordinationQueryKey(sessionId) }) },
+        )
+      );
+    };
     if (newHandoffs.length === 1) {
       const h = newHandoffs[0];
       const label = typeLabels[h.handoffType] ?? h.handoffType;
+      let viewClicked = false;
       toast({
         title: `Handoff: ${label}`,
         description: h.message ?? "A teammate sent a handoff signal.",
+        onOpenChange: (open) => {
+          if (!open && !viewClicked) ackHandoffs([h]);
+        },
         action: (
-          <ToastAction altText="Open Coordination tab" onClick={() => setActiveTab("coordination")}>
+          <ToastAction altText="Open Coordination tab" onClick={() => {
+            viewClicked = true;
+            setActiveTab("coordination");
+            ackHandoffs([h]);
+          }}>
             View
           </ToastAction>
         ),
       });
     } else {
+      let viewClicked = false;
       toast({
         title: `${newHandoffs.length} new handoff signals`,
         description: newHandoffs
           .map((h) => typeLabels[h.handoffType] ?? h.handoffType)
           .join(", "),
+        onOpenChange: (open) => {
+          if (!open && !viewClicked) ackHandoffs(newHandoffs);
+        },
         action: (
-          <ToastAction altText="Open Coordination tab" onClick={() => setActiveTab("coordination")}>
+          <ToastAction altText="Open Coordination tab" onClick={() => {
+            viewClicked = true;
+            setActiveTab("coordination");
+            ackHandoffs(newHandoffs);
+          }}>
             View
           </ToastAction>
         ),
