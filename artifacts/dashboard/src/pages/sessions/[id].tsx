@@ -1832,6 +1832,13 @@ export default function SessionDetail() {
     const resolved = valid.includes(tab ?? "") ? tab : "overview";
     return (resolved === "team" ? "coordination" : resolved) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm";
   });
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("tab", activeTab);
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState(null, "", newUrl);
+  }, [activeTab]);
   const [newObsCount, setNewObsCount] = useState(0);
   const [badgePulseKey, setBadgePulseKey] = useState(0);
   const [seenConflictFingerprint, setSeenConflictFingerprint] = useState<string>("");
