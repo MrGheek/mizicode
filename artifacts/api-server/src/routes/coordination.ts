@@ -38,7 +38,7 @@ import {
   peekNextJob,
 } from "../services/heavy-job-scheduler";
 import { compileLaneBundles } from "../services/skills-bundler";
-import { sweepExpiredClaims } from "../services/claim-sweeper";
+import { sweepExpiredClaims, expireStaleClaimsForSession } from "../services/claim-sweeper";
 import type { HeavyJobClass, HeavyJobStatus, HandoffType, ClaimType, SessionLane, LaneClaim, LaneHandoff, LaneHeavyJob } from "@workspace/db";
 
 const router = Router({ mergeParams: true });
@@ -191,6 +191,10 @@ router.get("/sessions/:id/lanes", async (req, res) => {
     .from(sessionsTable).where(eq(sessionsTable.id, sessionId));
   if (!session) { res.status(404).json({ error: "Session not found" }); return; }
 
+  // Soft-expire stale claims for this session before returning the lane list so
+  // callers always see an up-to-date active set without waiting for the background sweeper.
+  await expireStaleClaimsForSession(sessionId);
+
   const lanes = await db.select().from(sessionLanesTable)
     .where(eq(sessionLanesTable.sessionId, sessionId))
     .orderBy(desc(sessionLanesTable.createdAt));
@@ -335,11 +339,12 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
     .where(and(eq(sessionLanesTable.id, laneId), eq(sessionLanesTable.sessionId, sessionId)));
   if (!lane) { res.status(404).json({ error: "Lane not found" }); return; }
 
-  const { claimType, resourcePath, strength, ttlSeconds } = req.body as {
+  const { claimType, resourcePath, strength, ttlSeconds, preserveHistory } = req.body as {
     claimType?: ClaimType;
     resourcePath?: string;
     strength?: number;
     ttlSeconds?: number;
+    preserveHistory?: boolean;
   };
 
   if (!resourcePath || typeof resourcePath !== "string") {
@@ -352,28 +357,58 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
   const now = new Date();
   const expiresAt = new Date(Date.now() + ttl * 1000);
 
-  // Atomic upsert: INSERT or refresh the existing active claim for this lane + resource.
-  // The partial unique index on (lane_id, path_or_symbol) WHERE active = true guarantees
-  // that concurrent requests cannot produce duplicate active rows.
-  const [claim] = await db.insert(laneClaimsTable).values({
-    laneId,
-    claimType: claimType ?? "file",
-    pathOrSymbol: resourcePath,
-    claimedAt: now,
-    lastHeartbeatAt: now,
-    expiresAt,
-    claimStrength,
-    active: true,
-  }).onConflictDoUpdate({
-    target: [laneClaimsTable.laneId, laneClaimsTable.pathOrSymbol],
-    targetWhere: eq(laneClaimsTable.active, true),
-    set: {
-      claimType: claimType ?? sql`${laneClaimsTable.claimType}`,
-      claimStrength,
+  let claim: typeof laneClaimsTable.$inferSelect;
+
+  if (preserveHistory) {
+    // History-preserving path: atomically deactivate any existing active claim and insert a fresh row.
+    // Wrapped in a transaction so the resource is never left without an active claim if the insert
+    // fails, and concurrent preserve-history calls cannot race on the partial-unique index.
+    claim = await db.transaction(async (tx) => {
+      await tx.update(laneClaimsTable)
+        .set({ active: false })
+        .where(and(
+          eq(laneClaimsTable.laneId, laneId),
+          eq(laneClaimsTable.pathOrSymbol, resourcePath),
+          eq(laneClaimsTable.active, true),
+        ));
+
+      const [inserted] = await tx.insert(laneClaimsTable).values({
+        laneId,
+        claimType: claimType ?? "file",
+        pathOrSymbol: resourcePath,
+        claimedAt: now,
+        lastHeartbeatAt: now,
+        expiresAt,
+        claimStrength,
+        active: true,
+      }).returning();
+      return inserted;
+    });
+  } else {
+    // Default path: atomic upsert — INSERT or refresh the existing active claim in place.
+    // The partial unique index on (lane_id, path_or_symbol) WHERE active = true guarantees
+    // that concurrent requests cannot produce duplicate active rows.
+    const [upserted] = await db.insert(laneClaimsTable).values({
+      laneId,
+      claimType: claimType ?? "file",
+      pathOrSymbol: resourcePath,
+      claimedAt: now,
       lastHeartbeatAt: now,
       expiresAt,
-    },
-  }).returning();
+      claimStrength,
+      active: true,
+    }).onConflictDoUpdate({
+      target: [laneClaimsTable.laneId, laneClaimsTable.pathOrSymbol],
+      targetWhere: eq(laneClaimsTable.active, true),
+      set: {
+        claimType: claimType ?? sql`${laneClaimsTable.claimType}`,
+        claimStrength,
+        lastHeartbeatAt: now,
+        expiresAt,
+      },
+    }).returning();
+    claim = upserted;
+  }
 
   // Detect overlaps with other active lanes in the same session
   const otherLanes = await db.select({ id: sessionLanesTable.id, memberIdentifier: sessionLanesTable.memberIdentifier })
@@ -579,6 +614,9 @@ router.patch("/sessions/:id/lanes/:laneId/handoff/:handoffId", async (req, res) 
 router.get("/sessions/:id/coordination", async (req, res) => {
   const sessionId = getSessionId(req);
   if (!sessionId) { res.status(400).json({ error: "Invalid session ID" }); return; }
+
+  // Soft-expire stale claims before building the summary so counts are accurate.
+  await expireStaleClaimsForSession(sessionId);
 
   const lanes = await db.select().from(sessionLanesTable)
     .where(eq(sessionLanesTable.sessionId, sessionId))

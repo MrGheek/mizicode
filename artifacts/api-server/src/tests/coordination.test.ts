@@ -252,6 +252,102 @@ describe("POST /api/sessions/:id/lanes/:laneId/claim + DELETE (release)", () => 
     expect(res.body.action).toBe("heartbeat_refreshed");
     expect(res.body.expiresAt).toBeDefined();
   });
+
+  it("preserveHistory=false (default): refreshes existing claim in place", async () => {
+    const resourcePath = "src/services/preserve-history-false-test.ts";
+
+    const firstRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneId}/claim`)
+      .send({ claimType: "file", resourcePath, strength: 0.4, preserveHistory: false });
+
+    expect(firstRes.status).toBe(201);
+    const firstClaimId = firstRes.body.claim.id;
+
+    const secondRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneId}/claim`)
+      .send({ claimType: "file", resourcePath, strength: 0.9, preserveHistory: false });
+
+    expect(secondRes.status).toBe(201);
+    // Same row updated in place — ID must be identical
+    expect(secondRes.body.claim.id).toBe(firstClaimId);
+
+    // Exactly one active row should exist
+    const rows = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(and(
+        eq(laneClaimsTable.laneId, laneId),
+        eq(laneClaimsTable.pathOrSymbol, resourcePath),
+        eq(laneClaimsTable.active, true),
+      ));
+    expect(rows.length).toBe(1);
+    expect(rows[0].id).toBe(firstClaimId);
+  });
+
+  it("preserveHistory=true: deactivates old claim and inserts a fresh row", async () => {
+    const resourcePath = "src/services/preserve-history-true-test.ts";
+
+    const firstRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneId}/claim`)
+      .send({ claimType: "file", resourcePath, strength: 0.4 });
+
+    expect(firstRes.status).toBe(201);
+    const firstClaimId = firstRes.body.claim.id;
+
+    const secondRes = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneId}/claim`)
+      .send({ claimType: "file", resourcePath, strength: 0.9, preserveHistory: true });
+
+    expect(secondRes.status).toBe(201);
+    // A brand-new row should have been inserted
+    expect(secondRes.body.claim.id).not.toBe(firstClaimId);
+
+    // Only one active row — the new one
+    const activeRows = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(and(
+        eq(laneClaimsTable.laneId, laneId),
+        eq(laneClaimsTable.pathOrSymbol, resourcePath),
+        eq(laneClaimsTable.active, true),
+      ));
+    expect(activeRows.length).toBe(1);
+    expect(activeRows[0].id).toBe(secondRes.body.claim.id);
+
+    // The original row still exists but is now inactive (historical record preserved)
+    const allRows = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(and(
+        eq(laneClaimsTable.laneId, laneId),
+        eq(laneClaimsTable.pathOrSymbol, resourcePath),
+      ));
+    expect(allRows.length).toBe(2);
+    const oldRow = allRows.find(r => r.id === firstClaimId);
+    expect(oldRow).toBeDefined();
+    expect(oldRow!.active).toBe(false);
+  });
+
+  it("preserveHistory=true with no prior claim: inserts fresh row normally", async () => {
+    const resourcePath = "src/services/preserve-history-no-prior.ts";
+
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes/${laneId}/claim`)
+      .send({ claimType: "file", resourcePath, strength: 0.5, preserveHistory: true });
+
+    expect(res.status).toBe(201);
+    expect(res.body.claim.resourcePath).toBe(resourcePath);
+
+    const rows = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(and(
+        eq(laneClaimsTable.laneId, laneId),
+        eq(laneClaimsTable.pathOrSymbol, resourcePath),
+        eq(laneClaimsTable.active, true),
+      ));
+    expect(rows.length).toBe(1);
+  });
 });
 
 // ─── Conflict Detection ────────────────────────────────────────────────────────

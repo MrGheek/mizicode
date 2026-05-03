@@ -30,7 +30,7 @@ import {
 const USER = "test-user-stale-review";
 
 // Helper: save an item with an already-expired TTL so it becomes stale on sweep
-function saveExpiredItem(content: string) {
+async function saveExpiredItem(content: string) {
   const pastExpiry = Math.floor(Date.now() / 1000) - 10; // 10 seconds in the past
   return saveMemoryItem({
     userId: USER,
@@ -48,9 +48,9 @@ import { markSymbolStale } from "../services/memory";
 
 describe("Memory stale review workflow", () => {
   describe("runStaleSweep + getReviewNeededCount + bulkUpdateStaleItems", () => {
-    it("marks symbol-stale items and counts them as review-needed", () => {
+    it("marks symbol-stale items and counts them as review-needed", async () => {
       const symbolRef = `sym-${Date.now()}`;
-      const result = saveMemoryItem({
+      const result = await saveMemoryItem({
         userId: USER,
         memoryType: "convention",
         content: "Use camelCase for variable names",
@@ -73,9 +73,9 @@ describe("Memory stale review workflow", () => {
       expect(found?.staleStatus).toBe("stale");
     });
 
-    it("dismiss reduces review count and dismissed items are excluded from stale list", () => {
+    it("dismiss reduces review count and dismissed items are excluded from stale list", async () => {
       const symbolRef = `sym-dismiss-${Date.now()}`;
-      const { itemId } = saveMemoryItem({
+      const { itemId } = await saveMemoryItem({
         userId: USER,
         memoryType: "convention",
         content: "Prefer async/await over raw promises",
@@ -103,9 +103,9 @@ describe("Memory stale review workflow", () => {
       expect(found).toBeUndefined();
     });
 
-    it("dismissing an already-dismissed item is a no-op (idempotent)", () => {
+    it("dismissing an already-dismissed item is a no-op (idempotent)", async () => {
       const symbolRef = `sym-idem-${Date.now()}`;
-      const { itemId } = saveMemoryItem({
+      const { itemId } = await saveMemoryItem({
         userId: USER,
         memoryType: "note",
         content: "Keep functions under 50 lines",
@@ -125,9 +125,9 @@ describe("Memory stale review workflow", () => {
       expect(after.total).toBe(before.total);
     });
 
-    it("retract removes item from review count and stale list", () => {
+    it("retract removes item from review count and stale list", async () => {
       const symbolRef = `sym-retract-${Date.now()}`;
-      const { itemId } = saveMemoryItem({
+      const { itemId } = await saveMemoryItem({
         userId: USER,
         memoryType: "warning",
         content: "Do not mutate shared state directly",
@@ -160,11 +160,11 @@ describe("Memory stale review workflow", () => {
       expect(swept).toBeGreaterThanOrEqual(0);
     });
 
-    it("dismissing a TTL-expired item removes it from stale list and reduces review count", () => {
+    it("dismissing a TTL-expired item removes it from stale list and reduces review count", async () => {
       // Save an item and manually mark it stale via markSymbolStale to simulate TTL behaviour
       // (actual TTL expiry would take days in production).
       const symbolRef = `sym-ttl-dismiss-${Date.now()}`;
-      const { itemId } = saveMemoryItem({
+      const { itemId } = await saveMemoryItem({
         userId: USER,
         memoryType: "note",
         content: "Avoid global variables",

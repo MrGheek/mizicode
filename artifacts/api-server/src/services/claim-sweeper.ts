@@ -10,14 +10,57 @@
  *   - its `last_heartbeat_at` timestamp is older than LANE_HEARTBEAT_WINDOW_SECONDS
  */
 
-import { db, laneClaimsTable } from "@workspace/db";
-import { and, eq, lt, or } from "drizzle-orm";
+import { db, laneClaimsTable, sessionLanesTable } from "@workspace/db";
+import { and, eq, inArray, lt, or } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { LANE_HEARTBEAT_WINDOW_SECONDS } from "./lane-policy";
 
 export interface SweepResult {
   deleted: number;
   sweptAt: string;
+}
+
+export interface ExpireResult {
+  deactivated: number;
+  sweptAt: string;
+}
+
+/**
+ * Soft-expire (set active=false) all stale active claims that belong to the
+ * given session. Called on GET /lanes so callers always see a consistent view
+ * without waiting for the background hard-delete sweeper interval.
+ *
+ * Preserves the claim rows (unlike sweepExpiredClaims which hard-deletes) so
+ * history-preserving callers can still query the inactive rows.
+ */
+export async function expireStaleClaimsForSession(sessionId: number): Promise<ExpireResult> {
+  const now = new Date();
+  const heartbeatCutoff = new Date(Date.now() - LANE_HEARTBEAT_WINDOW_SECONDS * 1000);
+
+  const lanes = await db
+    .select({ id: sessionLanesTable.id })
+    .from(sessionLanesTable)
+    .where(eq(sessionLanesTable.sessionId, sessionId));
+
+  const laneIds = lanes.map((l) => l.id);
+  if (laneIds.length === 0) return { deactivated: 0, sweptAt: now.toISOString() };
+
+  const deactivated = await db
+    .update(laneClaimsTable)
+    .set({ active: false })
+    .where(
+      and(
+        eq(laneClaimsTable.active, true),
+        inArray(laneClaimsTable.laneId, laneIds),
+        or(
+          lt(laneClaimsTable.expiresAt, now),
+          lt(laneClaimsTable.lastHeartbeatAt, heartbeatCutoff),
+        ),
+      ),
+    )
+    .returning({ id: laneClaimsTable.id });
+
+  return { deactivated: deactivated.length, sweptAt: now.toISOString() };
 }
 
 /**
