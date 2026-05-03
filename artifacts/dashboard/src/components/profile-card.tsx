@@ -3,7 +3,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Cpu, HardDrive, Clock, Zap, Play, Loader2, Network, AlertTriangle } from "lucide-react";
+import { Cpu, HardDrive, Clock, Zap, Play, Loader2, Network, AlertTriangle, Star } from "lucide-react";
 import type { GpuProfile } from "@workspace/api-client-react";
 import { LaunchSessionDialog, type LaunchOptions } from "@/components/launch-session-dialog";
 
@@ -18,6 +18,9 @@ interface ProfileCardProps {
    * default.
    */
   isDefaultLaunch?: boolean;
+  isPinned?: boolean;
+  onTogglePin?: () => void;
+  pinTestIdSuffix?: string;
 }
 
 const PROFILE_TAGLINES: Record<string, string> = {
@@ -45,7 +48,7 @@ const PROFILE_TAGLINES: Record<string, string> = {
     "671B MIT-licensed model with strong general coding and multi-language reasoning. Great when open licensing is a requirement.",
 };
 
-export function ProfileCard({ profile, onLaunch, isLaunching, isDefaultLaunch }: ProfileCardProps) {
+export function ProfileCard({ profile, onLaunch, isLaunching, isDefaultLaunch, isPinned, onTogglePin, pinTestIdSuffix }: ProfileCardProps) {
   const tagline = PROFILE_TAGLINES[profile.name] ?? "";
   const [dialogOpen, setDialogOpen] = useState(false);
 
@@ -71,7 +74,7 @@ export function ProfileCard({ profile, onLaunch, isLaunching, isDefaultLaunch }:
       <Card className="flex flex-col bg-card/50 border-border/50 hover:border-primary/50 transition-colors">
         <CardHeader className="pb-3">
           <div className="flex justify-between items-start">
-            <div>
+            <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <CardTitle className="text-lg font-bold">{profile.displayName}</CardTitle>
                 <Badge variant="secondary" className="text-xs font-mono px-1.5 py-0">
@@ -110,11 +113,42 @@ export function ProfileCard({ profile, onLaunch, isLaunching, isDefaultLaunch }:
                 {profile.gpuName} x{profile.numGpus} ({profile.totalVram}GB VRAM)
               </CardDescription>
             </div>
-            <div className="text-right">
-              <div className="text-lg font-bold text-primary">
-                ${profile.estimatedCostMin.toFixed(2)}-${profile.estimatedCostMax.toFixed(2)}
+            <div className="flex flex-col items-end gap-1 shrink-0 ml-2">
+              <div className="flex items-center gap-1.5">
+                {onTogglePin && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={onTogglePin}
+                          aria-label={isPinned ? "Unpin profile" : "Pin to favourites"}
+                          data-testid={`pin-profile-${profile.id}${pinTestIdSuffix ? `-${pinTestIdSuffix}` : ""}`}
+                          className={`p-0.5 rounded transition-colors ${
+                            isPinned
+                              ? "text-yellow-400 hover:text-yellow-300"
+                              : "text-muted-foreground/40 hover:text-yellow-400"
+                          }`}
+                        >
+                          <Star
+                            className="w-4 h-4"
+                            fill={isPinned ? "currentColor" : "none"}
+                          />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="text-xs">
+                        {isPinned ? "Remove from Favourites" : "Pin to Favourites"}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+                <div className="text-right">
+                  <div className="text-lg font-bold text-primary">
+                    ${profile.estimatedCostMin.toFixed(2)}-${profile.estimatedCostMax.toFixed(2)}
+                  </div>
+                  <div className="text-xs text-muted-foreground">/ hour</div>
+                </div>
               </div>
-              <div className="text-xs text-muted-foreground">/ hour</div>
             </div>
           </div>
           {tagline && (

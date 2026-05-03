@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useLocation } from "wouter";
 import { 
   useGetDashboardSummary, 
@@ -23,7 +23,7 @@ import type { GpuProfile, SchedulerConfig, UpdateSchedulerRequest } from "@works
 import type { LaunchOptions } from "@/components/launch-session-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight, Target, Trash2 } from "lucide-react";
+import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight, Target, Trash2, Star } from "lucide-react";
 import { SwarmPill } from "@/components/swarm-activity-panel";
 import { ProfileCard } from "@/components/profile-card";
 import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
@@ -39,6 +39,7 @@ export default function Dashboard() {
   const [launchingProfileId, setLaunchingProfileId] = useState<number | null>(null);
   const [isSavingScheduler, setIsSavingScheduler] = useState(false);
   const [dismissTick, setDismissTick] = useState(0);
+  const { pinnedIds, togglePin } = usePinnedProfiles();
 
   const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary();
   const { data: cleanupStats } = useGetClaimCleanupStats({ query: { refetchInterval: 300000 } });
@@ -283,6 +284,8 @@ export default function Dashboard() {
           isLoading={isLoadingProfiles}
           launchingProfileId={launchingProfileId}
           onLaunch={handleLaunch}
+          pinnedIds={pinnedIds}
+          onTogglePin={togglePin}
         />
 
         {/* Claim Cleanup Health */}
@@ -378,6 +381,35 @@ function ContinueCard({ session, onDismiss }: ContinueCardProps) {
   );
 }
 
+const PINNED_STORAGE_KEY = "floatr:pinned-profiles";
+
+function usePinnedProfiles() {
+  const [pinnedIds, setPinnedIds] = useState<number[]>(() => {
+    try {
+      const raw = localStorage.getItem(PINNED_STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as number[]) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const togglePin = useCallback((profileId: number) => {
+    setPinnedIds((prev) => {
+      const next = prev.includes(profileId)
+        ? prev.filter((id) => id !== profileId)
+        : [...prev, profileId];
+      try {
+        localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  return { pinnedIds, togglePin };
+}
+
 const MODEL_BENCHMARKS: Record<string, string> = {
   "Kimi K2.6":          "65.8% SWE-Bench Verified",
   "Kimi K2.5":          "63.6% SWE-Bench Verified · legacy",
@@ -392,6 +424,8 @@ interface QuickLaunchProfilesProps {
   isLoading: boolean;
   launchingProfileId: number | null;
   onLaunch: (profileId: number, opts?: Omit<LaunchOptions, "profileId">) => void;
+  pinnedIds: number[];
+  onTogglePin: (profileId: number) => void;
 }
 
 const SWARM_CONSTRAINED_CAP = 8;
@@ -401,7 +435,7 @@ function isSwarmConstrained(profile: GpuProfile): boolean {
   return cap > 0 && cap <= SWARM_CONSTRAINED_CAP;
 }
 
-function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch }: QuickLaunchProfilesProps) {
+function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch, pinnedIds, onTogglePin }: QuickLaunchProfilesProps) {
   const sortedProfiles = useMemo(() => {
     if (!profiles) return [];
     return [...profiles].sort((a, b) => {
@@ -438,6 +472,15 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
 
   const isGrouped = modelGroups.length >= 2;
 
+  const pinnedProfiles = useMemo(() => {
+    if (!profiles) return [];
+    return pinnedIds
+      .map((id) => profiles.find((p) => p.id === id))
+      .filter((p): p is GpuProfile => p !== undefined);
+  }, [profiles, pinnedIds]);
+
+  const hasFavourites = pinnedProfiles.length > 0;
+
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
@@ -456,41 +499,73 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
         <div className="p-8 text-center border border-dashed rounded-lg border-border/60 text-muted-foreground">
           No GPU profiles configured.
         </div>
-      ) : isGrouped ? (
+      ) : (
         <div className="space-y-8">
-          {modelGroups.map(({ model, items }, groupIdx) => (
-            <div key={model}>
-              <div className="flex items-baseline gap-3 mb-3 pb-2 border-b border-border/40">
-                <h3 className="text-base font-semibold">{model}</h3>
-                <span className="text-xs text-muted-foreground">
-                  {MODEL_BENCHMARKS[model] ?? "Open-weight model"}
-                </span>
+          {hasFavourites && (
+            <div>
+              <div className="flex items-baseline gap-3 mb-3 pb-2 border-b border-yellow-500/30">
+                <h3 className="text-base font-semibold flex items-center gap-2">
+                  <Star className="w-4 h-4 text-yellow-400" fill="currentColor" />
+                  Favourites
+                </h3>
+                <span className="text-xs text-muted-foreground">Your pinned profiles</span>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {items.map((profile, idx) => (
+                {pinnedProfiles.map((profile) => (
                   <ProfileCard
                     key={profile.id}
                     profile={profile}
                     onLaunch={onLaunch}
                     isLaunching={launchingProfileId === profile.id}
-                    isDefaultLaunch={groupIdx === 0 && idx === 0}
+                    isDefaultLaunch={false}
+                    isPinned={true}
+                    onTogglePin={() => onTogglePin(profile.id)}
+                    pinTestIdSuffix="fav"
                   />
                 ))}
               </div>
             </div>
-          ))}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {sortedProfiles.map((profile, idx) => (
-            <ProfileCard
-              key={profile.id}
-              profile={profile}
-              onLaunch={onLaunch}
-              isLaunching={launchingProfileId === profile.id}
-              isDefaultLaunch={idx === 0}
-            />
-          ))}
+          )}
+
+          {isGrouped ? (
+            modelGroups.map(({ model, items }, groupIdx) => (
+              <div key={model}>
+                <div className="flex items-baseline gap-3 mb-3 pb-2 border-b border-border/40">
+                  <h3 className="text-base font-semibold">{model}</h3>
+                  <span className="text-xs text-muted-foreground">
+                    {MODEL_BENCHMARKS[model] ?? "Open-weight model"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {items.map((profile, idx) => (
+                    <ProfileCard
+                      key={profile.id}
+                      profile={profile}
+                      onLaunch={onLaunch}
+                      isLaunching={launchingProfileId === profile.id}
+                      isDefaultLaunch={!hasFavourites && groupIdx === 0 && idx === 0}
+                      isPinned={pinnedIds.includes(profile.id)}
+                      onTogglePin={() => onTogglePin(profile.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {sortedProfiles.map((profile, idx) => (
+                <ProfileCard
+                  key={profile.id}
+                  profile={profile}
+                  onLaunch={onLaunch}
+                  isLaunching={launchingProfileId === profile.id}
+                  isDefaultLaunch={!hasFavourites && idx === 0}
+                  isPinned={pinnedIds.includes(profile.id)}
+                  onTogglePin={() => onTogglePin(profile.id)}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
