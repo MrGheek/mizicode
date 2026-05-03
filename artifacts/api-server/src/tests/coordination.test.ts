@@ -6,11 +6,13 @@
  * and cleaned up in afterAll.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import request from "supertest";
 import app from "../app";
 import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneHandoffsTable, laneHeavyJobsTable } from "@workspace/db";
 import { eq, and, inArray, sql } from "drizzle-orm";
+import { sweepExpiredClaims, expireStaleClaimsForSession } from "../services/claim-sweeper";
+import { LANE_HEARTBEAT_WINDOW_SECONDS } from "../services/lane-policy";
 
 // ─── Test Fixture Setup ────────────────────────────────────────────────────────
 
@@ -1077,6 +1079,259 @@ describe("Heavy-job scheduler: age-weight ordering", () => {
     const staleJob = jobs.find((j) => j.id === staleJobId)!;
 
     expect(staleJob.score).toBeGreaterThan(freshHighJob.score);
+  });
+});
+
+// ─── sweepExpiredClaims unit/integration tests ─────────────────────────────────
+
+describe("sweepExpiredClaims", () => {
+  let sweepLaneId: number;
+
+  beforeAll(async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes`)
+      .send({ memberIdentifier: "sweep-test@test.com", laneType: "general" });
+    sweepLaneId = res.body.id;
+  });
+
+  afterEach(async () => {
+    await db.delete(laneClaimsTable).where(eq(laneClaimsTable.laneId, sweepLaneId));
+  });
+
+  it("hard-deletes a claim whose expires_at has passed (TTL expiry)", async () => {
+    const [expired] = await db
+      .insert(laneClaimsTable)
+      .values({
+        laneId: sweepLaneId,
+        claimType: "file",
+        pathOrSymbol: "src/sweep-test/ttl-expired.ts",
+        expiresAt: new Date(Date.now() - 60_000),
+        active: true,
+      })
+      .returning();
+
+    const result = await sweepExpiredClaims();
+
+    expect(result.deleted).toBeGreaterThanOrEqual(1);
+    expect(typeof result.sweptAt).toBe("string");
+
+    const remaining = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(eq(laneClaimsTable.id, expired.id));
+    expect(remaining).toHaveLength(0);
+  });
+
+  it("hard-deletes a claim whose last_heartbeat_at is older than the heartbeat window (missed heartbeat)", async () => {
+    const staleHeartbeat = new Date(Date.now() - (LANE_HEARTBEAT_WINDOW_SECONDS + 60) * 1000);
+
+    const [expired] = await db
+      .insert(laneClaimsTable)
+      .values({
+        laneId: sweepLaneId,
+        claimType: "file",
+        pathOrSymbol: "src/sweep-test/heartbeat-expired.ts",
+        expiresAt: new Date(Date.now() + 3_600_000),
+        active: true,
+      })
+      .returning();
+
+    await db
+      .update(laneClaimsTable)
+      .set({ lastHeartbeatAt: staleHeartbeat })
+      .where(eq(laneClaimsTable.id, expired.id));
+
+    const result = await sweepExpiredClaims();
+
+    expect(result.deleted).toBeGreaterThanOrEqual(1);
+
+    const remaining = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(eq(laneClaimsTable.id, expired.id));
+    expect(remaining).toHaveLength(0);
+  });
+
+  it("leaves a still-active claim untouched (valid TTL and recent heartbeat)", async () => {
+    const [active] = await db
+      .insert(laneClaimsTable)
+      .values({
+        laneId: sweepLaneId,
+        claimType: "file",
+        pathOrSymbol: "src/sweep-test/still-active.ts",
+        expiresAt: new Date(Date.now() + 3_600_000),
+        active: true,
+      })
+      .returning();
+
+    await sweepExpiredClaims();
+
+    const remaining = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(eq(laneClaimsTable.id, active.id));
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].active).toBe(true);
+  });
+
+  it("does not hard-delete an already-inactive claim even if its timestamps are stale", async () => {
+    const [inactive] = await db
+      .insert(laneClaimsTable)
+      .values({
+        laneId: sweepLaneId,
+        claimType: "file",
+        pathOrSymbol: "src/sweep-test/already-inactive.ts",
+        expiresAt: new Date(Date.now() - 60_000),
+        active: false,
+      })
+      .returning();
+
+    await sweepExpiredClaims();
+
+    const remaining = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(eq(laneClaimsTable.id, inactive.id));
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].active).toBe(false);
+  });
+
+  it("returns sweptAt as a valid ISO timestamp", async () => {
+    const result = await sweepExpiredClaims();
+    expect(() => new Date(result.sweptAt)).not.toThrow();
+    expect(new Date(result.sweptAt).getTime()).not.toBeNaN();
+  });
+});
+
+// ─── expireStaleClaimsForSession unit/integration tests ────────────────────────
+
+describe("expireStaleClaimsForSession", () => {
+  let softExpireLaneId: number;
+
+  beforeAll(async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${testSessionId}/lanes`)
+      .send({ memberIdentifier: "soft-expire-test@test.com", laneType: "general" });
+    softExpireLaneId = res.body.id;
+  });
+
+  afterEach(async () => {
+    await db.delete(laneClaimsTable).where(eq(laneClaimsTable.laneId, softExpireLaneId));
+  });
+
+  it("soft-deactivates a claim whose expires_at has passed (TTL expiry)", async () => {
+    const [expired] = await db
+      .insert(laneClaimsTable)
+      .values({
+        laneId: softExpireLaneId,
+        claimType: "file",
+        pathOrSymbol: "src/soft-expire-test/ttl-expired.ts",
+        expiresAt: new Date(Date.now() - 60_000),
+        active: true,
+      })
+      .returning();
+
+    const result = await expireStaleClaimsForSession(testSessionId);
+
+    expect(result.deactivated).toBeGreaterThanOrEqual(1);
+
+    const row = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(eq(laneClaimsTable.id, expired.id));
+    expect(row).toHaveLength(1);
+    expect(row[0].active).toBe(false);
+  });
+
+  it("soft-deactivates a claim whose last_heartbeat_at is older than the heartbeat window", async () => {
+    const staleHeartbeat = new Date(Date.now() - (LANE_HEARTBEAT_WINDOW_SECONDS + 60) * 1000);
+
+    const [expired] = await db
+      .insert(laneClaimsTable)
+      .values({
+        laneId: softExpireLaneId,
+        claimType: "file",
+        pathOrSymbol: "src/soft-expire-test/heartbeat-expired.ts",
+        expiresAt: new Date(Date.now() + 3_600_000),
+        active: true,
+      })
+      .returning();
+
+    await db
+      .update(laneClaimsTable)
+      .set({ lastHeartbeatAt: staleHeartbeat })
+      .where(eq(laneClaimsTable.id, expired.id));
+
+    const result = await expireStaleClaimsForSession(testSessionId);
+
+    expect(result.deactivated).toBeGreaterThanOrEqual(1);
+
+    const row = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(eq(laneClaimsTable.id, expired.id));
+    expect(row).toHaveLength(1);
+    expect(row[0].active).toBe(false);
+  });
+
+  it("leaves a still-active claim untouched (valid TTL and recent heartbeat)", async () => {
+    const [active] = await db
+      .insert(laneClaimsTable)
+      .values({
+        laneId: softExpireLaneId,
+        claimType: "file",
+        pathOrSymbol: "src/soft-expire-test/still-active.ts",
+        expiresAt: new Date(Date.now() + 3_600_000),
+        active: true,
+      })
+      .returning();
+
+    const result = await expireStaleClaimsForSession(testSessionId);
+
+    expect(result.deactivated).toBe(0);
+
+    const row = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(eq(laneClaimsTable.id, active.id));
+    expect(row).toHaveLength(1);
+    expect(row[0].active).toBe(true);
+  });
+
+  it("does not touch claims belonging to a different session", async () => {
+    const [otherSession] = await db
+      .insert(sessionsTable)
+      .values({ profileId: testProfileId, status: "ready" })
+      .returning();
+
+    const [otherLane] = await db
+      .insert(sessionLanesTable)
+      .values({ sessionId: otherSession.id, memberIdentifier: "other@test.com", laneType: "general" })
+      .returning();
+
+    const [otherClaim] = await db
+      .insert(laneClaimsTable)
+      .values({
+        laneId: otherLane.id,
+        claimType: "file",
+        pathOrSymbol: "src/soft-expire-test/other-session.ts",
+        expiresAt: new Date(Date.now() - 60_000),
+        active: true,
+      })
+      .returning();
+
+    await expireStaleClaimsForSession(testSessionId);
+
+    const row = await db
+      .select()
+      .from(laneClaimsTable)
+      .where(eq(laneClaimsTable.id, otherClaim.id));
+    expect(row).toHaveLength(1);
+    expect(row[0].active).toBe(true);
+
+    await db.delete(laneClaimsTable).where(eq(laneClaimsTable.laneId, otherLane.id));
+    await db.delete(sessionLanesTable).where(eq(sessionLanesTable.id, otherLane.id));
+    await db.delete(sessionsTable).where(eq(sessionsTable.id, otherSession.id));
   });
 });
 
