@@ -204,6 +204,15 @@ The `preview-dashboard.yml` workflow deploys dashboard previews using secrets fr
 
 4. Optionally, add **Deployment protection rules** (e.g. require a reviewer — not needed for `preview`).
 
+**Verifying secrets without opening a PR:** After adding the three secrets above, run the workflow manually to confirm the credentials work before merging any real PR:
+
+1. Go to **Actions → Preview — Dashboard**.
+2. Click **Run workflow**, choose the branch you want to deploy (e.g. `main`), and click **Run workflow**.
+3. Open the completed run and check the **Summary** tab — a successful deploy prints the preview URL there.
+4. If the run fails, the error message in the "Deploy to preview (Vercel)" step will tell you which secret is missing or invalid.
+
+This is the recommended verification step any time secrets are rotated or the `preview` Environment is recreated.
+
 **Switching providers:** To use a provider other than Vercel, replace the "Deploy to preview (Vercel)" step in `preview-dashboard.yml` with your provider's CLI command. The step must write `echo "url=<preview-url>" >> "$GITHUB_OUTPUT"` and populate the corresponding secrets in the `preview` Environment.
 
 ---
