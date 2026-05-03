@@ -169,6 +169,7 @@ function useOpenConflicts() {
 
 const LAST_BACKUP_KEY = "floatr:last-memory-backup";
 const LAST_BACKUP_KEY_LEGACY = "omniql:last-memory-backup";
+const BACKUP_WARNING_DAYS = 7;
 
 function useLastBackupTime() {
   const [lastBackup, setLastBackup] = useState<Date | null>(() => {
@@ -468,6 +469,10 @@ function MemoryBackupCard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { lastBackup, recordBackup } = useLastBackupTime();
 
+  const backupAgeMs = lastBackup ? Date.now() - lastBackup.getTime() : null;
+  const backupAgeDays = backupAgeMs !== null ? backupAgeMs / (1000 * 60 * 60 * 24) : null;
+  const isBackupOutdated = lastBackup === null || (backupAgeDays !== null && backupAgeDays >= BACKUP_WARNING_DAYS);
+
   async function handleDownload() {
     setDownloading(true);
     try {
@@ -524,10 +529,19 @@ function MemoryBackupCard() {
   }
 
   return (
-    <Card className="bg-card/50 border-border/50">
+    <Card className={`bg-card/50 border-border/50 ${isBackupOutdated ? "border-amber-500/40" : ""}`}>
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
           <Download className="w-4 h-4" /> Backup &amp; Restore
+          {isBackupOutdated && (
+            <span
+              className={`flex items-center gap-1 text-[10px] font-semibold normal-case px-2 py-0.5 rounded-full border text-amber-400 border-amber-400/30 bg-amber-400/10 ${lastBackup === null ? "ml-auto" : ""}`}
+              title={lastBackup === null ? "You haven't backed up your memory database yet." : `Last backup was ${Math.floor(backupAgeDays!)} day${Math.floor(backupAgeDays!) !== 1 ? "s" : ""} ago — consider downloading a fresh backup.`}
+            >
+              <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+              {lastBackup === null ? "No backup yet" : `Backup ${Math.floor(backupAgeDays!)}d old`}
+            </span>
+          )}
           {lastBackup && (
             <span className="ml-auto text-[10px] font-normal normal-case text-muted-foreground/70 flex items-center gap-1">
               <Clock className="w-3 h-3" />
