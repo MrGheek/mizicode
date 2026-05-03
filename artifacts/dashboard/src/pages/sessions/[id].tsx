@@ -17,6 +17,8 @@ import {
   getGetSessionCoordinationQueryKey,
   useEnqueueRepoIndex,
   useGetRepoFingerprint,
+  useSearchRepo,
+  useGetRepoBlastRadius,
   getGetRepoSummaryQueryKey,
   getGetRepoFingerprintQueryKey,
 } from "@workspace/api-client-react";
@@ -1028,6 +1030,35 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
     );
   };
 
+  // Symbol / file search
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [searchType, setSearchType] = useState<"all" | "symbol" | "file" | "chunk">("all");
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => setDebouncedQuery(searchInput.trim()), 400);
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
+  }, [searchInput]);
+
+  const searchEnabled = debouncedQuery.length > 0;
+  const { data: searchData, isLoading: searchLoading, isFetching: searchFetching, isError: searchError } = useSearchRepo(
+    sessionId,
+    { q: debouncedQuery || "_", type: searchType === "all" ? undefined : searchType, limit: 20 },
+    { query: { enabled: searchEnabled } },
+  );
+
+  // Blast-radius lookup
+  const [blastInput, setBlastInput] = useState("");
+  const [blastFile, setBlastFile] = useState("");
+
+  const { data: blastData, isLoading: blastLoading, isError: blastError } = useGetRepoBlastRadius(
+    sessionId,
+    { file: blastFile || "_" },
+    { query: { enabled: !!blastFile } },
+  );
+
   if (isLoading) {
     return (
       <div className="mt-4 space-y-3">
@@ -1215,6 +1246,216 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
           )}
         </CardContent>
       </Card>
+
+      {/* Symbol / file search */}
+      <Card className="bg-card/50 border-border/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+              <Search className="w-4 h-4" /> Search Codebase
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {status === "none" && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary/20 rounded p-2">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                <span>Index the repo first to enable search.</span>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={searchInput}
+                  onChange={e => setSearchInput(e.target.value)}
+                  placeholder="Search symbols, files, or code chunks…"
+                  className="pl-9 pr-9 bg-secondary/30 border-border/50 text-sm"
+                  disabled={status === "none" || isIndexing}
+                />
+                {searchInput && (
+                  <button
+                    onClick={() => { setSearchInput(""); setDebouncedQuery(""); }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              <select
+                value={searchType}
+                onChange={e => setSearchType(e.target.value as "all" | "symbol" | "file" | "chunk")}
+                disabled={status === "none" || isIndexing}
+                className="px-2 py-1.5 text-xs rounded-md border border-border/50 bg-secondary/30 text-foreground appearance-none focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer min-w-[84px] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <option value="all">All types</option>
+                <option value="symbol">Symbols</option>
+                <option value="file">Files</option>
+                <option value="chunk">Chunks</option>
+              </select>
+            </div>
+
+            {searchEnabled && (
+              <>
+                {(searchLoading || searchFetching) && !searchData && (
+                  <div className="space-y-1.5">
+                    {[1, 2, 3].map(i => <Skeleton key={i} className="h-10 w-full" />)}
+                  </div>
+                )}
+                {searchError && !searchLoading && (
+                  <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded p-2.5">
+                    <XCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>Search failed. The repo may not be indexed or the server is unavailable.</span>
+                  </div>
+                )}
+                {!searchError && searchData && searchData.results.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">No results for &ldquo;{debouncedQuery}&rdquo;.</p>
+                )}
+                {searchData && searchData.results.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                      {searchData.total.toLocaleString()} result{searchData.total !== 1 ? "s" : ""} — showing {searchData.results.length}
+                      {searchFetching && <Loader2 className="inline w-3 h-3 ml-1 animate-spin" />}
+                    </p>
+                    {searchData.results.map((r, i) => (
+                      <div key={i} className="border border-border/40 rounded px-2.5 py-2 text-xs font-mono">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 capitalize shrink-0">
+                            {r.type}
+                          </Badge>
+                          {r.kind && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-primary/5 border-primary/20 text-primary/80">
+                              {r.kind}
+                            </Badge>
+                          )}
+                          {r.lang && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">
+                              {r.lang}
+                            </Badge>
+                          )}
+                          {r.name && (
+                            <span className="font-semibold text-foreground truncate">{r.name}</span>
+                          )}
+                          <span className="text-muted-foreground truncate flex-1">{r.path}{r.line != null ? `:${r.line}` : ""}</span>
+                          <span className="text-muted-foreground/60 shrink-0 ml-auto">{Math.round((r.scores.combined ?? 0) * 100)}%</span>
+                        </div>
+                        {r.snippet && (
+                          <p className="mt-1 text-muted-foreground/80 truncate text-[10px]">{r.snippet}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+      {/* Blast-radius lookup */}
+      <Card className="bg-card/50 border-border/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+              <Network className="w-4 h-4" /> Blast Radius
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">Enter a file path to see which files depend on it and which tests may be affected.</p>
+            {status === "none" && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary/20 rounded p-2">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                <span>Index the repo first to enable blast-radius lookup.</span>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <Input
+                value={blastInput}
+                onChange={e => setBlastInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && blastInput.trim() && status !== "none" && !isIndexing) setBlastFile(blastInput.trim()); }}
+                placeholder="e.g. src/utils/helpers.ts"
+                className="flex-1 bg-secondary/30 border-border/50 text-sm font-mono"
+                disabled={status === "none" || isIndexing}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0 gap-1.5 h-9 text-xs"
+                onClick={() => { if (blastInput.trim()) setBlastFile(blastInput.trim()); }}
+                disabled={!blastInput.trim() || blastLoading || status === "none" || isIndexing}
+              >
+                {blastLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                Lookup
+              </Button>
+            </div>
+
+            {blastFile && blastLoading && (
+              <div className="space-y-1.5">
+                {[1, 2].map(i => <Skeleton key={i} className="h-10 w-full" />)}
+              </div>
+            )}
+
+            {blastFile && blastError && !blastLoading && (
+              <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded p-2.5">
+                <XCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>Blast-radius lookup failed. The repo may not be indexed or the file path may not exist.</span>
+              </div>
+            )}
+
+            {!blastError && blastData && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted-foreground font-mono truncate flex-1">{blastData.file}</span>
+                  <Badge variant="outline" className="text-[9px] px-1.5 shrink-0">
+                    {Math.round(blastData.overallConfidence * 100)}% confidence
+                  </Badge>
+                </div>
+
+                {blastData.directDependents.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Direct Dependents ({blastData.directDependents.length})</p>
+                    <div className="space-y-1">
+                      {blastData.directDependents.map((dep, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[11px] font-mono bg-secondary/20 rounded px-2 py-1">
+                          <span className="truncate flex-1 text-foreground/90">{dep.path}</span>
+                          <span className="text-muted-foreground/60 shrink-0">{Math.round(dep.confidence * 100)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {blastData.affectedTests.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Affected Tests ({blastData.affectedTests.length})</p>
+                    <div className="space-y-1">
+                      {blastData.affectedTests.map((t, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[11px] font-mono bg-emerald-500/5 border border-emerald-500/20 rounded px-2 py-1">
+                          <span className="truncate flex-1 text-emerald-400/90">{t.path}</span>
+                          <span className="text-muted-foreground/60 shrink-0">{Math.round(t.confidence * 100)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {blastData.relatedModules.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Related Modules ({blastData.relatedModules.length})</p>
+                    <div className="space-y-1">
+                      {blastData.relatedModules.map((m, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[11px] font-mono bg-secondary/20 rounded px-2 py-1">
+                          <span className="truncate flex-1 text-muted-foreground/80">{m.path}</span>
+                          <span className="text-muted-foreground/60 shrink-0">{Math.round(m.confidence * 100)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {blastData.directDependents.length === 0 && blastData.affectedTests.length === 0 && blastData.relatedModules.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-3">No dependents found for this file.</p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
       {/* Architecture summary */}
       {isReady && summary?.summary && (
