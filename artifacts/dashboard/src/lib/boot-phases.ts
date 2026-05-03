@@ -78,7 +78,23 @@ export function inferBootPhase(args: {
   }
 
   const activeKey = detectActive(status, statusMessage ?? "");
-  const activeIdx = activeKey ? ORDER.findIndex(p => p.key === activeKey) : -1;
+  let activeIdx = activeKey ? ORDER.findIndex(p => p.key === activeKey) : -1;
+
+  // On `error`, the final statusMessage is often a generic failure ("Instance
+  // errored", "vast.ai returned 500") that contains no phase keyword. In that
+  // case, fall back to the last phase we ever observed in the boot log so the
+  // stepper marks the correct row red instead of collapsing to phase 1.
+  if (status === "error" && activeIdx <= 0) {
+    let lastObservedIdx = -1;
+    for (const line of allMessages) {
+      const k = detectActive("provisioning", line); // neutral status — pure keyword match
+      if (k) {
+        const idx = ORDER.findIndex(p => p.key === k);
+        if (idx > lastObservedIdx) lastObservedIdx = idx;
+      }
+    }
+    if (lastObservedIdx >= 0) activeIdx = lastObservedIdx;
+  }
 
   if (status === "ready") {
     return ORDER.map(p => ({ ...p, status: "done" as BootPhaseStatus }));

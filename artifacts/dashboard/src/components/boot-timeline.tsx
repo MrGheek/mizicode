@@ -141,8 +141,8 @@ export function BootTimeline({
       <div className="px-4 py-2 border-t border-secondary/60 flex items-center justify-between gap-3 text-[11px] text-muted-foreground/80">
         <span>
           {estimateMinutes
-            ? `Usually ~${estimateMinutes} min for this profile`
-            : "Boot time varies by GPU profile"}
+            ? `Usually ${Math.max(1, estimateMinutes - 5)}–${estimateMinutes + 5} min for this profile`
+            : "Boot time varies by GPU profile (typically 25–45 min)"}
         </span>
         {bootLog.length > 0 && (
           <button
