@@ -25,12 +25,13 @@ async function cleanupSession(sessionId: number) {
     .where(eq(sessionLanesTable.sessionId, sessionId));
   const laneIds = lanes.map((l) => l.id);
 
+  await db.delete(laneHeavyJobsTable).where(eq(laneHeavyJobsTable.sessionId, sessionId));
+
   if (laneIds.length > 0) {
     await db.delete(laneClaimsTable).where(inArray(laneClaimsTable.laneId, laneIds));
     await db.delete(laneHandoffsTable).where(inArray(laneHandoffsTable.laneId, laneIds));
     await db.delete(sessionLanesTable).where(eq(sessionLanesTable.sessionId, sessionId));
   }
-  await db.delete(laneHeavyJobsTable).where(eq(laneHeavyJobsTable.sessionId, sessionId));
   await db.delete(sessionsTable).where(eq(sessionsTable.id, sessionId));
 }
 
@@ -625,6 +626,268 @@ describe("GET /api/sessions/:id/coordination", () => {
     expect(typeof res.body.totalQueuedJobs).toBe("number");
     expect(typeof res.body.pendingHandoffs).toBe("number");
     expect(Array.isArray(res.body.recentHandoffs)).toBe(true);
+  });
+});
+
+describe("GET /api/sessions/:id/coordination - count accuracy", () => {
+  let coordSessionId: number;
+  let coordLaneId: number;
+
+  beforeAll(async () => {
+    const [session] = await db
+      .insert(sessionsTable)
+      .values({ profileId: testProfileId, status: "ready" })
+      .returning();
+    coordSessionId = session.id;
+
+    const res = await request(app)
+      .post(`/api/sessions/${coordSessionId}/lanes`)
+      .send({ memberIdentifier: "coord-user@test.com", laneType: "backend" });
+    coordLaneId = res.body.id;
+  });
+
+  afterAll(async () => {
+    await cleanupSession(coordSessionId);
+  });
+
+  it("starts with zero totalActiveClaims for a fresh session", async () => {
+    const res = await request(app).get(`/api/sessions/${coordSessionId}/coordination`);
+    expect(res.status).toBe(200);
+    expect(res.body.totalActiveClaims).toBe(0);
+
+    const laneSummary = res.body.lanes.find(
+      (l: { lane: { id: number } }) => l.lane.id === coordLaneId,
+    );
+    expect(laneSummary).toBeDefined();
+    expect(laneSummary.activeClaims).toBe(0);
+  });
+
+  it("totalActiveClaims increments when a claim is created", async () => {
+    await request(app)
+      .post(`/api/sessions/${coordSessionId}/lanes/${coordLaneId}/claim`)
+      .send({ resourcePath: "src/coord-test/file.ts", strength: 0.5 });
+
+    const res = await request(app).get(`/api/sessions/${coordSessionId}/coordination`);
+    expect(res.status).toBe(200);
+    expect(res.body.totalActiveClaims).toBe(1);
+
+    const laneSummary = res.body.lanes.find(
+      (l: { lane: { id: number } }) => l.lane.id === coordLaneId,
+    );
+    expect(laneSummary.activeClaims).toBe(1);
+  });
+
+  it("totalActiveClaims decrements when a claim is released", async () => {
+    const claimRes = await request(app)
+      .post(`/api/sessions/${coordSessionId}/lanes/${coordLaneId}/claim`)
+      .send({ resourcePath: "src/coord-test/releasable.ts", strength: 0.5 });
+    const claimId = claimRes.body.claim.id;
+
+    const beforeRes = await request(app).get(`/api/sessions/${coordSessionId}/coordination`);
+    const countBefore: number = beforeRes.body.totalActiveClaims;
+
+    await request(app).delete(
+      `/api/sessions/${coordSessionId}/lanes/${coordLaneId}/claim/${claimId}`,
+    );
+
+    const afterRes = await request(app).get(`/api/sessions/${coordSessionId}/coordination`);
+    expect(afterRes.body.totalActiveClaims).toBe(countBefore - 1);
+
+    const laneSummary = afterRes.body.lanes.find(
+      (l: { lane: { id: number } }) => l.lane.id === coordLaneId,
+    );
+    expect(laneSummary.activeClaims).toBe(countBefore - 1);
+  });
+
+  it("pendingHandoffs increments when a handoff is created", async () => {
+    const beforeRes = await request(app).get(`/api/sessions/${coordSessionId}/coordination`);
+    const totalBefore: number = beforeRes.body.pendingHandoffs;
+    const laneBefore = beforeRes.body.lanes.find(
+      (l: { lane: { id: number } }) => l.lane.id === coordLaneId,
+    );
+    const laneCountBefore: number = laneBefore.pendingHandoffs;
+
+    await request(app)
+      .post(`/api/sessions/${coordSessionId}/lanes/${coordLaneId}/handoff`)
+      .send({ handoffType: "watch_files", resourcePaths: ["src/shared/api.ts"] });
+
+    const afterRes = await request(app).get(`/api/sessions/${coordSessionId}/coordination`);
+    expect(afterRes.body.pendingHandoffs).toBe(totalBefore + 1);
+
+    const laneAfter = afterRes.body.lanes.find(
+      (l: { lane: { id: number } }) => l.lane.id === coordLaneId,
+    );
+    expect(laneAfter.pendingHandoffs).toBe(laneCountBefore + 1);
+  });
+
+  it("totalQueuedJobs increments when a job is enqueued associated with a lane", async () => {
+    const beforeRes = await request(app).get(`/api/sessions/${coordSessionId}/coordination`);
+    const totalBefore: number = beforeRes.body.totalQueuedJobs;
+    const laneBefore = beforeRes.body.lanes.find(
+      (l: { lane: { id: number } }) => l.lane.id === coordLaneId,
+    );
+    const laneJobsBefore: number = laneBefore.queuedJobs;
+
+    await request(app)
+      .post(`/api/sessions/${coordSessionId}/heavy-jobs`)
+      .send({ jobClass: "indexing", laneId: coordLaneId });
+
+    const afterRes = await request(app).get(`/api/sessions/${coordSessionId}/coordination`);
+    expect(afterRes.body.totalQueuedJobs).toBe(totalBefore + 1);
+
+    const laneAfter = afterRes.body.lanes.find(
+      (l: { lane: { id: number } }) => l.lane.id === coordLaneId,
+    );
+    expect(laneAfter.queuedJobs).toBe(laneJobsBefore + 1);
+  });
+
+  it("totalQueuedJobs excludes completed jobs", async () => {
+    const enqueueRes = await request(app)
+      .post(`/api/sessions/${coordSessionId}/heavy-jobs`)
+      .send({ jobClass: "other", laneId: coordLaneId });
+    const jobId: number = enqueueRes.body.id;
+
+    const beforeRes = await request(app).get(`/api/sessions/${coordSessionId}/coordination`);
+    const countBefore: number = beforeRes.body.totalQueuedJobs;
+
+    await request(app)
+      .patch(`/api/sessions/${coordSessionId}/heavy-jobs/${jobId}`)
+      .send({ status: "running" });
+    await request(app)
+      .patch(`/api/sessions/${coordSessionId}/heavy-jobs/${jobId}`)
+      .send({ status: "completed", result: {} });
+
+    const afterRes = await request(app).get(`/api/sessions/${coordSessionId}/coordination`);
+    expect(afterRes.body.totalQueuedJobs).toBe(countBefore - 1);
+  });
+});
+
+// ─── Claim Expiry ──────────────────────────────────────────────────────────────
+
+describe("Claim expiry: expireStaleClaimsForSession", () => {
+  let expirySessionId: number;
+  let expiryLaneId: number;
+
+  beforeAll(async () => {
+    const [session] = await db
+      .insert(sessionsTable)
+      .values({ profileId: testProfileId, status: "ready" })
+      .returning();
+    expirySessionId = session.id;
+
+    const res = await request(app)
+      .post(`/api/sessions/${expirySessionId}/lanes`)
+      .send({ memberIdentifier: "expiry-user@test.com", laneType: "backend" });
+    expiryLaneId = res.body.id;
+  });
+
+  afterAll(async () => {
+    await cleanupSession(expirySessionId);
+  });
+
+  it("marks a claim inactive when its expiresAt is backdated to the past", async () => {
+    const claimRes = await request(app)
+      .post(`/api/sessions/${expirySessionId}/lanes/${expiryLaneId}/claim`)
+      .send({ resourcePath: "src/expiry-test/stale.ts", strength: 0.5 });
+    expect(claimRes.status).toBe(201);
+    const claimId: number = claimRes.body.claim.id;
+
+    const [before] = await db
+      .select({ active: laneClaimsTable.active })
+      .from(laneClaimsTable)
+      .where(eq(laneClaimsTable.id, claimId));
+    expect(before.active).toBe(true);
+
+    await db
+      .update(laneClaimsTable)
+      .set({ expiresAt: sql`NOW() - INTERVAL '1 second'` })
+      .where(eq(laneClaimsTable.id, claimId));
+
+    const lanesRes = await request(app).get(`/api/sessions/${expirySessionId}/lanes`);
+    expect(lanesRes.status).toBe(200);
+
+    const [after] = await db
+      .select({ active: laneClaimsTable.active })
+      .from(laneClaimsTable)
+      .where(eq(laneClaimsTable.id, claimId));
+    expect(after.active).toBe(false);
+  });
+
+  it("coordination totalActiveClaims excludes the expired claim", async () => {
+    const activeRes = await request(app)
+      .post(`/api/sessions/${expirySessionId}/lanes/${expiryLaneId}/claim`)
+      .send({ resourcePath: "src/expiry-test/active.ts", strength: 0.5 });
+    expect(activeRes.status).toBe(201);
+
+    const staleRes = await request(app)
+      .post(`/api/sessions/${expirySessionId}/lanes/${expiryLaneId}/claim`)
+      .send({ resourcePath: "src/expiry-test/stale2.ts", strength: 0.5 });
+    expect(staleRes.status).toBe(201);
+    const staleClaimId: number = staleRes.body.claim.id;
+
+    await db
+      .update(laneClaimsTable)
+      .set({ expiresAt: sql`NOW() - INTERVAL '1 second'` })
+      .where(eq(laneClaimsTable.id, staleClaimId));
+
+    const coordRes = await request(app).get(`/api/sessions/${expirySessionId}/coordination`);
+    expect(coordRes.status).toBe(200);
+
+    const laneSummary = coordRes.body.lanes.find(
+      (l: { lane: { id: number } }) => l.lane.id === expiryLaneId,
+    );
+    expect(laneSummary.activeClaims).toBe(1);
+    expect(coordRes.body.totalActiveClaims).toBe(1);
+  });
+
+  it("marks a claim inactive when lastHeartbeatAt is beyond the heartbeat window", async () => {
+    const claimRes = await request(app)
+      .post(`/api/sessions/${expirySessionId}/lanes/${expiryLaneId}/claim`)
+      .send({ resourcePath: "src/expiry-test/heartbeat-stale.ts", strength: 0.5 });
+    expect(claimRes.status).toBe(201);
+    const claimId: number = claimRes.body.claim.id;
+
+    await db
+      .update(laneClaimsTable)
+      .set({
+        lastHeartbeatAt: sql`NOW() - INTERVAL '1 hour'`,
+        expiresAt: sql`NOW() + INTERVAL '1 hour'`,
+      })
+      .where(eq(laneClaimsTable.id, claimId));
+
+    const lanesRes = await request(app).get(`/api/sessions/${expirySessionId}/lanes`);
+    expect(lanesRes.status).toBe(200);
+
+    const [after] = await db
+      .select({ active: laneClaimsTable.active })
+      .from(laneClaimsTable)
+      .where(eq(laneClaimsTable.id, claimId));
+    expect(after.active).toBe(false);
+  });
+
+  it("does not expire a claim whose expiresAt and lastHeartbeatAt are both in the future", async () => {
+    const claimRes = await request(app)
+      .post(`/api/sessions/${expirySessionId}/lanes/${expiryLaneId}/claim`)
+      .send({ resourcePath: "src/expiry-test/fresh.ts", strength: 0.5 });
+    expect(claimRes.status).toBe(201);
+    const claimId: number = claimRes.body.claim.id;
+
+    await db
+      .update(laneClaimsTable)
+      .set({
+        lastHeartbeatAt: sql`NOW()`,
+        expiresAt: sql`NOW() + INTERVAL '1 hour'`,
+      })
+      .where(eq(laneClaimsTable.id, claimId));
+
+    const lanesRes = await request(app).get(`/api/sessions/${expirySessionId}/lanes`);
+    expect(lanesRes.status).toBe(200);
+
+    const [after] = await db
+      .select({ active: laneClaimsTable.active })
+      .from(laneClaimsTable)
+      .where(eq(laneClaimsTable.id, claimId));
+    expect(after.active).toBe(true);
   });
 });
 
