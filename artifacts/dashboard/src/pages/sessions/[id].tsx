@@ -2113,14 +2113,31 @@ export default function SessionDetail() {
     }
   }, [showConflictBadge]);
 
-  // Persist new conflicts to the notification center. Each unique
-  // (laneA:laneB:recommendation) tuple is added once via dedupe-by-id.
+  // Persist new conflicts to the notification center. On first load the
+  // existing conflicts are seeded into a `seen` set so we never fire
+  // retroactive notifications for conflicts that pre-existed the session
+  // page mount; only conflicts that appear later trigger an entry.
+  const seenConflictIdsRef = useRef<Set<string> | null>(null);
   useEffect(() => {
-    if (!sessionId) return;
-    for (const c of activeConflicts) {
+    // Reset on session change so a new session starts fresh.
+    seenConflictIdsRef.current = null;
+  }, [sessionId]);
+  useEffect(() => {
+    if (!sessionId || !bgConflictsData) return;
+    const keys = activeConflicts.map((c) => {
       const [a, b] = [c.laneIdA, c.laneIdB].sort((x, y) => x - y);
+      return { c, key: `${a}:${b}:${c.recommendation}`, a, b };
+    });
+    if (seenConflictIdsRef.current === null) {
+      seenConflictIdsRef.current = new Set(keys.map((k) => k.key));
+      return;
+    }
+    const seen = seenConflictIdsRef.current;
+    for (const { c, key, a, b } of keys) {
+      if (seen.has(key)) continue;
+      seen.add(key);
       addNotification({
-        id: `conflict:${sessionId}:${a}:${b}:${c.recommendation}`,
+        id: `conflict:${sessionId}:${key}`,
         type: "conflict",
         title: c.recommendation === "block" ? "Blocking conflict detected" : "Conflict detected",
         subtitle: `Lanes ${a} ↔ ${b}`,
@@ -2128,7 +2145,7 @@ export default function SessionDetail() {
         sessionId,
       });
     }
-  }, [activeConflicts, sessionId]);
+  }, [activeConflicts, bgConflictsData, sessionId]);
 
   // Persist swarm phase transitions (completed / aborted) to the
   // notification center. Tracks previous phase per session so we only
@@ -2199,6 +2216,7 @@ export default function SessionDetail() {
     );
     if (newHandoffs.length === 0) return;
     newHandoffs.forEach((h) => toastedHandoffIdsRef.current.add(h.id));
+    if (activeTab === "coordination") return;
     const typeLabels: Record<string, string> = {
       blocked: "Blocked",
       needs_review: "Needs Review",
@@ -2206,7 +2224,8 @@ export default function SessionDetail() {
       watch_files: "Watch Files",
       related_lane: "Related Lane",
     };
-    // Persist each new handoff to the notification center regardless of tab.
+    // Persist each new handoff to the notification center (Coordination
+    // tab inactive — matches spec for non-current-context delivery).
     for (const h of newHandoffs) {
       const label = typeLabels[h.handoffType] ?? h.handoffType;
       addNotification({
@@ -2218,7 +2237,6 @@ export default function SessionDetail() {
         sessionId,
       });
     }
-    if (activeTab === "coordination") return;
     if (newHandoffs.length === 1) {
       const h = newHandoffs[0];
       const label = typeLabels[h.handoffType] ?? h.handoffType;

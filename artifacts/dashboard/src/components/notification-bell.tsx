@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
 import { Bell, CheckCircle2, XCircle, Network, Database, Users, AlertTriangle, GitMerge } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -47,6 +47,64 @@ function NotificationItem({ n, onNavigate }: { n: Notification; onNavigate: (hre
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Renders notifications as a flat list when a single session (or no
+ * session) is involved, but groups them under "Session #N" headers
+ * once two or more sessions have produced notifications. Newest first
+ * within each group; groups themselves are ordered by their newest entry.
+ */
+function GroupedList({
+  notifications,
+  onNavigate,
+}: {
+  notifications: Notification[];
+  onNavigate: (href: string) => void;
+}) {
+  const groups = useMemo(() => {
+    const map = new Map<string, { sessionId: number | null; items: Notification[] }>();
+    for (const n of notifications) {
+      const key = n.sessionId != null ? `s:${n.sessionId}` : "other";
+      const existing = map.get(key);
+      if (existing) {
+        existing.items.push(n);
+      } else {
+        map.set(key, { sessionId: n.sessionId ?? null, items: [n] });
+      }
+    }
+    return Array.from(map.values()).sort(
+      (a, b) => b.items[0].createdAt - a.items[0].createdAt
+    );
+  }, [notifications]);
+
+  // If only one bucket, just render flat (no header noise).
+  if (groups.length <= 1) {
+    return (
+      <div className="space-y-0.5">
+        {notifications.map((n) => (
+          <NotificationItem key={n.id} n={n} onNavigate={onNavigate} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {groups.map((g) => (
+        <div key={g.sessionId ?? "other"}>
+          <div className="px-3 pt-1 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground/80 font-semibold">
+            {g.sessionId != null ? `Session #${g.sessionId}` : "Other"}
+          </div>
+          <div className="space-y-0.5">
+            {g.items.map((n) => (
+              <NotificationItem key={n.id} n={n} onNavigate={onNavigate} />
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -131,11 +189,7 @@ export function NotificationBell() {
               <p className="text-[10px] opacity-70 mt-1">Async events will appear here.</p>
             </div>
           ) : (
-            <div className="space-y-0.5">
-              {notifications.map((n) => (
-                <NotificationItem key={n.id} n={n} onNavigate={handleNavigate} />
-              ))}
-            </div>
+            <GroupedList notifications={notifications} onNavigate={handleNavigate} />
           )}
         </div>
       </PopoverContent>
