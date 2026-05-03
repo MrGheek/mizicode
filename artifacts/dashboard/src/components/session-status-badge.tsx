@@ -48,9 +48,21 @@ export function TeamSessionBadge({ members }: { members: TeamMember[] }) {
     <Tooltip>
       <TooltipTrigger asChild>{badge}</TooltipTrigger>
       <TooltipContent side="top" className="flex flex-col gap-0.5 text-left">
-        {members.map((m) => (
-          <span key={m.name}>{m.name}</span>
-        ))}
+        {members.map((m) =>
+          m.ideUrl ? (
+            <a
+              key={m.name}
+              href={m.ideUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:underline text-violet-300"
+            >
+              {m.name}
+            </a>
+          ) : (
+            <span key={m.name}>{m.name}</span>
+          )
+        )}
       </TooltipContent>
     </Tooltip>
   );
