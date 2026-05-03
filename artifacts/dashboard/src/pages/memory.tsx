@@ -1,12 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Brain, Search, X, Clock, ChevronDown, ChevronRight, FolderOpen, Download, Upload, AlertTriangle, Loader2, Pencil, Check } from "lucide-react";
+import { Brain, Search, X, Clock, ChevronDown, ChevronRight, FolderOpen, Download, Upload, AlertTriangle, Loader2, Pencil, Check, Activity, Layers, Zap, TrendingUp, ShieldAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { toast } from "sonner";
+import type { MemoryGovernanceStatsResponse } from "@workspace/api-client-react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Cell,
+} from "recharts";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 const PAGE_SIZE = 30;
@@ -102,6 +106,268 @@ function useLastBackupTime() {
   };
 
   return { lastBackup, recordBackup };
+}
+
+const LAYER_COLORS = ["#6366f1", "#8b5cf6", "#a78bfa", "#c4b5fd", "#e9d5ff"];
+const TYPE_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#84cc16"];
+const SCOPE_COLORS = ["#f97316", "#14b8a6", "#8b5cf6", "#ef4444", "#6366f1", "#22c55e"];
+
+function MemoryHealthPanel() {
+  // Fetches from the dashboard proxy (/api/memory/governance-stats) rather than
+  // the generated client hook (useGetMemoryGovernanceStats → /api/mem/stats)
+  // because /api/mem/* routes are token-gated by verifyMemToken in production
+  // and cannot be safely called from the browser without a bearer token.
+  // The proxy uses server-side MEM_USER_ID and follows the existing pattern
+  // used by /api/memory/sessions, /api/memory/search, etc.
+  const { data: stats, isLoading, isError } = useQuery<MemoryGovernanceStatsResponse>({
+    queryKey: ["memory-governance-stats"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/memory/governance-stats`);
+      if (!res.ok) throw new Error("Failed to fetch governance stats");
+      return res.json() as Promise<MemoryGovernanceStatsResponse>;
+    },
+    refetchInterval: 30000,
+    staleTime: 20000,
+  });
+
+  if (isLoading) {
+    return (
+      <Card className="bg-card/50 border-border/50">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+            <Activity className="w-4 h-4" /> Memory Health
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-16 w-full rounded-md" />
+            ))}
+          </div>
+          <Skeleton className="h-32 w-full rounded-md" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isError || !stats) {
+    return (
+      <Card className="bg-card/50 border-border/50">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+            <Activity className="w-4 h-4" /> Memory Health
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground text-center py-4">
+            Could not load memory health stats.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const totalItems = stats.totalItems ?? 0;
+
+  if (totalItems === 0) {
+    return (
+      <Card className="bg-card/50 border-border/50">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+            <Activity className="w-4 h-4" /> Memory Health
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="py-6 text-center text-muted-foreground text-sm">
+            <Layers className="w-8 h-8 mx-auto mb-2 opacity-20" />
+            <p>No memory items yet.</p>
+            <p className="text-xs mt-1 opacity-70">Stats will appear once the agent records memory during sessions.</p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const staleCount = stats.staleCount ?? 0;
+  const stalePct = totalItems > 0 ? Math.round((staleCount / totalItems) * 100) : 0;
+  const contradictionCount = stats.contradictionCount ?? 0;
+  const promotionCount = stats.promotionCount ?? 0;
+  const hitRate = stats.hitRate ?? 0;
+  const avgTokens = stats.avgInjectedTokensEstimate ?? 0;
+
+  const layerData = Object.entries(stats.layerUsage ?? {})
+    .map(([name, count]) => ({ name, count: count as number }))
+    .sort((a, b) => b.count - a.count);
+
+  const typeData = Object.entries(stats.byType ?? {})
+    .map(([name, count]) => ({ name, count: count as number }))
+    .sort((a, b) => b.count - a.count);
+
+  const scopeData = Object.entries(stats.byScope ?? {})
+    .map(([name, count]) => ({ name, count: count as number }))
+    .sort((a, b) => b.count - a.count);
+
+  const healthColor = stalePct > 40 ? "text-red-400" : stalePct > 20 ? "text-amber-400" : "text-emerald-400";
+  const healthLabel = stalePct > 40 ? "Degraded" : stalePct > 20 ? "Fair" : "Healthy";
+
+  return (
+    <Card className="bg-card/50 border-border/50">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+          <Activity className="w-4 h-4" /> Memory Health
+          <span className={`ml-auto text-[10px] font-semibold normal-case px-2 py-0.5 rounded-full border ${healthColor} border-current bg-current/10`}>
+            {healthLabel}
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {/* Stat tiles */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 space-y-1">
+            <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] uppercase tracking-wide font-medium">
+              <Layers className="w-3.5 h-3.5" /> Total Items
+            </div>
+            <div className="text-2xl font-bold tracking-tight">{totalItems.toLocaleString()}</div>
+          </div>
+
+          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 space-y-1">
+            <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] uppercase tracking-wide font-medium">
+              <Clock className="w-3.5 h-3.5" /> Stale
+            </div>
+            <div className={`text-2xl font-bold tracking-tight ${stalePct > 20 ? "text-amber-400" : ""}`}>
+              {stalePct}%
+            </div>
+            <div className="text-[10px] text-muted-foreground">{staleCount} item{staleCount !== 1 ? "s" : ""}</div>
+          </div>
+
+          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 space-y-1">
+            <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] uppercase tracking-wide font-medium">
+              <ShieldAlert className="w-3.5 h-3.5" /> Conflicts
+            </div>
+            <div className={`text-2xl font-bold tracking-tight ${contradictionCount > 0 ? "text-red-400" : ""}`}>
+              {contradictionCount}
+            </div>
+            <div className="text-[10px] text-muted-foreground">{promotionCount} promoted</div>
+          </div>
+
+          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3 space-y-1">
+            <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] uppercase tracking-wide font-medium">
+              <Zap className="w-3.5 h-3.5" /> Hit Rate
+            </div>
+            <div className="text-2xl font-bold tracking-tight">{Math.round(hitRate * 100)}%</div>
+            <div className="text-[10px] text-muted-foreground">~{Math.round(avgTokens)} avg tokens</div>
+          </div>
+        </div>
+
+        {/* Charts row */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Layer usage bar chart */}
+          {layerData.length > 0 && (
+            <div className="sm:col-span-1">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium mb-2 flex items-center gap-1.5">
+                <TrendingUp className="w-3 h-3" /> Layer Hit Distribution
+              </p>
+              <ResponsiveContainer width="100%" height={110}>
+                <BarChart data={layerData} margin={{ top: 0, right: 0, left: -24, bottom: 0 }}>
+                  <XAxis dataKey="name" tick={{ fontSize: 9, fill: "currentColor" }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 9, fill: "currentColor" }} tickLine={false} axisLine={false} />
+                  <RechartsTooltip
+                    contentStyle={{ fontSize: 11, background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 6 }}
+                    labelStyle={{ color: "hsl(var(--foreground))" }}
+                    itemStyle={{ color: "hsl(var(--muted-foreground))" }}
+                  />
+                  <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                    {layerData.map((_, idx) => (
+                      <Cell key={idx} fill={LAYER_COLORS[idx % LAYER_COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* By type breakdown */}
+          {typeData.length > 0 && (
+            <div className="sm:col-span-1">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium mb-2 flex items-center gap-1.5">
+                <Layers className="w-3 h-3" /> By Type
+              </p>
+              <div className="space-y-1">
+                {typeData.slice(0, 6).map((d, idx) => (
+                  <div key={d.name} className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: TYPE_COLORS[idx % TYPE_COLORS.length] }} />
+                    <span className="text-[10px] text-muted-foreground flex-1 truncate">{d.name}</span>
+                    <span className="text-[10px] font-mono text-foreground/70 flex-shrink-0">{d.count}</span>
+                    <div className="w-14 bg-secondary/40 rounded-full h-1.5 flex-shrink-0">
+                      <div
+                        className="h-1.5 rounded-full"
+                        style={{
+                          width: `${Math.round((d.count / totalItems) * 100)}%`,
+                          background: TYPE_COLORS[idx % TYPE_COLORS.length],
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* By scope */}
+          {scopeData.length > 0 && (
+            <div className="sm:col-span-1">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium mb-2 flex items-center gap-1.5">
+                <Activity className="w-3 h-3" /> By Scope
+              </p>
+              <div className="space-y-1">
+                {scopeData.slice(0, 6).map((d, idx) => (
+                  <div key={d.name} className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: SCOPE_COLORS[idx % SCOPE_COLORS.length] }} />
+                    <span className="text-[10px] text-muted-foreground flex-1 truncate">{d.name}</span>
+                    <span className="text-[10px] font-mono text-foreground/70 flex-shrink-0">{d.count}</span>
+                    <div className="w-14 bg-secondary/40 rounded-full h-1.5 flex-shrink-0">
+                      <div
+                        className="h-1.5 rounded-full"
+                        style={{
+                          width: `${Math.round((d.count / totalItems) * 100)}%`,
+                          background: SCOPE_COLORS[idx % SCOPE_COLORS.length],
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Budget profile badge */}
+        {stats.budgetProfile && (
+          <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground border-t border-border/30 pt-3">
+            <span className="uppercase tracking-wide font-medium">Budget:</span>
+            <span className="font-mono bg-secondary/40 rounded px-2 py-0.5 text-foreground/70">
+              {stats.budgetProfile.memoryCandidateCount} candidates
+            </span>
+            <span className="font-mono bg-secondary/40 rounded px-2 py-0.5 text-foreground/70">
+              layer {stats.budgetProfile.memoryLayerAccess}
+            </span>
+            <span className="font-mono bg-secondary/40 rounded px-2 py-0.5 text-foreground/70">
+              stale: {stats.budgetProfile.memoryStaleSuppressionStrength}
+            </span>
+            <span className="font-mono bg-secondary/40 rounded px-2 py-0.5 text-foreground/70">
+              verbosity: {stats.budgetProfile.memoryMetadataVerbosity}
+            </span>
+            {stats.semanticContradictionActive && (
+              <span className="ml-auto flex items-center gap-1 text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                Semantic contradiction active
+              </span>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function MemoryBackupCard() {
@@ -383,6 +649,9 @@ export default function MemoryPage() {
           AI session notes and tool observations — searchable across all sessions.
         </p>
       </div>
+
+      {/* Memory Health Panel */}
+      <MemoryHealthPanel />
 
       {/* Filter + Search row */}
       <div className="flex gap-2 items-center">

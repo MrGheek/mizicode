@@ -5,7 +5,7 @@ import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
-import { listObservations, listSessions, searchMemory, subscribeToObservations, backupDb, restoreDb, addObservation, addSummary } from "../services/memory";
+import { listObservations, listSessions, searchMemory, subscribeToObservations, backupDb, restoreDb, addObservation, addSummary, getGovernanceStats } from "../services/memory";
 import fs from "fs";
 import type { TeamMemberRecord, SessionRoutingStats } from "@workspace/db";
 import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles, getRepoIntelligenceForSession } from "../services/skills-bundler";
@@ -1140,6 +1140,16 @@ router.get("/memory/sessions", (req, res) => {
   } catch (err) {
     logger.error(err, "Failed to list all memory sessions for dashboard");
     res.status(500).json({ error: "Failed to list sessions" });
+  }
+});
+
+router.get("/memory/governance-stats", (_req, res) => {
+  try {
+    const stats = getGovernanceStats({ userId: MEM_USER_ID });
+    res.json(stats);
+  } catch (err) {
+    logger.error(err, "Failed to get memory governance stats for dashboard");
+    res.status(500).json({ error: "Failed to get governance stats" });
   }
 });
 
