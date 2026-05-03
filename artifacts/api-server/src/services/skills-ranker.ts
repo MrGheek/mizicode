@@ -396,6 +396,65 @@ export async function getSkillFeedbackScores(): Promise<SkillFeedbackScore[]> {
 }
 
 /**
+ * Load aggregate feedback stats for a single skill by DB id.
+ * Uses the same recency-decay logic as getSkillFeedbackScores().
+ * Returns null rates/scores when no feedback exists (explicit empty state).
+ */
+export async function getSkillFeedbackScoreById(skillId: number): Promise<{
+  totalCount: number;
+  helpfulCount: number;
+  unhelpfulCount: number;
+  helpfulRate: number | null;
+  rawHelpfulRate: number | null;
+  normalizedScore: number | null;
+  avgTaskSuccessScore: number | null;
+}> {
+  const rows = await db
+    .select({
+      helpful: skillFeedbackTable.helpful,
+      taskSuccessScore: skillFeedbackTable.taskSuccessScore,
+      createdAt: skillFeedbackTable.createdAt,
+    })
+    .from(skillFeedbackTable)
+    .where(eq(skillFeedbackTable.skillId, skillId));
+
+  let totalCount = 0;
+  let helpfulCount = 0;
+  let decayedTotalWeight = 0;
+  let decayedHelpfulWeight = 0;
+  let taskSuccessSum = 0;
+  let taskSuccessCount = 0;
+
+  for (const row of rows) {
+    totalCount += 1;
+    const weight = computeDecayWeight(row.createdAt);
+    decayedTotalWeight += weight;
+    if (row.helpful) {
+      helpfulCount += 1;
+      decayedHelpfulWeight += weight;
+    }
+    if (row.taskSuccessScore !== null && row.taskSuccessScore !== undefined) {
+      taskSuccessSum += row.taskSuccessScore;
+      taskSuccessCount += 1;
+    }
+  }
+
+  const rawHelpfulRate = totalCount > 0 ? helpfulCount / totalCount : null;
+  const helpfulRate = decayedTotalWeight > 0 ? decayedHelpfulWeight / decayedTotalWeight : null;
+  const normalizedScore = helpfulRate !== null ? (helpfulRate - 0.5) * 2 : null;
+
+  return {
+    totalCount,
+    helpfulCount,
+    unhelpfulCount: totalCount - helpfulCount,
+    helpfulRate,
+    rawHelpfulRate,
+    normalizedScore,
+    avgTaskSuccessScore: taskSuccessCount > 0 ? taskSuccessSum / taskSuccessCount : null,
+  };
+}
+
+/**
  * Build a historyScores map (manifest.id → normalizedScore) from feedback score records.
  * For native skills, slug === manifest.id.
  * For imported skills, slug = "imported-{sourceId}-{manifestId}" — we extract the

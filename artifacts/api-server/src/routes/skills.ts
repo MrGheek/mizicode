@@ -8,7 +8,7 @@ import { eq, and, desc, or, like, sql, inArray } from "drizzle-orm";
 import { importSkillFromUrl } from "../services/skills-import";
 import { seedDefaultBundles, compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext } from "../services/skills-bundler";
 import { DEFAULT_SKILLS } from "../services/default-skills";
-import { getSkillFeedbackScores } from "../services/skills-ranker";
+import { getSkillFeedbackScores, getSkillFeedbackScoreById } from "../services/skills-ranker";
 import {
   scheduleEvalRun,
   listEvalRuns,
@@ -486,7 +486,7 @@ router.get("/skills/:skillId", async (req, res) => {
     return;
   }
 
-  const [latestVersion, allCategories, explicitLinks] = await Promise.all([
+  const [latestVersion, allCategories, explicitLinks, feedbackStats] = await Promise.all([
     db
       .select()
       .from(skillVersionsTable)
@@ -501,6 +501,7 @@ router.get("/skills/:skillId", async (req, res) => {
       .select({ category: skillDesignCategoriesTable.category })
       .from(skillDesignCategoriesTable)
       .where(eq(skillDesignCategoriesTable.skillId, id)),
+    getSkillFeedbackScoreById(id),
   ]);
 
   const categoryNames = allCategories.map((r) => r.category);
@@ -514,7 +515,7 @@ router.get("/skills/:skillId", async (req, res) => {
 
   const designCategories = Array.from(new Set([...explicitCats, ...computedCats])).sort();
 
-  res.json({ skill, latestManifest: latestVersion?.manifestJson || null, designCategories });
+  res.json({ skill, latestManifest: latestVersion?.manifestJson || null, designCategories, feedbackStats });
 });
 
 router.post("/skills/import", async (req, res) => {
