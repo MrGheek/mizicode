@@ -59,6 +59,18 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@41
 
+      # ── GitHub Deployment (created before deploy so the PR sidebar shows it) ─
+      - name: Create GitHub deployment
+        id: create-deployment
+        uses: chrnorm/deployment-action@55729fcebec3d284f60f5bcabbd8376437d696b1 # v2.0.7
+        with:
+          token: ${{ github.token }}
+          environment: preview
+          ref: ${{ github.event.pull_request.head.sha }}
+          auto-merge: false
+          transient-environment: true
+          production-environment: false
+
       # ── Deploy to Vercel preview ───────────────────────────────────────────
       # Deploys the already-built dashboard dist directory to Vercel as a static
       # site and captures the resulting preview URL.
@@ -121,3 +133,26 @@ jobs:
             | **Commit** | `${{ github.event.pull_request.head.sha }}` |
 
             > This comment is updated automatically on each new commit to this PR.
+
+      # ── GitHub Deployment status ───────────────────────────────────────────
+      # These steps run last so the final deployment state reflects the outcome
+      # of the entire job (including the comment steps above), not just the
+      # Vercel deploy step.
+      - name: Update deployment status (success)
+        if: success()
+        uses: chrnorm/deployment-status@9a72af4586197112e0491ea843682b5dc280d806 # v2.0.3
+        with:
+          token: ${{ github.token }}
+          deployment-id: ${{ steps.create-deployment.outputs.deployment_id }}
+          state: success
+          environment-url: ${{ steps.deploy.outputs.url }}
+          description: "Preview deployed successfully"
+
+      - name: Update deployment status (failure)
+        if: failure() && steps.create-deployment.outputs.deployment_id != ''
+        uses: chrnorm/deployment-status@9a72af4586197112e0491ea843682b5dc280d806 # v2.0.3
+        with:
+          token: ${{ github.token }}
+          deployment-id: ${{ steps.create-deployment.outputs.deployment_id }}
+          state: failure
+          description: "Preview deployment failed"
