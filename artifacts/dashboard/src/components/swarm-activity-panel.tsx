@@ -9,6 +9,7 @@ import {
   AlertTriangle, GitMerge, SkipForward, Minus,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useVisibilityReconnect } from "@/hooks/use-visibility-reconnect";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 
@@ -156,6 +157,8 @@ function buildTabBadgeLabel(snapshot: SwarmSnapshot | null, availability: SwarmS
 export function useSwarmStatus(sessionId: number, isReady: boolean) {
   const [data, setData] = useState<SwarmStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  // Incrementing this forces the SSE effect to tear down and reconnect.
+  const [reconnectKey, setReconnectKey] = useState(0);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -169,6 +172,12 @@ export function useSwarmStatus(sessionId: number, isReady: boolean) {
       setLoading(false);
     }
   }, [sessionId]);
+
+  // Reconnect the SSE stream whenever the tab regains focus to avoid silent stalls.
+  useVisibilityReconnect(() => {
+    if (isReady) setReconnectKey((k) => k + 1);
+    else fetchStatus();
+  });
 
   useEffect(() => {
     if (!sessionId) return;
@@ -218,7 +227,7 @@ export function useSwarmStatus(sessionId: number, isReady: boolean) {
       es?.close();
       if (fallbackInterval) clearInterval(fallbackInterval);
     };
-  }, [sessionId, isReady, fetchStatus]);
+  }, [sessionId, isReady, fetchStatus, reconnectKey]);
 
   return { data, loading };
 }

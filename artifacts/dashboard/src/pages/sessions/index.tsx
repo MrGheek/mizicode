@@ -12,6 +12,7 @@ import type { SwarmStatusResponse } from "@/components/swarm-activity-panel";
 import { Badge } from "@/components/ui/badge";
 import { RelaunchButton } from "@/components/relaunch-button";
 import { isTypingTarget } from "@/lib/shortcuts";
+import { useVisibilityReconnect } from "@/hooks/use-visibility-reconnect";
 
 const RELAUNCHABLE_STATUSES = new Set(["stopped"]);
 
@@ -31,11 +32,16 @@ function useSwarmBatchSse(sessionIds: number[], readySessionIds: number[]) {
   const [statusMap, setStatusMap] = useState<Record<number, SwarmStatusResponse>>({});
   const allIdsKey = sessionIds.slice().sort((a, b) => a - b).join(",");
   const readyIdsKey = readySessionIds.slice().sort((a, b) => a - b).join(",");
+  // Incrementing this forces the SSE effect to tear down and reconnect on tab focus.
+  const [reconnectKey, setReconnectKey] = useState(0);
 
   // Keep a mutable ref so fallback callbacks always use the freshest allIdsKey
   // even when the SSE effect hasn't re-run yet.
   const allIdsKeyRef = useRef(allIdsKey);
   useEffect(() => { allIdsKeyRef.current = allIdsKey; }, [allIdsKey]);
+
+  // Reconnect all streams when the tab regains focus to avoid silent stalls.
+  useVisibilityReconnect(() => setReconnectKey((k) => k + 1));
 
   // Initial batch fetch — populates historical data for all sessions including stopped ones.
   useEffect(() => {
@@ -114,7 +120,7 @@ function useSwarmBatchSse(sessionIds: number[], readySessionIds: number[]) {
       for (const es of streams) es.close();
       if (fallbackInterval) clearInterval(fallbackInterval);
     };
-  }, [readyIdsKey]); // allIdsKey tracked via ref so fallback always uses current IDs
+  }, [readyIdsKey, reconnectKey]); // allIdsKey tracked via ref so fallback always uses current IDs
 
   return statusMap;
 }

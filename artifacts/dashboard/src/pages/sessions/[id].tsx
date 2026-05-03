@@ -47,6 +47,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { useHandoffNotificationPref } from "@/hooks/use-handoff-notification-pref";
+import { useVisibilityReconnect } from "@/hooks/use-visibility-reconnect";
 import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useListProfiles } from "@workspace/api-client-react";
@@ -1980,6 +1981,12 @@ export default function SessionDetail() {
     setMemReconnecting(false);
     memConnectRef.current?.();
   };
+
+  // Reconnect the memory stream whenever the tab regains focus to avoid silent stalls.
+  // Reuses the existing handleMemoryReconnect logic which resets retry state cleanly.
+  useVisibilityReconnect(() => {
+    if (!memSessionEndedRef.current) handleMemoryReconnect();
+  });
   // --- end live memory feed ---
 
   const copyToClipboard = (text: string, fieldId: string) => {

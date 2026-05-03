@@ -6,6 +6,7 @@ import {
   getListHeavyJobsQueryKey,
   getGetSessionCoordinationQueryKey,
 } from "@workspace/api-client-react";
+import { useVisibilityReconnect } from "./use-visibility-reconnect";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 
@@ -38,8 +39,19 @@ export function useCoordinationStream(
   const esRef = useRef<EventSource | null>(null);
   const [status, setStatus] = useState<CoordinationStreamStatus>("polling");
 
+  // Stored by the main effect so useVisibilityReconnect can trigger a reconnect
+  // without closing over stale captured variables.
+  const visibilityReconnectRef = useRef<(() => void) | null>(null);
+
+  useVisibilityReconnect(() => {
+    visibilityReconnectRef.current?.();
+  });
+
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      visibilityReconnectRef.current = null;
+      return;
+    }
 
     let cancelled = false;
 
@@ -118,6 +130,8 @@ export function useCoordinationStream(
       };
     }
 
+    // Shared reconnect logic: invalidate caches, tear down stale connection, reconnect.
+    // Used by both useVisibilityReconnect (visibilitychange) and the resume listener below.
     function reconnectImmediately() {
       if (cancelled) return;
       invalidateAll();
@@ -135,23 +149,21 @@ export function useCoordinationStream(
       connect();
     }
 
-    function handleVisibilityChange() {
-      if (document.visibilityState !== "visible") return;
-      reconnectImmediately();
-    }
-
     function handleResume() {
       reconnectImmediately();
     }
 
     connect();
 
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    // Expose for the shared useVisibilityReconnect hook (handles visibilitychange).
+    visibilityReconnectRef.current = reconnectImmediately;
+    // Also handle the Page Lifecycle `resume` event for device sleep/wake cycles,
+    // which may not fire visibilitychange.
     document.addEventListener("resume", handleResume);
 
     return () => {
       cancelled = true;
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      visibilityReconnectRef.current = null;
       document.removeEventListener("resume", handleResume);
       clearHeartbeat();
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
