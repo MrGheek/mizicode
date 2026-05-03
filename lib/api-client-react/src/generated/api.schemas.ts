@@ -46,6 +46,10 @@ export interface GpuProfile {
   servedModelName: string;
   /** Human-readable model name shown in the dashboard */
   modelDisplayName: string;
+  /** Maximum concurrent swarm workers this profile can support */
+  swarmWorkerCap?: number | null;
+  /** Short benchmark callout shown in the Quick Launch section header (e.g. "65.8% SWE-Bench Verified") */
+  benchmarkCallout?: string | null;
 }
 
 export interface TeamMember {

@@ -55,6 +55,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "unsloth/Kimi-K2.6-GGUF",
     servedModelName: "kimi-k2-6",
     modelDisplayName: "Kimi K2.6",
+    benchmarkCallout: "65.8% SWE-Bench Verified",
     // Single 4090 — minimal VRAM headroom; swarm is marginal on this tier.
     // Users should prefer Standard or higher for swarm-intensive tasks.
     swarmWorkerCap: 16,
@@ -83,6 +84,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "unsloth/Kimi-K2.6-GGUF",
     servedModelName: "kimi-k2-6",
     modelDisplayName: "Kimi K2.6",
+    benchmarkCallout: "65.8% SWE-Bench Verified",
     // 4× 4090 — comfortable ceiling for moderate swarm concurrency.
     swarmWorkerCap: 48,
   },
@@ -110,6 +112,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "unsloth/Kimi-K2.6-GGUF",
     servedModelName: "kimi-k2-6",
     modelDisplayName: "Kimi K2.6",
+    benchmarkCallout: "65.8% SWE-Bench Verified",
     // 4× A100 80GB — strong headroom; supports high swarm concurrency.
     swarmWorkerCap: 100,
   },
@@ -138,6 +141,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "unsloth/Kimi-K2.6-GGUF",
     servedModelName: "kimi-k2-6",
     modelDisplayName: "Kimi K2.6",
+    benchmarkCallout: "65.8% SWE-Bench Verified",
     // 8× H100 — near-full swarm capability.
     swarmWorkerCap: 200,
   },
@@ -166,6 +170,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "unsloth/Kimi-K2.5-GGUF",
     servedModelName: "kimi-k2",
     modelDisplayName: "Kimi K2.5",
+    benchmarkCallout: "63.6% SWE-Bench Verified · legacy",
     // Same architecture as K2.6 Starter — same constraints apply.
     // Swarm is marginal on this tier; prefer a higher tier for swarm-intensive tasks.
     swarmWorkerCap: 16,
@@ -193,6 +198,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "unsloth/Kimi-K2.5-GGUF",
     servedModelName: "kimi-k2",
     modelDisplayName: "Kimi K2.5",
+    benchmarkCallout: "63.6% SWE-Bench Verified · legacy",
     // Same architecture as K2.6 Standard.
     swarmWorkerCap: 48,
   },
@@ -219,6 +225,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "unsloth/Kimi-K2.5-GGUF",
     servedModelName: "kimi-k2",
     modelDisplayName: "Kimi K2.5",
+    benchmarkCallout: "63.6% SWE-Bench Verified · legacy",
     // Same architecture as K2.6 Pro.
     swarmWorkerCap: 100,
   },
@@ -247,6 +254,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "unsloth/Kimi-K2.5-GGUF",
     servedModelName: "kimi-k2",
     modelDisplayName: "Kimi K2.5",
+    benchmarkCallout: "63.6% SWE-Bench Verified · legacy",
     // Same architecture as K2.6 Ultra.
     swarmWorkerCap: 200,
   },
@@ -275,6 +283,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "Qwen/Qwen3-Coder-Next",
     servedModelName: "qwen3-coder-next",
     modelDisplayName: "Qwen3-Coder-Next",
+    benchmarkCallout: "Highest open-weight SWE-Bench score per dollar",
     // 3B active params — very cheap per worker; 4× A100 supports high concurrency.
     swarmWorkerCap: 120,
   },
@@ -304,6 +313,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "Qwen/Qwen3-Coder-Next",
     servedModelName: "qwen3-coder-next",
     modelDisplayName: "Qwen3-Coder-Next",
+    benchmarkCallout: "Highest open-weight SWE-Bench score per dollar",
     // 3B active params on 8× A100 — tiny active footprint allows extreme concurrency.
     swarmWorkerCap: 250,
   },
@@ -333,6 +343,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "MiniMaxAI/MiniMax-M2.5",
     servedModelName: "minimax-m2.5",
     modelDisplayName: "MiniMax M2.5",
+    benchmarkCallout: "80.2% SWE-Bench Verified",
     // 10B active on 8× H100 — compact active layer gives modest swarm headroom.
     swarmWorkerCap: 80,
   },
@@ -364,6 +375,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "zai-org/GLM-5.1-FP8",
     servedModelName: "glm-5.1",
     modelDisplayName: "GLM-5.1 (FP8)",
+    benchmarkCallout: "58.4% SWE-Bench Pro · open-weight record",
     // CONSTRAINED: already at 0.98 GPU memory utilisation — extremely limited swarm headroom.
     // Swarm is marginal on this tier. Users should strongly prefer glm-5-1-h200 for swarm tasks.
     swarmWorkerCap: 4,
@@ -406,6 +418,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "zai-org/GLM-5.1-FP8",
     servedModelName: "glm-5.1",
     modelDisplayName: "GLM-5.1 (FP8)",
+    benchmarkCallout: "58.4% SWE-Bench Pro · open-weight record",
     // CONSTRAINED: H200 VRAM gives modest headroom over H100 Ultra tier.
     // Swarm is possible but limited; prefer higher-throughput profiles for
     // swarm-intensive tasks.
@@ -437,6 +450,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelRepo: "deepseek-ai/DeepSeek-V3.2",
     servedModelName: "deepseek-v3.2",
     modelDisplayName: "DeepSeek V3.2",
+    benchmarkCallout: "671B MIT-licensed · strong multilingual coding",
     // MoE 671B — large weight footprint constrains per-worker headroom despite H200.
     swarmWorkerCap: 32,
   },
@@ -485,6 +499,7 @@ export async function seedProfiles() {
           servedModelName: profile.servedModelName,
           modelDisplayName: profile.modelDisplayName,
           swarmWorkerCap: profile.swarmWorkerCap,
+          benchmarkCallout: profile.benchmarkCallout,
         })
         .where(eq(gpuProfilesTable.name, profile.name))
         .returning();

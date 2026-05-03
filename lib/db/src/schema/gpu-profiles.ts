@@ -30,6 +30,10 @@ export const gpuProfilesTable = pgTable("gpu_profiles", {
   // so the Claw Runner can enforce it without needing model-awareness.
   // Null means swarm is not supported / not configured for this profile.
   swarmWorkerCap: integer("swarm_worker_cap"),
+  // Short benchmark callout shown in the Quick Launch section header
+  // (e.g. "65.8% SWE-Bench Verified"). Stored here so the numbers can be
+  // updated in one place (profiles.ts seed data) without touching the dashboard.
+  benchmarkCallout: text("benchmark_callout"),
 });
 
 export const insertGpuProfileSchema = createInsertSchema(gpuProfilesTable).omit({ id: true });

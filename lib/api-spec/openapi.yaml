@@ -2843,6 +2843,14 @@ components:
         modelDisplayName:
           type: string
           description: Human-readable model name shown in the dashboard
+        swarmWorkerCap:
+          type: integer
+          nullable: true
+          description: Maximum concurrent swarm workers this profile can support (null means not configured)
+        benchmarkCallout:
+          type: string
+          nullable: true
+          description: Short benchmark callout shown in the Quick Launch section header (e.g. "65.8% SWE-Bench Verified")
       required:
         - id
         - name

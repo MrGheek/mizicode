@@ -410,15 +410,6 @@ function usePinnedProfiles() {
   return { pinnedIds, togglePin };
 }
 
-const MODEL_BENCHMARKS: Record<string, string> = {
-  "Kimi K2.6":          "65.8% SWE-Bench Verified",
-  "Kimi K2.5":          "63.6% SWE-Bench Verified · legacy",
-  "Qwen3-Coder-Next":   "Highest open-weight SWE-Bench score per dollar",
-  "MiniMax M2.5":       "80.2% SWE-Bench Verified",
-  "GLM-5.1 (FP8)":      "58.4% SWE-Bench Pro · open-weight record",
-  "DeepSeek V3.2":      "671B MIT-licensed · strong multilingual coding",
-};
-
 interface QuickLaunchProfilesProps {
   profiles: GpuProfile[] | undefined;
   isLoading: boolean;
@@ -533,7 +524,7 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
                 <div className="flex items-baseline gap-3 mb-3 pb-2 border-b border-border/40">
                   <h3 className="text-base font-semibold">{model}</h3>
                   <span className="text-xs text-muted-foreground">
-                    {MODEL_BENCHMARKS[model] ?? "Open-weight model"}
+                    {items[0]?.benchmarkCallout ?? "Open-weight model"}
                   </span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
