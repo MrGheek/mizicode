@@ -20,7 +20,7 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   Wand2, Plus, ExternalLink, AlertTriangle, ChevronDown, ChevronRight,
   Loader2, CheckCircle, XCircle, Package, GitBranch, Key, Scale,
-  ThumbsUp, ThumbsDown, Trash2, MessageSquare, Palette,
+  ThumbsUp, ThumbsDown, Trash2, MessageSquare, Palette, Clock,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -955,6 +955,46 @@ export default function SkillsLibrary() {
     queryClient.invalidateQueries({ queryKey: getListSkillsQueryKey() });
   };
 
+  const { data: designSyncData } = useQuery({
+    queryKey: ["design-intelligence-sources"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/design-intelligence/sources`);
+      if (!res.ok) throw new Error("Failed to fetch sync status");
+      return res.json() as Promise<{
+        sources: unknown[];
+        sync: {
+          lastSyncedAt: string | null;
+          lastSyncReason: "sha_change" | "safety_net" | "manual" | null;
+          isRunning: boolean;
+        };
+      }>;
+    },
+    staleTime: 30000,
+    refetchInterval: 60000,
+  });
+
+  function formatRelativeTime(isoString: string | null): string {
+    if (!isoString) return "Never";
+    const diff = Date.now() - new Date(isoString).getTime();
+    const minutes = Math.floor(diff / 60000);
+    if (minutes < 1) return "just now";
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  }
+
+  const syncStatus = designSyncData?.sync;
+  const syncReasonLabel =
+    syncStatus?.lastSyncReason === "sha_change"
+      ? "new commit detected"
+      : syncStatus?.lastSyncReason === "safety_net"
+      ? "6-hour safety net"
+      : syncStatus?.lastSyncReason === "manual"
+      ? "manual"
+      : null;
+
   const allApproved = approvedData?.skills ?? [];
   const installedSkills = allApproved.filter(s => s.enabled);
   const disabledSkills = allApproved.filter(s => !s.enabled);
@@ -1036,6 +1076,26 @@ export default function SkillsLibrary() {
             Skills Library
           </h1>
           <p className="text-muted-foreground mt-1">Manage Smart Skills and bundles for AI-assisted coding sessions</p>
+          {syncStatus && (
+            <p className="text-xs text-muted-foreground/70 mt-1 flex items-center gap-1.5">
+              <Clock className="w-3 h-3 shrink-0" />
+              {syncStatus.isRunning ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>Design data syncing…</span>
+                </>
+              ) : (
+                <>
+                  <span>Design data last updated{" "}
+                    <span className="text-foreground/60">{formatRelativeTime(syncStatus.lastSyncedAt)}</span>
+                  </span>
+                  {syncReasonLabel && (
+                    <span className="text-foreground/40">({syncReasonLabel})</span>
+                  )}
+                </>
+              )}
+            </p>
+          )}
         </div>
         <Button className="gap-2" onClick={() => setImportOpen(true)}>
           <Plus className="w-4 h-4" /> Import Skill

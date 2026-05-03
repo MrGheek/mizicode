@@ -53,6 +53,7 @@ type SyncStatus = {
   nextSyncAt: string | null;
   intervalMs: number;
   isRunning: boolean;
+  lastSyncReason: "sha_change" | "safety_net" | "manual" | null;
 };
 
 type SourcesResponse = {
@@ -155,6 +156,15 @@ function SyncStatusBar({ sync, onSyncNow, isSyncing, syncAlreadyRunning }: {
           <span className="text-foreground/70">
             {formatRelativeTime(sync.lastSyncedAt)}
           </span>
+          {sync.lastSyncReason && sync.lastSyncedAt && (
+            <span className="ml-1 text-foreground/50">
+              ({sync.lastSyncReason === "sha_change"
+                ? "new commit detected"
+                : sync.lastSyncReason === "safety_net"
+                ? "6-hour safety net"
+                : "manual"})
+            </span>
+          )}
         </span>
         {sync.nextSyncAt && !isActive && (
           <span

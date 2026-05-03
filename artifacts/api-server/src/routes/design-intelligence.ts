@@ -228,6 +228,7 @@ router.get("/design-intelligence/sources", async (req, res) => {
         nextSyncAt: syncStatus.nextSyncAt?.toISOString() ?? null,
         intervalMs: syncStatus.intervalMs,
         isRunning: syncStatus.isRunning,
+        lastSyncReason: syncStatus.lastSyncReason,
       },
     });
   } catch (err) {

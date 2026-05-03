@@ -67,6 +67,7 @@ interface DesignSyncStatus {
   nextSyncAt: Date | null;
   intervalMs: number;
   isRunning: boolean;
+  lastSyncReason: "sha_change" | "safety_net" | "manual" | null;
 }
 
 const designSyncState: DesignSyncStatus = {
@@ -76,6 +77,7 @@ const designSyncState: DesignSyncStatus = {
   nextSyncAt: null,
   intervalMs: parseDesignSyncInterval(),
   isRunning: false,
+  lastSyncReason: null,
 };
 
 export function getDesignSyncStatus(): DesignSyncStatus {
@@ -83,16 +85,17 @@ export function getDesignSyncStatus(): DesignSyncStatus {
 }
 
 export async function triggerDesignSync(): Promise<{ success: boolean; reason: string }> {
-  return runDesignSync();
+  return runDesignSync("manual");
 }
 
-export function markDesignSyncComplete(): void {
+export function markDesignSyncComplete(reason: "sha_change" | "safety_net" | "manual" = "safety_net"): void {
   designSyncState.lastSyncedAt = new Date();
   designSyncState.lastAttemptedAt = new Date();
   designSyncState.lastError = null;
+  designSyncState.lastSyncReason = reason;
 }
 
-async function runDesignSync(): Promise<{ success: boolean; reason: string }> {
+async function runDesignSync(reason: "sha_change" | "safety_net" | "manual" = "safety_net"): Promise<{ success: boolean; reason: string }> {
   if (designSyncState.isRunning) {
     logger.warn("Design sync: previous run still in progress — skipping this interval tick");
     return { success: false, reason: "Sync already in progress" };
@@ -100,24 +103,25 @@ async function runDesignSync(): Promise<{ success: boolean; reason: string }> {
 
   designSyncState.isRunning = true;
   designSyncState.lastAttemptedAt = new Date();
-  logger.info("Design sync: starting re-sync of curated sources");
+  logger.info({ triggerReason: reason }, "Design sync: starting re-sync of curated sources");
 
   try {
     const result = await seedCuratedSources();
     if (result.success) {
       designSyncState.lastSyncedAt = new Date();
+      designSyncState.lastSyncReason = reason;
       designSyncState.lastError = null;
-      logger.info({ reason: result.reason, updated: result.updated }, "Design sync: completed successfully");
+      logger.info({ reason: result.reason, updated: result.updated, triggerReason: reason }, "Design sync: completed successfully");
       return { success: true, reason: result.reason };
     } else {
       designSyncState.lastError = result.reason;
-      logger.error({ reason: result.reason }, "Design sync: sync reported failure — lastSyncedAt not updated");
+      logger.error({ reason: result.reason, triggerReason: reason }, "Design sync: sync reported failure — lastSyncedAt not updated");
       return { success: false, reason: result.reason };
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     designSyncState.lastError = message;
-    logger.error({ err }, "Design sync: unexpected error during scheduled sync");
+    logger.error({ err, triggerReason: reason }, "Design sync: unexpected error during scheduled sync");
     return { success: false, reason: message };
   } finally {
     designSyncState.isRunning = false;
@@ -161,7 +165,7 @@ async function runShaCheckJob(): Promise<void> {
     { oldSha: storedSha ?? "none", newSha: remoteSha },
     "SHA-check: new commit detected — triggering immediate design sync",
   );
-  void runDesignSync();
+  void runDesignSync("sha_change");
 }
 
 function startDesignSyncScheduler(): void {
@@ -171,7 +175,7 @@ function startDesignSyncScheduler(): void {
   // 6-hour safety-net: full sync regardless of SHA
   setInterval(() => {
     designSyncState.nextSyncAt = new Date(Date.now() + intervalMs);
-    void runDesignSync();
+    void runDesignSync("safety_net");
   }, intervalMs);
 
   // 15-minute lightweight SHA-check: only syncs when a new commit is detected
