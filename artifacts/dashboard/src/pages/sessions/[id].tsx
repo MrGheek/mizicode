@@ -2825,7 +2825,7 @@ export default function SessionDetail() {
 
           {/* Blocking conflict banner */}
           {bannerVisible && (
-            <div key={conflictBannerShakeKey} className={`flex items-start gap-3 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm${conflictBannerShakeKey > 0 ? " animate-banner-shake" : ""}`}>
+            <div key={blockingConflictFingerprint} className={`flex items-start gap-3 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm animate-conflict-banner-in${conflictBannerShakeKey > 0 ? " animate-banner-shake" : ""}`}>
               <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
               <span className="flex-1 text-red-300">
                 <span className="font-semibold text-red-200">
