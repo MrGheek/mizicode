@@ -1123,9 +1123,13 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
     );
   };
 
-  // Symbol / file search
-  const [searchInput, setSearchInput] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  // Symbol / file search — persisted in sessionStorage across tab switches
+  const [searchInput, setSearchInput] = useState<string>(() =>
+    sessionStorage.getItem(`repo-search-query:${sessionId}`) ?? ""
+  );
+  const [debouncedQuery, setDebouncedQuery] = useState<string>(() =>
+    (sessionStorage.getItem(`repo-search-query:${sessionId}`) ?? "").trim()
+  );
   const [searchType, setSearchType] = useState<"all" | "symbol" | "file" | "chunk">("all");
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1134,6 +1138,17 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
     searchDebounceRef.current = setTimeout(() => setDebouncedQuery(searchInput.trim()), 400);
     return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
   }, [searchInput]);
+
+  useEffect(() => {
+    sessionStorage.setItem(`repo-search-query:${sessionId}`, searchInput);
+  }, [searchInput, sessionId]);
+
+  // Rehydrate search state if sessionId changes without a full remount
+  useEffect(() => {
+    const saved = sessionStorage.getItem(`repo-search-query:${sessionId}`) ?? "";
+    setSearchInput(saved);
+    setDebouncedQuery(saved.trim());
+  }, [sessionId]);
 
   const searchEnabled = debouncedQuery.length > 0;
   const { data: searchData, isLoading: searchLoading, isFetching: searchFetching, isError: searchError } = useSearchRepo(
@@ -1151,9 +1166,27 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
   );
   const symbolDetail = symbolDetailData?.symbols?.[0] ?? null;
 
-  // Blast-radius lookup
-  const [blastInput, setBlastInput] = useState("");
-  const [blastFile, setBlastFile] = useState("");
+  // Blast-radius lookup — persisted in sessionStorage across tab switches
+  const [blastInput, setBlastInput] = useState<string>(() =>
+    sessionStorage.getItem(`repo-blast-input:${sessionId}`) ?? ""
+  );
+  const [blastFile, setBlastFile] = useState<string>(() =>
+    sessionStorage.getItem(`repo-blast-file:${sessionId}`) ?? ""
+  );
+
+  useEffect(() => {
+    sessionStorage.setItem(`repo-blast-input:${sessionId}`, blastInput);
+  }, [blastInput, sessionId]);
+
+  useEffect(() => {
+    sessionStorage.setItem(`repo-blast-file:${sessionId}`, blastFile);
+  }, [blastFile, sessionId]);
+
+  // Rehydrate blast state if sessionId changes without a full remount
+  useEffect(() => {
+    setBlastInput(sessionStorage.getItem(`repo-blast-input:${sessionId}`) ?? "");
+    setBlastFile(sessionStorage.getItem(`repo-blast-file:${sessionId}`) ?? "");
+  }, [sessionId]);
 
   const { data: blastData, isLoading: blastLoading, isError: blastError } = useGetRepoBlastRadius(
     sessionId,
