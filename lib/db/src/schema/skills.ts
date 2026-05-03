@@ -255,6 +255,19 @@ export const skillDesignCategoriesTable = pgTable("skill_design_categories", {
   skillCategoryUnique: uniqueIndex("skill_design_category_unique").on(table.skillId, table.category),
 }));
 
+/**
+ * Bookmarks for design intelligence entries.
+ * Users can bookmark any entry for quick reference.
+ * No user auth in this app, so bookmarks are global (single-user).
+ */
+export const designIntelligenceBookmarksTable = pgTable("design_intelligence_bookmarks", {
+  id: serial("id").primaryKey(),
+  entryId: integer("entry_id").notNull().references(() => designIntelligenceEntriesTable.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  entryUnique: uniqueIndex("design_intelligence_bookmarks_entry_unique").on(table.entryId),
+}));
+
 export const insertSkillSchema = createInsertSchema(skillsTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertSkill = z.infer<typeof insertSkillSchema>;
 export type Skill = typeof skillsTable.$inferSelect;
@@ -270,3 +283,4 @@ export type SkillEval = typeof skillEvalsTable.$inferSelect;
 export type BundleEval = typeof bundleEvalsTable.$inferSelect;
 export type DesignIntelligenceEntry = typeof designIntelligenceEntriesTable.$inferSelect;
 export type SkillDesignCategory = typeof skillDesignCategoriesTable.$inferSelect;
+export type DesignIntelligenceBookmark = typeof designIntelligenceBookmarksTable.$inferSelect;

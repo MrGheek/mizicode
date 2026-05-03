@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Palette, Search, Tag, Loader2, AlertCircle, RefreshCw, Clock, CheckCircle2, XCircle, Wand2,
+  Palette, Search, Tag, Loader2, AlertCircle, RefreshCw, Clock, CheckCircle2, XCircle, Wand2, Bookmark,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -219,6 +219,7 @@ function useDesignEntriesPage(
   category: string | undefined,
   q: string,
   offset: number,
+  savedOnly: boolean,
 ) {
   const params = new URLSearchParams();
   if (category) params.set("category", category);
@@ -227,15 +228,65 @@ function useDesignEntriesPage(
   params.set("offset", String(offset));
 
   return useQuery<EntriesPage>({
-    queryKey: ["design-intelligence-entries", category, q, offset],
+    queryKey: ["design-intelligence-entries", category, q, offset, savedOnly],
     queryFn: async () => {
-      const res = await fetch(
-        `${BASE_URL}api/design-intelligence?${params.toString()}`,
-      );
+      const url = savedOnly
+        ? `${BASE_URL}api/design-intelligence/bookmarks?${params.toString()}`
+        : `${BASE_URL}api/design-intelligence?${params.toString()}`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch entries");
       return res.json() as Promise<EntriesPage>;
     },
     staleTime: 30000,
+  });
+}
+
+function useBookmarkIds() {
+  return useQuery<{ bookmarkedIds: number[] }>({
+    queryKey: ["design-intelligence-bookmark-ids"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/design-intelligence/bookmarks/ids`);
+      if (!res.ok) throw new Error("Failed to fetch bookmark IDs");
+      return res.json() as Promise<{ bookmarkedIds: number[] }>;
+    },
+    staleTime: 10000,
+  });
+}
+
+function useToggleBookmark() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ entryId, bookmarked }: { entryId: number; bookmarked: boolean }) => {
+      const method = bookmarked ? "DELETE" : "POST";
+      const res = await fetch(`${BASE_URL}api/design-intelligence/bookmarks/${entryId}`, { method });
+      if (!res.ok) throw new Error("Failed to toggle bookmark");
+      return res.json();
+    },
+    onMutate: async ({ entryId, bookmarked }) => {
+      await queryClient.cancelQueries({ queryKey: ["design-intelligence-bookmark-ids"] });
+      const prev = queryClient.getQueryData<{ bookmarkedIds: number[] }>(["design-intelligence-bookmark-ids"]);
+      queryClient.setQueryData<{ bookmarkedIds: number[] }>(
+        ["design-intelligence-bookmark-ids"],
+        (old) => {
+          if (!old) return { bookmarkedIds: bookmarked ? [] : [entryId] };
+          return {
+            bookmarkedIds: bookmarked
+              ? old.bookmarkedIds.filter((id) => id !== entryId)
+              : [...old.bookmarkedIds, entryId],
+          };
+        },
+      );
+      return { prev };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.prev) {
+        queryClient.setQueryData(["design-intelligence-bookmark-ids"], context.prev);
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["design-intelligence-bookmark-ids"] });
+      void queryClient.invalidateQueries({ queryKey: ["design-intelligence-entries"] });
+    },
   });
 }
 
@@ -390,33 +441,64 @@ function RelatedSkillsBadges({ skills }: { skills: SkillSummary[] }) {
   );
 }
 
-function EntryCard({ entry, relatedSkills }: { entry: DesignEntry; relatedSkills?: SkillSummary[] }) {
+function EntryCard({
+  entry,
+  relatedSkills,
+  bookmarked,
+  onToggleBookmark,
+}: {
+  entry: DesignEntry;
+  relatedSkills?: SkillSummary[];
+  bookmarked?: boolean;
+  onToggleBookmark?: (entryId: number, currently: boolean) => void;
+}) {
   const swatchColor =
     isColorCategory(entry.category) ? extractEntryColor(entry.data_json) : null;
   return (
     <Card className="bg-card/50 border-border/50">
       <CardContent className="pt-3 pb-3">
-        <div className="flex items-center gap-2 flex-wrap mb-1.5">
-          <Badge
-            variant="outline"
-            className="text-[10px] py-0 h-4 border-primary/30 text-primary/80"
-          >
-            {entry.category}
-          </Badge>
-          {entry.tags.map((tag) => (
-            <Badge key={tag} variant="secondary" className="text-[10px] py-0 h-4">
-              {tag}
-            </Badge>
-          ))}
+        <div className="flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap mb-1.5">
+              <Badge
+                variant="outline"
+                className="text-[10px] py-0 h-4 border-primary/30 text-primary/80"
+              >
+                {entry.category}
+              </Badge>
+              {entry.tags.map((tag) => (
+                <Badge key={tag} variant="secondary" className="text-[10px] py-0 h-4">
+                  {tag}
+                </Badge>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 mb-1.5">
+              {swatchColor && <ColorSwatch color={swatchColor} />}
+              <p className="font-semibold text-sm">{entry.name}</p>
+            </div>
+            <DataJsonView data={entry.data_json} />
+            {relatedSkills && relatedSkills.length > 0 && (
+              <RelatedSkillsBadges skills={relatedSkills} />
+            )}
+          </div>
+          {onToggleBookmark && (
+            <button
+              onClick={() => onToggleBookmark(entry.id, bookmarked ?? false)}
+              className={`shrink-0 p-1 rounded transition-colors hover:bg-muted ${
+                bookmarked
+                  ? "text-amber-400 hover:text-amber-500"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              title={bookmarked ? "Remove bookmark" : "Bookmark this entry"}
+              aria-label={bookmarked ? "Remove bookmark" : "Bookmark this entry"}
+            >
+              <Bookmark
+                className="w-3.5 h-3.5"
+                fill={bookmarked ? "currentColor" : "none"}
+              />
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-2 mb-1.5">
-          {swatchColor && <ColorSwatch color={swatchColor} />}
-          <p className="font-semibold text-sm">{entry.name}</p>
-        </div>
-        <DataJsonView data={entry.data_json} />
-        {relatedSkills && relatedSkills.length > 0 && (
-          <RelatedSkillsBadges skills={relatedSkills} />
-        )}
       </CardContent>
     </Card>
   );
@@ -445,6 +527,7 @@ export default function DesignIntelligence() {
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
   const [accumulatedEntries, setAccumulatedEntries] = useState<DesignEntry[]>([]);
+  const [savedOnly, setSavedOnly] = useState(false);
 
   const queryClient = useQueryClient();
 
@@ -452,10 +535,14 @@ export default function DesignIntelligence() {
     useDesignCategories();
 
   const { data: page, isLoading: pageLoading, isError: pageError } =
-    useDesignEntriesPage(selectedCategory, search, offset);
+    useDesignEntriesPage(selectedCategory, search, offset, savedOnly);
 
   const { data: sourcesData } = useDesignSources();
   const { data: skillMapData } = useDesignSkillMap();
+  const { data: bookmarkData } = useBookmarkIds();
+  const toggleBookmark = useToggleBookmark();
+
+  const bookmarkedIdSet = new Set(bookmarkData?.bookmarkedIds ?? []);
 
   const [syncAlreadyRunning, setSyncAlreadyRunning] = useState(false);
 
@@ -516,12 +603,23 @@ export default function DesignIntelligence() {
     setAccumulatedEntries([]);
   };
 
+  const handleSavedToggle = (on: boolean) => {
+    setSavedOnly(on);
+    setOffset(0);
+    setAccumulatedEntries([]);
+  };
+
+  const handleToggleBookmark = (entryId: number, currently: boolean) => {
+    toggleBookmark.mutate({ entryId, bookmarked: currently });
+  };
+
   const total = page?.total ?? 0;
   const shown = accumulatedEntries.length;
   const hasMore = shown < total;
 
   const totalCategoryCount =
     categories?.reduce((s, c) => s + c.count, 0) ?? 0;
+  const savedCount = bookmarkData?.bookmarkedIds.length ?? 0;
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
@@ -548,7 +646,36 @@ export default function DesignIntelligence() {
         />
       )}
 
+      {/* View tabs: All / Saved */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => handleSavedToggle(false)}
+          className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+            !savedOnly
+              ? "bg-primary text-primary-foreground border-primary"
+              : "border-border/50 text-muted-foreground hover:text-foreground hover:border-border"
+          }`}
+        >
+          All
+        </button>
+        <button
+          onClick={() => handleSavedToggle(true)}
+          className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+            savedOnly
+              ? "bg-amber-500 text-white border-amber-500"
+              : "border-border/50 text-muted-foreground hover:text-foreground hover:border-border"
+          }`}
+        >
+          <Bookmark className="w-3 h-3" fill={savedOnly ? "currentColor" : "none"} />
+          Saved
+          {savedCount > 0 && (
+            <span className={`opacity-80`}>({savedCount})</span>
+          )}
+        </button>
+      </div>
+
       {/* Category filter */}
+      {!savedOnly && (
       <div className="space-y-2">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Category
@@ -594,6 +721,7 @@ export default function DesignIntelligence() {
           </div>
         )}
       </div>
+      )}
 
       {/* Search */}
       <div className="relative">
@@ -648,6 +776,8 @@ export default function DesignIntelligence() {
                 key={entry.id}
                 entry={entry}
                 relatedSkills={skillMapData?.skillMap[entry.category]}
+                bookmarked={bookmarkedIdSet.has(entry.id)}
+                onToggleBookmark={handleToggleBookmark}
               />
             ))}
             {hasMore && (

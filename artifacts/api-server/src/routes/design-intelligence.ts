@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { db, designIntelligenceEntriesTable, skillSourcesTable, skillsTable, skillDesignCategoriesTable } from "@workspace/db";
-import { eq, and, sql, or, ilike } from "drizzle-orm";
+import { db, designIntelligenceEntriesTable, skillSourcesTable, skillsTable, skillDesignCategoriesTable, designIntelligenceBookmarksTable } from "@workspace/db";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import { getDesignSyncStatus, triggerDesignSync } from "../services/scheduler";
 
 const router = Router();
@@ -312,6 +312,139 @@ router.post("/design-intelligence/sync", async (req, res) => {
   }
 
   return res.json({ ok: true, message: result.reason });
+});
+
+/**
+ * GET /api/design-intelligence/bookmarks
+ *
+ * Returns all bookmarked design entry IDs and their full entry data.
+ * Query params same as main entries endpoint (category, q, limit, offset)
+ * plus `savedOnly=true` to filter to bookmarked entries only.
+ */
+router.get("/design-intelligence/bookmarks", async (req, res) => {
+  try {
+    const bookmarks = await db
+      .select({ entryId: designIntelligenceBookmarksTable.entryId })
+      .from(designIntelligenceBookmarksTable);
+
+    const bookmarkedIds = bookmarks.map((b) => b.entryId);
+
+    if (bookmarkedIds.length === 0) {
+      return res.json({ entries: [], total: 0, bookmarkedIds: [] });
+    }
+
+    const category = typeof req.query["category"] === "string" ? req.query["category"] : undefined;
+    const q = typeof req.query["q"] === "string" ? req.query["q"] : undefined;
+    const limitRaw = Number(req.query["limit"] ?? 20);
+    const limit = Math.min(Math.max(1, isNaN(limitRaw) ? 20 : limitRaw), 100);
+    const offsetRaw = Number(req.query["offset"] ?? 0);
+    const offset = Math.max(0, isNaN(offsetRaw) ? 0 : offsetRaw);
+
+    const conditions = [inArray(designIntelligenceEntriesTable.id, bookmarkedIds)];
+
+    if (category) {
+      conditions.push(eq(designIntelligenceEntriesTable.category, category));
+    }
+
+    if (q) {
+      const pattern = `%${q}%`;
+      conditions.push(
+        sql`(${designIntelligenceEntriesTable.name} ilike ${pattern} or ${designIntelligenceEntriesTable.dataJson}::text ilike ${pattern})`,
+      );
+    }
+
+    const whereClause = and(...conditions);
+
+    const [entries, totalResult] = await Promise.all([
+      db
+        .select({
+          id: designIntelligenceEntriesTable.id,
+          category: designIntelligenceEntriesTable.category,
+          name: designIntelligenceEntriesTable.name,
+          data_json: designIntelligenceEntriesTable.dataJson,
+          tags: designIntelligenceEntriesTable.tags,
+        })
+        .from(designIntelligenceEntriesTable)
+        .where(whereClause)
+        .orderBy(designIntelligenceEntriesTable.id)
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({ total: sql<number>`count(*)::int` })
+        .from(designIntelligenceEntriesTable)
+        .where(whereClause),
+    ]);
+
+    return res.json({ entries, total: totalResult[0]?.total ?? 0, limit, offset, bookmarkedIds });
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch bookmarked design entries");
+    return res.status(500).json({ error: "Failed to fetch bookmarks" });
+  }
+});
+
+/**
+ * POST /api/design-intelligence/bookmarks/:entryId
+ *
+ * Bookmark a design entry. Idempotent — bookmarking an already-bookmarked entry is a no-op.
+ */
+router.post("/design-intelligence/bookmarks/:entryId", async (req, res) => {
+  const entryId = parseInt(req.params["entryId"] ?? "", 10);
+  if (isNaN(entryId)) {
+    return res.status(400).json({ error: "Invalid entryId" });
+  }
+
+  try {
+    await db
+      .insert(designIntelligenceBookmarksTable)
+      .values({ entryId })
+      .onConflictDoNothing();
+
+    return res.json({ ok: true, bookmarked: true, entryId });
+  } catch (err) {
+    req.log.error({ err }, "Failed to bookmark design entry");
+    return res.status(500).json({ error: "Failed to bookmark entry" });
+  }
+});
+
+/**
+ * DELETE /api/design-intelligence/bookmarks/:entryId
+ *
+ * Remove a bookmark from a design entry.
+ */
+router.delete("/design-intelligence/bookmarks/:entryId", async (req, res) => {
+  const entryId = parseInt(req.params["entryId"] ?? "", 10);
+  if (isNaN(entryId)) {
+    return res.status(400).json({ error: "Invalid entryId" });
+  }
+
+  try {
+    await db
+      .delete(designIntelligenceBookmarksTable)
+      .where(eq(designIntelligenceBookmarksTable.entryId, entryId));
+
+    return res.json({ ok: true, bookmarked: false, entryId });
+  } catch (err) {
+    req.log.error({ err }, "Failed to remove bookmark");
+    return res.status(500).json({ error: "Failed to remove bookmark" });
+  }
+});
+
+/**
+ * GET /api/design-intelligence/bookmarks/ids
+ *
+ * Returns just the set of bookmarked entry IDs (lightweight endpoint for UI state).
+ */
+router.get("/design-intelligence/bookmarks/ids", async (req, res) => {
+  try {
+    const bookmarks = await db
+      .select({ entryId: designIntelligenceBookmarksTable.entryId })
+      .from(designIntelligenceBookmarksTable);
+
+    return res.json({ bookmarkedIds: bookmarks.map((b) => b.entryId) });
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch bookmarked IDs");
+    return res.status(500).json({ error: "Failed to fetch bookmark IDs" });
+  }
 });
 
 export default router;
