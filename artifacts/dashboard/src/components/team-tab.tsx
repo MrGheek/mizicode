@@ -756,7 +756,21 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
     queryClient.invalidateQueries({ queryKey: getListHeavyJobsQueryKey(sessionId, { status: "queued,running,deferred" }) });
   }
 
-  const [showResolvedHandoffs, setShowResolvedHandoffs] = useState(false);
+  const [showResolvedHandoffs, setShowResolvedHandoffs] = useState(() => {
+    try {
+      return localStorage.getItem('handoff-show-resolved') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleSetShowResolvedHandoffs = (value: boolean) => {
+    try {
+      localStorage.setItem('handoff-show-resolved', String(value));
+    } catch {
+    }
+    setShowResolvedHandoffs(value);
+  };
 
   if (isLoading) {
     return (
@@ -904,7 +918,7 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
               </Badge>
               {resolvedHandoffs.length > 0 && (
                 <button
-                  onClick={() => setShowResolvedHandoffs((v) => !v)}
+                  onClick={() => handleSetShowResolvedHandoffs(!showResolvedHandoffs)}
                   className="text-[10px] text-muted-foreground/60 hover:text-muted-foreground underline underline-offset-2 transition-colors font-normal normal-case tracking-normal"
                 >
                   {showResolvedHandoffs ? "Hide resolved" : `Show resolved (${resolvedHandoffs.length})`}
