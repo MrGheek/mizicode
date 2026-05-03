@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "OmniQL Cloud Coding"
+title = "FLOATR Cloud Coding"
 version = "1.0.0"
 id = "artifacts/dashboard"
 router = "path"
