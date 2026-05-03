@@ -2004,6 +2004,20 @@ export default function SessionDetail() {
     memConnectRef.current?.();
   };
 
+  useEffect(() => {
+    if (!memGaveUp) return;
+    toast({
+      title: "Live feed disconnected",
+      description: "The memory stream stopped after several failed attempts.",
+      variant: "destructive",
+      action: (
+        <ToastAction altText="Reconnect" onClick={handleMemoryReconnect}>
+          Reconnect
+        </ToastAction>
+      ),
+    });
+  }, [memGaveUp]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Reconnect the memory stream whenever the tab regains focus to avoid silent stalls.
   // Reuses the existing handleMemoryReconnect logic which resets retry state cleanly.
   useVisibilityReconnect(() => {
