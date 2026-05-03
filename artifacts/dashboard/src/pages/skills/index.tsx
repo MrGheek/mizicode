@@ -156,6 +156,29 @@ function SkillSourceBlock({ skillId, alwaysOpen }: { skillId: number; alwaysOpen
   );
 }
 
+function DesignCategoryPills({ categories }: { categories: string[] }) {
+  if (categories.length === 0) return null;
+  const visible = categories.slice(0, 2);
+  const overflow = categories.length - visible.length;
+  return (
+    <div className="flex items-center gap-1 flex-wrap">
+      {visible.map((cat) => (
+        <Badge
+          key={cat}
+          variant="outline"
+          className="text-[10px] py-0 h-4 gap-0.5 border-primary/30 text-primary/70 bg-primary/5"
+        >
+          <span>{categoryIcon(cat)}</span>
+          <span className="capitalize ml-0.5">{cat}</span>
+        </Badge>
+      ))}
+      {overflow > 0 && (
+        <span className="text-[10px] text-muted-foreground/60">+{overflow} more</span>
+      )}
+    </div>
+  );
+}
+
 function SkillCard({
   skill,
   showProvenance,
@@ -165,6 +188,7 @@ function SkillCard({
   onToggle,
   isActioning,
   feedbackScores,
+  designCategories,
   onClick,
 }: {
   skill: SkillRecord;
@@ -175,6 +199,7 @@ function SkillCard({
   onToggle?: () => void;
   isActioning?: boolean;
   feedbackScores?: Record<string, FeedbackScoreEntry>;
+  designCategories?: string[];
   onClick?: () => void;
 }) {
   const isHighRisk = skill.installRisk === "hooked" || skill.installRisk === "binary";
@@ -201,6 +226,11 @@ function SkillCard({
             <h3 className="font-semibold text-sm mt-1">{skill.name}</h3>
             {skill.description && (
               <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{skill.description}</p>
+            )}
+            {designCategories && designCategories.length > 0 && (
+              <div className="mt-1.5">
+                <DesignCategoryPills categories={designCategories} />
+              </div>
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -1061,6 +1091,28 @@ export default function SkillsLibrary() {
     refetchInterval: 60000,
   });
 
+  const { data: skillMapData } = useQuery({
+    queryKey: ["design-intelligence-skill-map"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/design-intelligence/skill-map`);
+      if (!res.ok) throw new Error("Failed to fetch skill map");
+      return res.json() as Promise<{ skillMap: Record<string, Array<{ id: number }>>; totalCategories: number }>;
+    },
+    staleTime: 120000,
+  });
+
+  const skillDesignCategoriesById = (() => {
+    const map: Record<number, string[]> = {};
+    if (!skillMapData?.skillMap) return map;
+    for (const [category, skills] of Object.entries(skillMapData.skillMap)) {
+      for (const s of skills) {
+        if (!map[s.id]) map[s.id] = [];
+        map[s.id].push(category);
+      }
+    }
+    return map;
+  })();
+
   function formatRelativeTime(isoString: string | null): string {
     if (!isoString) return "Never";
     const diff = Date.now() - new Date(isoString).getTime();
@@ -1247,6 +1299,7 @@ export default function SkillsLibrary() {
                         onToggle={() => handleToggle(skill)}
                         isActioning={actioningId === skill.id}
                         feedbackScores={feedbackScoresMap}
+                        designCategories={skillDesignCategoriesById[skill.id]}
                         onClick={() => setSelectedSkill(skill)}
                       />
                     ))}
@@ -1285,6 +1338,7 @@ export default function SkillsLibrary() {
                   onReject={() => handleReject(skill)}
                   isActioning={actioningId === skill.id}
                   feedbackScores={feedbackScoresMap}
+                  designCategories={skillDesignCategoriesById[skill.id]}
                   onClick={() => setSelectedSkill(skill)}
                 />
               ))}
