@@ -3227,6 +3227,11 @@ components:
         timezone:
           type: string
           description: "IANA timezone (e.g. America/New_York)"
+        teamMemberNames:
+          type: array
+          items:
+            type: string
+          description: "Team member display names to include on auto-scheduled team sessions"
         createdAt:
           type: string
           format: date-time
@@ -3241,6 +3246,7 @@ components:
         - secondReminderTime
         - daysOfWeek
         - timezone
+        - teamMemberNames
         - createdAt
         - updatedAt
 
@@ -3269,6 +3275,11 @@ components:
         timezone:
           type: string
           description: "IANA timezone (e.g. America/New_York)"
+        teamMemberNames:
+          type: array
+          items:
+            type: string
+          description: "Team member display names to include on auto-scheduled team sessions"
 
     NotImplementedResponse:
       type: object

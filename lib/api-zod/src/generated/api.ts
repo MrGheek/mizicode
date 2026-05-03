@@ -842,6 +842,11 @@ export const GetSchedulerConfigResponse = zod.object({
     .array(zod.string())
     .describe("Days to run scheduler (mon, tue, wed, thu, fri, sat, sun)"),
   timezone: zod.string().describe("IANA timezone (e.g. America\/New_York)"),
+  teamMemberNames: zod
+    .array(zod.string())
+    .describe(
+      "Team member display names to include on auto-scheduled team sessions",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -873,6 +878,12 @@ export const UpdateSchedulerConfigBody = zod.object({
     .string()
     .optional()
     .describe("IANA timezone (e.g. America\/New_York)"),
+  teamMemberNames: zod
+    .array(zod.string())
+    .optional()
+    .describe(
+      "Team member display names to include on auto-scheduled team sessions",
+    ),
 });
 
 export const UpdateSchedulerConfigResponse = zod.object({
@@ -892,6 +903,11 @@ export const UpdateSchedulerConfigResponse = zod.object({
     .array(zod.string())
     .describe("Days to run scheduler (mon, tue, wed, thu, fri, sat, sun)"),
   timezone: zod.string().describe("IANA timezone (e.g. America\/New_York)"),
+  teamMemberNames: zod
+    .array(zod.string())
+    .describe(
+      "Team member display names to include on auto-scheduled team sessions",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });

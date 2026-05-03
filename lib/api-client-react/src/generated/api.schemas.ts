@@ -242,6 +242,8 @@ export interface SchedulerConfig {
   daysOfWeek: string[];
   /** IANA timezone (e.g. America/New_York) */
   timezone: string;
+  /** Team member display names to include on auto-scheduled team sessions */
+  teamMemberNames: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -259,6 +261,8 @@ export interface UpdateSchedulerRequest {
   daysOfWeek?: string[];
   /** IANA timezone (e.g. America/New_York) */
   timezone?: string;
+  /** Team member display names to include on auto-scheduled team sessions */
+  teamMemberNames?: string[];
 }
 
 export interface NotImplementedResponse {
