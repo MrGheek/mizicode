@@ -5,10 +5,13 @@ import {
   useListSessions,
   useGetActiveSession,
   useEnqueueRepoIndex,
+  useCloneSession,
   getGetRepoSummaryQueryKey,
   getGetRepoFingerprintQueryKey,
+  getCloneSessionQueryKey,
 } from "@workspace/api-client-react";
 import {
+  Github,
   LayoutDashboard,
   Terminal,
   Wand2,
@@ -83,9 +86,16 @@ export function CommandPalette() {
   }, [sessionDetailId, sessions]);
 
   // Global hotkey listener: Cmd/Ctrl+K toggles palette, "?" opens help overlay.
+  // Both are suppressed while typing in inputs/textareas/contenteditable so
+  // they never steal keystrokes from forms (the palette's own input is allowed
+  // to close itself via Escape, handled by Radix Dialog).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (isCommandPaletteShortcut(e)) {
+        // Allow Cmd/Ctrl+K only when not typing into the main app's inputs.
+        // The palette's own input is fine — when the palette is already open,
+        // we always allow toggling it shut.
+        if (!open && isTypingTarget(e)) return;
         e.preventDefault();
         setOpen((v) => !v);
         return;
@@ -133,6 +143,43 @@ export function CommandPalette() {
   const handleStopSession = useCallback(() => {
     window.dispatchEvent(new CustomEvent("floatr:request-stop-session"));
   }, []);
+
+  // "New Session" — navigates to the dashboard and asks the first profile
+  // card to open its launch dialog. Using a window event avoids lifting state
+  // out of ProfileCard while still giving us a single, real launch flow.
+  const handleNewSession = useCallback(() => {
+    if (location !== "/") {
+      setLocation("/");
+      // Wait for the dashboard to mount its ProfileCards before signalling.
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("floatr:open-launch-dialog"));
+      }, 50);
+    } else {
+      window.dispatchEvent(new CustomEvent("floatr:open-launch-dialog"));
+    }
+  }, [location, setLocation]);
+
+  // Recover the current session's repo URL from the clone snapshot — Session
+  // doesn't carry repoUrl directly, but the clone endpoint exposes it. Used
+  // for the "Open Repo in GitHub" command.
+  const { data: cloneSnapshot } = useCloneSession(currentSession?.id ?? 0, {
+    query: {
+      queryKey: getCloneSessionQueryKey(currentSession?.id ?? 0),
+      enabled: Boolean(currentSession?.id),
+      staleTime: 60_000,
+    },
+  });
+  const currentRepoUrl = cloneSnapshot?.repoUrl ?? null;
+  const githubUrl = useMemo(() => {
+    if (!currentRepoUrl) return null;
+    const trimmed = currentRepoUrl.trim().replace(/\.git$/i, "").replace(/\/+$/, "");
+    if (!trimmed) return null;
+    // git@github.com:owner/repo → https://github.com/owner/repo
+    const ssh = trimmed.match(/^git@([^:]+):(.+)$/);
+    if (ssh) return `https://${ssh[1]}/${ssh[2]}`;
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return null;
+  }, [currentRepoUrl]);
 
   const handleCopySsh = useCallback(
     (session: NonNullable<typeof currentSession>) => {
@@ -241,7 +288,7 @@ export function CommandPalette() {
 
               <CommandGroup heading="Sessions">
                 <CommandItem
-                  onSelect={() => runCommand(() => setLocation("/"))}
+                  onSelect={() => runCommand(() => handleNewSession())}
                   keywords={["new", "launch", "create", "session"]}
                 >
                   <Plus /> New Session
@@ -340,6 +387,16 @@ export function CommandPalette() {
                       keywords={["ide", "editor", "bolt"]}
                     >
                       <ExternalLink /> Open Coding Environment
+                    </CommandItem>
+                  )}
+                  {githubUrl && (
+                    <CommandItem
+                      onSelect={() =>
+                        runCommand(() => window.open(githubUrl, "_blank", "noopener"))
+                      }
+                      keywords={["github", "repo", "repository", "open"]}
+                    >
+                      <Github /> Open Repo in GitHub
                     </CommandItem>
                   )}
                 </CommandGroup>

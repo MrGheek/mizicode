@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,13 @@ interface ProfileCardProps {
   profile: GpuProfile;
   onLaunch: (profileId: number, opts?: Omit<LaunchOptions, "profileId">) => void;
   isLaunching?: boolean;
+  /**
+   * If true, this card listens for the global "floatr:open-launch-dialog"
+   * event (dispatched by the command palette / sessions-list "n" shortcut)
+   * and opens its launch dialog. Exactly one card per page should be the
+   * default.
+   */
+  isDefaultLaunch?: boolean;
 }
 
 const PROFILE_TAGLINES: Record<string, string> = {
@@ -38,9 +45,16 @@ const PROFILE_TAGLINES: Record<string, string> = {
     "671B MIT-licensed model with strong general coding and multi-language reasoning. Great when open licensing is a requirement.",
 };
 
-export function ProfileCard({ profile, onLaunch, isLaunching }: ProfileCardProps) {
+export function ProfileCard({ profile, onLaunch, isLaunching, isDefaultLaunch }: ProfileCardProps) {
   const tagline = PROFILE_TAGLINES[profile.name] ?? "";
   const [dialogOpen, setDialogOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isDefaultLaunch) return;
+    const onOpen = () => setDialogOpen(true);
+    window.addEventListener("floatr:open-launch-dialog", onOpen);
+    return () => window.removeEventListener("floatr:open-launch-dialog", onOpen);
+  }, [isDefaultLaunch]);
 
   const handleConfirm = (opts: LaunchOptions) => {
     const { profileId, ...rest } = opts;

@@ -189,10 +189,20 @@ export default function SessionsList() {
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const dispatchNewSession = () => {
+        if (window.location.pathname.replace(/\/$/, "") !== "") {
+          setLocation("/");
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent("floatr:open-launch-dialog"));
+          }, 50);
+        } else {
+          window.dispatchEvent(new CustomEvent("floatr:open-launch-dialog"));
+        }
+      };
       if (!filteredSessions || filteredSessions.length === 0) {
         if (e.key === "n") {
           e.preventDefault();
-          setLocation("/");
+          dispatchNewSession();
         }
         return;
       }
@@ -215,7 +225,7 @@ export default function SessionsList() {
         }
       } else if (e.key === "n") {
         e.preventDefault();
-        setLocation("/");
+        dispatchNewSession();
       }
     };
     window.addEventListener("keydown", onKey);

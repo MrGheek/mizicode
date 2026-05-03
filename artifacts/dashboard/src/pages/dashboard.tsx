@@ -426,7 +426,7 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
         </div>
       ) : isGrouped ? (
         <div className="space-y-8">
-          {modelGroups.map(({ model, items }) => (
+          {modelGroups.map(({ model, items }, groupIdx) => (
             <div key={model}>
               <div className="flex items-baseline gap-3 mb-3 pb-2 border-b border-border/40">
                 <h3 className="text-base font-semibold">{model}</h3>
@@ -435,12 +435,13 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
                 </span>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {items.map(profile => (
+                {items.map((profile, idx) => (
                   <ProfileCard
                     key={profile.id}
                     profile={profile}
                     onLaunch={onLaunch}
                     isLaunching={launchingProfileId === profile.id}
+                    isDefaultLaunch={groupIdx === 0 && idx === 0}
                   />
                 ))}
               </div>
@@ -449,12 +450,13 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {profiles.map(profile => (
+          {profiles.map((profile, idx) => (
             <ProfileCard
               key={profile.id}
               profile={profile}
               onLaunch={onLaunch}
               isLaunching={launchingProfileId === profile.id}
+              isDefaultLaunch={idx === 0}
             />
           ))}
         </div>
