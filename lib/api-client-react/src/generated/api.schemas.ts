@@ -97,12 +97,19 @@ export interface Session {
   tokenMode?: string | null;
   /** Active Smart Skills bundle ID */
   activeBundleId?: number | null;
+  /** Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session). */
+  intentText?: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface ActiveSessionResponse {
   session: Session | null;
+}
+
+export interface UpdateSessionRequest {
+  /** Updated plain-English session intent (max 500 chars). Pass null or empty string to clear. */
+  intentText?: string | null;
 }
 
 /**
@@ -130,6 +137,8 @@ export interface CreateSessionRequest {
   repoBranch?: string | null;
   /** Pre-computed repo fingerprint (langs, frameworks, etc.) for Smart Skills ranking. Derived from repoUrl if absent. */
   repoFingerprint?: CreateSessionRequestRepoFingerprint;
+  /** Plain-English description of what the user is trying to accomplish (max 500 chars). Stored on the session and seeded as the opening memory observation. */
+  intentText?: string | null;
 }
 
 export interface Template {
@@ -388,6 +397,8 @@ export interface CompileBundleRequest {
   repoLangs?: string[] | null;
   /** Optional repo URL to help select the best skill bundle for the project's stack. */
   repoUrl?: string | null;
+  /** Optional plain-English session intent. Used as an additional ranking hint when auto-selecting a default bundle. */
+  intentText?: string | null;
   modelProfile?: string | null;
 }
 

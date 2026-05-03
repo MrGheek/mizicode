@@ -162,6 +162,12 @@ export const ListSessionsResponseItem = zod.object({
     .number()
     .nullish()
     .describe("Active Smart Skills bundle ID"),
+  intentText: zod
+    .string()
+    .nullish()
+    .describe(
+      "Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -215,6 +221,100 @@ export const CreateSessionBody = zod.object({
     .describe(
       "Pre-computed repo fingerprint (langs, frameworks, etc.) for Smart Skills ranking. Derived from repoUrl if absent.",
     ),
+  intentText: zod
+    .string()
+    .nullish()
+    .describe(
+      "Plain-English description of what the user is trying to accomplish (max 500 chars). Stored on the session and seeded as the opening memory observation.",
+    ),
+});
+
+/**
+ * Currently supports updating the natural-language intentText (the session "goal").
+ * @summary Update editable session fields
+ */
+export const UpdateSessionParams = zod.object({
+  sessionId: zod.coerce.number(),
+});
+
+export const UpdateSessionBody = zod.object({
+  intentText: zod
+    .string()
+    .nullish()
+    .describe(
+      "Updated plain-English session intent (max 500 chars). Pass null or empty string to clear.",
+    ),
+});
+
+export const UpdateSessionResponse = zod.object({
+  id: zod.number(),
+  profileId: zod.number(),
+  profileName: zod.string(),
+  vastInstanceId: zod.number().nullish(),
+  vastOfferId: zod.number().nullish(),
+  templateHash: zod.string().nullish(),
+  status: zod.enum([
+    "pending",
+    "provisioning",
+    "downloading",
+    "starting",
+    "ready",
+    "stopping",
+    "stopped",
+    "error",
+  ]),
+  statusMessage: zod.string().nullish(),
+  boltDiyUrl: zod.string().nullish(),
+  codeServerUrl: zod.string().nullish(),
+  previewUrl: zod.string().nullish(),
+  sshHost: zod.string().nullish(),
+  sshPort: zod.number().nullish(),
+  publicIp: zod.string().nullish(),
+  costPerHour: zod.number().nullish(),
+  totalCost: zod.number().nullish(),
+  gpuName: zod.string().nullish(),
+  numGpus: zod.number().nullish(),
+  startedAt: zod.coerce.date().nullish(),
+  stoppedAt: zod.coerce.date().nullish(),
+  teamMembers: zod
+    .array(
+      zod.object({
+        name: zod.string(),
+        password: zod
+          .string()
+          .nullish()
+          .describe(
+            "Only present on GET \/sessions\/:id (detail). Omitted from list responses.",
+          ),
+        path: zod.string(),
+        ideUrl: zod.string().nullish(),
+      }),
+    )
+    .nullish(),
+  taskMode: zod
+    .string()
+    .nullish()
+    .describe(
+      "Task mode used for Smart Skills selection (build, review, debug, refactor, explore, team)",
+    ),
+  tokenMode: zod
+    .string()
+    .nullish()
+    .describe(
+      "Token mode used for context budgeting (full, core, lean, ultra)",
+    ),
+  activeBundleId: zod
+    .number()
+    .nullish()
+    .describe("Active Smart Skills bundle ID"),
+  intentText: zod
+    .string()
+    .nullish()
+    .describe(
+      "Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).",
+    ),
+  createdAt: zod.coerce.date(),
+  updatedAt: zod.coerce.date(),
 });
 
 /**
@@ -286,6 +386,12 @@ export const GetSessionResponse = zod.object({
     .number()
     .nullish()
     .describe("Active Smart Skills bundle ID"),
+  intentText: zod
+    .string()
+    .nullish()
+    .describe(
+      "Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -359,6 +465,12 @@ export const DeleteSessionResponse = zod.object({
     .number()
     .nullish()
     .describe("Active Smart Skills bundle ID"),
+  intentText: zod
+    .string()
+    .nullish()
+    .describe(
+      "Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -430,6 +542,12 @@ export const GetActiveSessionResponse = zod.object({
         .number()
         .nullish()
         .describe("Active Smart Skills bundle ID"),
+      intentText: zod
+        .string()
+        .nullish()
+        .describe(
+          "Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).",
+        ),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     })
@@ -505,6 +623,12 @@ export const RefreshSessionStatusResponse = zod.object({
     .number()
     .nullish()
     .describe("Active Smart Skills bundle ID"),
+  intentText: zod
+    .string()
+    .nullish()
+    .describe(
+      "Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).",
+    ),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -1718,6 +1842,12 @@ export const CompileBundleBody = zod.object({
     .nullish()
     .describe(
       "Optional repo URL to help select the best skill bundle for the project's stack.",
+    ),
+  intentText: zod
+    .string()
+    .nullish()
+    .describe(
+      "Optional plain-English session intent. Used as an additional ranking hint when auto-selecting a default bundle.",
     ),
   modelProfile: zod.string().nullish(),
 });

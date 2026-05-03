@@ -126,6 +126,36 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /sessions/{sessionId}:
+    patch:
+      operationId: updateSession
+      tags: [sessions]
+      summary: Update editable session fields
+      description: Currently supports updating the natural-language intentText (the session "goal").
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSessionRequest"
+      responses:
+        "200":
+          description: Updated session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     get:
       operationId: getSession
       tags: [sessions]
@@ -2853,6 +2883,10 @@ components:
           type: integer
           nullable: true
           description: Active Smart Skills bundle ID
+        intentText:
+          type: string
+          nullable: true
+          description: Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).
         createdAt:
           type: string
           format: date-time
@@ -2875,6 +2909,14 @@ components:
           nullable: true
       required:
         - session
+
+    UpdateSessionRequest:
+      type: object
+      properties:
+        intentText:
+          type: string
+          nullable: true
+          description: Updated plain-English session intent (max 500 chars). Pass null or empty string to clear.
 
     CreateSessionRequest:
       type: object
@@ -2916,6 +2958,10 @@ components:
           nullable: true
           additionalProperties: true
           description: Pre-computed repo fingerprint (langs, frameworks, etc.) for Smart Skills ranking. Derived from repoUrl if absent.
+        intentText:
+          type: string
+          nullable: true
+          description: Plain-English description of what the user is trying to accomplish (max 500 chars). Stored on the session and seeded as the opening memory observation.
       required:
         - profileId
 
@@ -3490,6 +3536,10 @@ components:
           type: string
           nullable: true
           description: Optional repo URL to help select the best skill bundle for the project's stack.
+        intentText:
+          type: string
+          nullable: true
+          description: Optional plain-English session intent. Used as an additional ranking hint when auto-selecting a default bundle.
         modelProfile:
           type: string
           nullable: true

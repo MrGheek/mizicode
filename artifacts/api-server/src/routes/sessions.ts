@@ -5,7 +5,7 @@ import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
-import { listObservations, listSessions, searchMemory, subscribeToObservations, backupDb, restoreDb } from "../services/memory";
+import { listObservations, listSessions, searchMemory, subscribeToObservations, backupDb, restoreDb, addObservation } from "../services/memory";
 import fs from "fs";
 import type { TeamMemberRecord, SessionRoutingStats } from "@workspace/db";
 import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles, getRepoIntelligenceForSession } from "../services/skills-bundler";
@@ -375,8 +375,99 @@ router.get("/sessions/:sessionId", async (req, res) => {
   res.json({ ...synced, profileName: profile?.displayName || "", swarmWorkerCap: profile?.swarmWorkerCap ?? null });
 });
 
+// PATCH /sessions/:sessionId — update editable session fields. Currently only
+// supports `intentText` (the natural-language session goal). When the goal
+// changes, we also append a `session_goal` observation so the change is
+// visible in the memory timeline.
+router.patch("/sessions/:sessionId", async (req, res) => {
+  const id = parseInt(req.params.sessionId);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
+
+  const body = (req.body ?? {}) as { intentText?: string | null };
+
+  // PATCH semantics: only fields explicitly present in the body are updated.
+  // An absent `intentText` key is a no-op; `null` or an empty/whitespace string
+  // explicitly clears the goal.
+  const intentTextPresent = Object.prototype.hasOwnProperty.call(body, "intentText");
+  let nextIntentText: string | null | undefined = undefined;
+  if (intentTextPresent) {
+    const raw = body.intentText;
+    if (raw === null || raw === undefined) {
+      nextIntentText = null;
+    } else if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      nextIntentText = trimmed.length > 0 ? trimmed.slice(0, 500) : null;
+    } else {
+      res.status(400).json({ error: "intentText must be a string or null" });
+      return;
+    }
+  }
+
+  const [existing] = await db
+    .select()
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, id));
+
+  if (!existing) {
+    res.status(404).json({ error: "Session not found" });
+    return;
+  }
+
+  if (!intentTextPresent) {
+    // Nothing to update — just return the current session shape for consistency.
+    const [profile0] = await db
+      .select({ displayName: gpuProfilesTable.displayName, swarmWorkerCap: gpuProfilesTable.swarmWorkerCap })
+      .from(gpuProfilesTable)
+      .where(eq(gpuProfilesTable.id, existing.profileId));
+    res.json({
+      ...redactOwnerToken(existing),
+      profileName: profile0?.displayName || "",
+      swarmWorkerCap: profile0?.swarmWorkerCap ?? null,
+    });
+    return;
+  }
+
+  const [updated] = await db
+    .update(sessionsTable)
+    .set({ intentText: nextIntentText ?? null, updatedAt: new Date() })
+    .where(eq(sessionsTable.id, id))
+    .returning();
+
+  if (nextIntentText && nextIntentText !== existing.intentText) {
+    try {
+      const memUserId = process.env["OMNIQL_MEM_USER_ID"] || "operator";
+      addObservation(String(id), memUserId, "session_goal", "", nextIntentText);
+    } catch (memErr) {
+      logger.warn({ err: memErr, sessionId: id }, "Failed to record updated session_goal observation (non-fatal)");
+    }
+  }
+
+  const [profile] = await db
+    .select({ displayName: gpuProfilesTable.displayName, swarmWorkerCap: gpuProfilesTable.swarmWorkerCap })
+    .from(gpuProfilesTable)
+    .where(eq(gpuProfilesTable.id, updated.profileId));
+
+  res.json({
+    ...redactOwnerToken(updated),
+    profileName: profile?.displayName || "",
+    swarmWorkerCap: profile?.swarmWorkerCap ?? null,
+  });
+});
+
 router.post("/sessions", async (req, res) => {
-  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint } = req.body;
+  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText } = req.body;
+
+  // Sanitize and bound the natural-language session intent (optional).
+  let intentText: string | null = null;
+  if (typeof rawIntentText === "string") {
+    const trimmed = rawIntentText.trim();
+    if (trimmed.length > 0) {
+      intentText = trimmed.slice(0, 500);
+    }
+  }
 
   if (!profileId) {
     res.status(400).json({ error: "profileId is required" });
@@ -536,6 +627,7 @@ router.post("/sessions", async (req, res) => {
         tokenMode: resolvedTokenMode,
         activeBundleId: requestedBundleId || null,
         repoFingerprintJson,
+        intentText,
         // Owner token: a random secret issued at session creation. Required by
         // the dashboard to call owner-only endpoints (e.g. swarm abort). Not a
         // team-member credential — team members use their own name+password.
@@ -577,6 +669,7 @@ router.post("/sessions", async (req, res) => {
         repoLangs,
         tokenMode: resolvedTokenMode as SessionContext["tokenMode"],
         repoIntelligence,
+        intentText: intentText || undefined,
       };
 
       let bundle: typeof skillBundlesTable.$inferSelect | null = null;
@@ -663,6 +756,23 @@ router.post("/sessions", async (req, res) => {
       })
       .where(eq(sessionsTable.id, session.id))
       .returning();
+
+    // Seed the natural-language session goal as the opening memory observation
+    // so it shows up in session timelines and is searchable from day one.
+    // Fire-and-forget — memory writes shouldn't block the launch response.
+    if (intentText) {
+      try {
+        addObservation(
+          String(session.id),
+          memUserId,
+          "session_goal",
+          "",
+          intentText,
+        );
+      } catch (memErr) {
+        logger.warn({ err: memErr, sessionId: session.id }, "Failed to seed session_goal observation (non-fatal)");
+      }
+    }
 
     // ownerToken is a bearer secret — expose only via GET /sessions/:id detail.
     // The creation response goes to the dashboard which will redirect to the detail page.

@@ -677,15 +677,20 @@ router.post("/skill-bundles/seed", async (_req, res) => {
 });
 
 router.post("/skill-bundles/compile", async (req, res) => {
-  const { bundleId, sessionType, taskMode, tokenMode, repoLangs, repoUrl, modelProfile } = req.body as {
+  const { bundleId, sessionType, taskMode, tokenMode, repoLangs, repoUrl, intentText, modelProfile } = req.body as {
     bundleId?: number;
     sessionType?: string;
     taskMode?: string;
     tokenMode?: string;
     repoLangs?: string[];
     repoUrl?: string;
+    intentText?: string;
     modelProfile?: string;
   };
+  // intentText is forwarded into the session context as a soft ranking hint.
+  // The bundle ranker may use it (alongside taskMode/repoLangs) to bias
+  // selection toward bundles/skills that match the user's stated goal.
+  const trimmedIntent = typeof intentText === "string" ? intentText.trim().slice(0, 500) : "";
 
   const ctx: SessionContext = {
     sessionType: (sessionType || "solo") as SessionContext["sessionType"],
@@ -693,6 +698,7 @@ router.post("/skill-bundles/compile", async (req, res) => {
     modelProfile: modelProfile || "kimi",
     repoLangs: repoLangs || [],
     tokenMode: (tokenMode || "core") as SessionContext["tokenMode"],
+    intentText: trimmedIntent || undefined,
   };
 
   try {

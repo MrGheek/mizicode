@@ -135,6 +135,7 @@ import type {
   UpdateMemoryConflictStatusBody,
   UpdateMemoryConflictStatusParams,
   UpdateSchedulerRequest,
+  UpdateSessionRequest,
   UpdateTemplateRequest,
 } from "./api.schemas";
 
@@ -547,6 +548,94 @@ export const useCreateSession = <
   TContext
 > => {
   return useMutation(getCreateSessionMutationOptions(options));
+};
+
+/**
+ * Currently supports updating the natural-language intentText (the session "goal").
+ * @summary Update editable session fields
+ */
+export const getUpdateSessionUrl = (sessionId: number) => {
+  return `/api/sessions/${sessionId}`;
+};
+
+export const updateSession = async (
+  sessionId: number,
+  updateSessionRequest: UpdateSessionRequest,
+  options?: RequestInit,
+): Promise<Session> => {
+  return customFetch<Session>(getUpdateSessionUrl(sessionId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateSessionRequest),
+  });
+};
+
+export const getUpdateSessionMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSession>>,
+    TError,
+    { sessionId: number; data: BodyType<UpdateSessionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateSession>>,
+  TError,
+  { sessionId: number; data: BodyType<UpdateSessionRequest> },
+  TContext
+> => {
+  const mutationKey = ["updateSession"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateSession>>,
+    { sessionId: number; data: BodyType<UpdateSessionRequest> }
+  > = (props) => {
+    const { sessionId, data } = props ?? {};
+
+    return updateSession(sessionId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateSessionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateSession>>
+>;
+export type UpdateSessionMutationBody = BodyType<UpdateSessionRequest>;
+export type UpdateSessionMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Update editable session fields
+ */
+export const useUpdateSession = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateSession>>,
+    TError,
+    { sessionId: number; data: BodyType<UpdateSessionRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateSession>>,
+  TError,
+  { sessionId: number; data: BodyType<UpdateSessionRequest> },
+  TContext
+> => {
+  return useMutation(getUpdateSessionMutationOptions(options));
 };
 
 /**

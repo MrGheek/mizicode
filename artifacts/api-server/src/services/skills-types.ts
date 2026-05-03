@@ -148,6 +148,12 @@ export interface SessionContext {
    */
   evalLiftScores?: Record<string, number>;
   repoIntelligence?: RepoIntelligenceContext;
+  /**
+   * Optional natural-language description of what the user is trying to
+   * accomplish. Forwarded as a soft signal that future ranking/compilation
+   * passes can use to bias bundle/skill selection.
+   */
+  intentText?: string;
 }
 
 export interface DesignContextEntry {

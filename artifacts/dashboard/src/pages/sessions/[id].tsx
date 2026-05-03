@@ -1,6 +1,7 @@
 import { useLocation, useParams } from "wouter";
 import {
   useGetSession,
+  useUpdateSession,
   useDeleteSession,
   useRefreshSessionStatus,
   useCreateSession,
@@ -26,11 +27,12 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
   Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw, Users, Copy, Check, Eye, EyeOff, FolderOpen,
-  Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap, Network,
+  Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap, Network, Target, Pencil,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { SessionStatusBadge } from "@/components/session-status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -1688,8 +1690,11 @@ export default function SessionDetail() {
   const deleteSession = useDeleteSession();
   const refreshStatus = useRefreshSessionStatus();
   const createSession = useCreateSession();
+  const updateSession = useUpdateSession();
   const [isRetrying, setIsRetrying] = useState(false);
   const [stopRatingOpen, setStopRatingOpen] = useState(false);
+  const [goalEditOpen, setGoalEditOpen] = useState(false);
+  const [goalDraft, setGoalDraft] = useState("");
   const completeFeedback = useSessionCompleteFeedback();
 
   // Swarm status — polled every 3 seconds when session is ready
@@ -1924,7 +1929,7 @@ export default function SessionDetail() {
     setIsRetrying(true);
     deleteSession.mutate({ sessionId }, {
       onSuccess: () => {
-        createSession.mutate({ data: { profileId: session.profileId } }, {
+        createSession.mutate({ data: { profileId: session.profileId, intentText: session.intentText ?? null } }, {
           onSuccess: (newSession) => {
             toast({ title: "Retrying on a new machine", description: "Launched a fresh instance." });
             queryClient.invalidateQueries({ queryKey: getGetActiveSessionQueryKey() });
@@ -2018,6 +2023,27 @@ export default function SessionDetail() {
             Session #{session.id} · {session.gpuName} x{session.numGpus}
             {session.vastInstanceId ? ` · Vast #${session.vastInstanceId}` : ""}
           </p>
+          {/* Session goal — natural-language intent, editable mid-session. */}
+          <button
+            type="button"
+            onClick={() => {
+              setGoalDraft(session.intentText ?? "");
+              setGoalEditOpen(true);
+            }}
+            className="mt-2 inline-flex items-start gap-2 max-w-2xl text-left rounded-md border border-border/40 bg-secondary/20 hover:bg-secondary/30 hover:border-border transition-colors px-2.5 py-1.5 group"
+            data-testid="button-edit-session-goal"
+          >
+            <Target className="w-3.5 h-3.5 text-primary mt-0.5 shrink-0" />
+            <span className="text-xs leading-snug flex-1 min-w-0">
+              <span className="text-muted-foreground/70 uppercase tracking-wider text-[9px] font-semibold mr-1.5">Goal</span>
+              {session.intentText ? (
+                <span className="text-foreground/90">{session.intentText}</span>
+              ) : (
+                <span className="text-muted-foreground italic">Add a one-line description of what you're working on</span>
+              )}
+            </span>
+            <Pencil className="w-3 h-3 text-muted-foreground/50 group-hover:text-foreground mt-0.5 shrink-0" />
+          </button>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshStatus.isPending || !isActive}>
@@ -2581,6 +2607,62 @@ export default function SessionDetail() {
                 disabled={deleteSession.isPending}
               >
                 Stop without rating
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {goalEditOpen && (
+        <Dialog open onOpenChange={(open) => { if (!open) setGoalEditOpen(false); }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Target className="w-4 h-4 text-primary" />
+                Session goal
+              </DialogTitle>
+            </DialogHeader>
+            <div className="py-2 space-y-2">
+              <p className="text-xs text-muted-foreground">
+                What are you working on in this session? Saved as a memory note and shown in the cockpit header.
+              </p>
+              <Textarea
+                value={goalDraft}
+                onChange={e => setGoalDraft(e.target.value.slice(0, 500))}
+                rows={4}
+                placeholder="e.g. Add Stripe checkout to the billing page"
+                className="text-sm resize-none"
+                data-testid="textarea-session-goal"
+                autoFocus
+              />
+              <div className="flex justify-end text-[10px] font-mono text-muted-foreground/60">
+                {goalDraft.length}/500
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setGoalEditOpen(false)} disabled={updateSession.isPending}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  const next = goalDraft.trim();
+                  updateSession.mutate(
+                    { sessionId, data: { intentText: next.length > 0 ? next : null } },
+                    {
+                      onSuccess: () => {
+                        toast({ title: "Session goal updated" });
+                        queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(sessionId) });
+                        setGoalEditOpen(false);
+                      },
+                      onError: () => toast({ title: "Failed to update goal", variant: "destructive" }),
+                    },
+                  );
+                }}
+                disabled={updateSession.isPending}
+                data-testid="button-save-session-goal"
+              >
+                {updateSession.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Saving…</> : "Save"}
               </Button>
             </DialogFooter>
           </DialogContent>

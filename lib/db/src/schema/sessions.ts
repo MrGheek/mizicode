@@ -45,6 +45,10 @@ export const sessionsTable = pgTable("sessions", {
   tokenMode: text("token_mode"),
   activeBundleId: integer("active_bundle_id").references(() => skillBundlesTable.id),
   repoFingerprintJson: jsonb("repo_fingerprint_json"),
+  // Plain-English description of what the user is trying to accomplish in this
+  // session, captured at launch (e.g. "Add Stripe payments to checkout").
+  // Seeded into memory and surfaced as the cockpit goal badge.
+  intentText: text("intent_text"),
   routingStatsJson: jsonb("routing_stats_json").$type<SessionRoutingStats>(),
   swarmSnapshotJson: jsonb("swarm_snapshot_json"),
   // Token issued at session creation time. Required to call session-owner actions

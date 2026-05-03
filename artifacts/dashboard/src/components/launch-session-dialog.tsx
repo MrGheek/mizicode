@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import {
@@ -23,6 +24,7 @@ export interface LaunchOptions {
   tokenMode?: string | null;
   bundleId?: number | null;
   repoUrl?: string | null;
+  intentText?: string | null;
   teamMembers?: string[];
 }
 
@@ -74,6 +76,7 @@ export function LaunchSessionDialog({
   const [taskMode, setTaskMode] = useState("build");
   const [tokenMode, setTokenMode] = useState("core");
   const [repoUrl, setRepoUrl] = useState("");
+  const [intentText, setIntentText] = useState("");
   const [bundleOverride, setBundleOverride] = useState<number | null | "none">(null);
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
@@ -92,6 +95,7 @@ export function LaunchSessionDialog({
         tokenMode,
         modelProfile: profile.name,
         repoUrl: repoUrl.trim() || undefined,
+        intentText: intentText.trim() || undefined,
       },
     }, {
       onSuccess: (result) => setRecommendedBundle(result),
@@ -103,7 +107,7 @@ export function LaunchSessionDialog({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(compileRecommendation, 600);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [taskMode, tokenMode, profile.id, repoUrl]);
+  }, [taskMode, tokenMode, profile.id, repoUrl, intentText]);
 
   const addMember = () => {
     if (memberNames.length < 4) setMemberNames(prev => [...prev, ""]);
@@ -119,6 +123,7 @@ export function LaunchSessionDialog({
       tokenMode,
       bundleId: bundleOverride === "none" ? null : (bundleOverride ?? recommendedBundle?.bundleId ?? null),
       repoUrl: repoUrl.trim() || null,
+      intentText: intentText.trim() || null,
       teamMembers: validTeam.length > 0 ? validTeam : undefined,
     });
   };
@@ -149,6 +154,28 @@ export function LaunchSessionDialog({
         </DialogHeader>
 
         <div className="space-y-5 py-2">
+          {/* Session intent — what are you working on? */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              What are you working on?
+              <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground/60">(optional)</span>
+            </Label>
+            <Textarea
+              placeholder="e.g. Add Stripe checkout to the billing page, or refactor the auth middleware to support API keys"
+              value={intentText}
+              onChange={e => setIntentText(e.target.value.slice(0, 500))}
+              rows={3}
+              className="text-sm resize-none"
+            />
+            <p className="text-[10px] text-muted-foreground flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <Info className="w-3 h-3 shrink-0" />
+                Seeded as the opening memory note and shown as your session goal
+              </span>
+              <span className="font-mono opacity-60">{intentText.length}/500</span>
+            </p>
+          </div>
+
           {/* Task Mode */}
           <div className="space-y-2">
             <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Task Mode</Label>

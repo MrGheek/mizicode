@@ -53,6 +53,7 @@ export default function Dashboard() {
         tokenMode: opts?.tokenMode ?? null,
         bundleId: opts?.bundleId ?? null,
         repoUrl: opts?.repoUrl ?? null,
+        intentText: opts?.intentText ?? null,
       }
     }, {
       onSuccess: (session) => {
