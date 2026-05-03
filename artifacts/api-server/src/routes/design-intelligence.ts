@@ -248,9 +248,13 @@ router.post("/design-intelligence/sync", async (req, res) => {
     return res.status(409).json({ error: "Sync already in progress" });
   }
 
-  void triggerDesignSync();
+  const result = await triggerDesignSync();
 
-  return res.json({ ok: true, message: "Sync started" });
+  if (!result.success) {
+    return res.status(500).json({ ok: false, error: result.reason });
+  }
+
+  return res.json({ ok: true, message: result.reason });
 });
 
 export default router;

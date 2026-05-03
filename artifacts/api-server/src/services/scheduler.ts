@@ -82,8 +82,8 @@ export function getDesignSyncStatus(): DesignSyncStatus {
   return { ...designSyncState };
 }
 
-export async function triggerDesignSync(): Promise<void> {
-  await runDesignSync();
+export async function triggerDesignSync(): Promise<{ success: boolean; reason: string }> {
+  return runDesignSync();
 }
 
 export function markDesignSyncComplete(): void {
@@ -92,10 +92,10 @@ export function markDesignSyncComplete(): void {
   designSyncState.lastError = null;
 }
 
-async function runDesignSync(): Promise<void> {
+async function runDesignSync(): Promise<{ success: boolean; reason: string }> {
   if (designSyncState.isRunning) {
     logger.warn("Design sync: previous run still in progress — skipping this interval tick");
-    return;
+    return { success: false, reason: "Sync already in progress" };
   }
 
   designSyncState.isRunning = true;
@@ -108,14 +108,17 @@ async function runDesignSync(): Promise<void> {
       designSyncState.lastSyncedAt = new Date();
       designSyncState.lastError = null;
       logger.info({ reason: result.reason, updated: result.updated }, "Design sync: completed successfully");
+      return { success: true, reason: result.reason };
     } else {
       designSyncState.lastError = result.reason;
       logger.error({ reason: result.reason }, "Design sync: sync reported failure — lastSyncedAt not updated");
+      return { success: false, reason: result.reason };
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     designSyncState.lastError = message;
     logger.error({ err }, "Design sync: unexpected error during scheduled sync");
+    return { success: false, reason: message };
   } finally {
     designSyncState.isRunning = false;
   }

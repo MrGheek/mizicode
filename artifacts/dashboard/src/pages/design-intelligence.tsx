@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/hooks/use-toast";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 const PAGE_SIZE = 20;
@@ -458,23 +459,35 @@ export default function DesignIntelligence() {
 
   const [syncAlreadyRunning, setSyncAlreadyRunning] = useState(false);
 
+  const ALREADY_RUNNING_MSG = "__sync_already_running__";
+
   const syncMutation = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${BASE_URL}api/design-intelligence/sync`, { method: "POST" });
-      const body = await res.json();
+      const body = await res.json() as { ok?: boolean; error?: string; message?: string };
       if (res.status === 409) {
         setSyncAlreadyRunning(true);
         setTimeout(() => setSyncAlreadyRunning(false), 5000);
-        return body;
+        throw new Error(ALREADY_RUNNING_MSG);
       }
-      if (!res.ok) throw new Error("Failed to start sync");
+      if (!res.ok) {
+        throw new Error(body.error ?? "Sync failed");
+      }
       setSyncAlreadyRunning(false);
       return body;
     },
     onSuccess: () => {
-      setTimeout(() => {
-        void queryClient.invalidateQueries({ queryKey: ["design-intelligence-sources"] });
-      }, 3000);
+      toast({ title: "Sync complete", description: "Design intelligence sources are up to date." });
+      void queryClient.invalidateQueries({ queryKey: ["design-intelligence-sources"] });
+    },
+    onError: (err: Error) => {
+      if (err.message === ALREADY_RUNNING_MSG) return;
+      toast({
+        title: "Sync failed",
+        description: err.message,
+        variant: "destructive",
+      });
+      void queryClient.invalidateQueries({ queryKey: ["design-intelligence-sources"] });
     },
   });
 
