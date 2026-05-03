@@ -389,7 +389,23 @@ interface QuickLaunchProfilesProps {
   onLaunch: (profileId: number, opts?: Omit<LaunchOptions, "profileId">) => void;
 }
 
+const SWARM_CONSTRAINED_CAP = 8;
+
+function isSwarmConstrained(profile: GpuProfile): boolean {
+  const cap = profile.swarmWorkerCap ?? 0;
+  return cap > 0 && cap <= SWARM_CONSTRAINED_CAP;
+}
+
 function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch }: QuickLaunchProfilesProps) {
+  const sortedProfiles = useMemo(() => {
+    if (!profiles) return [];
+    return [...profiles].sort((a, b) => {
+      const ac = isSwarmConstrained(a) ? 1 : 0;
+      const bc = isSwarmConstrained(b) ? 1 : 0;
+      return ac - bc;
+    });
+  }, [profiles]);
+
   const modelGroups = useMemo(() => {
     if (!profiles) return [];
     const groupMap = new Map<string, GpuProfile[]>();
@@ -399,9 +415,20 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
       groupMap.get(model)!.push(profile);
     }
     for (const group of groupMap.values()) {
-      group.sort((a, b) => a.estimatedCostMin - b.estimatedCostMin);
+      group.sort((a, b) => {
+        const ac = isSwarmConstrained(a) ? 1 : 0;
+        const bc = isSwarmConstrained(b) ? 1 : 0;
+        if (ac !== bc) return ac - bc;
+        return a.estimatedCostMin - b.estimatedCostMin;
+      });
     }
-    return Array.from(groupMap.entries()).map(([model, items]) => ({ model, items }));
+    const groups = Array.from(groupMap.entries()).map(([model, items]) => ({ model, items }));
+    groups.sort((a, b) => {
+      const aAllConstrained = a.items.every(isSwarmConstrained) ? 1 : 0;
+      const bAllConstrained = b.items.every(isSwarmConstrained) ? 1 : 0;
+      return aAllConstrained - bAllConstrained;
+    });
+    return groups;
   }, [profiles]);
 
   const isGrouped = modelGroups.length >= 2;
@@ -450,7 +477,7 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {profiles.map((profile, idx) => (
+          {sortedProfiles.map((profile, idx) => (
             <ProfileCard
               key={profile.id}
               profile={profile}
