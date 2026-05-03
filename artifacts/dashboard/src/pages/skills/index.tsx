@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   useListSkills,
   useImportSkill,
@@ -408,18 +408,55 @@ function SkillDesignCategoriesPanel({ skillId }: { skillId: number }) {
   );
 }
 
+const FEEDBACK_PAGE_LIMIT = 50;
+
 function FeedbackHistoryPanel({ skillId, feedbackScore }: { skillId: number; feedbackScore?: FeedbackScoreEntry }) {
   const queryClient = useQueryClient();
-  const { data, isLoading, isError } = useGetSkillFeedbackHistory(skillId);
+  const [offset, setOffset] = useState(0);
+  const [pages, setPages] = useState<Map<number, SkillFeedbackHistoryEntry[]>>(new Map());
+  const lastAggregateRef = useRef({ helpfulRate: 0, totalCount: 0, helpfulCount: 0, unhelpfulCount: 0 });
   const deleteMutation = useDeleteSkillFeedbackEntry();
   const clearAllMutation = useClearAllSkillFeedback();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const { toast } = useToast();
 
+  const { data, isLoading, isError, isFetching } = useGetSkillFeedbackHistory(
+    skillId,
+    { limit: FEEDBACK_PAGE_LIMIT, offset },
+  );
+
+  useEffect(() => {
+    setOffset(0);
+    setPages(new Map());
+    lastAggregateRef.current = { helpfulRate: 0, totalCount: 0, helpfulCount: 0, unhelpfulCount: 0 };
+  }, [skillId]);
+
+  useEffect(() => {
+    if (!data) return;
+    lastAggregateRef.current = {
+      helpfulRate: data.helpfulRate,
+      totalCount: data.totalCount,
+      helpfulCount: data.helpfulCount,
+      unhelpfulCount: data.unhelpfulCount,
+    };
+    setPages(prev => {
+      const next = new Map(prev);
+      next.set(offset, data.history);
+      return next;
+    });
+  }, [data, offset]);
+
+  const allHistory = Array.from(pages.entries())
+    .sort(([a], [b]) => a - b)
+    .flatMap(([, entries]) => entries);
+
   const handleDelete = (entry: SkillFeedbackHistoryEntry) => {
     deleteMutation.mutate({ skillId, feedbackId: entry.id }, {
       onSuccess: () => {
         toast({ title: "Feedback entry removed" });
+        setOffset(0);
+        setPages(new Map());
+        lastAggregateRef.current = { helpfulRate: 0, totalCount: 0, helpfulCount: 0, unhelpfulCount: 0 };
         queryClient.invalidateQueries({ queryKey: getGetSkillFeedbackHistoryQueryKey(skillId) });
         queryClient.invalidateQueries({ queryKey: getGetSkillFeedbackScoresQueryKey() });
       },
@@ -439,7 +476,7 @@ function FeedbackHistoryPanel({ skillId, feedbackScore }: { skillId: number; fee
     });
   };
 
-  if (isLoading) {
+  if (isLoading && allHistory.length === 0) {
     return (
       <div className="space-y-2">
         {[1, 2, 3].map(i => <Skeleton key={i} className="h-10 w-full" />)}
@@ -447,7 +484,7 @@ function FeedbackHistoryPanel({ skillId, feedbackScore }: { skillId: number; fee
     );
   }
 
-  if (isError || !data) {
+  if (isError && allHistory.length === 0) {
     return (
       <p className="text-xs text-muted-foreground text-center py-4">
         Could not load feedback history.
@@ -455,7 +492,12 @@ function FeedbackHistoryPanel({ skillId, feedbackScore }: { skillId: number; fee
     );
   }
 
-  const { helpfulRate, totalCount, helpfulCount, unhelpfulCount, history } = data;
+  const { helpfulRate, totalCount, helpfulCount, unhelpfulCount } = lastAggregateRef.current;
+  const hasMore = totalCount > 0 && allHistory.length < totalCount;
+
+  const handleLoadMore = () => {
+    setOffset(allHistory.length);
+  };
 
   const decayedTotalWeight = feedbackScore?.decayedTotalWeight ?? totalCount;
   const freshnessInfo = totalCount > 0 ? getFreshnessInfo(decayedTotalWeight, totalCount) : null;
@@ -513,13 +555,13 @@ function FeedbackHistoryPanel({ skillId, feedbackScore }: { skillId: number; fee
       )}
 
       {/* History list */}
-      {history.length > 0 && (
+      {allHistory.length > 0 && (
         <div className="space-y-1.5">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Recent Events ({totalCount} total)
+            Recent Events — Showing {allHistory.length} of {totalCount}
           </p>
           <div className="space-y-1">
-            {history.map(entry => (
+            {allHistory.map(entry => (
               <div
                 key={entry.id}
                 className="flex items-center gap-2 px-2.5 py-2 rounded-lg border border-border/30 bg-secondary/10 text-xs"
@@ -564,6 +606,23 @@ function FeedbackHistoryPanel({ skillId, feedbackScore }: { skillId: number; fee
               </div>
             ))}
           </div>
+          {hasMore && (
+            <div className="pt-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full h-8 text-xs"
+                onClick={handleLoadMore}
+                disabled={isFetching}
+              >
+                {isFetching ? (
+                  <><Loader2 className="w-3 h-3 animate-spin mr-1.5" /> Loading…</>
+                ) : (
+                  "Load more"
+                )}
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
