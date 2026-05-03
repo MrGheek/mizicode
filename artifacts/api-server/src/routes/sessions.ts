@@ -1246,10 +1246,26 @@ router.patch("/memory/stale/bulk", (req, res) => {
   }
 });
 
+const RESTORE_MAX_BYTES = 200 * 1024 * 1024; // 200 MB
+
 router.post("/memory/restore", (req, res) => {
   const chunks: Buffer[] = [];
-  req.on("data", (chunk: Buffer) => chunks.push(chunk));
+  let totalBytes = 0;
+  let rejected = false;
+
+  req.on("data", (chunk: Buffer) => {
+    if (rejected) return;
+    totalBytes += chunk.length;
+    if (totalBytes > RESTORE_MAX_BYTES) {
+      rejected = true;
+      res.status(413).json({ error: "File too large. Restore files must be 200 MB or smaller." });
+      res.once("finish", () => req.destroy());
+      return;
+    }
+    chunks.push(chunk);
+  });
   req.on("end", () => {
+    if (rejected) return;
     const buf = Buffer.concat(chunks);
     if (!buf.length) {
       res.status(400).json({ error: "No file data received" });
@@ -1265,6 +1281,7 @@ router.post("/memory/restore", (req, res) => {
     }
   });
   req.on("error", (err) => {
+    if (rejected) return;
     logger.error(err, "Error reading restore upload body");
     res.status(500).json({ error: "Failed to read uploaded file" });
   });
