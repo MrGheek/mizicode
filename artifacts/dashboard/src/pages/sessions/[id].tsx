@@ -328,8 +328,18 @@ function MemoryTab({
     setEditDraft(sess.summary ?? "");
   }
 
-  // Project path filter
-  const [selectedProject, setSelectedProject] = useState("");
+  // Project path filter — persisted in localStorage
+  const MEMORY_PROJECT_LS_KEY = "floatr:memory-project-filter";
+  const [selectedProject, setSelectedProjectState] = useState(() => {
+    try { return localStorage.getItem(MEMORY_PROJECT_LS_KEY) ?? ""; } catch { return ""; }
+  });
+  function setSelectedProject(value: string) {
+    setSelectedProjectState(value);
+    try {
+      if (value) { localStorage.setItem(MEMORY_PROJECT_LS_KEY, value); }
+      else { localStorage.removeItem(MEMORY_PROJECT_LS_KEY); }
+    } catch { /* ignore */ }
+  }
   const projectPaths = useMemoryProjectPaths(sessions);
 
   // Search state

@@ -892,12 +892,43 @@ function MemoryReviewCard() {
   );
 }
 
+const MEMORY_PROJECT_FILTER_PARAM = "projectPath";
+
+function getProjectFromUrl(): string {
+  try {
+    return new URLSearchParams(window.location.search).get(MEMORY_PROJECT_FILTER_PARAM) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function setProjectInUrl(value: string) {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (value) {
+      params.set(MEMORY_PROJECT_FILTER_PARAM, value);
+    } else {
+      params.delete(MEMORY_PROJECT_FILTER_PARAM);
+    }
+    const search = params.toString();
+    const newUrl = window.location.pathname + (search ? `?${search}` : "");
+    window.history.replaceState(null, "", newUrl);
+  } catch {
+    // ignore
+  }
+}
+
 export default function MemoryPage() {
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
-  const [selectedProject, setSelectedProject] = useState("");
+  const [selectedProject, setSelectedProjectState] = useState(getProjectFromUrl);
+
+  function setSelectedProject(value: string) {
+    setSelectedProjectState(value);
+    setProjectInUrl(value);
+  }
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
