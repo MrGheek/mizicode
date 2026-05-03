@@ -80,7 +80,7 @@ const FRONTEND_LANGS = new Set(["ts", "tsx", "js", "jsx", "svelte", "vue", "css"
  *
  * @deprecated Prefer LANE_POLICIES[laneType].designCategories or bundle overrides.
  */
-const UX_LANE_CATEGORIES_FALLBACK = [
+export const UX_LANE_CATEGORIES = [
   "palette",
   "typography",
   "chart_type",
@@ -89,18 +89,23 @@ const UX_LANE_CATEGORIES_FALLBACK = [
   "anti_pattern",
   "style",
 ];
-const FRONTEND_LANE_CATEGORIES_FALLBACK = [
+export const FRONTEND_LANE_CATEGORIES = [
   "palette",
   "typography",
   "stack_convention",
   "ux_guideline",
 ];
+// Aliases used by the design-category override resolution path.
+const UX_LANE_CATEGORIES_FALLBACK = UX_LANE_CATEGORIES;
+const FRONTEND_LANE_CATEGORIES_FALLBACK = FRONTEND_LANE_CATEGORIES;
 
 /**
  * Maximum design intelligence entries to inject per token mode.
  * `lean` and `ultra` modes receive no design context (token budget constraint).
+ *
+ * @internal — exported for testing only.
  */
-const DESIGN_CONTEXT_LIMIT: Partial<Record<TokenMode, number>> = {
+export const DESIGN_CONTEXT_LIMIT: Partial<Record<TokenMode, number>> = {
   full: 10,
   core: 5,
 };
@@ -134,7 +139,8 @@ function safeDesignCategoryOverrides(raw: unknown): Record<string, string[]> {
   return result;
 }
 
-async function queryDesignIntelligenceContext(
+/** @internal — exported for unit testing only. */
+export async function queryDesignIntelligenceContext(
   categories: string[],
   repoLangs: string[],
   tokenMode: TokenMode,
