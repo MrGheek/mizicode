@@ -57,9 +57,12 @@ export function RelaunchButton({
         onSuccess: (clone: CloneSessionResponse) => {
           // Guard: if the source profile is no longer available (deleted or
           // hidden), don't enter a stuck loading state — surface a clear
-          // error and reset.
-          const profileExists = !!profiles?.some((p) => p.id === clone.profileId);
-          if (!profileExists) {
+          // error and reset. Only treat the profile as missing when the
+          // profiles list has actually loaded; otherwise we'd false-error
+          // on a cold cache (race during first click).
+          const profilesLoaded = Array.isArray(profiles);
+          const profileMissing = profilesLoaded && !profiles!.some((p) => p.id === clone.profileId);
+          if (profileMissing) {
             toast({
               title: "Profile no longer available",
               description:

@@ -12,7 +12,7 @@ import type { SwarmStatusResponse } from "@/components/swarm-activity-panel";
 import { Badge } from "@/components/ui/badge";
 import { RelaunchButton } from "@/components/relaunch-button";
 
-const RELAUNCHABLE_STATUSES = new Set(["stopped", "error"]);
+const RELAUNCHABLE_STATUSES = new Set(["stopped"]);
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 const BATCH_INTERVAL_MS = 3000;

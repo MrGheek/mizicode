@@ -8,9 +8,11 @@ import {
   useGetSchedulerConfig,
   useUpdateSchedulerConfig,
   useListSessions,
+  useCloneSession,
   getGetDashboardSummaryQueryKey,
   getGetActiveSessionQueryKey,
   getGetSchedulerConfigQueryKey,
+  getCloneSessionQueryKey,
 } from "@workspace/api-client-react";
 import type { Session } from "@workspace/api-client-react";
 import { formatDistanceToNow } from "date-fns";
@@ -125,7 +127,7 @@ export default function Dashboard() {
     // Filter out dismissed sessions BEFORE picking the most recent — this way
     // dismissing the top candidate falls through to the next eligible one.
     const candidate = allSessions
-      .filter((s) => (s.status === "stopped" || s.status === "error") && s.intentText)
+      .filter((s) => s.status === "stopped" && s.intentText)
       .filter((s) => {
         const ts = s.stoppedAt ? new Date(s.stoppedAt).getTime() : new Date(s.createdAt).getTime();
         return ts >= cutoff;
@@ -290,11 +292,43 @@ interface ContinueCardProps {
   onDismiss: () => void;
 }
 
+/**
+ * Derive a friendly project name from a Git repo URL — works for HTTPS
+ * (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git).
+ * Returns null if no recognisable project segment can be extracted.
+ */
+function projectNameFromRepoUrl(repoUrl: string | null | undefined): string | null {
+  if (!repoUrl) return null;
+  const trimmed = repoUrl.trim().replace(/\.git$/i, "").replace(/\/+$/, "");
+  if (!trimmed) return null;
+  // SSH-style: git@host:owner/repo
+  const sshMatch = trimmed.match(/[:/]([^/:]+\/[^/:]+)$/);
+  if (sshMatch) return sshMatch[1];
+  // HTTP-style: take last two path segments if available
+  try {
+    const u = new URL(trimmed);
+    const parts = u.pathname.split("/").filter(Boolean);
+    if (parts.length >= 2) return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+    if (parts.length === 1) return parts[0];
+  } catch {
+    // Fall through to last segment
+  }
+  const lastSegment = trimmed.split("/").pop();
+  return lastSegment || null;
+}
+
 function ContinueCard({ session, onDismiss }: ContinueCardProps) {
   const stoppedRef = session.stoppedAt ? new Date(session.stoppedAt) : new Date(session.createdAt);
   const ago = formatDistanceToNow(stoppedRef, { addSuffix: true });
   const cost = session.totalCost?.toFixed(2) ?? "0.00";
   const intent = session.intentText ?? "";
+  // Lazy-fetch the clone payload to recover the repo URL → project name.
+  // The `Session` list type doesn't expose repoUrl, so we piggyback on the
+  // cheap clone endpoint (read-only, already used by the Re-launch flow).
+  const { data: cloneData } = useCloneSession(session.id, {
+    query: { queryKey: getCloneSessionQueryKey(session.id), staleTime: 60_000 },
+  });
+  const projectName = projectNameFromRepoUrl(cloneData?.repoUrl);
   return (
     <Card className="border-primary/40 bg-gradient-to-br from-primary/10 via-primary/5 to-transparent relative">
       <button
@@ -315,6 +349,11 @@ function ContinueCard({ session, onDismiss }: ContinueCardProps) {
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-base font-bold">Continue where you left off</h3>
+              {projectName && (
+                <span className="text-xs font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded">
+                  {projectName}
+                </span>
+              )}
               <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
                 {session.profileName} · {ago}
               </span>

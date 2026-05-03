@@ -2454,7 +2454,7 @@ export default function SessionDetail() {
               Destroy
             </Button>
           )}
-          {!isActive && (
+          {session.status === "stopped" && (
             <RelaunchButton sessionId={session.id} variant="prominent" />
           )}
         </div>
