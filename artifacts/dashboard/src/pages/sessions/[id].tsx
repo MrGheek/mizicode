@@ -51,6 +51,7 @@ import { inferBootPhase } from "@/lib/boot-phases";
 import { BootTimeline, BootProgressStrip } from "@/components/boot-timeline";
 import { RelaunchButton } from "@/components/relaunch-button";
 import { isTypingTarget } from "@/lib/shortcuts";
+import { addNotification } from "@/lib/notification-store";
 import { TeamTab } from "@/components/team-tab";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 
@@ -2112,6 +2113,56 @@ export default function SessionDetail() {
     }
   }, [showConflictBadge]);
 
+  // Persist new conflicts to the notification center. Each unique
+  // (laneA:laneB:recommendation) tuple is added once via dedupe-by-id.
+  useEffect(() => {
+    if (!sessionId) return;
+    for (const c of activeConflicts) {
+      const [a, b] = [c.laneIdA, c.laneIdB].sort((x, y) => x - y);
+      addNotification({
+        id: `conflict:${sessionId}:${a}:${b}:${c.recommendation}`,
+        type: "conflict",
+        title: c.recommendation === "block" ? "Blocking conflict detected" : "Conflict detected",
+        subtitle: `Lanes ${a} ↔ ${b}`,
+        href: `/sessions/${sessionId}?tab=coordination`,
+        sessionId,
+      });
+    }
+  }, [activeConflicts, sessionId]);
+
+  // Persist swarm phase transitions (completed / aborted) to the
+  // notification center. Tracks previous phase per session so we only
+  // emit once per transition.
+  const prevSwarmPhaseRef = useRef<string | null>(null);
+  useEffect(() => {
+    const phase = swarmData?.snapshot?.phase ?? null;
+    const prev = prevSwarmPhaseRef.current;
+    prevSwarmPhaseRef.current = phase;
+    if (!sessionId || !phase || phase === prev) return;
+    // synthesising → idle (or any non-active terminal phase) means run completed.
+    if (prev === "synthesising" && phase !== "synthesising" && phase !== "active" && phase !== "aborted") {
+      const done = swarmData?.snapshot?.doneCount ?? 0;
+      const total = swarmData?.snapshot?.totalWorkers ?? 0;
+      addNotification({
+        id: `swarm-completed:${sessionId}:${swarmData?.snapshot?.timestamp ?? Date.now()}`,
+        type: "swarm_completed",
+        title: "Swarm run finished",
+        subtitle: `${done}/${total} workers completed · session #${sessionId}`,
+        href: `/sessions/${sessionId}?tab=swarm`,
+        sessionId,
+      });
+    } else if (phase === "aborted" && prev !== "aborted") {
+      addNotification({
+        id: `swarm-aborted:${sessionId}:${swarmData?.snapshot?.timestamp ?? Date.now()}`,
+        type: "swarm_aborted",
+        title: "Swarm run aborted",
+        subtitle: `Session #${sessionId}`,
+        href: `/sessions/${sessionId}?tab=swarm`,
+        sessionId,
+      });
+    }
+  }, [swarmData, sessionId]);
+
   // When the Coordination tab is opened, mark current pending handoffs as seen.
   // When handoffs are all resolved (count hits 0), reset seen count too.
   useEffect(() => {
@@ -2148,7 +2199,6 @@ export default function SessionDetail() {
     );
     if (newHandoffs.length === 0) return;
     newHandoffs.forEach((h) => toastedHandoffIdsRef.current.add(h.id));
-    if (activeTab === "coordination") return;
     const typeLabels: Record<string, string> = {
       blocked: "Blocked",
       needs_review: "Needs Review",
@@ -2156,6 +2206,19 @@ export default function SessionDetail() {
       watch_files: "Watch Files",
       related_lane: "Related Lane",
     };
+    // Persist each new handoff to the notification center regardless of tab.
+    for (const h of newHandoffs) {
+      const label = typeLabels[h.handoffType] ?? h.handoffType;
+      addNotification({
+        id: `handoff:${sessionId}:${h.id}`,
+        type: "handoff",
+        title: `Handoff: ${label}`,
+        subtitle: h.message ?? `Session #${sessionId}`,
+        href: `/sessions/${sessionId}?tab=coordination`,
+        sessionId,
+      });
+    }
+    if (activeTab === "coordination") return;
     if (newHandoffs.length === 1) {
       const h = newHandoffs[0];
       const label = typeLabels[h.handoffType] ?? h.handoffType;

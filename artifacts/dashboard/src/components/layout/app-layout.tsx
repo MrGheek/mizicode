@@ -11,6 +11,8 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { StopCountdownModal } from "@/components/stop-countdown-modal";
 import { CommandPalette } from "@/components/command-palette";
+import { NotificationBell } from "@/components/notification-bell";
+import { NotificationWatchers } from "@/components/notification-watchers";
 import { useToast } from "@/hooks/use-toast";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
@@ -98,9 +100,16 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto bg-background focus:outline-none">
+      <main className="flex-1 overflow-y-auto bg-background focus:outline-none relative">
+        {/* Floating notification bell — top-right of every page */}
+        <div className="absolute top-4 right-6 z-30">
+          <NotificationBell />
+        </div>
         {children}
       </main>
+
+      {/* Global notification watchers — emit notifications for async events */}
+      <NotificationWatchers />
 
       {/* Global stop countdown modal — appears anywhere in the app */}
       <StopCountdownModal

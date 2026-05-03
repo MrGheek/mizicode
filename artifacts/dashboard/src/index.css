@@ -17,9 +17,19 @@
   100% { transform: scale(1);    }
 }
 
+@keyframes bell-shake {
+  0%, 100% { transform: rotate(0); }
+  15% { transform: rotate(-12deg); }
+  30% { transform: rotate(10deg); }
+  45% { transform: rotate(-6deg); }
+  60% { transform: rotate(4deg); }
+  75% { transform: rotate(-2deg); }
+}
+
 @theme inline {
   --animate-badge-pop: badge-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   --animate-badge-pulse: badge-pulse 0.4s ease-out both;
+  --animate-bell-shake: bell-shake 0.9s ease-in-out both;
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
   --color-border: hsl(var(--border));
