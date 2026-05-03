@@ -939,7 +939,7 @@ router.get("/sessions/:id/coordination/stream", (req, res) => {
   addCoordinationClient(sessionId, res);
 
   const keepAlive = setInterval(() => {
-    try { res.write(": ping\n\n"); } catch { /* ignore */ }
+    try { res.write("event: ping\ndata: {}\n\n"); } catch { /* ignore */ }
   }, 20000);
 
   req.on("close", () => {
