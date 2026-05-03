@@ -1040,12 +1040,16 @@ export function listStaleItems(params: {
   const db = getDb();
   const now = Math.floor(Date.now() / 1000);
 
+  // Exclude dismissed (stale_status = 'invalidated') and retracted items — they are resolved.
+  // TTL-expired branch is narrowed to stale_status = 'fresh' so dismissed-but-expired items
+  // don't bleed back into the actionable list after the user has already dismissed them.
   const rows = db.prepare(`
     SELECT * FROM mem_items
     WHERE user_id = ?
-      AND (stale_status = 'stale'
-           OR (ttl_expires_at IS NOT NULL AND ttl_expires_at <= ?))
       AND validity_status != 'retracted'
+      AND stale_status != 'invalidated'
+      AND (stale_status = 'stale'
+           OR (stale_status = 'fresh' AND ttl_expires_at IS NOT NULL AND ttl_expires_at <= ?))
     ORDER BY updated_at DESC
     LIMIT ? OFFSET ?
   `).all(params.userId, now, params.limit || 50, params.offset || 0) as Record<string, unknown>[];
@@ -1574,6 +1578,121 @@ export function searchMemory(userId: string, rawQuery: string, limit = 30, offse
   }
 
   return { observations, sessions, totalObservations, totalSessions };
+}
+
+/**
+ * Sweep all mem_items whose TTL has expired and mark them stale.
+ * Optionally scope to a single userId; when omitted, sweeps all users.
+ * Returns the number of items newly marked stale.
+ */
+export function runStaleSweep(userId?: string): number {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const result = userId
+    ? db.prepare(`
+        UPDATE mem_items
+        SET stale_status = 'stale', updated_at = unixepoch()
+        WHERE ttl_expires_at IS NOT NULL
+          AND ttl_expires_at <= ?
+          AND stale_status = 'fresh'
+          AND validity_status != 'retracted'
+          AND user_id = ?
+      `).run(now, userId)
+    : db.prepare(`
+        UPDATE mem_items
+        SET stale_status = 'stale', updated_at = unixepoch()
+        WHERE ttl_expires_at IS NOT NULL
+          AND ttl_expires_at <= ?
+          AND stale_status = 'fresh'
+          AND validity_status != 'retracted'
+      `).run(now);
+  logger.info({ userId: userId ?? "all", markedStale: result.changes }, "[mem] Stale sweep completed");
+  return result.changes;
+}
+
+/**
+ * Bulk-dismiss (invalidate) or bulk-retract stale memory items.
+ * Only touches items that belong to the given userId.
+ *
+ * - "dismiss"  → sets stale_status = 'invalidated' (suppressed from retrieval).
+ *               Only acts on actionable items (stale_status = 'stale' OR TTL-expired fresh).
+ *               Already-invalidated/retracted items are left untouched.
+ * - "retract"  → sets validity_status = 'retracted'  (permanently hidden).
+ *               Acts on any non-retracted item in the provided id list.
+ *
+ * Returns the number of items actually updated.
+ */
+export function bulkUpdateStaleItems(
+  userId: string,
+  itemIds: number[],
+  action: "dismiss" | "retract",
+): number {
+  if (itemIds.length === 0) return 0;
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const placeholders = itemIds.map(() => "?").join(",");
+  let result: Database.RunResult;
+  if (action === "dismiss") {
+    // Only dismiss items that are still actionable (stale or TTL-expired fresh).
+    // Skips already-invalidated and retracted items so the review count stays accurate.
+    result = db.prepare(`
+      UPDATE mem_items
+      SET stale_status = 'invalidated', updated_at = unixepoch()
+      WHERE user_id = ?
+        AND id IN (${placeholders})
+        AND validity_status != 'retracted'
+        AND stale_status != 'invalidated'
+        AND (stale_status = 'stale' OR (ttl_expires_at IS NOT NULL AND ttl_expires_at <= ?))
+    `).run(userId, ...itemIds, now);
+  } else {
+    result = db.prepare(`
+      UPDATE mem_items
+      SET validity_status = 'retracted', updated_at = unixepoch()
+      WHERE user_id = ?
+        AND id IN (${placeholders})
+        AND validity_status != 'retracted'
+    `).run(userId, ...itemIds);
+  }
+  logger.info({ userId, action, count: result.changes }, "[mem] Bulk stale update completed");
+  return result.changes;
+}
+
+/**
+ * Return a count of memory items that need human review:
+ * - actionable stale items: stale_status = 'stale' OR (ttl_expires_at expired AND stale_status = 'fresh')
+ *   Excludes 'invalidated' (already dismissed) and 'retracted' items — they are resolved.
+ * - open conflict groups
+ */
+export function getReviewNeededCount(userId: string): {
+  stale: number;
+  openConflicts: number;
+  total: number;
+} {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+
+  // Only count items that still need action:
+  // - explicitly marked stale (stale_status = 'stale')
+  // - OR TTL expired but not yet swept (stale_status = 'fresh' AND ttl_expires_at <= now)
+  // Excludes invalidated (dismissed) and retracted (removed) — those are resolved states.
+  const staleRow = db.prepare(`
+    SELECT COUNT(*) as cnt FROM mem_items
+    WHERE user_id = ?
+      AND validity_status != 'retracted'
+      AND (
+        stale_status = 'stale'
+        OR (stale_status = 'fresh' AND ttl_expires_at IS NOT NULL AND ttl_expires_at <= ?)
+      )
+  `).get(userId, now) as { cnt: number };
+
+  const conflictRow = db.prepare(`
+    SELECT COUNT(*) as cnt FROM mem_conflict_groups
+    WHERE user_id = ? AND conflict_status = 'open'
+  `).get(userId) as { cnt: number };
+
+  const stale = staleRow.cnt ?? 0;
+  const openConflicts = conflictRow.cnt ?? 0;
+  return { stale, openConflicts, total: stale + openConflicts };
 }
 
 export function healthCheck(): boolean {

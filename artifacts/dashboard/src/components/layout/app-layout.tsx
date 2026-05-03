@@ -14,10 +14,12 @@ import { CommandPalette } from "@/components/command-palette";
 import { NotificationBell } from "@/components/notification-bell";
 import { NotificationWatchers } from "@/components/notification-watchers";
 import { useToast } from "@/hooks/use-toast";
+import { useMemoryReviewCount } from "@/pages/memory";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { data: health } = useHealthCheck();
+  const { data: reviewCount } = useMemoryReviewCount();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -42,12 +44,14 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     });
   };
 
+  const memoryReviewTotal = reviewCount?.total ?? 0;
+
   const navigation = [
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
     { name: "Sessions", href: "/sessions", icon: Terminal },
     { name: "Templates", href: "/templates", icon: Layers },
     { name: "Skills", href: "/skills", icon: Wand2 },
-    { name: "Memory", href: "/memory", icon: Brain },
+    { name: "Memory", href: "/memory", icon: Brain, badge: memoryReviewTotal > 0 ? memoryReviewTotal : undefined },
     { name: "Design Intelligence", href: "/design-intelligence", icon: Palette },
   ];
 
@@ -79,7 +83,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 }`}
               >
                 <item.icon className="w-4 h-4" />
-                {item.name}
+                <span className="flex-1">{item.name}</span>
+                {"badge" in item && item.badge !== undefined && (
+                  <span className="text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none">
+                    {item.badge}
+                  </span>
+                )}
               </Link>
             );
           })}

@@ -5,7 +5,7 @@ import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
-import { listObservations, listSessions, searchMemory, subscribeToObservations, backupDb, restoreDb, addObservation, addSummary, getGovernanceStats } from "../services/memory";
+import { listObservations, listSessions, searchMemory, subscribeToObservations, backupDb, restoreDb, addObservation, addSummary, getGovernanceStats, runStaleSweep, bulkUpdateStaleItems, getReviewNeededCount, listStaleItems, listConflicts } from "../services/memory";
 import fs from "fs";
 import type { TeamMemberRecord, SessionRoutingStats } from "@workspace/db";
 import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles, getRepoIntelligenceForSession } from "../services/skills-bundler";
@@ -1178,6 +1178,71 @@ router.get("/memory/backup", async (_req, res) => {
       try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
     }
     if (!res.headersSent) res.status(500).json({ error: "Failed to create backup" });
+  }
+});
+
+router.get("/memory/review-count", (_req, res) => {
+  try {
+    const counts = getReviewNeededCount(MEM_USER_ID);
+    res.json(counts);
+  } catch (err) {
+    logger.error(err, "Failed to get memory review count");
+    res.status(500).json({ error: "Failed to get review count" });
+  }
+});
+
+router.post("/memory/sweep", (_req, res) => {
+  try {
+    const markedStale = runStaleSweep(MEM_USER_ID);
+    const counts = getReviewNeededCount(MEM_USER_ID);
+    res.json({ ok: true, markedStale, reviewNeeded: counts });
+  } catch (err) {
+    logger.error(err, "Failed to run memory stale sweep");
+    res.status(500).json({ error: "Failed to run stale sweep" });
+  }
+});
+
+router.get("/memory/stale", (req, res) => {
+  const limit = Math.min(200, Math.max(1, parseInt((req.query["limit"] as string | undefined) || "50", 10) || 50));
+  const offset = Math.max(0, parseInt((req.query["offset"] as string | undefined) || "0", 10) || 0);
+  try {
+    const items = listStaleItems({ userId: MEM_USER_ID, limit, offset });
+    res.json({ items, count: items.length });
+  } catch (err) {
+    logger.error(err, "Failed to list stale memory items");
+    res.status(500).json({ error: "Failed to list stale items" });
+  }
+});
+
+router.get("/memory/governance/conflicts", (req, res) => {
+  const limit = Math.min(100, Math.max(1, parseInt((req.query["limit"] as string | undefined) || "20", 10) || 20));
+  const offset = Math.max(0, parseInt((req.query["offset"] as string | undefined) || "0", 10) || 0);
+  try {
+    const conflicts = listConflicts({ userId: MEM_USER_ID, conflictStatus: "open", limit, offset });
+    res.json({ conflicts });
+  } catch (err) {
+    logger.error(err, "Failed to list open conflict groups");
+    res.status(500).json({ error: "Failed to list conflicts" });
+  }
+});
+
+router.patch("/memory/stale/bulk", (req, res) => {
+  const { itemIds, action } = req.body as { itemIds?: number[]; action?: string };
+  if (!Array.isArray(itemIds) || itemIds.length === 0) {
+    res.status(400).json({ error: "itemIds (non-empty array) is required" });
+    return;
+  }
+  if (action !== "dismiss" && action !== "retract") {
+    res.status(400).json({ error: "action must be 'dismiss' or 'retract'" });
+    return;
+  }
+  try {
+    const updated = bulkUpdateStaleItems(MEM_USER_ID, itemIds, action);
+    const counts = getReviewNeededCount(MEM_USER_ID);
+    res.json({ ok: true, updated, reviewNeeded: counts });
+  } catch (err) {
+    logger.error(err, "Failed to bulk update stale items");
+    res.status(500).json({ error: "Failed to bulk update stale items" });
   }
 });
 

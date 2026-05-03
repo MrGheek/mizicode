@@ -1,6 +1,29 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Brain, Search, X, Clock, ChevronDown, ChevronRight, FolderOpen, Download, Upload, AlertTriangle, Loader2, Pencil, Check, Activity, Layers, Zap, TrendingUp, ShieldAlert } from "lucide-react";
+import {
+  Brain,
+  Search,
+  X,
+  Clock,
+  ChevronDown,
+  ChevronRight,
+  FolderOpen,
+  Download,
+  Upload,
+  AlertTriangle,
+  Loader2,
+  Pencil,
+  Check,
+  Activity,
+  Layers,
+  Zap,
+  TrendingUp,
+  ShieldAlert,
+  RefreshCw,
+  Trash2,
+  EyeOff,
+  GitMerge,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -48,6 +71,40 @@ interface MemorySearchResult {
   totalSessions: number;
 }
 
+interface ReviewCount {
+  stale: number;
+  openConflicts: number;
+  total: number;
+}
+
+interface StaleMemItem {
+  id: number;
+  memoryType: string;
+  scope: string;
+  content: string;
+  staleStatus: string;
+  validityStatus: string;
+  ttlExpiresAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  symbolRef: string | null;
+  roiScore: number;
+}
+
+interface ConflictGroup {
+  id: number;
+  scope: string;
+  conflictStatus: string;
+  firstItemId: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface ConflictWithItems {
+  group: ConflictGroup;
+  items: StaleMemItem[];
+}
+
 function useSessionsPage(offset: number) {
   return useQuery<MemSession[]>({
     queryKey: ["mem-all-sessions", offset],
@@ -72,6 +129,41 @@ function useGlobalSearch(query: string, projectPath: string, offset: number) {
       return res.json();
     },
     staleTime: 5000,
+  });
+}
+
+export function useMemoryReviewCount() {
+  return useQuery<ReviewCount>({
+    queryKey: ["mem-review-count"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/memory/review-count`);
+      if (!res.ok) throw new Error("Failed to fetch review count");
+      return res.json();
+    },
+    refetchInterval: 120000,
+    staleTime: 30000,
+  });
+}
+
+function useStaleItems(limit = 50) {
+  return useQuery<{ items: StaleMemItem[]; count: number }>({
+    queryKey: ["mem-stale-items", limit],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/memory/stale?limit=${limit}`);
+      if (!res.ok) throw new Error("Failed to fetch stale items");
+      return res.json();
+    },
+  });
+}
+
+function useOpenConflicts() {
+  return useQuery<{ conflicts: ConflictWithItems[] }>({
+    queryKey: ["mem-open-conflicts"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/memory/governance/conflicts`);
+      if (!res.ok) throw new Error("Failed to fetch conflicts");
+      return res.json();
+    },
   });
 }
 
@@ -500,6 +592,306 @@ function MemoryBackupCard() {
   );
 }
 
+const STALE_STATUS_LABELS: Record<string, string> = {
+  stale: "Stale",
+  invalidated: "Invalidated",
+  fresh: "TTL expired",
+};
+
+const STALE_STATUS_COLORS: Record<string, string> = {
+  stale: "text-amber-400 bg-amber-400/10 border-amber-400/20",
+  invalidated: "text-red-400 bg-red-400/10 border-red-400/20",
+  fresh: "text-orange-400 bg-orange-400/10 border-orange-400/20",
+};
+
+function MemoryReviewCard() {
+  const queryClient = useQueryClient();
+  const { data: reviewCount, isLoading: countLoading } = useMemoryReviewCount();
+  const { data: staleData, isLoading: staleLoading } = useStaleItems(50);
+  const { data: conflictsData, isLoading: conflictsLoading } = useOpenConflicts();
+
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [sweeping, setSweeping] = useState(false);
+
+  const staleItems = staleData?.items ?? [];
+  const conflicts = conflictsData?.conflicts ?? [];
+
+  const bulkMutation = useMutation({
+    mutationFn: async ({ itemIds, action }: { itemIds: number[]; action: "dismiss" | "retract" }) => {
+      const res = await fetch(`${BASE_URL}api/memory/stale/bulk`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemIds, action }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error || "Operation failed");
+      }
+      return res.json();
+    },
+    onSuccess: (data, vars) => {
+      const label = vars.action === "dismiss" ? "dismissed" : "retracted";
+      toast.success(`${data.updated} item${data.updated !== 1 ? "s" : ""} ${label}`);
+      setSelectedIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["mem-stale-items"] });
+      queryClient.invalidateQueries({ queryKey: ["mem-review-count"] });
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Operation failed");
+    },
+  });
+
+  async function handleSweep() {
+    setSweeping(true);
+    try {
+      const res = await fetch(`${BASE_URL}api/memory/sweep`, { method: "POST" });
+      if (!res.ok) throw new Error("Sweep failed");
+      const data = await res.json() as { markedStale: number };
+      toast.success(data.markedStale > 0
+        ? `Sweep complete — ${data.markedStale} item${data.markedStale !== 1 ? "s" : ""} newly marked stale`
+        : "Sweep complete — no new stale items found");
+      queryClient.invalidateQueries({ queryKey: ["mem-stale-items"] });
+      queryClient.invalidateQueries({ queryKey: ["mem-review-count"] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Sweep failed");
+    } finally {
+      setSweeping(false);
+    }
+  }
+
+  const allSelectableIds = staleItems.map(i => i.id);
+  const allSelected = allSelectableIds.length > 0 && allSelectableIds.every(id => selectedIds.has(id));
+
+  function toggleAll() {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(allSelectableIds));
+    }
+  }
+
+  function toggleItem(id: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const isLoading = countLoading || staleLoading || conflictsLoading;
+  const hasReviewItems = (reviewCount?.total ?? 0) > 0;
+
+  return (
+    <Card className={`border-border/50 ${hasReviewItems ? "bg-amber-950/10 border-amber-500/20" : "bg-card/50"}`}>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center gap-2 font-medium uppercase tracking-wide">
+          <ShieldAlert className={`w-4 h-4 ${hasReviewItems ? "text-amber-400" : "text-muted-foreground"}`} />
+          <span className={hasReviewItems ? "text-amber-300" : "text-muted-foreground"}>
+            Memory Review
+          </span>
+          {countLoading ? (
+            <Skeleton className="h-4 w-12 ml-1" />
+          ) : hasReviewItems ? (
+            <span className="ml-1 text-xs font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded px-1.5 py-0.5 font-bold">
+              {reviewCount!.total} to review
+            </span>
+          ) : (
+            <span className="ml-1 text-[10px] font-normal normal-case text-muted-foreground/70">
+              All memories are fresh
+            </span>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto h-6 px-2 gap-1 text-xs text-muted-foreground"
+            onClick={handleSweep}
+            disabled={sweeping}
+          >
+            <RefreshCw className={`w-3 h-3 ${sweeping ? "animate-spin" : ""}`} />
+            Sweep
+          </Button>
+        </CardTitle>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : !hasReviewItems ? (
+          <p className="text-xs text-muted-foreground text-center py-4">
+            No stale or conflicted memories. Run a sweep to check TTL expiry.
+          </p>
+        ) : (
+          <>
+            {/* Summary row */}
+            <div className="flex gap-3 text-xs">
+              {(reviewCount?.stale ?? 0) > 0 && (
+                <span className="flex items-center gap-1 text-amber-400">
+                  <Clock className="w-3 h-3" />
+                  {reviewCount!.stale} stale
+                </span>
+              )}
+              {(reviewCount?.openConflicts ?? 0) > 0 && (
+                <span className="flex items-center gap-1 text-red-400">
+                  <GitMerge className="w-3 h-3" />
+                  {reviewCount!.openConflicts} conflict{reviewCount!.openConflicts !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+
+            {/* Stale items section */}
+            {staleItems.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Stale Items ({staleItems.length})
+                  </p>
+                  {selectedIds.size > 0 && (
+                    <div className="flex gap-1.5 ml-auto">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-xs gap-1 border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
+                        onClick={() => bulkMutation.mutate({ itemIds: Array.from(selectedIds), action: "dismiss" })}
+                        disabled={bulkMutation.isPending}
+                      >
+                        <EyeOff className="w-3 h-3" />
+                        Dismiss {selectedIds.size}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-xs gap-1 border-red-500/30 text-red-400 hover:bg-red-500/10"
+                        onClick={() => bulkMutation.mutate({ itemIds: Array.from(selectedIds), action: "retract" })}
+                        disabled={bulkMutation.isPending}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        Retract {selectedIds.size}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="border border-border/30 rounded overflow-hidden">
+                  {/* Header row */}
+                  <div className="flex items-center gap-2 px-3 py-2 bg-secondary/20 border-b border-border/20">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleAll}
+                      className="w-3.5 h-3.5 accent-primary cursor-pointer"
+                    />
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium flex-1">
+                      Content
+                    </span>
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium w-20 text-right hidden sm:block">
+                      Type
+                    </span>
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium w-16 text-right hidden sm:block">
+                      Status
+                    </span>
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium w-24 text-right hidden md:block">
+                      Expired
+                    </span>
+                  </div>
+
+                  {/* Item rows */}
+                  <div className="divide-y divide-border/20">
+                    {staleItems.map(item => {
+                      const isSelected = selectedIds.has(item.id);
+                      const statusKey = item.staleStatus !== "fresh" ? item.staleStatus : "fresh";
+                      return (
+                        <div
+                          key={item.id}
+                          className={`flex items-center gap-2 px-3 py-2.5 text-xs transition-colors ${isSelected ? "bg-primary/5" : "hover:bg-secondary/10"}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleItem(item.id)}
+                            className="w-3.5 h-3.5 accent-primary cursor-pointer flex-shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="truncate text-foreground/80" title={item.content}>
+                              {item.content}
+                            </p>
+                            {item.symbolRef && (
+                              <p className="text-[10px] text-muted-foreground/60 font-mono truncate mt-0.5">
+                                symbol: {item.symbolRef}
+                              </p>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground w-20 text-right hidden sm:block flex-shrink-0">
+                            {item.memoryType}
+                          </span>
+                          <span className={`text-[10px] border rounded px-1 py-0.5 w-16 text-center hidden sm:block flex-shrink-0 ${STALE_STATUS_COLORS[statusKey] ?? "text-muted-foreground bg-secondary/20 border-border/30"}`}>
+                            {STALE_STATUS_LABELS[statusKey] ?? item.staleStatus}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground w-24 text-right hidden md:block flex-shrink-0">
+                            {item.ttlExpiresAt
+                              ? format(new Date(item.ttlExpiresAt * 1000), "MMM d, yyyy")
+                              : "—"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-muted-foreground mt-2">
+                  <span className="font-medium">Dismiss</span> hides stale items from AI suggestions.{" "}
+                  <span className="font-medium">Retract</span> permanently removes them.
+                </p>
+              </div>
+            )}
+
+            {/* Open conflict groups */}
+            {conflicts.length > 0 && (
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+                  Open Conflicts ({conflicts.length})
+                </p>
+                <div className="space-y-2">
+                  {conflicts.map(({ group, items }) => (
+                    <div key={group.id} className="border border-red-500/20 bg-red-950/10 rounded p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <GitMerge className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+                        <span className="text-xs font-medium text-red-300">
+                          Conflict Group #{group.id}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground ml-auto">
+                          {format(new Date(group.createdAt * 1000), "MMM d, yyyy")} · scope: {group.scope}
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        {items.map(item => (
+                          <div key={item.id} className="text-xs text-foreground/70 border border-border/20 rounded px-2 py-1.5 bg-card/30">
+                            <p className="truncate" title={item.content}>{item.content}</p>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              {item.memoryType} · {item.scope}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-2">
+                        Resolve conflicts via the governance API or update the conflicting items.
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function MemoryPage() {
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState("");
@@ -823,6 +1215,9 @@ export default function MemoryPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Memory Review — always visible (not hidden during search) */}
+      {!isSearching && <MemoryReviewCard />}
 
       {/* Backup & Restore */}
       {!isSearching && <MemoryBackupCard />}
