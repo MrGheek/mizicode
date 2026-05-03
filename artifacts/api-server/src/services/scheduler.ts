@@ -229,7 +229,61 @@ async function getActiveSession() {
   return session || null;
 }
 
-async function launchScheduledSession(profileId: number, teamMemberNames: string[] = []): Promise<void> {
+async function deriveRepoFingerprint(repoUrl: string): Promise<{ langs: string[]; frameworks: string[]; urlHash: string }> {
+  const { createHash } = await import("crypto");
+  const trimmedUrl = repoUrl.trim();
+  const urlHash = createHash("sha256").update(trimmedUrl.toLowerCase()).digest("hex").slice(0, 16);
+  let langs: string[] = [];
+  let frameworks: string[] = [];
+
+  const ghMatch = trimmedUrl.match(/github\.com\/([^/]+)\/([^/.\s]+)/);
+  if (ghMatch) {
+    try {
+      const [owner, repo] = [ghMatch[1], ghMatch[2]];
+      const ghHeaders = { "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+
+      const langResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/languages`, {
+        headers: ghHeaders,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (langResp.ok) {
+        const data = await langResp.json() as Record<string, number>;
+        langs = Object.keys(data).map(l => l.toLowerCase());
+      }
+
+      const frameworkMarkers: Record<string, string> = {
+        "package.json": "node",
+        "requirements.txt": "python",
+        "pyproject.toml": "python",
+        "go.mod": "go",
+        "Cargo.toml": "rust",
+        "pom.xml": "java",
+        "build.gradle": "java",
+        "composer.json": "php",
+        "Gemfile": "ruby",
+      };
+      const markerChecks = Object.keys(frameworkMarkers).map(async (file) => {
+        try {
+          const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${file}`, {
+            headers: ghHeaders,
+            signal: AbortSignal.timeout(3000),
+          });
+          if (r.ok) frameworks.push(frameworkMarkers[file]);
+        } catch {
+          // Ignore per-file failures
+        }
+      });
+      await Promise.all(markerChecks);
+      frameworks = [...new Set(frameworks)];
+    } catch {
+      // Non-blocking: ignore if GitHub API is unreachable
+    }
+  }
+
+  return { langs, frameworks, urlHash };
+}
+
+async function launchScheduledSession(profileId: number, teamMemberNames: string[] = [], repoUrl?: string | null): Promise<void> {
   const profile = await getProfileById(profileId);
   if (!profile) {
     logger.warn({ profileId }, "Scheduler: profile not found, skipping launch");
@@ -300,6 +354,35 @@ async function launchScheduledSession(profileId: number, teamMemberNames: string
     const memAuthToken = process.env["OMNIQL_MEM_AUTH_TOKEN"] || process.env["OMNIQL_MEM_TOKEN"];
     const callbackBaseUrl = memProxyUrl;
 
+    // Derive repo fingerprint from repoUrl (mirrors manual session launch logic)
+    let repoFingerprintJson: Record<string, unknown> | null = null;
+    let repoLangs: string[] = [];
+    if (repoUrl && typeof repoUrl === "string" && repoUrl.trim()) {
+      try {
+        const { langs, frameworks, urlHash } = await deriveRepoFingerprint(repoUrl);
+        repoLangs = langs;
+        repoFingerprintJson = {
+          url: repoUrl.trim(),
+          urlHash,
+          langs,
+          frameworks,
+          derivedAt: new Date().toISOString(),
+          langSource: langs.length > 0 ? "github_api" : "none",
+        };
+        logger.info(
+          { sessionId: insertedSessionId, repoUrl: repoUrl.trim(), langs, frameworks },
+          "Scheduler: repo fingerprint derived for Smart Skills bundle selection",
+        );
+      } catch (fingerprintErr) {
+        logger.warn({ err: fingerprintErr, repoUrl }, "Scheduler: failed to derive repo fingerprint — will use default bundle");
+      }
+    }
+
+    // Persist repo fingerprint to session row
+    if (repoFingerprintJson) {
+      await db.update(sessionsTable).set({ repoFingerprintJson, updatedAt: new Date() }).where(eq(sessionsTable.id, insertedSessionId));
+    }
+
     // Compile the active skills bundle (same logic as manual launch)
     let activeBundleB64: string | undefined;
     let resolvedBundleId: number | undefined;
@@ -310,18 +393,21 @@ async function launchScheduledSession(profileId: number, teamMemberNames: string
         sessionType: teamMemberRecords.length > 0 ? "team" : "solo",
         taskMode: teamMemberRecords.length > 0 ? "team" : "build",
         modelProfile: profile.servedModelName || "kimi",
-        repoLangs: [],
+        repoLangs,
         tokenMode: "core",
         repoIntelligence: undefined,
       };
 
-      const bundle = await getDefaultBundleForContext(sessionCtx, false);
+      const bundle = await getDefaultBundleForContext(sessionCtx, !!(repoUrl && typeof repoUrl === "string" && repoUrl.trim()));
       if (bundle) {
         resolvedBundleId = bundle.id;
         const compiled = await compileBundle(bundle.id, sessionCtx);
         activeBundleB64 = buildActiveBundleEnvPayload(compiled, "core");
         pendingCompiled = compiled;
-        logger.info({ sessionId: insertedSessionId, bundleId: bundle.id, bundleSlug: bundle.slug }, "Scheduler: Smart Skills bundle compiled for session");
+        logger.info(
+          { sessionId: insertedSessionId, bundleId: bundle.id, bundleSlug: bundle.slug, repoLangs, repoFrameworks: repoFingerprintJson?.frameworks ?? [] },
+          "Scheduler: Smart Skills bundle compiled for session",
+        );
       }
     } catch (skillsErr) {
       logger.warn({ err: skillsErr, sessionId: insertedSessionId }, "Scheduler: Smart Skills compilation failed — session will launch without skills bundle");
@@ -460,10 +546,10 @@ async function checkSchedule(): Promise<void> {
         const active = await getActiveSession();
         if (!active) {
           logger.info(
-            { launchTime: config.launchTime, timezone: config.timezone },
+            { launchTime: config.launchTime, timezone: config.timezone, repoUrl: config.repoUrl ?? null },
             "Scheduler: auto-launching session"
           );
-          await launchScheduledSession(config.profileId, config.teamMemberNames ?? []);
+          await launchScheduledSession(config.profileId, config.teamMemberNames ?? [], config.repoUrl);
         } else {
           logger.info({ sessionId: active.id }, "Scheduler: session already running, skipping auto-launch");
         }

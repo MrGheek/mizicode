@@ -18,6 +18,10 @@ export const schedulerConfigTable = pgTable("scheduler_config", {
   // When set, launchScheduledSession generates credentials and passes them through
   // to buildOnStartScript, matching the team member flow from the manual sessions route.
   teamMemberNames: text("team_member_names").array().notNull().default(sql`ARRAY[]::text[]`),
+  // Optional GitHub repo URL. When set, launchScheduledSession derives a repo
+  // fingerprint (languages, frameworks) via the GitHub API and passes repoLangs
+  // into the SessionContext so Smart Skills picks the correct bundle.
+  repoUrl: text("repo_url"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

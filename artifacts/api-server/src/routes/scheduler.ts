@@ -34,6 +34,7 @@ router.put("/scheduler", async (req, res) => {
       daysOfWeek,
       timezone,
       teamMemberNames,
+      repoUrl,
     } = req.body;
 
     const config = await getOrCreateConfig();
@@ -50,6 +51,7 @@ router.put("/scheduler", async (req, res) => {
     if (daysOfWeek !== undefined) updates.daysOfWeek = daysOfWeek;
     if (timezone !== undefined) updates.timezone = timezone;
     if (Array.isArray(teamMemberNames)) updates.teamMemberNames = teamMemberNames.map(String).slice(0, 4);
+    if (repoUrl !== undefined) updates.repoUrl = typeof repoUrl === "string" && repoUrl.trim() ? repoUrl.trim() : null;
 
     const [updated] = await db
       .update(schedulerConfigTable)
