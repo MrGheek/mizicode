@@ -11,8 +11,17 @@ import { startClaimSweeper, sweepExpiredClaims } from "./services/claim-sweeper"
 import { db, laneClaimsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
 
-const CLAIM_PURGE_INTERVAL_MS = 60 * 60 * 1000;
-const CLAIM_RETENTION_DAYS = 7;
+const CLAIM_RETENTION_DAYS = parseInt(process.env["CLAIM_RETENTION_DAYS"] ?? "7", 10);
+const CLAIM_CLEANUP_INTERVAL_MS = parseInt(process.env["CLAIM_CLEANUP_INTERVAL_MS"] ?? String(60 * 60 * 1000), 10);
+
+if (isNaN(CLAIM_RETENTION_DAYS) || CLAIM_RETENTION_DAYS <= 0) {
+  throw new Error(`Invalid CLAIM_RETENTION_DAYS value: "${process.env["CLAIM_RETENTION_DAYS"]}"`);
+}
+if (isNaN(CLAIM_CLEANUP_INTERVAL_MS) || CLAIM_CLEANUP_INTERVAL_MS <= 0) {
+  throw new Error(`Invalid CLAIM_CLEANUP_INTERVAL_MS value: "${process.env["CLAIM_CLEANUP_INTERVAL_MS"]}"`);
+}
+
+logger.info({ CLAIM_RETENTION_DAYS, CLAIM_CLEANUP_INTERVAL_MS }, "Claim purge config resolved");
 
 /**
  * Permanently delete inactive claims older than the retention window.
@@ -38,8 +47,8 @@ async function purgeOldInactiveClaims(): Promise<void> {
 
 function startClaimPurger(): void {
   purgeOldInactiveClaims();
-  setInterval(purgeOldInactiveClaims, CLAIM_PURGE_INTERVAL_MS);
-  logger.info({ intervalMs: CLAIM_PURGE_INTERVAL_MS, retentionDays: CLAIM_RETENTION_DAYS }, "Inactive claim purge job scheduled");
+  setInterval(purgeOldInactiveClaims, CLAIM_CLEANUP_INTERVAL_MS);
+  logger.info({ intervalMs: CLAIM_CLEANUP_INTERVAL_MS, retentionDays: CLAIM_RETENTION_DAYS }, "Inactive claim purge job scheduled");
 }
 
 const rawPort = process.env["PORT"];
