@@ -3041,6 +3041,54 @@ export default function SessionDetail() {
             </Card>
           ) : null}
 
+          {/* Team Activity — compact summary card for team sessions */}
+          {hasNamedTeamMembers && (() => {
+            const activeLaneCount = (bgCoordData?.lanes ?? []).filter(
+              (ls) => ls.lane.status === "active"
+            ).length;
+            const pendingHandoffCount = bgCoordData?.pendingHandoffs ?? 0;
+            const goToCoordination = () => {
+              setActiveTab("coordination");
+              setSeenConflictFingerprint(conflictFingerprint);
+              setSeenHandoffCount(bgPendingHandoffs);
+            };
+            return (
+              <Card className="border-border/50 bg-card/50">
+                <CardHeader className="pb-2 pt-4 px-4">
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    <Users className="w-4 h-4 text-muted-foreground" />
+                    Team Activity
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="px-4 pb-4">
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={goToCoordination}
+                      className="flex items-center gap-2 rounded-md border border-border/50 bg-secondary/40 px-3 py-2 text-xs hover:bg-secondary/70 transition-colors text-left"
+                    >
+                      <span className="font-semibold text-base leading-none text-foreground">{activeLaneCount}</span>
+                      <span className="text-muted-foreground">active {activeLaneCount === 1 ? "lane" : "lanes"}</span>
+                    </button>
+                    <button
+                      onClick={goToCoordination}
+                      className="flex items-center gap-2 rounded-md border border-border/50 bg-secondary/40 px-3 py-2 text-xs hover:bg-secondary/70 transition-colors text-left"
+                    >
+                      <span className={`font-semibold text-base leading-none ${pendingHandoffCount > 0 ? "text-primary" : "text-foreground"}`}>{pendingHandoffCount}</span>
+                      <span className="text-muted-foreground">pending {pendingHandoffCount === 1 ? "handoff" : "handoffs"}</span>
+                    </button>
+                    <button
+                      onClick={goToCoordination}
+                      className="flex items-center gap-2 rounded-md border border-border/50 bg-secondary/40 px-3 py-2 text-xs hover:bg-secondary/70 transition-colors text-left"
+                    >
+                      <span className={`font-semibold text-base leading-none ${blockingConflictCount > 0 ? "text-red-400" : "text-foreground"}`}>{blockingConflictCount}</span>
+                      <span className="text-muted-foreground">blocking {blockingConflictCount === 1 ? "conflict" : "conflicts"}</span>
+                    </button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })()}
+
           {/* Team Access — shown when session has non-shared team members */}
           {(() => {
             type TM = { name: string; password?: string | null; path: string; ideUrl?: string | null };
