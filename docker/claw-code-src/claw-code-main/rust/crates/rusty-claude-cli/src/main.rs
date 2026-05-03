@@ -2483,14 +2483,24 @@ fn build_runtime(
     ConversationRuntime<AnthropicRuntimeClient, MemRecordingToolExecutor>,
     Box<dyn std::error::Error>,
 > {
-    Ok(ConversationRuntime::new_with_features(
+    let mut runtime = ConversationRuntime::new_with_features(
         session,
         AnthropicRuntimeClient::new(model, enable_tools, emit_output, allowed_tools.clone())?,
-        MemRecordingToolExecutor::new(CliToolExecutor::new(allowed_tools, emit_output), mem_client),
+        MemRecordingToolExecutor::new(
+            CliToolExecutor::new(allowed_tools, emit_output),
+            mem_client.clone(),
+        ),
         permission_policy(permission_mode),
         system_prompt,
         build_runtime_feature_config()?,
-    ))
+    );
+    // Activate the passive semantic memory recall pipeline (Task #225)
+    // when a mem client is configured. Without this wiring, the
+    // N → N+1 recall path stays dormant.
+    if let Some(mem) = mem_client {
+        runtime = runtime.with_passive_recall(mem);
+    }
+    Ok(runtime)
 }
 
 struct CliPermissionPrompter {

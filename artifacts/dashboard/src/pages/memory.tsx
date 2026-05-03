@@ -932,6 +932,132 @@ function setProjectInUrl(value: string) {
   }
 }
 
+interface RecallAuditEntry {
+  id: number;
+  turnId: number;
+  sessionId: string;
+  itemId: number;
+  itemContent: string;
+  memoryType: string;
+  scope: string;
+  turnExcerpt: string;
+  similarity: number;
+  bfsDepth: number;
+  sidecarAccepted: boolean;
+  sidecarScore: number | null;
+  sidecarReason: string | null;
+  injected: boolean;
+  createdAt: number;
+}
+
+interface RecallMetricsResponse {
+  enabled: boolean;
+  totalCandidates: number;
+  acceptedCandidates: number;
+  injectedCandidates: number;
+  acceptRate: number;
+  injectRate: number;
+  uniqueTurns: number;
+  avgInjectedTokensEstimate: number;
+}
+
+function PassiveRecallPanel() {
+  const { data: metrics } = useQuery<RecallMetricsResponse>({
+    queryKey: ["memory-recall-metrics"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/memory/recall-metrics`);
+      if (!res.ok) throw new Error("Failed to fetch recall metrics");
+      return res.json() as Promise<RecallMetricsResponse>;
+    },
+    refetchInterval: 30000,
+    staleTime: 20000,
+  });
+
+  const { data: auditData, isLoading } = useQuery<{ entries: RecallAuditEntry[] }>({
+    queryKey: ["memory-recall-audit"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/memory/recall-audit?limit=20`);
+      if (!res.ok) throw new Error("Failed to fetch recall audit");
+      return res.json() as Promise<{ entries: RecallAuditEntry[] }>;
+    },
+    refetchInterval: 30000,
+    staleTime: 20000,
+  });
+
+  const entries = auditData?.entries ?? [];
+  const enabled = metrics?.enabled ?? false;
+  const acceptRatePct = Math.round((metrics?.acceptRate ?? 0) * 100);
+  const injectRatePct = Math.round((metrics?.injectRate ?? 0) * 100);
+
+  return (
+    <Card className="bg-card/50 border-border/50">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+          <Zap className="w-4 h-4" /> Passive Recall
+          <span className={`ml-auto text-[10px] font-semibold normal-case px-2 py-0.5 rounded-full border ${enabled ? "text-emerald-400 border-emerald-400 bg-emerald-400/10" : "text-muted-foreground border-border bg-secondary/30"}`}>
+            {enabled ? "Enabled (global)" : "Disabled (global)"}
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Candidates</div>
+            <div className="text-lg font-semibold">{metrics?.totalCandidates ?? 0}</div>
+          </div>
+          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Accept rate</div>
+            <div className="text-lg font-semibold">{acceptRatePct}%</div>
+          </div>
+          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Inject rate</div>
+            <div className="text-lg font-semibold">{injectRatePct}%</div>
+          </div>
+          <div className="rounded-lg border border-border/40 bg-secondary/20 p-3">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Avg tokens</div>
+            <div className="text-lg font-semibold">{metrics?.avgInjectedTokensEstimate ?? 0}</div>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Recent recalls</div>
+          {isLoading ? (
+            <Skeleton className="h-24 w-full rounded-md" />
+          ) : entries.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-3 text-center">
+              No recall activity yet. Set <code className="text-foreground bg-secondary/40 px-1 rounded">OMNIQL_MEM_PASSIVE_RECALL=1</code> or enable per session.
+            </p>
+          ) : (
+            <div className="max-h-64 overflow-y-auto space-y-1.5">
+              {entries.map(e => (
+                <div key={e.id} className="text-xs rounded-md border border-border/40 bg-secondary/10 p-2 flex gap-2 items-start">
+                  <div className={`flex-shrink-0 w-1 h-full self-stretch rounded-full ${e.injected ? "bg-emerald-400" : e.sidecarAccepted ? "bg-amber-400" : "bg-muted-foreground/30"}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                      <span className="font-medium text-foreground">#{e.itemId}</span>
+                      <span className="px-1 rounded bg-secondary/40">{e.memoryType || "?"}</span>
+                      <span>sim {e.similarity.toFixed(2)}</span>
+                      {e.bfsDepth > 0 && <span>depth {e.bfsDepth}</span>}
+                      {e.sidecarScore !== null && <span>score {e.sidecarScore.toFixed(2)}</span>}
+                      <span className="ml-auto">
+                        {e.injected ? "✓ injected" : e.sidecarAccepted ? "accepted" : "rejected"}
+                      </span>
+                    </div>
+                    <div className="truncate text-foreground/90 mt-0.5">{e.itemContent.slice(0, 120)}</div>
+                    {e.turnExcerpt && (
+                      <div className="truncate text-muted-foreground/80 mt-0.5 text-[10px]">↳ turn: {e.turnExcerpt.slice(0, 100)}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function MemoryPage() {
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState("");
@@ -1089,6 +1215,9 @@ export default function MemoryPage() {
 
       {/* Memory Health Panel */}
       <MemoryHealthPanel />
+
+      {/* Passive Recall Audit Panel (Task #225) */}
+      <PassiveRecallPanel />
 
       {/* Filter + Search row */}
       <div className="flex gap-2 items-center">

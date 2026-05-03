@@ -8,6 +8,7 @@ use crate::compact::{
 };
 use crate::config::RuntimeFeatureConfig;
 use crate::hooks::{HookRunResult, HookRunner};
+use crate::mem_client::MemClientConfig;
 use crate::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter};
 use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
@@ -205,6 +206,7 @@ pub struct ConversationRuntime<C, T> {
     hook_runner: HookRunner,
     auto_compaction_input_tokens_threshold: u32,
     soft_interrupt_queue: SoftInterruptQueue,
+    passive_recall: Option<MemClientConfig>,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -251,7 +253,20 @@ where
             hook_runner: HookRunner::from_feature_config(&feature_config),
             auto_compaction_input_tokens_threshold: auto_compaction_threshold_from_env(),
             soft_interrupt_queue: SoftInterruptQueue::new(),
+            passive_recall: None,
         }
+    }
+
+    /// Attach a passive-recall client. When set, every call to `run_turn`
+    /// will (1) fetch the verified shortlist computed for the previous turn
+    /// and prepend it to the system prompt for this turn, (2) report the
+    /// injected items so the audit trail closes, and (3) record the new
+    /// user turn for the next recall pass. All network calls are best-effort
+    /// and never block the turn from proceeding.
+    #[must_use]
+    pub fn with_passive_recall(mut self, mem: MemClientConfig) -> Self {
+        self.passive_recall = Some(mem);
+        self
     }
 
     #[must_use]
@@ -289,9 +304,37 @@ where
         user_input: impl Into<String>,
         mut prompter: Option<&mut dyn PermissionPrompter>,
     ) -> Result<TurnSummary, RuntimeError> {
+        let user_text = user_input.into();
+
+        // ─── Passive recall N→N+1 ────────────────────────────────────────
+        // Before assembling this turn's prompt, take the verified shortlist
+        // *prefetched* at the end of the previous turn (if any) from the
+        // shared cache. This is a non-blocking lookup — we never make a
+        // network call here, so the main turn cannot stall on the memory
+        // service. If no prefetch has completed, we simply skip injection
+        // for this turn (the "passive" contract).
+        let mut turn_system_prompt = self.system_prompt.clone();
+        if let Some(mem) = &self.passive_recall {
+            if let Some((turn_id, items)) = mem.take_prefetched_recall() {
+                let mut block = String::from(
+                    "<recalled_memory>\nThe following memories from earlier in this project were judged relevant to the current turn. Use them as background context; cite or correct them if needed.\n",
+                );
+                let item_ids: Vec<i64> = items.iter().map(|(id, _)| *id).collect();
+                for (id, content) in &items {
+                    block.push_str(&format!("- [#{id}] {}\n", truncate_for_prompt(content, 600)));
+                }
+                block.push_str("</recalled_memory>");
+                turn_system_prompt.push(block);
+                mem.mark_recall_injected(turn_id, item_ids);
+            }
+            // Record this user turn so the next call to run_turn can pick up
+            // the resulting recall shortlist. Fire-and-forget.
+            mem.record_turn("user", user_text.clone());
+        }
+
         self.session
             .messages
-            .push(ConversationMessage::user_text(user_input.into()));
+            .push(ConversationMessage::user_text(user_text));
 
         let mut assistant_messages = Vec::new();
         let mut tool_results = Vec::new();
@@ -306,7 +349,7 @@ where
             }
 
             let request = ApiRequest {
-                system_prompt: self.system_prompt.clone(),
+                system_prompt: turn_system_prompt.clone(),
                 messages: self.session.messages.clone(),
             };
             let events = self.api_client.stream(request)?;
@@ -399,6 +442,30 @@ where
         }
 
         let auto_compaction = self.maybe_auto_compact();
+
+        // Record the final assistant message of this turn so passive recall
+        // sees a complete user→assistant exchange.
+        if let Some(mem) = &self.passive_recall {
+            if let Some(last_assistant) = assistant_messages.last() {
+                let text: String = last_assistant
+                    .blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !text.is_empty() {
+                    mem.record_turn("assistant", text);
+                }
+            }
+            // Kick off a background prefetch of the recall shortlist now,
+            // so by the time the next turn starts the cache will already
+            // be warm and `take_prefetched_recall` returns instantly.
+            // This is the non-blocking N→N+1 path required by the spec.
+            mem.prefetch_recall();
+        }
 
         Ok(TurnSummary {
             assistant_messages,
@@ -544,6 +611,15 @@ fn format_hook_message(result: &HookRunResult, fallback: &str) -> String {
     } else {
         result.messages().join("\n")
     }
+}
+
+fn truncate_for_prompt(s: &str, max_chars: usize) -> String {
+    let trimmed = s.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let truncated: String = trimmed.chars().take(max_chars).collect();
+    format!("{truncated}…")
 }
 
 fn merge_hook_feedback(messages: &[String], output: String, denied: bool) -> String {

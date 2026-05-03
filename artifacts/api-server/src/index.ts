@@ -6,7 +6,7 @@ import { startScheduler, markDesignSyncComplete } from "./services/scheduler";
 import { seedDefaultBundles } from "./services/skills-bundler";
 import { seedCuratedSources } from "./services/curated-sources";
 import { startEvalScheduler } from "./services/skills-evals";
-import { validateMemoryDataDir, startMemoryDiskMonitor } from "./services/memory";
+import { validateMemoryDataDir, startMemoryDiskMonitor, runPassiveRecallBackfill } from "./services/memory";
 import { startClaimSweeper, sweepExpiredClaims, recordExternalSweep } from "./services/claim-sweeper";
 import { db, laneClaimsTable, claimPurgeLogsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
@@ -134,4 +134,17 @@ app.listen(port, async (err) => {
   startClaimPurger();
   startEvalScheduler(60);
   startMemoryDiskMonitor();
+
+  // Passive memory recall (Task #225): embedding backfill for legacy items.
+  // Runs in the background so startup is never blocked on embedding API calls.
+  void (async () => {
+    try {
+      const embedded = await runPassiveRecallBackfill(500);
+      if (embedded > 0) {
+        logger.info({ embedded }, "Passive recall: legacy item embeddings backfilled");
+      }
+    } catch (err) {
+      logger.warn({ err }, "Passive recall backfill failed (non-fatal)");
+    }
+  })();
 });

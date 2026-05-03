@@ -5,6 +5,7 @@ import os from "os";
 import { EventEmitter } from "events";
 import { logger } from "../lib/logger";
 import { computeSemanticSimilarityBatch } from "./memory-semantic";
+import { embedAndStoreItem, inferEdgesForNewItem, runPassiveRecallMigrations, backfillItemEmbeddings } from "./memory-passive";
 
 const observationEmitter = new EventEmitter();
 observationEmitter.setMaxListeners(200);
@@ -251,8 +252,23 @@ function getDb(): Database.Database {
   `);
 
   runGovernanceMigrations(_db);
+  // Passive recall pipeline (Task #225): embeddings, turns, edges, audit.
+  // Idempotent — additive tables only.
+  try {
+    runPassiveRecallMigrations();
+  } catch (err) {
+    logger.error({ err }, "[mem] Passive recall migration failed");
+  }
 
   return _db;
+}
+
+/**
+ * Backfill embeddings for memory items lacking them. Called at startup so the
+ * passive recall pipeline can score historical entries from day one.
+ */
+export async function runPassiveRecallBackfill(maxItems = 500): Promise<number> {
+  return backfillItemEmbeddings(maxItems);
 }
 
 function runGovernanceMigrations(db: Database.Database): void {
@@ -750,6 +766,18 @@ export async function saveMemoryItem(params: {
       WHERE id = ? AND first_item_id IS NULL
     `).run(itemId, conflictGroupId);
   }
+
+  // Fire-and-forget: compute embedding + infer typed edges (relates_to,
+  // contradicts) for the new item. Failures here must never break the
+  // synchronous save path — passive recall is opportunistic.
+  void (async () => {
+    try {
+      await embedAndStoreItem(itemId, content);
+      await inferEdgesForNewItem({ itemId, scope, userId, contradictionIds: contradictions });
+    } catch (err) {
+      logger.debug({ err, itemId }, "[mem] passive embed/edge inference failed");
+    }
+  })();
 
   return { itemId, conflictGroupId, contradictions };
 }

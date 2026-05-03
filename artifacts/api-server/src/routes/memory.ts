@@ -25,6 +25,21 @@ import {
   SCOPE_PRIORITY,
 } from "../services/memory";
 import type { MemoryType, MemoryScope, ConflictStatus, PromotionStatus } from "../services/memory";
+import {
+  recordTurn,
+  runPassiveRecallForTurn,
+  getLatestRecallShortlist,
+  markRecallInjected,
+  recordEdge,
+  listEdges,
+  listRecallAudit,
+  getRecallMetrics,
+  isPassiveRecallEnabled,
+  setPassiveRecallForSession,
+  passiveRecallGloballyEnabled,
+  VALID_EDGE_TYPES,
+} from "../services/memory-passive";
+import type { EdgeType } from "../services/memory-passive";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -641,6 +656,187 @@ router.get("/mem/items", (req, res) => {
   } catch (err) {
     logger.error(err, "Failed to list memory items");
     res.status(500).json({ error: "Failed to list memory items" });
+  }
+});
+
+// ─── Passive Semantic Recall (Task #225) ─────────────────────────────────────
+
+/**
+ * Record a conversation turn and (optionally) run the recall pipeline
+ * synchronously. The recall pass is fire-and-forget by default so the runner
+ * never blocks on it; pass ?awaitRecall=1 to wait for the audit shortlist
+ * (useful for tests).
+ */
+router.post("/mem/turn", async (req, res) => {
+  if (!verifyMemToken(req, res)) return;
+  const { sessionId, userId, role, content, scopes } = req.body as {
+    sessionId: string; userId: string; role: string; content: string; scopes?: string[];
+  };
+  if (!sessionId || !userId || !role || !content) {
+    res.status(400).json({ error: "sessionId, userId, role, content are required" });
+    return;
+  }
+  const awaitRecall = req.query["awaitRecall"] === "1";
+  try {
+    const { turnId } = await recordTurn({ sessionId, userId, role, content });
+    if (!isPassiveRecallEnabled(sessionId)) {
+      res.json({ ok: true, turnId, passiveRecallEnabled: false });
+      return;
+    }
+    if (awaitRecall) {
+      const audit = await runPassiveRecallForTurn({ turnId, sessionId, userId, scopes });
+      res.json({ ok: true, turnId, passiveRecallEnabled: true, audit });
+      return;
+    }
+    // Fire-and-forget so turn N+1 prompt assembly is not blocked.
+    void runPassiveRecallForTurn({ turnId, sessionId, userId, scopes }).catch((err) => {
+      logger.warn({ err, turnId }, "[mem] passive recall pipeline failed");
+    });
+    res.json({ ok: true, turnId, passiveRecallEnabled: true });
+  } catch (err) {
+    logger.error(err, "Failed to record turn");
+    res.status(500).json({ error: "Failed to record turn" });
+  }
+});
+
+/** Return the verified recall shortlist for the latest audited turn. */
+router.get("/mem/recall", (req, res) => {
+  if (!verifyMemToken(req, res)) return;
+  const sessionId = req.query["sessionId"] as string | undefined;
+  const userId = req.query["userId"] as string | undefined;
+  const limit = Math.min(parseInt(String(req.query["limit"] || "8"), 10), 50);
+  if (!sessionId || !userId) {
+    res.status(400).json({ error: "sessionId and userId are required" });
+    return;
+  }
+  if (!isPassiveRecallEnabled(sessionId)) {
+    res.json({ turnId: null, items: [], shortlist: [], enabled: false });
+    return;
+  }
+  try {
+    const shortlist = getLatestRecallShortlist({ sessionId, userId, limit });
+    // Contract for the Rust runtime client (mem_client.rs::fetch_recall):
+    // it expects `{ turnId, items: [{ itemId, content }] }`. We also keep the
+    // richer `shortlist` array for dashboard / debugging consumers.
+    const turnId = shortlist.length > 0 ? shortlist[0].turnId : null;
+    const items = shortlist.map(s => ({ itemId: s.itemId, content: s.content }));
+    res.json({ turnId, items, shortlist, enabled: true });
+  } catch (err) {
+    logger.error(err, "Failed to get recall shortlist");
+    res.status(500).json({ error: "Failed to get recall shortlist" });
+  }
+});
+
+/** Mark recall-audit rows as injected (idempotent). */
+router.post("/mem/recall/inject", (req, res) => {
+  if (!verifyMemToken(req, res)) return;
+  const { turnId, itemIds } = req.body as { turnId: number; itemIds: number[] };
+  if (!turnId || !Array.isArray(itemIds)) {
+    res.status(400).json({ error: "turnId and itemIds[] are required" });
+    return;
+  }
+  try {
+    const updated = markRecallInjected(turnId, itemIds);
+    res.json({ ok: true, updated });
+  } catch (err) {
+    logger.error(err, "Failed to mark recall injected");
+    res.status(500).json({ error: "Failed to mark injected" });
+  }
+});
+
+/** Manual edge create. */
+router.post("/mem/edges", (req, res) => {
+  if (!verifyMemToken(req, res)) return;
+  const { srcItemId, dstItemId, edgeType, weight } = req.body as {
+    srcItemId: number; dstItemId: number; edgeType: EdgeType; weight?: number;
+  };
+  if (!srcItemId || !dstItemId || !edgeType) {
+    res.status(400).json({ error: "srcItemId, dstItemId, edgeType are required" });
+    return;
+  }
+  if (!VALID_EDGE_TYPES.includes(edgeType)) {
+    res.status(400).json({ error: `edgeType must be one of: ${VALID_EDGE_TYPES.join(", ")}` });
+    return;
+  }
+  try {
+    const result = recordEdge({ srcItemId, dstItemId, edgeType, weight });
+    if (!result) {
+      res.status(400).json({ error: "Edge could not be created (self-loop or constraint failure)" });
+      return;
+    }
+    res.json({ ok: true, id: result.id });
+  } catch (err) {
+    logger.error(err, "Failed to record edge");
+    res.status(500).json({ error: "Failed to record edge" });
+  }
+});
+
+/** List edges incident to a memory item. */
+router.get("/mem/edges/:itemId", (req, res) => {
+  if (!verifyMemToken(req, res)) return;
+  const itemId = parseInt(req.params["itemId"], 10);
+  if (isNaN(itemId)) {
+    res.status(400).json({ error: "Invalid itemId" });
+    return;
+  }
+  try {
+    const edges = listEdges(itemId);
+    res.json({ edges });
+  } catch (err) {
+    logger.error(err, "Failed to list edges");
+    res.status(500).json({ error: "Failed to list edges" });
+  }
+});
+
+/** Per-session feature flag override. */
+router.post("/mem/passive-config", (req, res) => {
+  if (!verifyMemToken(req, res)) return;
+  const { sessionId, enabled } = req.body as { sessionId: string; enabled: boolean };
+  if (!sessionId || typeof enabled !== "boolean") {
+    res.status(400).json({ error: "sessionId and enabled (boolean) are required" });
+    return;
+  }
+  try {
+    setPassiveRecallForSession(sessionId, enabled);
+    res.json({ ok: true, sessionId, enabled, globalDefault: passiveRecallGloballyEnabled() });
+  } catch (err) {
+    logger.error(err, "Failed to update passive-recall config");
+    res.status(500).json({ error: "Failed to update config" });
+  }
+});
+
+/** Dashboard audit trail. */
+router.get("/mem/recall/audit", (req, res) => {
+  if (!verifyMemToken(req, res)) return;
+  const userId = req.query["userId"] as string | undefined;
+  if (!userId) {
+    res.status(400).json({ error: "userId is required" });
+    return;
+  }
+  const sessionId = req.query["sessionId"] as string | undefined;
+  const limit = Math.min(parseInt(String(req.query["limit"] || "50"), 10), 200);
+  const offset = parseInt(String(req.query["offset"] || "0"), 10);
+  try {
+    const entries = listRecallAudit({ userId, sessionId, limit, offset });
+    res.json({ entries });
+  } catch (err) {
+    logger.error(err, "Failed to list recall audit");
+    res.status(500).json({ error: "Failed to list audit" });
+  }
+});
+
+router.get("/mem/recall/metrics", (req, res) => {
+  if (!verifyMemToken(req, res)) return;
+  const userId = req.query["userId"] as string | undefined;
+  if (!userId) {
+    res.status(400).json({ error: "userId is required" });
+    return;
+  }
+  try {
+    res.json(getRecallMetrics(userId));
+  } catch (err) {
+    logger.error(err, "Failed to get recall metrics");
+    res.status(500).json({ error: "Failed to get metrics" });
   }
 });
 

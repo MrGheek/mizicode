@@ -6,6 +6,7 @@ import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
 import { listObservations, listSessions, searchMemory, subscribeToObservations, backupDb, restoreDb, addObservation, addSummary, getGovernanceStats, runStaleSweep, bulkUpdateStaleItems, getReviewNeededCount, listStaleItems, listConflicts } from "../services/memory";
+import { listRecallAudit, getRecallMetrics, setPassiveRecallForSession, isPassiveRecallEnabled, passiveRecallGloballyEnabled } from "../services/memory-passive";
 import fs from "fs";
 import type { TeamMemberRecord, SessionRoutingStats } from "@workspace/db";
 import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles, getRepoIntelligenceForSession } from "../services/skills-bundler";
@@ -1242,6 +1243,59 @@ router.get("/memory/stale", (req, res) => {
   } catch (err) {
     logger.error(err, "Failed to list stale memory items");
     res.status(500).json({ error: "Failed to list stale items" });
+  }
+});
+
+// ─── Dashboard proxies for passive recall (Task #225) ───────────────────────
+
+router.get("/memory/recall-audit", (req, res) => {
+  const limit = Math.min(200, Math.max(1, parseInt((req.query["limit"] as string | undefined) || "50", 10) || 50));
+  const offset = Math.max(0, parseInt((req.query["offset"] as string | undefined) || "0", 10) || 0);
+  const sessionId = (req.query["sessionId"] as string | undefined) || undefined;
+  try {
+    const entries = listRecallAudit({ userId: MEM_USER_ID, sessionId, limit, offset });
+    res.json({ entries });
+  } catch (err) {
+    logger.error(err, "Failed to list recall audit for dashboard");
+    res.status(500).json({ error: "Failed to list recall audit" });
+  }
+});
+
+router.get("/memory/recall-metrics", (_req, res) => {
+  try {
+    const metrics = getRecallMetrics(MEM_USER_ID);
+    res.json(metrics);
+  } catch (err) {
+    logger.error(err, "Failed to get recall metrics for dashboard");
+    res.status(500).json({ error: "Failed to get recall metrics" });
+  }
+});
+
+router.get("/memory/passive-config", (req, res) => {
+  const sessionId = (req.query["sessionId"] as string | undefined) || undefined;
+  try {
+    res.json({
+      globalDefault: passiveRecallGloballyEnabled(),
+      sessionEnabled: sessionId ? isPassiveRecallEnabled(sessionId) : null,
+    });
+  } catch (err) {
+    logger.error(err, "Failed to get passive config");
+    res.status(500).json({ error: "Failed to get passive config" });
+  }
+});
+
+router.post("/memory/passive-config", (req, res) => {
+  const { sessionId, enabled } = req.body as { sessionId?: string; enabled?: boolean };
+  if (!sessionId || typeof enabled !== "boolean") {
+    res.status(400).json({ error: "sessionId and enabled (boolean) are required" });
+    return;
+  }
+  try {
+    setPassiveRecallForSession(sessionId, enabled);
+    res.json({ ok: true, sessionId, enabled, globalDefault: passiveRecallGloballyEnabled() });
+  } catch (err) {
+    logger.error(err, "Failed to set passive config");
+    res.status(500).json({ error: "Failed to set passive config" });
   }
 });
 
