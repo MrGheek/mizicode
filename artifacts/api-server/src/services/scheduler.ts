@@ -6,7 +6,7 @@ import { logger } from "../lib/logger";
 import * as vastai from "./vastai";
 import { getProfileById } from "./profiles";
 import type { VastOffer } from "./vastai";
-import { seedCuratedSources, fetchCurrentHeadSha, getStoredCommitSha } from "./curated-sources";
+import { seedCuratedSources, fetchCurrentHeadSha, getStoredCommitSha, isShaRateLimited } from "./curated-sources";
 import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles } from "./skills-bundler";
 import type { SessionContext } from "./skills-types";
 
@@ -135,9 +135,12 @@ async function runShaCheckJob(): Promise<void> {
     return;
   }
 
+  // Bail out early without hitting the network if we're inside a rate-limit cool-down.
+  if (isShaRateLimited()) return;
+
   const remoteSha = await fetchCurrentHeadSha();
   if (!remoteSha) {
-    logger.warn("SHA-check: remote HEAD SHA was null or unavailable — skipping");
+    // fetchCurrentHeadSha already logged the appropriate message (info for rate-limit, warn for other errors).
     return;
   }
 

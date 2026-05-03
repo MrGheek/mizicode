@@ -77,15 +77,55 @@ interface CsvFileSpec {
   category: DesignCategory;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
+// ─── Rate-limit back-off state ───────────────────────────────────────────────
+
+interface RateLimitState {
+  /** Timestamp (ms) before which all SHA-poll ticks should be skipped. */
+  cooldownUntil: number;
+  /** Number of consecutive rate-limit responses seen so far. */
+  consecutiveHits: number;
+}
+
+const rateLimitState: RateLimitState = {
+  cooldownUntil: 0,
+  consecutiveHits: 0,
+};
+
+/** Maximum cool-down cap: 1 hour */
+const MAX_COOLDOWN_MS = 60 * 60 * 1000;
+/** Base cool-down when no Reset header is present: 60 s */
+const BASE_COOLDOWN_MS = 60 * 1000;
+
+/**
+ * Returns true if the SHA-poll should be skipped because we are still inside a
+ * rate-limit cool-down window.  Logs an info message when still cooling down.
+ */
+export function isShaRateLimited(): boolean {
+  if (Date.now() < rateLimitState.cooldownUntil) {
+    const remainingSec = Math.ceil((rateLimitState.cooldownUntil - Date.now()) / 1000);
+    logger.info(
+      { remainingSec, consecutiveHits: rateLimitState.consecutiveHits },
+      "SHA-check: rate-limit cool-down active — skipping tick",
+    );
+    return true;
+  }
+  return false;
+}
+
+// ─── GitHub fetch helpers ─────────────────────────────────────────────────────
+
+function buildGitHubHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
   };
   const token = process.env["GITHUB_TOKEN"];
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+}
 
-  const res = await fetch(url, { headers });
+async function fetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(url, { headers: buildGitHubHeaders() });
   if (!res.ok) {
     throw new Error(`GitHub API ${res.status} for ${url}: ${await res.text()}`);
   }
@@ -230,14 +270,87 @@ export interface SeedResult {
 
 /**
  * Fetch the current HEAD commit SHA from GitHub without doing a full ingest.
- * Returns null if the request fails.
+ *
+ * Rate-limit handling:
+ * - Inspects X-RateLimit-Remaining / X-RateLimit-Reset headers on every response.
+ * - When the API returns 403/429, records a cool-down period derived from the
+ *   X-RateLimit-Reset header (if present) with exponential back-off on consecutive hits.
+ * - When the response is 200 OK but remaining quota is ≤ 5, a pre-emptive cool-down is
+ *   applied so the last few quota slots are not wasted on idle polls.
+ * - Logs at info level (not warn) for rate-limit events so as not to cause noisy alerts.
+ * - Resets the back-off counter on any successful response with quota remaining > 5.
+ * - Returns null on rate-limit or other failures so the caller can skip that tick.
  */
 export async function fetchCurrentHeadSha(): Promise<string | null> {
+  const url = `${API_BASE}/commits?per_page=1`;
+  let res: Response;
   try {
-    const commits = await fetchJson<GitHubCommit[]>(`${API_BASE}/commits?per_page=1`);
+    res = await fetch(url, { headers: buildGitHubHeaders() });
+  } catch (err) {
+    logger.warn({ err }, "SHA-check: network error fetching HEAD commit SHA — skipping tick");
+    return null;
+  }
+
+  // Check for rate-limit condition: explicit 403/429 HTTP error from GitHub.
+  const remaining = parseInt(res.headers.get("X-RateLimit-Remaining") ?? "1", 10);
+  const resetEpochSec = parseInt(res.headers.get("X-RateLimit-Reset") ?? "0", 10);
+  const isRateLimited = !res.ok && (res.status === 403 || res.status === 429);
+
+  if (isRateLimited) {
+    rateLimitState.consecutiveHits += 1;
+
+    // Derive cool-down duration: honour Reset header first, then exponential back-off.
+    let cooldownMs: number;
+    if (resetEpochSec > 0) {
+      const msUntilReset = resetEpochSec * 1000 - Date.now();
+      cooldownMs = Math.max(msUntilReset, BASE_COOLDOWN_MS);
+    } else {
+      // Exponential back-off: 60s × 2^(hits-1), capped at 1 hour.
+      cooldownMs = Math.min(BASE_COOLDOWN_MS * Math.pow(2, rateLimitState.consecutiveHits - 1), MAX_COOLDOWN_MS);
+    }
+
+    rateLimitState.cooldownUntil = Date.now() + cooldownMs;
+    const cooldownSec = Math.ceil(cooldownMs / 1000);
+
+    logger.info(
+      { status: res.status, remaining, cooldownSec, consecutiveHits: rateLimitState.consecutiveHits },
+      "SHA-check: GitHub rate-limited — entering cool-down, will resume after window",
+    );
+    return null;
+  }
+
+  if (!res.ok) {
+    logger.warn({ status: res.status, url }, "SHA-check: unexpected GitHub API error — skipping tick");
+    return null;
+  }
+
+  // Successful response — reset back-off state.
+  if (rateLimitState.consecutiveHits > 0) {
+    logger.info(
+      { consecutiveHits: rateLimitState.consecutiveHits },
+      "SHA-check: rate-limit cool-down lifted — resuming normal polling",
+    );
+    rateLimitState.consecutiveHits = 0;
+    rateLimitState.cooldownUntil = 0;
+  }
+
+  // Proactively enter a cool-down if remaining quota is very low (≤ 5) or fully exhausted.
+  if (remaining <= 5) {
+    const cooldownMs = resetEpochSec > 0
+      ? Math.max(resetEpochSec * 1000 - Date.now(), BASE_COOLDOWN_MS)
+      : BASE_COOLDOWN_MS;
+    rateLimitState.cooldownUntil = Date.now() + cooldownMs;
+    logger.info(
+      { remaining, cooldownSec: Math.ceil(cooldownMs / 1000) },
+      "SHA-check: GitHub quota almost exhausted — pre-emptive cool-down applied",
+    );
+  }
+
+  try {
+    const commits = await res.json() as GitHubCommit[];
     return commits[0]?.sha ?? null;
   } catch (err) {
-    logger.warn({ err }, "SHA-check: could not fetch HEAD commit SHA from GitHub");
+    logger.warn({ err }, "SHA-check: failed to parse GitHub commits response");
     return null;
   }
 }
