@@ -11,6 +11,7 @@ import {
   useGetSkillFeedbackScores,
   useGetSkillFeedbackHistory,
   useDeleteSkillFeedbackEntry,
+  useClearAllSkillFeedback,
   getGetSkillFeedbackHistoryQueryKey,
   getGetSkillFeedbackScoresQueryKey,
 } from "@workspace/api-client-react";
@@ -411,6 +412,8 @@ function FeedbackHistoryPanel({ skillId, feedbackScore }: { skillId: number; fee
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useGetSkillFeedbackHistory(skillId);
   const deleteMutation = useDeleteSkillFeedbackEntry();
+  const clearAllMutation = useClearAllSkillFeedback();
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const { toast } = useToast();
 
   const handleDelete = (entry: SkillFeedbackHistoryEntry) => {
@@ -421,6 +424,18 @@ function FeedbackHistoryPanel({ skillId, feedbackScore }: { skillId: number; fee
         queryClient.invalidateQueries({ queryKey: getGetSkillFeedbackScoresQueryKey() });
       },
       onError: () => toast({ title: "Failed to remove entry", variant: "destructive" }),
+    });
+  };
+
+  const handleClearAll = () => {
+    clearAllMutation.mutate({ skillId }, {
+      onSuccess: () => {
+        toast({ title: "All feedback cleared" });
+        setShowClearConfirm(false);
+        queryClient.invalidateQueries({ queryKey: getGetSkillFeedbackHistoryQueryKey(skillId) });
+        queryClient.invalidateQueries({ queryKey: getGetSkillFeedbackScoresQueryKey() });
+      },
+      onError: () => toast({ title: "Failed to clear feedback", variant: "destructive" }),
     });
   };
 
@@ -549,6 +564,54 @@ function FeedbackHistoryPanel({ skillId, feedbackScore }: { skillId: number; fee
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Clear all feedback */}
+      {totalCount > 0 && (
+        <div className="border-t border-border/30 pt-3">
+          {!showClearConfirm ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full h-7 text-xs text-red-400 border-red-500/30 hover:bg-red-500/10 hover:text-red-300"
+              onClick={() => setShowClearConfirm(true)}
+            >
+              <Trash2 className="w-3 h-3 mr-1.5" />
+              Clear all feedback
+            </Button>
+          ) : (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 space-y-2">
+              <p className="text-xs text-red-300 text-center">
+                Delete all {totalCount} feedback {totalCount === 1 ? "entry" : "entries"} for this skill? This cannot be undone.
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1 h-7 text-xs"
+                  onClick={() => setShowClearConfirm(false)}
+                  disabled={clearAllMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  className="flex-1 h-7 text-xs bg-red-600/20 hover:bg-red-600/40 text-red-400 border-red-600/30"
+                  variant="outline"
+                  onClick={handleClearAll}
+                  disabled={clearAllMutation.isPending}
+                >
+                  {clearAllMutation.isPending ? (
+                    <Loader2 className="w-3 h-3 animate-spin mr-1.5" />
+                  ) : (
+                    <Trash2 className="w-3 h-3 mr-1.5" />
+                  )}
+                  Confirm clear all
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

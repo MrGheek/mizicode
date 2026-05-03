@@ -3481,6 +3481,89 @@ export const useDisableSkill = <
 };
 
 /**
+ * @summary Delete all feedback entries for a skill
+ */
+export const getClearAllSkillFeedbackUrl = (skillId: number) => {
+  return `/api/skills/${skillId}/feedback`;
+};
+
+export const clearAllSkillFeedback = async (
+  skillId: number,
+  options?: RequestInit,
+): Promise<SuccessResponse> => {
+  return customFetch<SuccessResponse>(getClearAllSkillFeedbackUrl(skillId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getClearAllSkillFeedbackMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearAllSkillFeedback>>,
+    TError,
+    { skillId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof clearAllSkillFeedback>>,
+  TError,
+  { skillId: number },
+  TContext
+> => {
+  const mutationKey = ["clearAllSkillFeedback"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof clearAllSkillFeedback>>,
+    { skillId: number }
+  > = (props) => {
+    const { skillId } = props ?? {};
+    return clearAllSkillFeedback(skillId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ClearAllSkillFeedbackMutationResult = NonNullable<
+  Awaited<ReturnType<typeof clearAllSkillFeedback>>
+>;
+
+export type ClearAllSkillFeedbackMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Delete all feedback entries for a skill
+ */
+export const useClearAllSkillFeedback = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof clearAllSkillFeedback>>,
+    TError,
+    { skillId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof clearAllSkillFeedback>>,
+  TError,
+  { skillId: number },
+  TContext
+> => {
+  return useMutation(getClearAllSkillFeedbackMutationOptions(options));
+};
+
+/**
  * @summary Delete a specific feedback entry for a skill
  */
 export const getDeleteSkillFeedbackEntryUrl = (

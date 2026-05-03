@@ -450,6 +450,25 @@ router.get("/skills/:skillId/feedback", async (req, res) => {
   });
 });
 
+router.delete("/skills/:skillId/feedback", async (req, res) => {
+  const skillId = parseInt(req.params.skillId);
+  if (isNaN(skillId)) {
+    res.status(400).json({ error: "Invalid skill ID" });
+    return;
+  }
+
+  const [skill] = await db.select({ id: skillsTable.id }).from(skillsTable).where(eq(skillsTable.id, skillId));
+  if (!skill) {
+    res.status(404).json({ error: "Skill not found" });
+    return;
+  }
+
+  const result = await db.delete(skillFeedbackTable).where(eq(skillFeedbackTable.skillId, skillId));
+  const deletedCount = result.rowCount ?? 0;
+  logger.info({ skillId, deletedCount }, "All skill feedback cleared");
+  res.json({ success: true, deletedCount });
+});
+
 router.delete("/skills/:skillId/feedback/:feedbackId", async (req, res) => {
   const skillId = parseInt(req.params.skillId);
   const feedbackId = parseInt(req.params.feedbackId);
