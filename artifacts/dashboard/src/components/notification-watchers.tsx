@@ -209,10 +209,19 @@ function SessionEventWatcher({ sessionId, isReady }: { sessionId: number; isRead
       watch_files: "Watch Files",
       related_lane: "Related Lane",
     };
+    // Spec: only persist handoffs when the user is NOT actively viewing
+    // the Coordination tab of this session (otherwise the in-page UI
+    // already surfaces them). Read route/query directly so we don't add
+    // a router-context dependency to a watcher.
+    const onCoordinationForThisSession =
+      typeof window !== "undefined" &&
+      window.location.pathname === `/sessions/${sessionId}` &&
+      new URLSearchParams(window.location.search).get("tab") === "coordination";
     for (const h of handoffs) {
       if (seen.has(h.id)) continue;
       seen.add(h.id);
       if (h.status !== "pending") continue;
+      if (onCoordinationForThisSession) continue;
       const label = typeLabels[h.handoffType] ?? h.handoffType;
       addNotification({
         id: `handoff:${sessionId}:${h.id}`,
