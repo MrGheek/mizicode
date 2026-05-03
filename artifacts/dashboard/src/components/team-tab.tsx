@@ -14,6 +14,7 @@ import {
   getGetSessionCoordinationQueryKey,
 } from "@workspace/api-client-react";
 import { useCoordinationStream } from "@/hooks/use-coordination-stream";
+import { useToast } from "@/hooks/use-toast";
 import type {
   LaneWithPolicy,
   ConflictItem,
@@ -169,6 +170,7 @@ function SendHandoffDialog({
 
   const mutation = useCreateLaneHandoff();
   const isPending = mutation.status === "pending";
+  const { toast } = useToast();
 
   const otherLanes = allLanes.filter((l) => l.id !== lane.id);
 
@@ -191,7 +193,11 @@ function SendHandoffDialog({
           setMessage("");
           setHandoffType("needs_review");
           setTargetLaneId("all");
+          toast({ title: "Handoff sent" });
           onSuccess();
+        },
+        onError: () => {
+          toast({ variant: "destructive", title: "Failed to send handoff", description: "Please try again." });
         },
       }
     );
@@ -322,11 +328,20 @@ function ClaimRow({
 }) {
   const mutation = useReleaseLaneClaim();
   const isPending = mutation.status === "pending";
+  const { toast } = useToast();
 
   function handleRelease() {
     mutation.mutate(
       { id: sessionId, laneId, claimId: claim.id },
-      { onSuccess: onReleased }
+      {
+        onSuccess: () => {
+          toast({ title: "Claim released" });
+          onReleased();
+        },
+        onError: () => {
+          toast({ variant: "destructive", title: "Failed to release claim", description: "Please try again." });
+        },
+      }
     );
   }
 
