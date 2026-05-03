@@ -1218,7 +1218,9 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
     setDebouncedQuery(saved.trim());
   }, [sessionId]);
 
-  const searchEnabled = debouncedQuery.length > 0;
+  const canSearch =
+    summary?.confidenceLevel === "partial" || summary?.confidenceLevel === "full";
+  const searchEnabled = canSearch && debouncedQuery.length > 0;
   const { data: searchData, isLoading: searchLoading, isFetching: searchFetching, isError: searchError } = useSearchRepo(
     sessionId,
     { q: debouncedQuery || "_", type: searchType === "all" ? undefined : searchType, limit: 20 },
@@ -1458,10 +1460,20 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {status === "none" && (
+            {!canSearch && !isIndexing && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary/20 rounded p-2">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
-                <span>Index the repo first to enable search.</span>
+                <span>
+                  {status === "none"
+                    ? "Index the repo first to enable search."
+                    : "Search is available once the index reaches partial or full confidence."}
+                </span>
+              </div>
+            )}
+            {isIndexing && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary/20 rounded p-2">
+                <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-primary/60" />
+                <span>Indexing in progress — search will be available shortly.</span>
               </div>
             )}
             <div className="flex gap-2">
@@ -1472,7 +1484,7 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
                   onChange={e => setSearchInput(e.target.value)}
                   placeholder="Search symbols, files, or code chunks…"
                   className="pl-9 pr-9 bg-secondary/30 border-border/50 text-sm"
-                  disabled={status === "none" || isIndexing}
+                  disabled={!canSearch || isIndexing}
                 />
                 {searchInput && (
                   <button
@@ -1486,7 +1498,7 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
               <select
                 value={searchType}
                 onChange={e => setSearchType(e.target.value as "all" | "symbol" | "file" | "chunk")}
-                disabled={status === "none" || isIndexing}
+                disabled={!canSearch || isIndexing}
                 className="px-2 py-1.5 text-xs rounded-md border border-border/50 bg-secondary/30 text-foreground appearance-none focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer min-w-[84px] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <option value="all">All types</option>
