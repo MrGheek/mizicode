@@ -1781,6 +1781,8 @@ export default function SessionDetail() {
   const [seenConflictFingerprint, setSeenConflictFingerprint] = useState<string>("");
   const [conflictBadgePulseKey, setConflictBadgePulseKey] = useState(0);
   const prevConflictFingerprintRef = useRef<string>("");
+  const [conflictBannerShakeKey, setConflictBannerShakeKey] = useState(0);
+  const prevBlockingConflictFingerprintRef = useRef<string>("");
   const [dismissedConflictFingerprint, setDismissedConflictFingerprint] = useState<string>(() =>
     sessionId ? (localStorage.getItem(`conflict-dismissed:${sessionId}`) ?? "") : ""
   );
@@ -2126,6 +2128,23 @@ export default function SessionDetail() {
       prevConflictFingerprintRef.current = "";
     }
   }, [showConflictBadge]);
+
+  const bannerVisible = hasBlockingConflict && dismissedConflictFingerprint !== blockingConflictFingerprint;
+
+  useEffect(() => {
+    const prev = prevBlockingConflictFingerprintRef.current;
+    prevBlockingConflictFingerprintRef.current = blockingConflictFingerprint;
+    if (bannerVisible && prev !== "" && prev !== blockingConflictFingerprint) {
+      setConflictBannerShakeKey((k) => k + 1);
+    }
+  }, [blockingConflictFingerprint, bannerVisible]);
+
+  useEffect(() => {
+    if (!bannerVisible) {
+      setConflictBannerShakeKey(0);
+      prevBlockingConflictFingerprintRef.current = "";
+    }
+  }, [bannerVisible]);
 
   // Note: swarm/handoff/conflict notifications are emitted globally by
   // the per-session watchers in `notification-watchers.tsx` so they fire
@@ -2731,8 +2750,8 @@ export default function SessionDetail() {
           )}
 
           {/* Blocking conflict banner */}
-          {hasBlockingConflict && dismissedConflictFingerprint !== blockingConflictFingerprint && (
-            <div className="flex items-start gap-3 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm">
+          {bannerVisible && (
+            <div key={conflictBannerShakeKey} className={`flex items-start gap-3 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm${conflictBannerShakeKey > 0 ? " animate-banner-shake" : ""}`}>
               <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
               <span className="flex-1 text-red-300">
                 <span className="font-semibold text-red-200">

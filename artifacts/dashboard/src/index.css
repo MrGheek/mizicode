@@ -26,10 +26,21 @@
   75% { transform: rotate(-2deg); }
 }
 
+@keyframes banner-shake {
+  0%, 100% { transform: translateX(0); }
+  15%       { transform: translateX(-5px); }
+  30%       { transform: translateX(5px); }
+  45%       { transform: translateX(-4px); }
+  60%       { transform: translateX(4px); }
+  75%       { transform: translateX(-2px); }
+  90%       { transform: translateX(2px); }
+}
+
 @theme inline {
   --animate-badge-pop: badge-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   --animate-badge-pulse: badge-pulse 0.4s ease-out both;
   --animate-bell-shake: bell-shake 0.9s ease-in-out both;
+  --animate-banner-shake: banner-shake 0.55s ease-in-out both;
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
   --color-border: hsl(var(--border));
