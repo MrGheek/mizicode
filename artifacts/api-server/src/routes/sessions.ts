@@ -251,18 +251,49 @@ router.get("/sessions", async (_req, res) => {
       teamMembers: sessionsTable.teamMembers,
       createdAt: sessionsTable.createdAt,
       updatedAt: sessionsTable.updatedAt,
+      swarmSnapshotJson: sessionsTable.swarmSnapshotJson,
     })
     .from(sessionsTable)
     .leftJoin(gpuProfilesTable, eq(sessionsTable.profileId, gpuProfilesTable.id))
     .orderBy(desc(sessionsTable.createdAt));
 
-  // Redact passwords from list response — full credentials are only on the detail endpoint
-  const sanitized = sessions.map((s) => ({
-    ...s,
-    teamMembers: s.teamMembers
-      ? (s.teamMembers as TeamMemberRecord[]).map(({ password: _pw, ...rest }) => rest)
-      : null,
-  }));
+  // Redact passwords from list response — full credentials are only on the detail endpoint.
+  // Enrich each session with a swarmStatus field so the frontend can render swarm pills
+  // on the very first paint without waiting for the batch poll round-trip.
+  const sanitized = sessions.map((s) => {
+    const { swarmSnapshotJson, ...rest } = s;
+
+    // Derive swarm status using the same priority logic as swarm-status-batch:
+    // 1. in-memory cache (freshest), 2. DB snapshot (stale), 3. status-based sentinel.
+    let swarmStatus: { availability: string; snapshot: SwarmSnapshot | null } | null = null;
+
+    if (["pending", "provisioning", "downloading", "starting"].includes(s.status)) {
+      swarmStatus = { availability: "starting", snapshot: null };
+    } else {
+      const cached = swarmCache.get(s.id);
+      const dbSnapshot = swarmSnapshotJson as SwarmSnapshot | null;
+
+      if (cached) {
+        const ageMs = Date.now() - cached.receivedAt;
+        swarmStatus = {
+          availability: ageMs <= STALE_THRESHOLD_MS ? "live" : "stale",
+          snapshot: cached.snapshot,
+        };
+      } else if (dbSnapshot) {
+        swarmStatus = { availability: "stale", snapshot: dbSnapshot };
+      } else {
+        swarmStatus = { availability: "unavailable", snapshot: null };
+      }
+    }
+
+    return {
+      ...rest,
+      teamMembers: s.teamMembers
+        ? (s.teamMembers as TeamMemberRecord[]).map(({ password: _pw, ...m }) => m)
+        : null,
+      swarmStatus,
+    };
+  });
 
   res.json(sanitized);
 });

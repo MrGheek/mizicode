@@ -29,12 +29,23 @@ async function fetchBatchStatus(idsKey: string): Promise<Record<number, SwarmSta
   return coerced;
 }
 
-function useSwarmBatchSse(sessionIds: number[], readySessionIds: number[]) {
+function useSwarmBatchSse(sessionIds: number[], readySessionIds: number[], initialData?: Record<number, SwarmStatusResponse>) {
   const [statusMap, setStatusMap] = useState<Record<number, SwarmStatusResponse>>({});
   const allIdsKey = sessionIds.slice().sort((a, b) => a - b).join(",");
   const readyIdsKey = readySessionIds.slice().sort((a, b) => a - b).join(",");
   // Incrementing this forces the SSE effect to tear down and reconnect on tab focus.
   const [reconnectKey, setReconnectKey] = useState(0);
+
+  // Seed the status map with inline data from the sessions list as soon as it arrives,
+  // but only once per unique dataset (tracked by allIdsKey). This gives pills an
+  // initial value on the very first paint before the batch fetch round-trip completes.
+  const seededKeyRef = useRef<string>("");
+  useEffect(() => {
+    if (!initialData || Object.keys(initialData).length === 0) return;
+    if (seededKeyRef.current === allIdsKey) return;
+    seededKeyRef.current = allIdsKey;
+    setStatusMap((prev) => ({ ...initialData, ...prev }));
+  }, [initialData, allIdsKey]);
 
   // Keep a mutable ref so fallback callbacks always use the freshest allIdsKey
   // even when the SSE effect hasn't re-run yet.
@@ -275,7 +286,20 @@ export default function SessionsList() {
 
   const sessionIds = useMemo(() => sessions?.map(s => s.id) ?? [], [sessions]);
   const readySessionIds = useMemo(() => sessions?.filter(s => s.status === "ready").map(s => s.id) ?? [], [sessions]);
-  const swarmStatusMap = useSwarmBatchSse(sessionIds, readySessionIds);
+
+  // Build the initial swarm status map from inline data returned by the sessions list endpoint.
+  // This means pills can render on the very first paint with no extra round-trip.
+  const inlineSwarmData = useMemo<Record<number, SwarmStatusResponse>>(() => {
+    if (!sessions) return {};
+    const map: Record<number, SwarmStatusResponse> = {};
+    for (const s of sessions) {
+      const sw = (s as typeof s & { swarmStatus?: SwarmStatusResponse | null }).swarmStatus;
+      if (sw) map[s.id] = sw;
+    }
+    return map;
+  }, [sessions]);
+
+  const swarmStatusMap = useSwarmBatchSse(sessionIds, readySessionIds, inlineSwarmData);
 
   const idsParam = useMemo(
     () => sessionIds.length > 0 ? sessionIds.join(",") : undefined,
