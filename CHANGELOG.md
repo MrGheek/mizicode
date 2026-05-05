@@ -1,3 +1,10 @@
+## v0.1.1 — 2026-05-05\n\n- fix: update GitHub Actions secret names to match MIZIAPI and MIZIDASHBOARD (162ff33)
+- Update references from Floatr to Mizi across project files (2dd4fec)
+- fix: rename floatr → mizi in Fly.io configs, CI workflow, and README (9e81ef2)
+- fix: rename floatr → mizi in Fly.io configs, CI workflow, and README (4743ff4)
+- ci: add GitHub Actions workflow to auto-deploy to Fly.io on push to main (ecf3275)
+- Task #271: Wire dashboard API URL to automatically pick up the Fly.io address (7d73d2b)\n
+
 # Changelog
 
 ## v0.1.0 — 2026-05-05\n\n- feat: Add Fly.io deployment config and wire dashboard API URL (Task #266) (c73b4ad)
