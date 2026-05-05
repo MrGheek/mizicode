@@ -1,7 +1,12 @@
 import { Router } from "express";
+import { and, desc, eq } from "drizzle-orm";
+import { db, paletteIntentsTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 
 const router = Router();
+
+/** Resolved from env at startup — scopes all palette history to this identity. */
+const PALETTE_USER_ID = process.env["OMNIQL_MEM_USER_ID"] || "operator";
 
 const VALID_ACTIONS = [
   "navigate",
@@ -51,6 +56,28 @@ Rules:
 - If the command is unrecognizable or outside scope, set ok=false with a friendly explanation.
 - Keep explanation concise (≤ 80 chars). It will be shown in a toast notification.
 - Never include markdown, code fences, or any text outside the JSON object.`;
+
+/** Number of recent successful intents to include as few-shot examples. */
+const FEW_SHOT_LIMIT = 5;
+
+/** Build the few-shot examples block to append to the system prompt. */
+function buildFewShotBlock(
+  examples: Array<{ query: string; action: string | null; payloadJson: unknown; explanation: string }>
+): string {
+  if (examples.length === 0) return "";
+
+  const lines = [
+    "",
+    "Past successful commands from this user (use as few-shot examples):",
+  ];
+  for (const ex of examples) {
+    const payload = ex.payloadJson ?? null;
+    lines.push(
+      `  User: "${ex.query}" → ${JSON.stringify({ ok: true, action: ex.action, payload, explanation: ex.explanation })}`
+    );
+  }
+  return lines.join("\n");
+}
 
 /** Strict server-side validation of the LLM-returned intent payload. */
 function validateParsedIntent(parsed: unknown): {
@@ -103,6 +130,26 @@ function validateParsedIntent(parsed: unknown): {
   return { ok: true, action, payload: { route, sessionId }, explanation };
 }
 
+/** Persist an intent result (success or failure) to the DB for future learning. */
+async function persistIntent(
+  userId: string,
+  query: string,
+  result: { ok: boolean; action: PaletteAction | null; payload: { route: string | null; sessionId: number | null } | null; explanation: string }
+): Promise<void> {
+  try {
+    await db.insert(paletteIntentsTable).values({
+      userId,
+      query,
+      ok: result.ok,
+      action: result.action,
+      payloadJson: result.payload,
+      explanation: result.explanation,
+    });
+  } catch (err) {
+    logger.warn({ err }, "palette-intent: failed to persist intent to DB");
+  }
+}
+
 router.post("/palette/intent", async (req, res) => {
   const body = req.body as {
     query?: unknown;
@@ -141,14 +188,40 @@ router.post("/palette/intent", async (req, res) => {
   ].join("\n");
 
   try {
+    // Fetch this user's recent successful intents to use as few-shot examples.
+    // Filtered by PALETTE_USER_ID so no cross-user data leaks into the prompt.
+    let fewShotBlock = "";
+    try {
+      const recentSuccessful = await db
+        .select({
+          query: paletteIntentsTable.query,
+          action: paletteIntentsTable.action,
+          payloadJson: paletteIntentsTable.payloadJson,
+          explanation: paletteIntentsTable.explanation,
+        })
+        .from(paletteIntentsTable)
+        .where(and(
+          eq(paletteIntentsTable.userId, PALETTE_USER_ID),
+          eq(paletteIntentsTable.ok, true)
+        ))
+        .orderBy(desc(paletteIntentsTable.createdAt))
+        .limit(FEW_SHOT_LIMIT);
+
+      fewShotBlock = buildFewShotBlock(recentSuccessful);
+    } catch (err) {
+      logger.warn({ err }, "palette-intent: failed to load few-shot examples from DB");
+    }
+
     // Lazy import so missing AI env vars only fail this handler, not server startup.
     const { openai } = await import("@workspace/integrations-openai-ai-server");
+
+    const systemPrompt = fewShotBlock ? SYSTEM_PROMPT + fewShotBlock : SYSTEM_PROMPT;
 
     const response = await openai.chat.completions.create({
       model: "gpt-5-mini",
       max_completion_tokens: 512,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
       ],
     });
@@ -160,27 +233,32 @@ router.post("/palette/intent", async (req, res) => {
       rawParsed = JSON.parse(raw);
     } catch {
       logger.warn({ raw }, "palette-intent: LLM returned non-JSON response");
-      res.json({
-        ok: false,
+      const failResult = {
+        ok: false as const,
         action: null,
         payload: null,
         explanation: "Could not parse command — please try rephrasing",
-      });
+      };
+      void persistIntent(PALETTE_USER_ID, query, failResult);
+      res.json(failResult);
       return;
     }
 
     const validated = validateParsedIntent(rawParsed);
     if (validated === null) {
       logger.warn({ rawParsed }, "palette-intent: LLM returned invalid action/payload schema");
-      res.json({
-        ok: false,
+      const failResult = {
+        ok: false as const,
         action: null,
         payload: null,
         explanation: "Unexpected response format — please try rephrasing",
-      });
+      };
+      void persistIntent(PALETTE_USER_ID, query, failResult);
+      res.json(failResult);
       return;
     }
 
+    void persistIntent(PALETTE_USER_ID, query, validated);
     res.json(validated);
   } catch (err) {
     logger.error({ err }, "palette-intent: LLM call failed");

@@ -15,6 +15,20 @@
       "when": 1746316800000,
       "tag": "0009_scheduler_repo_url",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1746835200000,
+      "tag": "0013_palette_intents",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1746835201000,
+      "tag": "0014_palette_intents_user_id",
+      "breakpoints": true
     }
   ]
 }
