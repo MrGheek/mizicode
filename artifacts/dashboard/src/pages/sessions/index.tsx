@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { RelaunchButton } from "@/components/relaunch-button";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useVisibilityReconnect } from "@/hooks/use-visibility-reconnect";
+import { GitHubBranchChip } from "@/components/github-branch-chip";
 
 const RELAUNCHABLE_STATUSES = new Set(["stopped"]);
 
@@ -506,7 +507,14 @@ export default function SessionsList() {
                     className={`border-border/50 ${isFocused ? "bg-primary/10 outline outline-1 outline-primary/40" : ""}`}
                   >
                     <TableCell className="font-mono text-muted-foreground">#{session.id}</TableCell>
-                    <TableCell className="font-medium">{session.profileName}</TableCell>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {session.profileName}
+                        {session.hasGithubToken && (
+                          <GitHubBranchChip sessionId={session.id} />
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2 flex-wrap">
                         <SessionStatusBadge status={session.status} />
