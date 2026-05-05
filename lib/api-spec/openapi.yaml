@@ -3085,6 +3085,9 @@ components:
           type: string
           nullable: true
           description: Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).
+        hasGithubToken:
+          type: boolean
+          description: Whether a GitHub PAT was provided at launch (token itself is not stored).
         createdAt:
           type: string
           format: date-time
@@ -3206,6 +3209,18 @@ components:
           type: string
           nullable: true
           description: Plain-English description of what the user is trying to accomplish (max 500 chars). Stored on the session and seeded as the opening memory observation.
+        nimModelId:
+          type: string
+          nullable: true
+          description: NIM model ID for hosted-inference sessions (e.g. "moonshotai/kimi-k2.6"). Mutually exclusive with profileId.
+        nimProvider:
+          type: string
+          nullable: true
+          description: "Partner provider for NIM sessions: \"nvidia\" | \"vultr\" | \"together\" | \"deepinfra\". Defaults to \"nvidia\"."
+        githubToken:
+          type: string
+          nullable: true
+          description: GitHub Personal Access Token — injected as GITHUB_TOKEN and used to force-push to floatr/session-{id} branch. Never stored in the database.
       required:
         - profileId
 

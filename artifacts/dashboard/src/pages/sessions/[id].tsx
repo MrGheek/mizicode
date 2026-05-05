@@ -3031,7 +3031,7 @@ export default function SessionDetail() {
             ) : (
               <>· {session.gpuName} x{session.numGpus}{session.vastInstanceId ? ` · Vast #${session.vastInstanceId}` : ""}</>
             )}
-            {(session as typeof session & { hasGithubToken?: boolean }).hasGithubToken && (
+            {session.hasGithubToken && (session.nimModelId || session.repoUrl) && (
               <GitHubBranchChip sessionId={session.id} />
             )}
           </p>

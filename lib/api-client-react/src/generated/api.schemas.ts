@@ -186,6 +186,12 @@ export interface Session {
   activeBundleId?: number | null;
   /** Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session). */
   intentText?: string | null;
+  /** NIM model ID for hosted-inference sessions. */
+  nimModelId?: string | null;
+  /** URL of the git repository cloned in this session. */
+  repoUrl?: string | null;
+  /** Whether a GitHub PAT was provided at launch (token itself is not stored). */
+  hasGithubToken?: boolean | null;
   createdAt: string;
   updatedAt: string;
 }

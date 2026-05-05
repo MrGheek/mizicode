@@ -192,6 +192,10 @@ export const ListSessionsResponseItem = zod.object({
     .describe(
       "Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).",
     ),
+  hasGithubToken: zod
+    .boolean()
+    .nullish()
+    .describe("Whether a GitHub PAT was provided at launch (token itself is not stored)."),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -262,6 +266,12 @@ export const CreateSessionBody = zod.object({
     .nullish()
     .describe(
       "Partner provider for NIM sessions: \"nvidia\" | \"vultr\" | \"together\" | \"deepinfra\". Defaults to \"nvidia\".",
+    ),
+  githubToken: zod
+    .string()
+    .nullish()
+    .describe(
+      "GitHub Personal Access Token — injected as GITHUB_TOKEN and used to force-push to floatr/session-{id} branch. Never stored in the database.",
     ),
 });
 
@@ -428,6 +438,10 @@ export const GetSessionResponse = zod.object({
     .describe(
       "Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).",
     ),
+  hasGithubToken: zod
+    .boolean()
+    .nullish()
+    .describe("Whether a GitHub PAT was provided at launch (token itself is not stored)."),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -507,6 +521,10 @@ export const DeleteSessionResponse = zod.object({
     .describe(
       "Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).",
     ),
+  hasGithubToken: zod
+    .boolean()
+    .nullish()
+    .describe("Whether a GitHub PAT was provided at launch (token itself is not stored)."),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });
@@ -630,6 +648,10 @@ export const GetActiveSessionResponse = zod.object({
         .describe(
           "Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).",
         ),
+      hasGithubToken: zod
+        .boolean()
+        .nullish()
+        .describe("Whether a GitHub PAT was provided at launch (token itself is not stored)."),
       createdAt: zod.coerce.date(),
       updatedAt: zod.coerce.date(),
     })
@@ -711,6 +733,10 @@ export const RefreshSessionStatusResponse = zod.object({
     .describe(
       "Plain-English description of what the user is trying to accomplish in this session (set at launch, editable mid-session).",
     ),
+  hasGithubToken: zod
+    .boolean()
+    .nullish()
+    .describe("Whether a GitHub PAT was provided at launch (token itself is not stored)."),
   createdAt: zod.coerce.date(),
   updatedAt: zod.coerce.date(),
 });

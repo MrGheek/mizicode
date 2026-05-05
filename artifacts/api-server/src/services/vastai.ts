@@ -342,10 +342,31 @@ git config --global push.default current
 cat > /usr/local/bin/git << 'FLOATR_GIT_WRAPPER'
 #!/bin/bash
 GIT=/usr/bin/git
-if [ "$1" = "push" ]; then
+# Walk args skipping global git options to find the actual subcommand.
+# Handles: git -c k=v push, git --no-pager push, git -C path push, etc.
+CMD=""
+SKIP_NEXT=0
+for arg in "$@"; do
+  if [ "$SKIP_NEXT" = "1" ]; then SKIP_NEXT=0; continue; fi
+  case "$arg" in
+    -c|-C|--exec-path|--git-dir|--work-tree|--namespace|--super-prefix) SKIP_NEXT=1 ;;
+    --*=*|-*) ;;
+    *) CMD="$arg"; break ;;
+  esac
+done
+if [ "$CMD" = "push" ]; then
   REMOTE="origin"
+  FOUND=0
+  SKIP2=0
   for a in "$@"; do
-    case "$a" in push|-*) continue ;; *) REMOTE="$a"; break ;; esac
+    if [ "$SKIP2" = "1" ]; then SKIP2=0; continue; fi
+    case "$a" in
+      -c|-C|--exec-path|--git-dir|--work-tree|--namespace|--super-prefix) SKIP2=1; continue ;;
+      --*=*|-*) continue ;;
+      *)
+        if [ "$FOUND" = "1" ]; then REMOTE="$a"; break; fi
+        FOUND=1 ;;
+    esac
   done
   exec "$GIT" push "$REMOTE" HEAD:floatr/session-${profileConfig.sessionId}
 else
