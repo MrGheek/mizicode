@@ -1,5 +1,5 @@
 # ============================================================
-# Fly.io configuration — FLOATR API Server
+# Fly.io configuration — MIZI API Server
 #
 # Deploy with:
 #   fly launch --config artifacts/api-server/fly.toml
@@ -29,7 +29,7 @@
 #     DEEPINFRA_API_KEY                — DeepInfra model provider
 # ============================================================
 
-app = "floatr-api"
+app = "mizi-api"
 primary_region = "ord"
 
 [build]
@@ -42,7 +42,7 @@ primary_region = "ord"
   NODE_ENV         = "production"
 
 [[mounts]]
-  source      = "floatr_memory"
+  source      = "mizi_memory"
   destination = "/data/memory"
 
 [[services]]

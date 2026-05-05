@@ -1,18 +1,18 @@
 # ============================================================
-# Fly.io configuration — FLOATR Dashboard
+# Fly.io configuration — MIZI Dashboard
 #
 # Deploy with:
 #   fly launch --config artifacts/dashboard/fly.toml
 #   fly deploy --config artifacts/dashboard/fly.toml \
 #       --dockerfile artifacts/dashboard/Dockerfile \
 #       --build-context . \
-#       --build-arg VITE_API_BASE_URL=https://floatr-api.fly.dev
+#       --build-arg VITE_API_BASE_URL=https://mizi-api.fly.dev
 #
 # The dashboard has no runtime secrets of its own.
 # VITE_API_BASE_URL is baked in at build time via --build-arg.
 # ============================================================
 
-app = "floatr-dashboard"
+app = "mizi-dashboard"
 primary_region = "ord"
 
 [build]
@@ -20,18 +20,18 @@ primary_region = "ord"
 
   [build.args]
     # Point the dashboard at your API server's Fly.io URL.
-    # The value below assumes your API app is named "floatr-api" (the default).
-    # If you chose a different name (e.g. "floatr-api-staging"), override this
+    # The value below assumes your API app is named "mizi-api" (the default).
+    # If you chose a different name (e.g. "mizi-api-staging"), override this
     # at deploy time:
     #
     #   fly deploy --config artifacts/dashboard/fly.toml \
     #              --dockerfile artifacts/dashboard/Dockerfile \
     #              --build-context . \
-    #              --build-arg VITE_API_BASE_URL=https://floatr-api-staging.fly.dev
+    #              --build-arg VITE_API_BASE_URL=https://mizi-api-staging.fly.dev
     #
     # When VITE_API_BASE_URL is absent (Replit dev), the dashboard falls back
     # to same-origin relative paths automatically — no local changes needed.
-    VITE_API_BASE_URL = "https://floatr-api.fly.dev"
+    VITE_API_BASE_URL = "https://mizi-api.fly.dev"
 
 [[services]]
   protocol      = "tcp"

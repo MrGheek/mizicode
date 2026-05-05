@@ -3,7 +3,7 @@
  *
  * On Replit (dev and production): uses Vite's BASE_URL (same-origin relative path).
  * On Fly.io: VITE_API_BASE_URL is injected at build time pointing to the API server's
- * Fly.io hostname (e.g. https://floatr-api.fly.dev). In that case every API fetch
+ * Fly.io hostname (e.g. https://mizi-api.fly.dev). In that case every API fetch
  * must be cross-origin so we prepend the API origin.
  *
  * Note the trailing slash is always present so callers can write

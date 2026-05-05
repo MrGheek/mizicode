@@ -1,4 +1,4 @@
-# FLOATR Cloud Coding
+# MIZI Code
 
 A full-stack platform for spinning up GPU-powered AI coding sessions on Vast.ai.
 The system provisions remote GPU machines running Bolt.diy, llama.cpp with GGUF models, code-server (VS Code), and an nginx preview proxy.
@@ -22,19 +22,19 @@ the **monorepo root** as the Docker build context so shared libraries resolve co
 fly launch \
   --config artifacts/api-server/fly.toml \
   --dockerfile artifacts/api-server/Dockerfile \
-  --name floatr-api \
+  --name mizi-api \
   --no-deploy
 
 # Provision a Postgres database and attach it (sets DATABASE_URL automatically)
-fly postgres create --name floatr-db --region ord
-fly postgres attach floatr-db --app floatr-api
+fly postgres create --name mizi-db --region ord
+fly postgres attach mizi-db --app mizi-api
 
 # Create the persistent volume for the SQLite memory database
 # (1 GB is sufficient to start; resize with `fly volumes extend` later)
-fly volumes create floatr_memory --app floatr-api --region ord --size 1
+fly volumes create mizi_memory --app mizi-api --region ord --size 1
 
 # Set the remaining secrets
-fly secrets set --app floatr-api \
+fly secrets set --app mizi-api \
   VASTAI_API_KEY="<your vastai key>" \
   AI_INTEGRATIONS_OPENAI_API_KEY="<your openai key>" \
   AI_INTEGRATIONS_OPENAI_BASE_URL="https://api.openai.com/v1" \
@@ -50,7 +50,7 @@ fly deploy --config artifacts/api-server/fly.toml \
 ```
 
 After a successful deploy the API server is reachable at
-`https://floatr-api.fly.dev`.
+`https://mizi-api.fly.dev`.
 
 ---
 
@@ -61,21 +61,21 @@ After a successful deploy the API server is reachable at
 fly launch \
   --config artifacts/dashboard/fly.toml \
   --dockerfile artifacts/dashboard/Dockerfile \
-  --name floatr-dashboard \
+  --name mizi-dashboard \
   --no-deploy
 
 # Deploy — pass the API server URL as a build arg
 fly deploy --config artifacts/dashboard/fly.toml \
            --dockerfile artifacts/dashboard/Dockerfile \
            --build-context . \
-           --build-arg VITE_API_BASE_URL=https://floatr-api.fly.dev
+           --build-arg VITE_API_BASE_URL=https://mizi-api.fly.dev
 ```
 
 > **Naming convention:** `VITE_API_BASE_URL` follows the pattern
 > `https://<api-app-name>.fly.dev` where `<api-app-name>` is the Fly.io app
 > name you chose when running `fly launch` for the API server (default:
-> `floatr-api`). If you used a different name (e.g. `floatr-api-staging`),
-> pass `--build-arg VITE_API_BASE_URL=https://floatr-api-staging.fly.dev` at
+> `mizi-api`). If you used a different name (e.g. `mizi-api-staging`),
+> pass `--build-arg VITE_API_BASE_URL=https://mizi-api-staging.fly.dev` at
 > deploy time. You do **not** need to edit `fly.toml` to change the URL — the
 > `--build-arg` flag overrides the default baked into the file.
 >
@@ -84,13 +84,13 @@ fly deploy --config artifacts/dashboard/fly.toml \
 > required.
 
 After a successful deploy the dashboard is reachable at
-`https://floatr-dashboard.fly.dev`.
+`https://mizi-dashboard.fly.dev`.
 
 ---
 
 ### Subsequent deploys
 
-Replace `floatr-api` with your actual API app name if you chose a different one
+Replace `mizi-api` with your actual API app name if you chose a different one
 during `fly launch`.
 
 ```bash
@@ -99,18 +99,18 @@ fly deploy --config artifacts/api-server/fly.toml \
            --dockerfile artifacts/api-server/Dockerfile \
            --build-context .
 
-# Dashboard (replace "floatr-api" if your API app has a different name)
+# Dashboard (replace "mizi-api" if your API app has a different name)
 fly deploy --config artifacts/dashboard/fly.toml \
            --dockerfile artifacts/dashboard/Dockerfile \
            --build-context . \
-           --build-arg VITE_API_BASE_URL=https://floatr-api.fly.dev
+           --build-arg VITE_API_BASE_URL=https://mizi-api.fly.dev
 ```
 
 ### Checking logs
 
 ```bash
-fly logs --app floatr-api
-fly logs --app floatr-dashboard
+fly logs --app mizi-api
+fly logs --app mizi-dashboard
 ```
 
 ---
