@@ -26,7 +26,7 @@ use compat_harness::{extract_manifest, UpstreamPaths};
 use init::initialize_repo;
 use render::{MarkdownStreamState, Spinner, TerminalRenderer};
 use runtime::{
-    clear_oauth_credentials, generate_pkce_pair, generate_state,
+    clear_oauth_credentials, forward_soft_interrupt_telemetry, generate_pkce_pair, generate_state,
     load_system_prompt, load_system_prompt_with_past_context, mem_client::MemClientConfig,
     parse_oauth_callback_request_target, save_oauth_credentials, ApiClient, ApiRequest,
     AssistantEvent, CompactionConfig, ConfigLoader, ConfigSource, ContentBlock,
@@ -1126,6 +1126,11 @@ impl LiveCli {
                     );
                 }
                 self.persist_session()?;
+                // Drain any soft-interrupt events queued during this turn and
+                // ship them to the API server for dashboard aggregation.
+                forward_soft_interrupt_telemetry(
+                    &self.runtime.soft_interrupt_queue().take_events(),
+                );
                 Ok(())
             }
             Err(error) => {
@@ -1264,8 +1269,11 @@ impl LiveCli {
         )?;
         let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
         let summary = runtime.run_turn(input, Some(&mut permission_prompter))?;
+        // Drain soft-interrupt telemetry before moving runtime into self.
+        let si_events = runtime.soft_interrupt_queue().take_events();
         self.runtime = runtime;
         self.persist_session()?;
+        forward_soft_interrupt_telemetry(&si_events);
         println!(
             "{}",
             json!({

@@ -640,6 +640,94 @@ fn merge_hook_feedback(messages: &[String], output: String, denied: bool) -> Str
     sections.join("\n\n")
 }
 
+/// Forward soft-interrupt telemetry events to the API server after a turn.
+///
+/// Reads `OMNIQL_CALLBACK_URL` (set by the onstart script to the full status
+/// endpoint, e.g. `https://host/api/sessions/123/status`) and derives the
+/// telemetry endpoint by replacing the `/status` suffix with
+/// `/telemetry/soft-interrupts`.
+///
+/// Uses `OMNIQL_MEM_AUTH_TOKEN` for Bearer auth (the same token the instance
+/// receives from the server at launch time). Also emits one structured JSON
+/// line to stderr per event so container log aggregation can capture them
+/// independently of the HTTP path.
+///
+/// This is best-effort: if env vars are absent or the HTTP call fails the
+/// error is logged to stderr but never propagated to the caller.
+pub fn forward_soft_interrupt_telemetry(events: &[SoftInterruptEvent]) {
+    if events.is_empty() {
+        return;
+    }
+
+    for ev in events {
+        eprintln!(
+            r#"{{"type":"soft_interrupt_injected","time_in_queue_ms":{},"coalesced_with":{}}}"#,
+            ev.time_in_queue.as_millis(),
+            ev.coalesced_with,
+        );
+    }
+
+    let callback_url = match std::env::var("OMNIQL_CALLBACK_URL") {
+        Ok(u) if !u.is_empty() => u,
+        _ => return,
+    };
+
+    // OMNIQL_CALLBACK_URL is the full status endpoint, e.g.:
+    //   https://host/api/sessions/123/status
+    // Derive the telemetry endpoint by replacing the /status suffix.
+    let telemetry_url = match callback_url.strip_suffix("/status") {
+        Some(base) => format!("{base}/telemetry/soft-interrupts"),
+        None => return,
+    };
+
+    let auth_token = std::env::var("OMNIQL_MEM_AUTH_TOKEN").unwrap_or_default();
+
+    let payload: Vec<serde_json::Value> = events
+        .iter()
+        .map(|ev| {
+            serde_json::json!({
+                "time_in_queue_ms": ev.time_in_queue.as_millis(),
+                "coalesced_with": ev.coalesced_with,
+            })
+        })
+        .collect();
+
+    let body = serde_json::json!({ "events": payload });
+
+    // Spawn a background thread so the HTTP POST never blocks the turn loop.
+    // Errors and non-2xx responses are reported to stderr for log aggregation;
+    // they never propagate back to the caller (fire-and-forget contract).
+    std::thread::spawn(move || {
+        let Ok(client) = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        else {
+            return;
+        };
+
+        let mut req = client.post(&telemetry_url).json(&body);
+        if !auth_token.is_empty() {
+            req = req.header("Authorization", format!("Bearer {auth_token}"));
+        }
+
+        match req.send() {
+            Ok(resp) if !resp.status().is_success() => {
+                eprintln!(
+                    r#"{{"type":"soft_interrupt_forward_warn","status":{}}}"#,
+                    resp.status().as_u16(),
+                );
+            }
+            Err(err) => {
+                eprintln!(
+                    r#"{{"type":"soft_interrupt_forward_error","error":{}}}"#,
+                    serde_json::to_string(&err.to_string()).unwrap_or_default()
+                );
+            }
+            Ok(_) => {}
+        }
+    });
+}
+
 type ToolHandler = Box<dyn FnMut(&str) -> Result<String, ToolError>>;
 
 #[derive(Default)]

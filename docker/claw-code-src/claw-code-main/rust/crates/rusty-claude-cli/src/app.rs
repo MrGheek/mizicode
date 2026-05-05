@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use crate::args::{OutputFormat, PermissionMode};
 use crate::input::{LineEditor, ReadOutcome};
 use crate::render::{Spinner, TerminalRenderer};
-use runtime::{ConversationClient, ConversationMessage, RuntimeError, StreamEvent, UsageSummary};
+use runtime::{
+    forward_soft_interrupt_telemetry, ConversationClient, ConversationMessage, RuntimeError,
+    SoftInterruptQueue, StreamEvent, UsageSummary,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionConfig {
@@ -95,18 +98,23 @@ pub struct CliApp {
     state: SessionState,
     conversation_client: ConversationClient,
     conversation_history: Vec<ConversationMessage>,
+    soft_interrupt_queue: SoftInterruptQueue,
 }
 
 impl CliApp {
     pub fn new(config: SessionConfig) -> Result<Self, RuntimeError> {
         let state = SessionState::new(config.model.clone());
         let conversation_client = ConversationClient::from_env(config.model.clone())?;
+        // Share the runtime's own queue so `take_events` drains the same queue
+        // that `drain_for_injection` writes into during the turn.
+        let soft_interrupt_queue = conversation_client.soft_interrupt_queue();
         Ok(Self {
             config,
             renderer: TerminalRenderer::new(),
             state,
             conversation_client,
             conversation_history: Vec::new(),
+            soft_interrupt_queue,
         })
     }
 
@@ -349,7 +357,23 @@ impl CliApp {
 
         self.write_turn_output(&summary, out)?;
         let _ = turn_usage;
+
+        self.forward_soft_interrupt_events();
+
         Ok(())
+    }
+
+    /// Drain soft-interrupt telemetry events recorded during this turn and
+    /// forward them via `runtime::forward_soft_interrupt_telemetry`.
+    ///
+    /// That function emits one structured JSON line to stderr per event and,
+    /// when `OMNIQL_CALLBACK_URL` + `OMNIQL_MEM_AUTH_TOKEN` are set, POSTs
+    /// the batch to `POST /sessions/:id/telemetry/soft-interrupts` on the API
+    /// server (deriving the URL by replacing the `/status` suffix in the
+    /// callback URL). Forwarding is fire-and-forget; errors go to stderr only.
+    fn forward_soft_interrupt_events(&self) {
+        let events = self.soft_interrupt_queue.take_events();
+        forward_soft_interrupt_telemetry(&events);
     }
 }
 

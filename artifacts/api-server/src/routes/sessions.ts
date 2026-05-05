@@ -1372,6 +1372,60 @@ router.post("/memory/restore", (req, res) => {
   });
 });
 
+// ── Soft-interrupt telemetry endpoint ────────────────────────────────────────
+// POST /sessions/:sessionId/telemetry/soft-interrupts
+// Called by the claw-runner after each turn to forward SoftInterruptEvent records
+// produced by SoftInterruptQueue::take_events(). Each record carries the time the
+// user message waited in the queue before being injected and the number of messages
+// coalesced at the same injection point. Logging here lets dashboards chart how
+// often soft interrupts fire and how long messages waited (the cache-warm UX win).
+router.post("/sessions/:sessionId/telemetry/soft-interrupts", (req, res) => {
+  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid sessionId" });
+    return;
+  }
+
+  if (CALLBACK_TOKEN) {
+    const auth = req.headers["authorization"] || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    if (token !== CALLBACK_TOKEN) {
+      logger.warn({ sessionId }, "Soft-interrupt telemetry callback: invalid token");
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+  }
+
+  const body = req.body as { events?: unknown[] };
+  if (!Array.isArray(body?.events)) {
+    res.status(400).json({ error: "events (array) is required" });
+    return;
+  }
+
+  const safeMs = (v: unknown): number => {
+    const n = Number(v ?? 0);
+    return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : 0;
+  };
+  const safeCount = (v: unknown): number => {
+    const n = Number(v ?? 1);
+    return Number.isFinite(n) && n >= 1 ? Math.trunc(n) : 1;
+  };
+
+  let accepted = 0;
+  for (const raw of body.events) {
+    const ev = raw as Record<string, unknown>;
+    const timeInQueueMs = safeMs(ev["time_in_queue_ms"]);
+    const coalescedWith = safeCount(ev["coalesced_with"]);
+    logger.info(
+      { sessionId, timeInQueueMs, coalescedWith, event: "soft_interrupt_injected" },
+      "Soft interrupt injected — message waited in queue before safe-boundary injection"
+    );
+    accepted++;
+  }
+
+  res.json({ ok: true, accepted });
+});
+
 // ── Routing stats endpoints ──────────────────────────────────────────────────
 // POST /sessions/:sessionId/routing-stats
 // Called by the claw-runner (via callbackBaseUrl) when context-shield stats are
