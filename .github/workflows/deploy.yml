@@ -17,7 +17,6 @@ jobs:
   deploy-api-server:
     name: Deploy API Server (mizi-api)
     runs-on: ubuntu-latest
-    environment: production
 
     steps:
       - name: Checkout
@@ -39,7 +38,6 @@ jobs:
   deploy-dashboard:
     name: Deploy Dashboard (mizi-dashboard)
     runs-on: ubuntu-latest
-    environment: production
     needs: deploy-api-server
 
     steps:
