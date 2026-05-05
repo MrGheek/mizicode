@@ -202,7 +202,7 @@ export const ListSessionsResponse = zod.array(ListSessionsResponseItem);
  * @summary Start a new coding session
  */
 export const CreateSessionBody = zod.object({
-  profileId: zod.number(),
+  profileId: zod.number().nullish().describe("Required for Vast.ai GPU sessions. Omit when launching a NIM/hosted-inference session."),
   offerId: zod
     .number()
     .nullish()
@@ -250,6 +250,18 @@ export const CreateSessionBody = zod.object({
     .nullish()
     .describe(
       "Plain-English description of what the user is trying to accomplish (max 500 chars). Stored on the session and seeded as the opening memory observation.",
+    ),
+  nimModelId: zod
+    .string()
+    .nullish()
+    .describe(
+      "NIM model ID for hosted-inference sessions (e.g. \"moonshotai/kimi-k2.6\"). Mutually exclusive with profileId.",
+    ),
+  nimProvider: zod
+    .string()
+    .nullish()
+    .describe(
+      "Partner provider for NIM sessions: \"nvidia\" | \"vultr\" | \"together\" | \"deepinfra\". Defaults to \"nvidia\".",
     ),
 });
 

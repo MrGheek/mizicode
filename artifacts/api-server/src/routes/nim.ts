@@ -28,7 +28,12 @@ router.get("/nim/providers", (_req, res) => {
   res.json({ providers });
 });
 
-router.post("/nim/catalog/sync", async (_req, res) => {
+router.post("/nim/catalog/sync", async (req, res) => {
+  const adminToken = process.env.ADMIN_SWEEP_TOKEN;
+  if (!adminToken || req.headers["x-admin-token"] !== adminToken) {
+    res.status(401).json({ error: "Unauthorized — x-admin-token required" });
+    return;
+  }
   try {
     await syncNimCatalog();
     res.json({ ok: true });

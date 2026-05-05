@@ -1,34 +1,41 @@
 {
-  "version": "7",
-  "dialect": "postgresql",
-  "entries": [
-    {
-      "idx": 0,
-      "version": "7",
-      "when": 1776796480339,
-      "tag": "0000_add_lane_claims_active_unique_idx",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1746316800000,
-      "tag": "0009_scheduler_repo_url",
-      "breakpoints": true
-    },
-    {
-      "idx": 13,
-      "version": "7",
-      "when": 1746835200000,
-      "tag": "0013_palette_intents",
-      "breakpoints": true
-    },
-    {
-      "idx": 14,
-      "version": "7",
-      "when": 1746835201000,
-      "tag": "0014_palette_intents_user_id",
-      "breakpoints": true
-    }
-  ]
+	"version": "7",
+	"dialect": "postgresql",
+	"entries": [
+		{
+			"idx": 0,
+			"version": "7",
+			"when": 1776796480339,
+			"tag": "0000_add_lane_claims_active_unique_idx",
+			"breakpoints": true
+		},
+		{
+			"idx": 9,
+			"version": "7",
+			"when": 1746316800000,
+			"tag": "0009_scheduler_repo_url",
+			"breakpoints": true
+		},
+		{
+			"idx": 13,
+			"version": "7",
+			"when": 1746835200000,
+			"tag": "0013_palette_intents",
+			"breakpoints": true
+		},
+		{
+			"idx": 14,
+			"version": "7",
+			"when": 1746835201000,
+			"tag": "0014_palette_intents_user_id",
+			"breakpoints": true
+		},
+		{
+			"idx": 15,
+			"version": "7",
+			"when": 1777974274260,
+			"tag": "0015_nim_provider",
+			"breakpoints": true
+		}
+	]
 }

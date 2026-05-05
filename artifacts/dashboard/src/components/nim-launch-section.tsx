@@ -254,7 +254,7 @@ export function NimLaunchSection() {
         tokenMode: null,
         bundleId: null,
         teamMembers: null,
-      } as unknown as Parameters<typeof createSession.mutate>[0]["data"],
+      },
     }, {
       onSuccess: (session) => {
         setSelectedModel(null);

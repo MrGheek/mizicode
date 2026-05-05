@@ -228,7 +228,8 @@ export type CreateSessionRequestRepoFingerprint = {
 } | null;
 
 export interface CreateSessionRequest {
-  profileId: number;
+  /** Required for Vast.ai GPU sessions. Omit when launching a NIM/hosted-inference session. */
+  profileId?: number | null;
   /** Specific Vast.ai offer ID to use (optional, auto-selects best if not provided) */
   offerId?: number | null;
   /** Names of team members to provision per-user IDEs for (max 4) */
@@ -247,6 +248,10 @@ export interface CreateSessionRequest {
   repoFingerprint?: CreateSessionRequestRepoFingerprint;
   /** Plain-English description of what the user is trying to accomplish (max 500 chars). Stored on the session and seeded as the opening memory observation. */
   intentText?: string | null;
+  /** NIM model ID for hosted-inference sessions (e.g. "moonshotai/kimi-k2.6"). Mutually exclusive with profileId. */
+  nimModelId?: string | null;
+  /** Partner provider for NIM sessions: "nvidia" | "vultr" | "together" | "deepinfra". Defaults to "nvidia". */
+  nimProvider?: string | null;
 }
 
 export interface Template {

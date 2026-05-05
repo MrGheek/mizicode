@@ -874,7 +874,13 @@ router.post("/sessions", async (req, res) => {
       };
       const pc = provConfig[prov] ?? provConfig["nvidia"];
       nimApiBase = pc.apiBase;
-      nimApiKey = process.env[pc.envKey] || "";
+      nimApiKey = process.env[pc.envKey];
+      if (!nimApiKey) {
+        res.status(400).json({
+          error: `Provider "${prov}" is not configured — set the ${pc.envKey} environment variable to use this provider.`,
+        });
+        return;
+      }
     }
 
     const onstart = vastai.buildOnStartScript({
