@@ -1,0 +1,62 @@
+name: Deploy to Fly.io
+
+on:
+  push:
+    branches: [main]
+
+# New pushes queue rather than cancel so no deploy is ever skipped.
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Deploy API first — the dashboard SPA bakes in the API URL at build time.
+  deploy-api-server:
+    name: Deploy API Server (floatr-api)
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+
+      - name: Deploy
+        run: |
+          flyctl deploy \
+            --config artifacts/api-server/fly.toml \
+            --dockerfile artifacts/api-server/Dockerfile \
+            --build-context . \
+            --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_API_SERVER }}
+
+  deploy-dashboard:
+    name: Deploy Dashboard (floatr-dashboard)
+    runs-on: ubuntu-latest
+    environment: production
+    needs: deploy-api-server
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+
+      - name: Deploy
+        # VITE_API_BASE_URL is defined in artifacts/dashboard/fly.toml [build.args]
+        # and does not need to be repeated here.
+        run: |
+          flyctl deploy \
+            --config artifacts/dashboard/fly.toml \
+            --dockerfile artifacts/dashboard/Dockerfile \
+            --build-context . \
+            --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_DASHBOARD }}
