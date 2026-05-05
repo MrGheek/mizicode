@@ -10,8 +10,20 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Zap, Play, Loader2, ChevronRight, Globe, Lock, Info } from "lucide-react";
+import { Zap, Play, Loader2, ChevronRight, Globe, Lock, Info, CheckCircle2, WifiOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
+interface ProviderHealth {
+  key: string;
+  displayName: string;
+  configured: boolean;
+  live: boolean;
+  latencyMs: number | null;
+}
+
+interface NimHealthResponse {
+  providers: ProviderHealth[];
+}
 
 interface NimModel {
   nimModelId: string;
@@ -38,11 +50,13 @@ const PROVIDER_LABELS: Record<string, string> = {
 function NimModelCard({
   model,
   configured,
+  health = {},
   onLaunch,
   isLaunching,
 }: {
   model: NimModel;
   configured: Record<string, boolean>;
+  health?: Record<string, ProviderHealth>;
   onLaunch: (model: NimModel) => void;
   isLaunching: boolean;
 }) {
@@ -52,9 +66,17 @@ function NimModelCard({
   const nvidiaConfigured = configured["nvidia"];
   const canLaunch = (isFree && nvidiaConfigured) || configuredPartners.length > 0;
 
+  const liveProviders = [
+    ...(isFree && nvidiaConfigured && health["nvidia"]?.live ? ["nvidia"] : []),
+    ...configuredPartners.filter((p) => health[p]?.live),
+  ];
+  const isLive = liveProviders.length > 0;
+
   return (
     <Card
-      className={`flex flex-col bg-card/50 border-border/50 transition-colors ${canLaunch ? "hover:border-primary/50 cursor-pointer" : "opacity-60"}`}
+      className={`flex flex-col bg-card/50 border-border/50 transition-all ${
+        isLive ? "border-emerald-500/40 shadow-[0_0_12px_rgba(52,211,153,0.08)]" : ""
+      } ${canLaunch ? "hover:border-primary/50 cursor-pointer" : "opacity-60"}`}
       onClick={() => canLaunch && onLaunch(model)}
     >
       <CardHeader className="pb-2 pt-4 px-4">
@@ -62,6 +84,15 @@ function NimModelCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="font-semibold text-sm leading-tight">{model.displayName}</span>
+              {isLive && (
+                <span className="flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400"></span>
+                  </span>
+                  Live
+                </span>
+              )}
               {isFree && (
                 <Badge variant="default" className="text-[10px] px-1.5 py-0 bg-emerald-600/80 hover:bg-emerald-600/80 border-0">
                   Free
@@ -76,7 +107,9 @@ function NimModelCard({
             <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug line-clamp-2">{model.shortDescription}</p>
           </div>
           <div className="shrink-0 flex items-center">
-            {canLaunch ? (
+            {isLive ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            ) : canLaunch ? (
               <Zap className="w-4 h-4 text-emerald-400" />
             ) : (
               <Lock className="w-3.5 h-3.5 text-muted-foreground/50" />
@@ -91,12 +124,25 @@ function NimModelCard({
           )}
           {isFree && (
             <span className="text-[10px] text-muted-foreground">
-              via {nvidiaConfigured ? <span className="text-emerald-400">NVIDIA NIM</span> : <span className="text-muted-foreground/50">NVIDIA NIM (key needed)</span>}
+              via {nvidiaConfigured ? (
+                <span className={health["nvidia"]?.live ? "text-emerald-400" : "text-muted-foreground"}>
+                  NVIDIA NIM{health["nvidia"]?.live && health["nvidia"]?.latencyMs ? ` (${health["nvidia"].latencyMs}ms)` : ""}
+                </span>
+              ) : (
+                <span className="text-muted-foreground/50">NVIDIA NIM (key needed)</span>
+              )}
             </span>
           )}
           {hasPartner && configuredPartners.length > 0 && (
             <span className="text-[10px] text-muted-foreground">
-              {configuredPartners.map((p) => PROVIDER_LABELS[p] ?? p).join(", ")}
+              {configuredPartners.map((p) => {
+                const h = health[p];
+                return (
+                  <span key={p} className={h?.live ? "text-emerald-400" : ""}>
+                    {PROVIDER_LABELS[p] ?? p}{h?.live && h?.latencyMs ? ` (${h.latencyMs}ms)` : ""}
+                  </span>
+                );
+              })}
             </span>
           )}
         </div>
@@ -233,6 +279,7 @@ export function NimLaunchSection() {
   const [selectedModel, setSelectedModel] = useState<NimModel | null>(null);
   const [launchingModelId, setLaunchingModelId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [health, setHealth] = useState<Record<string, ProviderHealth>>({});
 
   useEffect(() => {
     fetch(`${BASE_URL}api/nim/catalog`)
@@ -240,6 +287,24 @@ export function NimLaunchSection() {
       .then((data) => { if (data) setCatalog(data); })
       .catch(() => {})
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const fetchHealth = () => {
+      fetch(`${BASE_URL}api/nim/health`)
+        .then((r) => r.ok ? r.json() as Promise<NimHealthResponse> : null)
+        .then((data) => {
+          if (data) {
+            const map: Record<string, ProviderHealth> = {};
+            for (const p of data.providers) map[p.key] = p;
+            setHealth(map);
+          }
+        })
+        .catch(() => {});
+    };
+    fetchHealth();
+    const id = setInterval(fetchHealth, 60_000);
+    return () => clearInterval(id);
   }, []);
 
   const handleLaunch = (opts: { nimModelId: string; nimProvider: string; repoUrl: string | null; intentText: string | null }) => {
@@ -283,6 +348,8 @@ export function NimLaunchSection() {
   const shownModels = expanded ? displayModels : displayModels.slice(0, 6);
 
   const anyConfigured = Object.values(configured).some(Boolean);
+  const liveProviderList = Object.values(health).filter((p) => p.live);
+  const anyLive = liveProviderList.length > 0;
 
   return (
     <div className="space-y-3">
@@ -292,7 +359,17 @@ export function NimLaunchSection() {
             <h2 className="text-lg font-bold flex items-center gap-2">
               <Globe className="w-4 h-4 text-emerald-400" />
               Hosted Inference
-              <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-400 px-1.5 py-0">~2 min start</Badge>
+              {anyLive ? (
+                <span className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-medium">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400"></span>
+                  </span>
+                  {liveProviderList.map((p) => p.displayName).join(", ")} live
+                </span>
+              ) : (
+                <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-400 px-1.5 py-0">~2 min start</Badge>
+              )}
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">No GPU rental — powered by NVIDIA NIM and partner clouds</p>
           </div>
@@ -302,7 +379,25 @@ export function NimLaunchSection() {
             API key required
           </Badge>
         )}
+        {anyLive && Object.values(health).some((p) => p.configured && !p.live) && (
+          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <WifiOff className="w-3 h-3" />
+            {Object.values(health).filter((p) => p.configured && !p.live).map((p) => p.displayName).join(", ")} offline
+          </span>
+        )}
       </div>
+
+      {anyLive && (
+        <div className="rounded-md border border-emerald-500/30 bg-emerald-500/8 px-3 py-2.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs text-emerald-300">
+            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+            <span>
+              <span className="font-semibold">{liveProviderList.map((p) => p.displayName).join(" & ")} {liveProviderList.length === 1 ? "is" : "are"} live</span>
+              {" "}— pick a model below and start coding in ~2 minutes.
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-1 border-b border-border/40 pb-0">
         {(["free", "partner"] as NimTab[]).map((tab) => (
@@ -335,6 +430,7 @@ export function NimLaunchSection() {
             key={model.nimModelId}
             model={model}
             configured={configured}
+            health={health}
             onLaunch={setSelectedModel}
             isLaunching={launchingModelId === model.nimModelId}
           />

@@ -28,6 +28,35 @@ router.get("/nim/providers", (_req, res) => {
   res.json({ providers });
 });
 
+router.get("/nim/health", async (_req, res) => {
+  const configured = getConfiguredProviders();
+  const results = await Promise.all(
+    Object.entries(PROVIDER_CONFIG).map(async ([key, info]) => {
+      if (!configured[key]) {
+        return { key, displayName: info.displayName, configured: false, live: false, latencyMs: null };
+      }
+      const apiKey = process.env[info.envKey];
+      const start = Date.now();
+      try {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 5000);
+        const resp = await fetch(`${info.apiBase}/models`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          signal: controller.signal,
+        });
+        clearTimeout(tid);
+        const latencyMs = Date.now() - start;
+        // Any non-5xx response means the provider endpoint is reachable
+        const live = resp.status < 500;
+        return { key, displayName: info.displayName, configured: true, live, latencyMs };
+      } catch {
+        return { key, displayName: info.displayName, configured: true, live: false, latencyMs: null };
+      }
+    })
+  );
+  res.json({ providers: results });
+});
+
 router.post("/nim/catalog/sync", async (req, res) => {
   const adminToken = process.env.ADMIN_SWEEP_TOKEN;
   if (!adminToken || req.headers["x-admin-token"] !== adminToken) {
