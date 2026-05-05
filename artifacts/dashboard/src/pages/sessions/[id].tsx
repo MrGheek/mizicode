@@ -2983,9 +2983,19 @@ export default function SessionDetail() {
       {/* Header */}
       <div className="flex justify-between items-start">
         <div>
-          <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-2xl font-bold tracking-tight">Cockpit: {session.profileName}</h1>
+          <div className="flex items-center gap-3 mb-1 flex-wrap">
+            <h1 className="text-2xl font-bold tracking-tight">
+              Cockpit:{" "}
+              {(session as typeof session & { provider?: string; nimModelId?: string }).provider === "nim"
+                ? ((session as typeof session & { nimModelId?: string }).nimModelId ?? session.profileName)
+                : session.profileName}
+            </h1>
             <SessionStatusBadge status={session.status} />
+            {(session as typeof session & { provider?: string }).provider === "nim" && (
+              <span className="inline-flex items-center gap-1 text-emerald-400 font-sans text-xs font-semibold border border-emerald-500/30 bg-emerald-500/10 rounded px-1.5 py-0.5">
+                ⚡ NIM
+              </span>
+            )}
           </div>
           <p className="text-muted-foreground font-mono text-sm flex items-center gap-2 flex-wrap">
             Session #{session.id}

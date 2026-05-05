@@ -196,10 +196,27 @@ export default function Dashboard() {
                   </div>
                   <SessionStatusBadge status={activeSession.status} />
                 </div>
-                <div className="font-semibold text-white text-sm mb-0.5 truncate">{activeSession.profileName}</div>
-                <div className="text-xs text-slate-500 font-mono mb-1">
-                  {activeSession.gpuName} · ${activeSession.costPerHour?.toFixed(2) ?? "0.00"}/hr
-                </div>
+                {(() => {
+                  const nim = activeSession as typeof activeSession & { provider?: string; nimModelId?: string; nimProvider?: string };
+                  const isNim = nim.provider === "nim";
+                  return (
+                    <>
+                      <div className="font-semibold text-white text-sm mb-0.5 truncate">
+                        {isNim ? (nim.nimModelId ?? activeSession.profileName) : activeSession.profileName}
+                      </div>
+                      {isNim && (
+                        <div className="mb-1 inline-flex items-center gap-1 text-emerald-400 font-sans text-[10px] font-semibold border border-emerald-500/30 bg-emerald-500/10 rounded px-1.5 py-0.5">
+                          ⚡ NIM{nim.nimProvider ? <span className="opacity-60 font-normal ml-0.5">via {nim.nimProvider}</span> : null}
+                        </div>
+                      )}
+                      <div className="text-xs text-slate-500 font-mono mb-1">
+                        {isNim
+                          ? `$${activeSession.costPerHour?.toFixed(2) ?? "0.00"}/hr`
+                          : `${activeSession.gpuName} · $${activeSession.costPerHour?.toFixed(2) ?? "0.00"}/hr`}
+                      </div>
+                    </>
+                  );
+                })()}
                 {activeSession.teamMembers && activeSession.teamMembers.length > 0 && (
                   <div className="mb-2"><TeamSessionBadge members={activeSession.teamMembers} /></div>
                 )}
