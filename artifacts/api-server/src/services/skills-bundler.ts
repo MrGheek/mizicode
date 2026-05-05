@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { db, skillsTable, skillBundlesTable, skillVersionsTable, skillSourcesTable, sessionSkillsTable, sessionsTable, sessionRepoContextTable, designIntelligenceEntriesTable } from "@workspace/db";
 import { eq, and, inArray, desc, asc } from "drizzle-orm";
 import { DEFAULT_SKILLS, DEFAULT_BUNDLES } from "./default-skills";
-import { rankSkills, buildRepoIntelligenceContext, getSkillFeedbackScores, buildHistoryScoresMap, getEvalLiftScoresMap } from "./skills-ranker";
+import { rankSkills, intentFit, buildRepoIntelligenceContext, getSkillFeedbackScores, buildHistoryScoresMap, getEvalLiftScoresMap } from "./skills-ranker";
 import { TOKEN_MODE_PROFILES } from "./skills-types";
 import type { FloatrSkillManifest, SessionContext, CompiledBundle, TokenMode, RepoIntelligenceContext, DesignContextEntry } from "./skills-types";
 import { logger } from "../lib/logger";
@@ -392,6 +392,24 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
     if (intel.isStale) repoReasoningParts.push("stale=true");
   }
 
+  // Build intent reasoning: list selected skills that had a non-zero intentFit
+  // contribution so the "Explain why" panel can surface the goal's influence.
+  let intentReasoning: string | undefined;
+  const trimmedIntent = ctx.intentText?.trim();
+  if (trimmedIntent && trimmedIntent.length > 10) {
+    const boostedSkills = selected
+      .filter(s => intentFit(s, ctxWithHistory) > 0)
+      .map(s => s.name);
+    const goalSnippet = trimmedIntent.length > 80
+      ? `${trimmedIntent.slice(0, 80)}…`
+      : trimmedIntent;
+    if (boostedSkills.length > 0) {
+      intentReasoning = `Goal "${goalSnippet}" boosted: ${boostedSkills.join(", ")}`;
+    } else {
+      intentReasoning = `Goal "${goalSnippet}" present but did not match any skill keywords`;
+    }
+  }
+
   return {
     bundleId,
     slug: bundle.slug,
@@ -402,6 +420,7 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
       repo: repoReasoningParts.join(", "),
       model: `modelProfile=${ctx.modelProfile}`,
       tokenMode: `tokenMode=${ctx.tokenMode}, budget=${tokenBudget}/${maxTokenBudget} tokens, skills=${selected.length}`,
+      ...(intentReasoning ? { intent: intentReasoning } : {}),
     },
     repoConfidenceLevel: intel?.confidenceLevel || "none",
   };

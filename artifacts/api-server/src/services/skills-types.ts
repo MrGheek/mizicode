@@ -173,6 +173,12 @@ export interface CompiledBundle {
     repo: string;
     model: string;
     tokenMode: string;
+    /**
+     * Present when `SessionContext.intentText` was long enough (> 10 chars) to
+     * influence skill ranking via the intentFit signal. Lists the goal snippet
+     * and the skills whose scores were materially boosted by it.
+     */
+    intent?: string;
   };
   repoConfidenceLevel?: string;
   designContext?: DesignContextEntry[];

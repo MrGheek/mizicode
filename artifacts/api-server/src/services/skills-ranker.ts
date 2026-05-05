@@ -74,8 +74,11 @@ function repoFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
  *
  * Returns a score in [0, 1] based on the number of intent tokens (length ≥ 4)
  * that appear in the manifest's searchable text.
+ *
+ * Exported so callers (e.g. the bundler's reasoning path) can inspect per-skill
+ * intent contributions without re-running the full ranking pipeline.
  */
-function intentFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
+export function intentFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
   const intent = ctx.intentText?.trim();
   if (!intent || intent.length <= 10) return 0;
   const STOP = new Set([

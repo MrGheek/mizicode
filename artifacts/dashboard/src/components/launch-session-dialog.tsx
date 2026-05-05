@@ -75,6 +75,7 @@ type ReasoningType = {
   repo?: string;
   model?: string;
   tokenMode?: string;
+  intent?: string;
   [key: string]: unknown;
 };
 
@@ -356,6 +357,12 @@ export function LaunchSessionDialog({
                 {reasoning.repo && <p><span className="text-muted-foreground">Repo match:</span> {reasoning.repo}</p>}
                 {reasoning.model && <p><span className="text-muted-foreground">Model:</span> {reasoning.model}</p>}
                 {reasoning.tokenMode && <p><span className="text-muted-foreground">Token mode:</span> {reasoning.tokenMode}</p>}
+                {reasoning.intent && (
+                  <p className="border-t border-border/30 pt-1 mt-1">
+                    <span className="text-muted-foreground">Goal influence:</span>{" "}
+                    <span className="text-foreground/80">{String(reasoning.intent)}</span>
+                  </p>
+                )}
               </div>
             )}
 
