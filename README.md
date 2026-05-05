@@ -71,6 +71,18 @@ fly deploy --config artifacts/dashboard/fly.toml \
            --build-arg VITE_API_BASE_URL=https://floatr-api.fly.dev
 ```
 
+> **Naming convention:** `VITE_API_BASE_URL` follows the pattern
+> `https://<api-app-name>.fly.dev` where `<api-app-name>` is the Fly.io app
+> name you chose when running `fly launch` for the API server (default:
+> `floatr-api`). If you used a different name (e.g. `floatr-api-staging`),
+> pass `--build-arg VITE_API_BASE_URL=https://floatr-api-staging.fly.dev` at
+> deploy time. You do **not** need to edit `fly.toml` to change the URL — the
+> `--build-arg` flag overrides the default baked into the file.
+>
+> In Replit dev mode (no `VITE_API_BASE_URL` set) the dashboard automatically
+> falls back to same-origin relative paths, so no local configuration is
+> required.
+
 After a successful deploy the dashboard is reachable at
 `https://floatr-dashboard.fly.dev`.
 
@@ -78,13 +90,16 @@ After a successful deploy the dashboard is reachable at
 
 ### Subsequent deploys
 
+Replace `floatr-api` with your actual API app name if you chose a different one
+during `fly launch`.
+
 ```bash
 # API server
 fly deploy --config artifacts/api-server/fly.toml \
            --dockerfile artifacts/api-server/Dockerfile \
            --build-context .
 
-# Dashboard
+# Dashboard (replace "floatr-api" if your API app has a different name)
 fly deploy --config artifacts/dashboard/fly.toml \
            --dockerfile artifacts/dashboard/Dockerfile \
            --build-context . \

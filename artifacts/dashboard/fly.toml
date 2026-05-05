@@ -20,7 +20,17 @@ primary_region = "ord"
 
   [build.args]
     # Point the dashboard at your API server's Fly.io URL.
-    # Override this if you use a custom app name.
+    # The value below assumes your API app is named "floatr-api" (the default).
+    # If you chose a different name (e.g. "floatr-api-staging"), override this
+    # at deploy time:
+    #
+    #   fly deploy --config artifacts/dashboard/fly.toml \
+    #              --dockerfile artifacts/dashboard/Dockerfile \
+    #              --build-context . \
+    #              --build-arg VITE_API_BASE_URL=https://floatr-api-staging.fly.dev
+    #
+    # When VITE_API_BASE_URL is absent (Replit dev), the dashboard falls back
+    # to same-origin relative paths automatically — no local changes needed.
     VITE_API_BASE_URL = "https://floatr-api.fly.dev"
 
 [[services]]
