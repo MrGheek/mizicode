@@ -3,6 +3,10 @@ set -e
 
 LOG_FILE="/var/log/onstart.log"
 STATUS_FILE="/tmp/instance-status"
+# Tracks whether a failure has already been reported to the dashboard so the
+# top-level ERR trap doesn't double-report when a phase has already classified
+# its own structured cause (e.g. vllm_warmup_failed, download_failed).
+FAILURE_REPORTED_FILE="/tmp/instance-failure-reported"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
@@ -35,6 +39,58 @@ report_status() {
         --max-time 10 \
         >> "$LOG_FILE" 2>&1 || log "WARNING: status callback failed (phase: $_phase) — dashboard may lag"
 }
+
+# Report a structured boot failure to the dashboard. Sets the sentinel file
+# so the global ERR trap doesn't overwrite the more specific cause.
+# Usage: report_failure "<cause>" "<human message>"
+# Causes recognised by the API server (sessions.ts FAILURE_STATUS_MAP):
+#   provisioning_failed, download_failed, download_stalled,
+#   vllm_warmup_failed, skills_compile_failed, disk_full
+report_failure() {
+    local _cause="$1"
+    local _msg="$2"
+    log "BOOT FAILURE: ${_cause} — ${_msg}"
+    echo "$_cause" > "$STATUS_FILE"
+    touch "$FAILURE_REPORTED_FILE"
+    report_status "$_cause" "$_msg"
+}
+
+# Detect whether the host filesystem ran out of disk while we were running.
+# Looks for "no space left" sentinel in onstart log AND checks `df` for any
+# mount under our writable paths that has 0 free space.
+detect_disk_full() {
+    if grep -qi "no space left on device" "$LOG_FILE" 2>/dev/null; then
+        return 0
+    fi
+    # awk note: a bare `exit 0` in a body block still runs END, and an
+    # `END { exit 1 }` would clobber that 0 — making this function always
+    # return false. We instead set a flag and exit from END based on it.
+    # df -P column 4 = available 1K blocks; treat <= 1MB as "full".
+    if df -P /workspace /var/log /tmp 2>/dev/null \
+        | awk 'NR>1 && $4+0 <= 1024 { full=1 } END { exit (full ? 0 : 1) }'; then
+        return 0
+    fi
+    return 1
+}
+
+# Top-level error trap: on any uncaught failure during Phase 1 (the foreground
+# section of this script), report a structured failure to the dashboard so the
+# cockpit can show a clear cause + suggested step instead of a generic "error".
+# Phase 2 runs in a backgrounded subshell with its own report_failure calls.
+on_error() {
+    local _exit=$?
+    if [ -f "$FAILURE_REPORTED_FILE" ]; then
+        # A more specific phase already reported. Preserve its cause.
+        exit "$_exit"
+    fi
+    if detect_disk_full; then
+        report_failure "disk_full" "Host disk full during boot — destroy this session and retry on a different host"
+    else
+        report_failure "provisioning_failed" "Container provisioning failed (exit ${_exit}) — see boot log for details"
+    fi
+    exit "$_exit"
+}
+trap on_error ERR
 
 retry() {
     local max_attempts="${RETRY_MAX:-3}"
@@ -406,7 +462,14 @@ if [ -n "${FLOATR_ACTIVE_BUNDLE_B64:-}" ]; then
         report_status "skills_ready" "Smart Skills bundle loaded"
         log "=== Phase 1.5 done — Smart Skills bundle active ==="
     else
-        log "WARNING: Failed to decode FLOATR_ACTIVE_BUNDLE_B64 — Smart Skills will be unavailable this session"
+        # Bundle decode failed — report a structured cause so the cockpit can
+        # show a clear "Smart Skills compile failed" row rather than letting
+        # the session look "starting" forever. Non-fatal: we proceed without
+        # skills so the user can still SSH in and inspect.
+        report_failure "skills_compile_failed" "Failed to decode FLOATR_ACTIVE_BUNDLE_B64 — Smart Skills unavailable this session"
+        # Clear the failure sentinel so subsequent phases (download, vLLM)
+        # can still report their own status — Phase 1.5 is non-blocking.
+        rm -f "$FAILURE_REPORTED_FILE"
     fi
 else
     log "No Smart Skills bundle configured for this session — skipping Phase 1.5"
@@ -543,10 +606,77 @@ log "Starting LLM backend in background..."
         report_status "downloading"
         log "Downloading model $MODEL_REPO to $MODEL_DIR — this may take a while..."
         mkdir -p "$MODEL_DIR"
+        # Phase 2 runs inside a backgrounded subshell, so the top-level ERR
+        # trap does NOT fire here. We must classify download failures inline
+        # and exit the subshell so the runaway `wait` on the parent stays
+        # alive (other services keep serving) while the dashboard sees a
+        # clear cause.
+        #
+        # Three failure modes get distinct causes so the dashboard can
+        # surface different next-step guidance:
+        #   - disk_full         → destroy + retry on different host
+        #   - download_stalled  → network/HF unreachable; retry or change region
+        #   - download_failed   → generic retry exhaustion (other errors)
+        #
+        # Stall detection: run the download in the background and poll the
+        # on-disk size of MODEL_DIR. If size does not grow for
+        # DOWNLOAD_STALL_TIMEOUT_SEC (default 180s) of consecutive checks,
+        # kill the download tree and report download_stalled. This catches
+        # "TCP connected but no bytes flowing" cases that retry alone won't.
+        DOWNLOAD_STALL_TIMEOUT_SEC="${DOWNLOAD_STALL_TIMEOUT_SEC:-180}"
+        DOWNLOAD_STALL_POLL_SEC="${DOWNLOAD_STALL_POLL_SEC:-15}"
+
+        _measure_dir_bytes() {
+            du -sb "$1" 2>/dev/null | awk '{print $1+0}' || echo 0
+        }
+
+        # Launch download in background; capture pid for the watchdog.
         retry huggingface-cli download "$MODEL_REPO" \
             --local-dir "$MODEL_DIR" \
             --local-dir-use-symlinks False \
-            --resume-download
+            --resume-download &
+        _DL_PID=$!
+
+        _last_size=$(_measure_dir_bytes "$MODEL_DIR")
+        _stall_elapsed=0
+        _stalled=0
+        while kill -0 "$_DL_PID" 2>/dev/null; do
+            sleep "$DOWNLOAD_STALL_POLL_SEC"
+            _now_size=$(_measure_dir_bytes "$MODEL_DIR")
+            if [ "$_now_size" -gt "$_last_size" ]; then
+                _last_size=$_now_size
+                _stall_elapsed=0
+            else
+                _stall_elapsed=$((_stall_elapsed + DOWNLOAD_STALL_POLL_SEC))
+                log "Download progress check: no new bytes for ${_stall_elapsed}s (limit ${DOWNLOAD_STALL_TIMEOUT_SEC}s)"
+                if [ "$_stall_elapsed" -ge "$DOWNLOAD_STALL_TIMEOUT_SEC" ]; then
+                    _stalled=1
+                    log "Download stalled — killing pid $_DL_PID and child processes"
+                    pkill -P "$_DL_PID" 2>/dev/null || true
+                    kill -TERM "$_DL_PID" 2>/dev/null || true
+                    sleep 2
+                    kill -KILL "$_DL_PID" 2>/dev/null || true
+                    break
+                fi
+            fi
+        done
+
+        wait "$_DL_PID" 2>/dev/null
+        _DL_RC=$?
+
+        if [ "$_stalled" -eq 1 ]; then
+            report_failure "download_stalled" "Model download stalled — no new bytes written for ${DOWNLOAD_STALL_TIMEOUT_SEC}s. HuggingFace or host network is unreachable; destroy and retry, ideally in a different region."
+            exit 1
+        fi
+
+        if [ "$_DL_RC" -ne 0 ]; then
+            if detect_disk_full; then
+                report_failure "disk_full" "Model download failed — host disk full. Destroy and retry on a different host."
+            else
+                report_failure "download_failed" "Model weight download from HuggingFace failed after $((${RETRY_MAX:-3})) attempts"
+            fi
+            exit 1
+        fi
         log "Model download complete"
     fi
 
@@ -677,16 +807,23 @@ print(shlex.join(result))
     log "litellm proxy started (PID: $LITELLM_PID)"
 
     log "Waiting for vLLM to be ready (model loading may take a few minutes)..."
+    _vllm_ready=0
     for i in $(seq 1 120); do
         if curl -sf "http://localhost:$VLLM_INTERNAL_PORT/health" > /dev/null 2>&1; then
             log "vLLM is ready!"
+            _vllm_ready=1
             break
-        fi
-        if [ $i -eq 120 ]; then
-            log "WARNING: vLLM did not respond within 600 seconds"
         fi
         sleep 5
     done
+    if [ "$_vllm_ready" -eq 0 ]; then
+        # vLLM warmup never completed within the 600s budget. Report a
+        # structured cause so the cockpit can surface "vLLM warmup failed"
+        # with a suggested next step (check VRAM, lower max-model-len, or
+        # destroy + retry on a larger profile). Don't exit the subshell so
+        # SSH and code-server stay reachable for the user to investigate.
+        report_failure "vllm_warmup_failed" "vLLM did not respond to /health within 600s — check /var/log/vllm-server.log"
+    fi
 
     log "Configuring claw-code CLI..."
     export ANTHROPIC_BASE_URL="http://localhost:${VLLM_PORT}"
@@ -697,8 +834,10 @@ print(shlex.join(result))
     echo "export ANTHROPIC_API_KEY=not-needed" >> /root/.bashrc
     log "claw-code configured: ANTHROPIC_BASE_URL -> litellm proxy (port $VLLM_PORT)"
 
-    echo "llm_ready" > "$STATUS_FILE"
-    report_status "llm_ready"
+    if [ "$_vllm_ready" -eq 1 ]; then
+        echo "llm_ready" > "$STATUS_FILE"
+        report_status "llm_ready"
+    fi
     log "=== FLOATR Coding Environment Fully Ready (vLLM online) ==="
     log "  vLLM API:      http://localhost:$VLLM_INTERNAL_PORT/v1 (OpenAI format)"
     log "  LLM Proxy:     http://localhost:$VLLM_PORT (OpenAI + Anthropic via litellm)"

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Loader2, Circle, XCircle, ChevronDown, ChevronRight, AlertTriangle, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { BootPhase } from "@/lib/boot-phases";
+import { parseBootFailure, type BootPhase } from "@/lib/boot-phases";
 
 interface BootTimelineProps {
   phases: BootPhase[];
@@ -52,7 +52,14 @@ export function BootTimeline({
 
   const elapsed = startedAt ? now - startedAt.getTime() : 0;
   const activeIdx = phases.findIndex(p => p.status === "active" || p.status === "error");
-  const diskFullDetected = bootLog.some(l => l.toLowerCase().includes("no space left on device"));
+  const errorIdx = phases.findIndex(p => p.status === "error");
+  // Structured failure parsed from the status message and accumulated log.
+  // Lets us render a "Suggested next step" row beneath the failed phase
+  // without depending on lexical heuristics in the UI layer.
+  const structuredFailure = errorIdx >= 0 ? parseBootFailure(rawStatusMessage, bootLog) : null;
+  const diskFullDetected =
+    structuredFailure?.cause === "disk_full" ||
+    bootLog.some(l => l.toLowerCase().includes("no space left on device"));
 
   return (
     <div className="bg-secondary/30 border border-secondary rounded-md overflow-hidden">
@@ -111,6 +118,15 @@ export function BootTimeline({
                 {(isActive || isError) && rawStatusMessage && i === activeIdx && (
                   <div className="mt-0.5 font-mono text-[11px] text-muted-foreground/80 break-all">
                     {">"} {rawStatusMessage}
+                  </div>
+                )}
+                {isError && structuredFailure && i === errorIdx && (
+                  <div
+                    className="mt-1.5 flex items-start gap-1.5 text-[11px] text-destructive/90 leading-snug"
+                    data-testid={`boot-failure-${structuredFailure.cause}`}
+                  >
+                    <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                    <span><span className="font-semibold">Suggested next step:</span> {structuredFailure.suggestedStep}</span>
                   </div>
                 )}
               </div>

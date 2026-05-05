@@ -167,7 +167,49 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
 
 // ─── Instance callback: the running instance POSTs its phase transitions here ──
 // Replaces the unreliable server-side probe (Vast.ai firewall blocks server→instance).
+//
+// Production posture: OMNIQL_MEM_TOKEN MUST be set when NODE_ENV=production,
+// otherwise the callback endpoint becomes an unauthenticated status-mutation
+// surface that any internet host can hit. Memory and ambient routes already
+// fail fast on the same env var; we mirror that here so the launch posture is
+// uniform across all token-gated surfaces.
 const CALLBACK_TOKEN = process.env["OMNIQL_MEM_TOKEN"] || "";
+const CALLBACK_IS_PROD = process.env["NODE_ENV"] === "production";
+if (CALLBACK_IS_PROD && !CALLBACK_TOKEN) {
+  throw new Error(
+    "OMNIQL_MEM_TOKEN must be set in production to protect the instance status callback endpoint",
+  );
+}
+if (!CALLBACK_TOKEN) {
+  logger.warn("[sessions] OMNIQL_MEM_TOKEN not set — instance status callback is unauthenticated (dev mode only)");
+}
+
+/**
+ * Failure classifications reported by the running instance via onstart.sh.
+ * Each entry maps a structured cause to its default human-readable summary.
+ * Kept in sync with the report_failure calls in docker/onstart.sh.
+ *
+ * The persisted statusMessage always begins with `boot_failure:<cause>: ` so
+ * the dashboard boot-phase classifier (parseBootFailure in boot-phases.ts)
+ * can surface a suggested next step. The marker is prepended in the callback
+ * handler regardless of whether the agent supplied its own message — see
+ * the buildFailureStatusMessage helper below.
+ */
+const FAILURE_DEFAULT_MESSAGES: Record<string, string> = {
+  provisioning_failed:   "Container provisioning failed before services came up",
+  download_failed:       "Model weight download failed after retries",
+  download_stalled:      "Model download stalled — host network or HuggingFace unreachable",
+  vllm_warmup_failed:    "vLLM did not respond to /health within the warmup window",
+  skills_compile_failed: "Smart Skills bundle failed to compile",
+  disk_full:             "Host ran out of disk space — destroy and retry on a different machine",
+};
+
+/** Build a `boot_failure:<cause>: <message>` marker that survives the callback. */
+function buildFailureStatusMessage(cause: string, suppliedMessage: string | undefined): string {
+  const trimmed = suppliedMessage?.trim();
+  const human = trimmed && trimmed.length > 0 ? trimmed : (FAILURE_DEFAULT_MESSAGES[cause] ?? cause);
+  return `boot_failure:${cause}: ${human}`;
+}
 
 const INSTANCE_STATUS_MAP: Record<string, { status: typeof sessionsTable.$inferSelect["status"]; statusMessage: string }> = {
   services_ready:   { status: "starting",    statusMessage: "Tools ready — LLM model loading in background..." },
@@ -176,6 +218,14 @@ const INSTANCE_STATUS_MAP: Record<string, { status: typeof sessionsTable.$inferS
   skills_compiling: { status: "starting",    statusMessage: "Compiling Smart Skills bundle..." },
   skills_ready:     { status: "starting",    statusMessage: "Smart Skills loaded — LLM loading in background..." },
   llm_ready:        { status: "ready",       statusMessage: "Session is ready — vLLM online" },
+  // Failure phases — all map to status "error". The persisted statusMessage
+  // is built per-request to preserve the structured cause marker.
+  ...Object.fromEntries(
+    Object.entries(FAILURE_DEFAULT_MESSAGES).map(([cause, human]) => [
+      cause,
+      { status: "error" as const, statusMessage: `boot_failure:${cause}: ${human}` },
+    ]),
+  ),
 };
 
 router.post("/sessions/:sessionId/status", async (req, res) => {
@@ -208,7 +258,15 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
     return;
   }
 
-  const statusMessage = (message?.trim()) || mapped.statusMessage;
+  // For failure phases, ALWAYS rebuild the message so the
+  // `boot_failure:<cause>: ` marker survives even when onstart.sh supplies
+  // its own human-readable message text. Without this, the dashboard's
+  // parseBootFailure() classifier loses the structured cause and the
+  // suggested-next-step UX silently regresses.
+  const isFailurePhase = instanceStatus in FAILURE_DEFAULT_MESSAGES;
+  const statusMessage = isFailurePhase
+    ? buildFailureStatusMessage(instanceStatus, message)
+    : ((message?.trim()) || mapped.statusMessage);
 
   logger.info({ sessionId, instanceStatus, dbStatus: mapped.status, statusMessage }, "Instance status callback received");
 

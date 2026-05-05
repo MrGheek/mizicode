@@ -28,6 +28,60 @@ export interface BootPhase {
   status: BootPhaseStatus;
 }
 
+/**
+ * Structured failure cause emitted by docker/onstart.sh via the instance
+ * status callback. The cockpit uses this to render a "Suggested next step"
+ * row beneath the failed phase instead of a generic "error" badge.
+ *
+ * Kept in sync with FAILURE_STATUS_MAP in
+ *   artifacts/api-server/src/routes/sessions.ts
+ */
+export type BootFailureCause =
+  | "provisioning_failed"
+  | "download_failed"
+  | "download_stalled"
+  | "vllm_warmup_failed"
+  | "skills_compile_failed"
+  | "disk_full";
+
+export interface BootFailure {
+  cause: BootFailureCause;
+  /** The phase the failure should be attached to in the timeline. */
+  phaseKey: BootPhaseKey;
+  /** Short label for the suggested next step shown in the UI. */
+  suggestedStep: string;
+  /** Whether the dashboard should offer the "Destroy & Retry" button. */
+  destroyAndRetryRecommended: boolean;
+}
+
+const FAILURE_TABLE: Record<BootFailureCause, Omit<BootFailure, "cause">> = {
+  provisioning_failed:   { phaseKey: "container", suggestedStep: "Container provisioning failed before services came up — destroy this session and retry on a different host.", destroyAndRetryRecommended: true },
+  skills_compile_failed: { phaseKey: "skills",    suggestedStep: "Smart Skills bundle failed to compile — re-save the bundle in Settings or clear it for this session, then retry.", destroyAndRetryRecommended: false },
+  download_failed:       { phaseKey: "weights",   suggestedStep: "Model weight download failed after retries — check that the model repo exists and HuggingFace is reachable, then destroy and retry.", destroyAndRetryRecommended: true },
+  download_stalled:      { phaseKey: "weights",   suggestedStep: "Model download stalled — host network or HuggingFace appears unreachable. Destroy and retry to land on a different host.", destroyAndRetryRecommended: true },
+  disk_full:             { phaseKey: "weights",   suggestedStep: "Host ran out of disk space — destroy this session and retry. Vast.ai will pick a different host with sufficient free space.", destroyAndRetryRecommended: true },
+  vllm_warmup_failed:    { phaseKey: "llm",       suggestedStep: "vLLM did not come online within the warmup window — VRAM may be insufficient for this profile. Try a smaller quant or larger GPU profile.", destroyAndRetryRecommended: true },
+};
+
+/**
+ * Parse the structured `boot_failure:<cause> <message>` prefix that
+ * onstart.sh emits via report_failure(). Returns null if the message is
+ * unstructured (legacy boot or unrelated status line).
+ */
+export function parseBootFailure(statusMessage: string | null | undefined, allMessages: string[] = []): BootFailure | null {
+  const candidates = [statusMessage ?? "", ...allMessages].filter(Boolean) as string[];
+  for (const line of candidates) {
+    const m = /boot_failure:([a-z_]+)/i.exec(line);
+    if (!m) continue;
+    const cause = m[1] as BootFailureCause;
+    const entry = FAILURE_TABLE[cause];
+    if (entry) {
+      return { cause, ...entry };
+    }
+  }
+  return null;
+}
+
 const ORDER: { key: BootPhaseKey; label: string }[] = [
   { key: "container", label: "Container started" },
   { key: "ssh",       label: "SSH ready" },
@@ -79,6 +133,19 @@ export function inferBootPhase(args: {
 
   const activeKey = detectActive(status, statusMessage ?? "");
   let activeIdx = activeKey ? ORDER.findIndex(p => p.key === activeKey) : -1;
+
+  // Structured-failure override: when onstart.sh emitted a `boot_failure:<cause>`
+  // marker, route the error row to the cause's phase regardless of the active
+  // keyword. This handles cases like `vllm_warmup_failed` where the literal
+  // status line "boot_failure:vllm_warmup_failed ..." doesn't match the
+  // legacy lexical heuristics.
+  if (status === "error") {
+    const failure = parseBootFailure(statusMessage, bootLog);
+    if (failure) {
+      const idx = ORDER.findIndex(p => p.key === failure.phaseKey);
+      if (idx >= 0) activeIdx = idx;
+    }
+  }
 
   // On `error`, the final statusMessage is often a generic failure ("Instance
   // errored", "vast.ai returned 500") that contains no phase keyword. In that

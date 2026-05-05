@@ -442,18 +442,41 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
       claimsByLane.set(c.laneId, paths);
     }
 
+    // Load repo graph edges so claim-time overlap detection includes
+    // shared-dependency analysis, matching the behaviour of GET /conflicts.
+    // Non-blocking: if the session has no repo context yet (e.g. indexing
+    // hasn't completed), proceed with edges = [] and only path overlap is
+    // considered.
+    let repoEdges: Array<{ from: string; to: string }> = [];
+    try {
+      const [repoCtx] = await db.select({ edgesJson: sessionRepoContextTable.edgesJson })
+        .from(sessionRepoContextTable)
+        .where(eq(sessionRepoContextTable.sessionId, sessionId))
+        .orderBy(desc(sessionRepoContextTable.updatedAt))
+        .limit(1);
+      if (repoCtx?.edgesJson) {
+        repoEdges = (repoCtx.edgesJson as unknown as Array<{ from: string; to: string }>) ?? [];
+      }
+    } catch (err) {
+      logger.warn({ err, sessionId }, "Claim overlap: failed to load repo edges (proceeding without graph data)");
+    }
+
     for (const [otherId, otherPaths] of claimsByLane.entries()) {
       const overlapScore = computeClaimOverlap([resourcePath], otherPaths);
-      const blastRadiusOverlap = 0; // no graph data at claim time
-      if (overlapScore > 0) {
+      const blastRadiusOverlap = estimateBlastRadiusOverlap([resourcePath], otherPaths, repoEdges);
+      if (overlapScore > 0 || blastRadiusOverlap > 0) {
         const laneInfo = otherLanes.find(l => l.id === otherId);
+        // Recommendation incorporates both direct path overlap and shared-dependency
+        // blast-radius overlap so a lane claiming a file that imports another lane's
+        // claimed file surfaces as "warn" even when paths don't directly collide.
+        const effectiveScore = Math.max(overlapScore, blastRadiusOverlap * 0.75);
         const recommendation: "no_conflict" | "warn" | "block" =
-          overlapScore >= 0.75 ? "block" : overlapScore >= 0.4 ? "warn" : "no_conflict";
+          effectiveScore >= 0.75 ? "block" : effectiveScore >= 0.4 ? "warn" : "no_conflict";
         overlaps.push({
           conflictingLaneId: otherId,
           conflictingMember: laneInfo?.memberIdentifier ?? "unknown",
           overlapScore: Math.round(overlapScore * 100) / 100,
-          blastRadiusOverlap,
+          blastRadiusOverlap: Math.round(blastRadiusOverlap * 100) / 100,
           recommendation,
         });
       }

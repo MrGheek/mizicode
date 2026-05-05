@@ -268,6 +268,12 @@ function getDb(): Database.Database {
  * passive recall pipeline can score historical entries from day one.
  */
 export async function runPassiveRecallBackfill(maxItems = 500): Promise<number> {
+  // Ensure governance migrations have run so `mem_items` exists before the
+  // passive-recall pipeline (which uses its own getDb() and only runs the
+  // passive migrations) tries to scan it. Without this, a fresh on-disk DB
+  // produces "no such table: mem_items" at startup. Idempotent — getDb()
+  // memoises the handle.
+  getDb();
   return backfillItemEmbeddings(maxItems);
 }
 
