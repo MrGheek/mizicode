@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, real, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, real, jsonb, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -34,6 +34,13 @@ export const gpuProfilesTable = pgTable("gpu_profiles", {
   // (e.g. "65.8% SWE-Bench Verified"). Stored here so the numbers can be
   // updated in one place (profiles.ts seed data) without touching the dashboard.
   benchmarkCallout: text("benchmark_callout"),
+  // NIM metadata: marks this as a NIM workspace profile (no GPU rental) and
+  // records which hosted-inference provider it targets by default.
+  // isNimWorkspace=true profiles are selected when launching a NIM session.
+  isNimWorkspace: boolean("is_nim_workspace").notNull().default(false),
+  // Default provider key (nvidia | vultr | together | deepinfra). Null for
+  // standard Vast.ai GPU profiles that never use the NIM path.
+  nimDefaultProvider: text("nim_default_provider"),
 });
 
 export const insertGpuProfileSchema = createInsertSchema(gpuProfilesTable).omit({ id: true });

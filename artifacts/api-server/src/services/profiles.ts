@@ -58,6 +58,8 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     modelDisplayName: "NIM Hosted",
     benchmarkCallout: null,
     swarmWorkerCap: 200,
+    isNimWorkspace: true,
+    nimDefaultProvider: "nvidia",
   },
 
   // ── Kimi K2.6 profiles (default / recommended) ───────────────────────────

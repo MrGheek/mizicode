@@ -265,7 +265,7 @@ function NimLaunchDialog({ model, configured, onClose, onConfirm, isLaunching }:
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 
-type NimTab = "free" | "partner";
+type NimTab = "all" | "free" | "partner";
 
 export function NimLaunchSection() {
   const [, setLocation] = useLocation();
@@ -275,7 +275,7 @@ export function NimLaunchSection() {
 
   const [catalog, setCatalog] = useState<NimCatalogResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<NimTab>("free");
+  const [activeTab, setActiveTab] = useState<NimTab>("all");
   const [selectedModel, setSelectedModel] = useState<NimModel | null>(null);
   const [launchingModelId, setLaunchingModelId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -343,8 +343,9 @@ export function NimLaunchSection() {
 
   const configured = catalog.configured;
   const freeModels = catalog.models.filter((m) => m.nimTypes.includes("nim_type_preview"));
-  const partnerModels = catalog.models.filter((m) => m.nimTypes.includes("nim_type_upgrade_available") && !m.nimTypes.includes("nim_type_preview"));
-  const displayModels = activeTab === "free" ? freeModels : partnerModels;
+  // Partner tab includes all models with upgrade_available, including hybrids (free + partner).
+  const partnerModels = catalog.models.filter((m) => m.nimTypes.includes("nim_type_upgrade_available"));
+  const displayModels = activeTab === "all" ? catalog.models : activeTab === "free" ? freeModels : partnerModels;
   const shownModels = expanded ? displayModels : displayModels.slice(0, 6);
 
   const anyConfigured = Object.values(configured).some(Boolean);
@@ -400,17 +401,17 @@ export function NimLaunchSection() {
       )}
 
       <div className="flex gap-1 border-b border-border/40 pb-0">
-        {(["free", "partner"] as NimTab[]).map((tab) => (
+        {(["all", "free", "partner"] as NimTab[]).map((tab) => (
           <button
             key={tab}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => { setActiveTab(tab); setExpanded(false); }}
             className={`px-3 pb-2 text-xs font-medium transition-colors border-b-2 -mb-px ${
               activeTab === tab
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {tab === "free" ? `Free (${freeModels.length})` : `Partner (${partnerModels.length})`}
+            {tab === "all" ? `All (${catalog.models.length})` : tab === "free" ? `Free (${freeModels.length})` : `Partner (${partnerModels.length})`}
           </button>
         ))}
       </div>
@@ -419,7 +420,9 @@ export function NimLaunchSection() {
         <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-300/80 flex items-start gap-2">
           <Info className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
           <span>
-            Set <code className="font-mono">NVIDIA_NIM_API_KEY</code> in Secrets to enable free models, or add a partner API key (Vultr, Together AI) for partner models.
+            Set <code className="font-mono">NVIDIA_NIM_API_KEY</code> in{" "}
+            <a href={`${BASE_URL}settings`} className="underline text-amber-300 hover:text-amber-200">Settings → Secrets</a>
+            {" "}to enable free models, or add a partner API key (Vultr, Together AI) for partner models.
           </span>
         </div>
       )}

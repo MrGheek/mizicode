@@ -637,6 +637,28 @@ router.post("/sessions", async (req, res) => {
     return;
   }
 
+  // Validate NIM provider key BEFORE any DB writes to prevent orphaned sessions.
+  let nimApiBase: string | undefined;
+  let nimApiKey: string | undefined;
+  if (nimModelId) {
+    const prov = nimProvider || "nvidia";
+    const provConfig: Record<string, { apiBase: string; envKey: string }> = {
+      nvidia:    { apiBase: "https://integrate.api.nvidia.com/v1", envKey: "NVIDIA_NIM_API_KEY" },
+      vultr:     { apiBase: "https://api.vultrinference.com/v1",   envKey: "VULTR_INFERENCE_API_KEY" },
+      together:  { apiBase: "https://api.together.xyz/v1",         envKey: "TOGETHER_API_KEY" },
+      deepinfra: { apiBase: "https://api.deepinfra.com/v1/openai", envKey: "DEEPINFRA_API_KEY" },
+    };
+    const pc = provConfig[prov] ?? provConfig["nvidia"];
+    nimApiBase = pc.apiBase;
+    nimApiKey = process.env[pc.envKey];
+    if (!nimApiKey) {
+      res.status(400).json({
+        error: `Provider "${prov}" is not configured — set the ${pc.envKey} environment variable to use this provider.`,
+      });
+      return;
+    }
+  }
+
   let insertedSessionId: number | undefined;
 
   try {
@@ -861,27 +883,7 @@ router.post("/sessions", async (req, res) => {
       await db.update(sessionsTable).set({ activeBundleId: resolvedBundleId, updatedAt: new Date() }).where(eq(sessionsTable.id, session.id));
     }
 
-    // Resolve NIM API key based on the provider chosen.
-    let nimApiBase: string | undefined;
-    let nimApiKey: string | undefined;
-    if (nimModelId) {
-      const prov = nimProvider || "nvidia";
-      const provConfig: Record<string, { apiBase: string; envKey: string }> = {
-        nvidia:    { apiBase: "https://integrate.api.nvidia.com/v1", envKey: "NVIDIA_NIM_API_KEY" },
-        vultr:     { apiBase: "https://api.vultrinference.com/v1",   envKey: "VULTR_INFERENCE_API_KEY" },
-        together:  { apiBase: "https://api.together.xyz/v1",         envKey: "TOGETHER_API_KEY" },
-        deepinfra: { apiBase: "https://api.deepinfra.com/v1/openai", envKey: "DEEPINFRA_API_KEY" },
-      };
-      const pc = provConfig[prov] ?? provConfig["nvidia"];
-      nimApiBase = pc.apiBase;
-      nimApiKey = process.env[pc.envKey];
-      if (!nimApiKey) {
-        res.status(400).json({
-          error: `Provider "${prov}" is not configured — set the ${pc.envKey} environment variable to use this provider.`,
-        });
-        return;
-      }
-    }
+    // nimApiBase / nimApiKey were validated and resolved before the session insert.
 
     const onstart = vastai.buildOnStartScript({
       modelRepo: MODEL_REPO,
