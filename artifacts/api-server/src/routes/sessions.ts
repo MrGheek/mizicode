@@ -810,7 +810,7 @@ router.post("/sessions", async (req, res) => {
         repoFingerprintJson,
         intentText,
         provider: nimModelId ? "nim" : "vastai",
-        nimProvider: (nimModelId && nimProvider) ? String(nimProvider) : null,
+        nimProvider: nimModelId ? String(nimProvider ?? "nvidia") : null,
         nimModelId: nimModelId ? String(nimModelId) : null,
         // Owner token: a random secret issued at session creation. Required by
         // the dashboard to call owner-only endpoints (e.g. swarm abort). Not a

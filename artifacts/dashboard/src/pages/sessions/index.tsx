@@ -544,10 +544,28 @@ export default function SessionsList() {
                       )}
                     </TableCell>
                     <TableCell className="text-muted-foreground font-mono text-sm">
-                      {(session as typeof session & { provider?: string; nimModelId?: string }).provider === "nim"
-                        ? <span className="inline-flex items-center gap-1 text-emerald-400 font-sans text-xs font-semibold">⚡ NIM · {(session as typeof session & { nimModelId?: string }).nimModelId}</span>
-                        : (session.gpuName ? `${session.gpuName} x${session.numGpus}` : 'N/A')
-                      }
+                      {(() => {
+                        const s = session as typeof session & { provider?: string; nimModelId?: string; nimProvider?: string };
+                        if (s.provider === "nim") {
+                          const providerLabel = s.nimProvider
+                            ? s.nimProvider.charAt(0).toUpperCase() + s.nimProvider.slice(1)
+                            : "NVIDIA NIM";
+                          return (
+                            <span className="inline-flex items-center gap-1.5 font-sans text-xs font-semibold">
+                              <span className="text-emerald-400">⚡ NIM</span>
+                              <span className="text-white/30">·</span>
+                              <span className="text-emerald-300">{providerLabel}</span>
+                              {s.nimModelId && (
+                                <>
+                                  <span className="text-white/30">·</span>
+                                  <span className="text-white/50 font-normal truncate max-w-[120px]">{s.nimModelId.split("/").pop()}</span>
+                                </>
+                              )}
+                            </span>
+                          );
+                        }
+                        return session.gpuName ? `${session.gpuName} x${session.numGpus}` : "N/A";
+                      })()}
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm">
                       {format(new Date(session.createdAt), "MMM d, yyyy HH:mm")}
