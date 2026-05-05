@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useCreateSession } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -201,7 +201,6 @@ function NimLaunchDialog({ model, configured, onClose, onConfirm, isLaunching }:
     try { return localStorage.getItem(NIM_GH_TOKEN_KEY) ?? ""; } catch { return ""; }
   });
   const [showToken, setShowToken] = useState(false);
-  const repoUrlRef = useRef(repoUrl);
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>

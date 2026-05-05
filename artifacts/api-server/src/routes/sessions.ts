@@ -477,7 +477,13 @@ router.get("/sessions/:sessionId", async (req, res) => {
     .from(gpuProfilesTable)
     .where(eq(gpuProfilesTable.id, synced.profileId));
 
-  res.json({ ...synced, profileName: profile?.displayName || "", swarmWorkerCap: profile?.swarmWorkerCap ?? null });
+  // Recover repoUrl from the fingerprint JSON so the frontend can use it for
+  // branch-chip gating (repoUrl is not a dedicated column — it's embedded in
+  // repoFingerprintJson.url by buildOnStartScript / launch flow).
+  const fpJson = synced.repoFingerprintJson as Record<string, unknown> | null;
+  const repoUrl = fpJson && typeof fpJson.url === "string" ? fpJson.url : null;
+
+  res.json({ ...synced, profileName: profile?.displayName || "", swarmWorkerCap: profile?.swarmWorkerCap ?? null, repoUrl });
 });
 
 // GET /sessions/:sessionId/clone — return the launch options needed to re-create
