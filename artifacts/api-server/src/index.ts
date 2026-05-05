@@ -10,6 +10,7 @@ import { validateMemoryDataDir, startMemoryDiskMonitor, runPassiveRecallBackfill
 import { initSafetySubsystem, drainApprovedActions } from "./services/safety";
 import { startAmbientRunner, registerAmbientExecutors } from "./services/ambient";
 import { startClaimSweeper, sweepExpiredClaims, recordExternalSweep } from "./services/claim-sweeper";
+import { syncNimCatalog } from "./services/nim-catalog";
 import { db, laneClaimsTable, claimPurgeLogsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
 
@@ -136,6 +137,17 @@ app.listen(port, async (err) => {
   startClaimPurger();
   startEvalScheduler(60);
   startMemoryDiskMonitor();
+
+  try {
+    await syncNimCatalog();
+    logger.info("NIM catalog synced");
+    // Re-sync every 6 hours to pick up new partner models.
+    setInterval(() => {
+      syncNimCatalog().catch((e) => logger.warn({ err: e }, "NIM catalog re-sync failed"));
+    }, 6 * 60 * 60 * 1000);
+  } catch (e) {
+    logger.warn({ err: e }, "NIM catalog initial sync failed (non-fatal)");
+  }
 
   try {
     initSafetySubsystem();

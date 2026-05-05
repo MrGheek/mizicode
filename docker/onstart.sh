@@ -597,6 +597,71 @@ log "=== Phase 1.7 done — Context Shield provisioned ==="
 log "Starting LLM backend in background..."
 
 (
+    # ── NIM fast-boot: hosted-inference mode (skips vLLM and model download) ──
+    # When NIM_MODEL_ID is set, the workspace uses a partner-cloud or NVIDIA-hosted
+    # LLM API instead of a locally-downloaded model. LiteLLM proxies the API so
+    # claw-code still sees the standard Anthropic/OpenAI interface on localhost.
+    if [ -n "${NIM_MODEL_ID:-}" ]; then
+        log "=== NIM Mode: Using hosted inference (${NIM_MODEL_ID}) via ${NIM_API_BASE} ==="
+        echo "starting_llm" > "$STATUS_FILE"
+        report_status "starting_llm"
+        log "Starting LiteLLM NIM proxy on port $VLLM_PORT..."
+
+        litellm \
+            --model "openai/${NIM_MODEL_ID}" \
+            --api_base "${NIM_API_BASE}" \
+            --api_key "${NIM_API_KEY:-not-needed}" \
+            --host 0.0.0.0 \
+            --port "$VLLM_PORT" \
+            > /var/log/litellm.log 2>&1 &
+        NIM_LITELLM_PID=$!
+        log "LiteLLM NIM proxy started (PID: $NIM_LITELLM_PID)"
+
+        # Wait for LiteLLM to come up (should be fast — no model to load).
+        _nim_ready=0
+        for i in $(seq 1 30); do
+            if curl -sf "http://localhost:$VLLM_PORT/health" > /dev/null 2>&1; then
+                log "LiteLLM NIM proxy ready on port $VLLM_PORT"
+                _nim_ready=1
+                break
+            fi
+            sleep 2
+        done
+
+        export ANTHROPIC_BASE_URL="http://localhost:${VLLM_PORT}"
+        export ANTHROPIC_API_KEY="not-needed"
+        echo "ANTHROPIC_BASE_URL=http://localhost:${VLLM_PORT}" >> /etc/environment
+        echo "ANTHROPIC_API_KEY=not-needed" >> /etc/environment
+        echo "export ANTHROPIC_BASE_URL=http://localhost:${VLLM_PORT}" >> /root/.bashrc
+        echo "export ANTHROPIC_API_KEY=not-needed" >> /root/.bashrc
+        log "claw-code configured: ANTHROPIC_BASE_URL -> LiteLLM NIM proxy (port $VLLM_PORT)"
+
+        if [ "$_nim_ready" -eq 1 ]; then
+            echo "llm_ready" > "$STATUS_FILE"
+            report_status "llm_ready"
+        fi
+        log "=== NIM Mode: Proxy ready — NIM_MODEL_ID=${NIM_MODEL_ID} ==="
+        log "  LLM Proxy:   http://localhost:$VLLM_PORT (OpenAI + Anthropic via litellm → NIM)"
+        log "  Upstream:    ${NIM_API_BASE}"
+
+        # Keep LiteLLM alive with auto-restart.
+        while true; do
+            if ! kill -0 "$NIM_LITELLM_PID" 2>/dev/null; then
+                log "LiteLLM NIM proxy died — restarting..."
+                litellm \
+                    --model "openai/${NIM_MODEL_ID}" \
+                    --api_base "${NIM_API_BASE}" \
+                    --api_key "${NIM_API_KEY:-not-needed}" \
+                    --host 0.0.0.0 \
+                    --port "$VLLM_PORT" \
+                    > /var/log/litellm.log 2>&1 &
+                NIM_LITELLM_PID=$!
+            fi
+            sleep 30
+        done
+    fi
+    # ── End NIM fast-boot ─────────────────────────────────────────────────────
+
     MODEL_DIR="$MODEL_BASE_PATH/$MODEL_QUANT"
 
     if [ -d "$MODEL_DIR" ] && ls "$MODEL_DIR"/*.safetensors > /dev/null 2>&1; then

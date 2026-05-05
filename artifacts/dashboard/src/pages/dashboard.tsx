@@ -26,6 +26,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight, Target, Trash2, Star, Network } from "lucide-react";
 import { SwarmPill } from "@/components/swarm-activity-panel";
 import { ProfileCard } from "@/components/profile-card";
+import { NimLaunchSection } from "@/components/nim-launch-section";
 import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
 import { SchedulerConfigCard } from "@/components/scheduler-config-card";
 import { Button } from "@/components/ui/button";
@@ -287,6 +288,9 @@ export default function Dashboard() {
           pinnedIds={pinnedIds}
           onTogglePin={togglePin}
         />
+
+        {/* Hosted Inference (NIM) */}
+        <NimLaunchSection />
 
         {/* Claim Cleanup Health */}
         {cleanupStats && <ClaimCleanupCard stats={cleanupStats} />}

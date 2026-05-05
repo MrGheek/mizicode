@@ -20,6 +20,9 @@ export type BootPhaseKey =
   | "weights"
   | "llm";
 
+/** Provider type — drives which phase ORDER is used by inferBootPhase. */
+export type SessionProvider = "vastai" | "nim";
+
 export type BootPhaseStatus = "pending" | "active" | "done" | "error" | "skipped";
 
 export interface BootPhase {
@@ -92,6 +95,14 @@ const ORDER: { key: BootPhaseKey; label: string }[] = [
   { key: "llm",       label: "LLM ready" },
 ];
 
+/** Condensed 3-phase timeline used for NIM (hosted-inference) sessions.
+ *  No model download or vLLM warmup — just container → services → LLM proxy. */
+const NIM_ORDER: { key: BootPhaseKey; label: string }[] = [
+  { key: "container", label: "Container started" },
+  { key: "services",  label: "Services started" },
+  { key: "llm",       label: "NIM proxy ready" },
+];
+
 function detectActive(status: string, msg: string): BootPhaseKey | null {
   const m = msg.toLowerCase();
   if (status === "ready" || /vllm online|llm ready|session is ready/.test(m)) return "llm";
@@ -120,8 +131,11 @@ export function inferBootPhase(args: {
   status: string;
   statusMessage: string | null | undefined;
   bootLog?: string[];
+  provider?: SessionProvider | string | null;
 }): BootPhase[] {
-  const { status, statusMessage, bootLog = [] } = args;
+  const { status, statusMessage, bootLog = [], provider } = args;
+  const isNim = provider === "nim";
+  const activeOrder = isNim ? NIM_ORDER : ORDER;
   const allMessages = [...bootLog, statusMessage ?? ""].filter(Boolean) as string[];
 
   // Build the set of phases that have been observed at any point in the log.
@@ -132,7 +146,7 @@ export function inferBootPhase(args: {
   }
 
   const activeKey = detectActive(status, statusMessage ?? "");
-  let activeIdx = activeKey ? ORDER.findIndex(p => p.key === activeKey) : -1;
+  let activeIdx = activeKey ? activeOrder.findIndex(p => p.key === activeKey) : -1;
 
   // Structured-failure override: when onstart.sh emitted a `boot_failure:<cause>`
   // marker, route the error row to the cause's phase regardless of the active
@@ -142,7 +156,7 @@ export function inferBootPhase(args: {
   if (status === "error") {
     const failure = parseBootFailure(statusMessage, bootLog);
     if (failure) {
-      const idx = ORDER.findIndex(p => p.key === failure.phaseKey);
+      const idx = activeOrder.findIndex(p => p.key === failure.phaseKey);
       if (idx >= 0) activeIdx = idx;
     }
   }
@@ -156,7 +170,7 @@ export function inferBootPhase(args: {
     for (const line of allMessages) {
       const k = detectActive("provisioning", line); // neutral status — pure keyword match
       if (k) {
-        const idx = ORDER.findIndex(p => p.key === k);
+        const idx = activeOrder.findIndex(p => p.key === k);
         if (idx > lastObservedIdx) lastObservedIdx = idx;
       }
     }
@@ -164,11 +178,11 @@ export function inferBootPhase(args: {
   }
 
   if (status === "ready") {
-    return ORDER.map(p => ({ ...p, status: "done" as BootPhaseStatus }));
+    return activeOrder.map(p => ({ ...p, status: "done" as BootPhaseStatus }));
   }
 
   if (status === "stopped") {
-    return ORDER.map((p, i) => ({
+    return activeOrder.map((p, i) => ({
       ...p,
       status: (observed.has(p.key) && (activeIdx < 0 || i < activeIdx))
         ? "done"
@@ -176,7 +190,7 @@ export function inferBootPhase(args: {
     }));
   }
 
-  return ORDER.map((p, i) => {
+  return activeOrder.map((p, i) => {
     if (status === "error" && activeIdx >= 0 && i === activeIdx) {
       return { ...p, status: "error" as BootPhaseStatus };
     }

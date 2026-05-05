@@ -13,6 +13,7 @@ import coordinationRouter from "./coordination";
 import designIntelligenceRouter from "./design-intelligence";
 import ambientRouter from "./ambient";
 import paletteIntentRouter from "./palette-intent";
+import nimRouter from "./nim";
 
 const router: IRouter = Router();
 
@@ -31,5 +32,6 @@ router.use(coordinationRouter);
 router.use(designIntelligenceRouter);
 router.use(ambientRouter);
 router.use(paletteIntentRouter);
+router.use(nimRouter);
 
 export default router;

@@ -1,7 +1,7 @@
 import { Router, type RequestHandler } from "express";
 import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
-import { getProfileById } from "../services/profiles";
+import { getProfileById, getNimWorkspaceProfile } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { logger } from "../lib/logger";
@@ -311,6 +311,9 @@ router.get("/sessions", async (_req, res) => {
       createdAt: sessionsTable.createdAt,
       updatedAt: sessionsTable.updatedAt,
       swarmSnapshotJson: sessionsTable.swarmSnapshotJson,
+      provider: sessionsTable.provider,
+      nimProvider: sessionsTable.nimProvider,
+      nimModelId: sessionsTable.nimModelId,
     })
     .from(sessionsTable)
     .leftJoin(gpuProfilesTable, eq(sessionsTable.profileId, gpuProfilesTable.id))
@@ -609,7 +612,7 @@ router.patch("/sessions/:sessionId", async (req, res) => {
 });
 
 router.post("/sessions", async (req, res) => {
-  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText } = req.body;
+  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider } = req.body;
 
   // Sanitize and bound the natural-language session intent (optional).
   let intentText: string | null = null;
@@ -620,12 +623,15 @@ router.post("/sessions", async (req, res) => {
     }
   }
 
-  if (!profileId) {
-    res.status(400).json({ error: "profileId is required" });
+  if (!profileId && !nimModelId) {
+    res.status(400).json({ error: "profileId or nimModelId is required" });
     return;
   }
 
-  const profile = await getProfileById(profileId);
+  let profile = profileId ? await getProfileById(profileId) : null;
+  if (!profile && nimModelId) {
+    profile = await getNimWorkspaceProfile();
+  }
   if (!profile) {
     res.status(400).json({ error: "Invalid profile" });
     return;
@@ -770,7 +776,9 @@ router.post("/sessions", async (req, res) => {
         vastOfferId: selectedOfferId,
         templateHash: templateHash || null,
         status: "provisioning",
-        statusMessage: "Finding GPU and provisioning instance...",
+        statusMessage: nimModelId
+          ? "Provisioning workspace container — NIM API will be ready in ~2 min..."
+          : "Finding GPU and provisioning instance...",
         gpuName: profile.gpuName,
         numGpus: profile.numGpus,
         teamMembers: teamMemberRecords.length > 0 ? teamMemberRecords : null,
@@ -779,6 +787,9 @@ router.post("/sessions", async (req, res) => {
         activeBundleId: requestedBundleId || null,
         repoFingerprintJson,
         intentText,
+        provider: nimModelId ? "nim" : "vastai",
+        nimProvider: (nimModelId && nimProvider) ? String(nimProvider) : null,
+        nimModelId: nimModelId ? String(nimModelId) : null,
         // Owner token: a random secret issued at session creation. Required by
         // the dashboard to call owner-only endpoints (e.g. swarm abort). Not a
         // team-member credential — team members use their own name+password.
@@ -850,6 +861,22 @@ router.post("/sessions", async (req, res) => {
       await db.update(sessionsTable).set({ activeBundleId: resolvedBundleId, updatedAt: new Date() }).where(eq(sessionsTable.id, session.id));
     }
 
+    // Resolve NIM API key based on the provider chosen.
+    let nimApiBase: string | undefined;
+    let nimApiKey: string | undefined;
+    if (nimModelId) {
+      const prov = nimProvider || "nvidia";
+      const provConfig: Record<string, { apiBase: string; envKey: string }> = {
+        nvidia:    { apiBase: "https://integrate.api.nvidia.com/v1", envKey: "NVIDIA_NIM_API_KEY" },
+        vultr:     { apiBase: "https://api.vultrinference.com/v1",   envKey: "VULTR_INFERENCE_API_KEY" },
+        together:  { apiBase: "https://api.together.xyz/v1",         envKey: "TOGETHER_API_KEY" },
+        deepinfra: { apiBase: "https://api.deepinfra.com/v1/openai", envKey: "DEEPINFRA_API_KEY" },
+      };
+      const pc = provConfig[prov] ?? provConfig["nvidia"];
+      nimApiBase = pc.apiBase;
+      nimApiKey = process.env[pc.envKey] || "";
+    }
+
     const onstart = vastai.buildOnStartScript({
       modelRepo: MODEL_REPO,
       modelQuant: MODEL_QUANT,
@@ -866,6 +893,9 @@ router.post("/sessions", async (req, res) => {
       sessionId: insertedSessionId,
       callbackBaseUrl,
       activeBundleB64,
+      nimModelId: nimModelId ? String(nimModelId) : undefined,
+      nimApiBase,
+      nimApiKey,
     });
 
     const result = await vastai.createInstance({

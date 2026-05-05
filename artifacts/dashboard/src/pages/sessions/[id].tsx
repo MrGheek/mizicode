@@ -2918,8 +2918,9 @@ export default function SessionDetail() {
       status: session?.status ?? "",
       statusMessage: session?.statusMessage ?? null,
       bootLog,
+      provider: (session as typeof session & { provider?: string })?.provider ?? "vastai",
     }),
-    [session?.status, session?.statusMessage, bootLog],
+    [session?.status, session?.statusMessage, bootLog, (session as typeof session & { provider?: string })?.provider],
   );
 
   if (isLoading) {

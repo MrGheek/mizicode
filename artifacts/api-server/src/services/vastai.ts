@@ -277,6 +277,11 @@ export function buildOnStartScript(profileConfig: {
   sessionId?: number;
   callbackBaseUrl?: string;
   activeBundleB64?: string;
+  // NIM hosted-inference mode: when set, onstart.sh skips vLLM/download and
+  // routes LiteLLM at the partner API endpoint instead.
+  nimModelId?: string;
+  nimApiBase?: string;
+  nimApiKey?: string;
 }): string {
   const memLines = profileConfig.memProxyUrl
     ? [
@@ -307,6 +312,14 @@ export function buildOnStartScript(profileConfig: {
     ? `export FLOATR_ACTIVE_BUNDLE_B64='${profileConfig.activeBundleB64}'`
     : "";
 
+  const nimLines = profileConfig.nimModelId
+    ? [
+        `export NIM_MODEL_ID="${profileConfig.nimModelId}"`,
+        `export NIM_API_BASE="${profileConfig.nimApiBase || "https://integrate.api.nvidia.com/v1"}"`,
+        `export NIM_API_KEY="${profileConfig.nimApiKey || ""}"`,
+      ].join("\n")
+    : "";
+
   return `#!/bin/bash
 export MODEL_REPO="${profileConfig.modelRepo}"
 export MODEL_QUANT="${profileConfig.modelQuant}"
@@ -316,6 +329,7 @@ export VLLM_MAX_NUM_SEQS="${profileConfig.llamaBatchSize}"
 export VLLM_EXTRA_ARGS="${profileConfig.llamaExtraArgs}"
 export NUM_GPUS="${profileConfig.numGpus || 1}"
 export SWARM_MAX_WORKERS="${profileConfig.swarmWorkerCap ?? 0}"
+${nimLines}
 ${memLines}
 ${callbackLines}
 ${teamLine}

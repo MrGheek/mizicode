@@ -23,6 +23,9 @@ export interface SessionRoutingStats {
 export const sessionsTable = pgTable("sessions", {
   id: serial("id").primaryKey(),
   profileId: integer("profile_id").notNull().references(() => gpuProfilesTable.id),
+  provider: text("provider").notNull().default("vastai"),
+  nimProvider: text("nim_provider"),
+  nimModelId: text("nim_model_id"),
   vastInstanceId: integer("vast_instance_id"),
   vastOfferId: integer("vast_offer_id"),
   templateHash: text("template_hash"),

@@ -544,7 +544,10 @@ export default function SessionsList() {
                       )}
                     </TableCell>
                     <TableCell className="text-muted-foreground font-mono text-sm">
-                      {session.gpuName ? `${session.gpuName} x${session.numGpus}` : 'N/A'}
+                      {(session as typeof session & { provider?: string; nimModelId?: string }).provider === "nim"
+                        ? <span className="inline-flex items-center gap-1 text-emerald-400 font-sans text-xs font-semibold">⚡ NIM · {(session as typeof session & { nimModelId?: string }).nimModelId}</span>
+                        : (session.gpuName ? `${session.gpuName} x${session.numGpus}` : 'N/A')
+                      }
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm">
                       {format(new Date(session.createdAt), "MMM d, yyyy HH:mm")}

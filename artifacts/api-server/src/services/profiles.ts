@@ -31,6 +31,35 @@ const CHUNKED_PREFILL_PRO =
   "--long-prefill-token-threshold 2048 --scheduling-policy priority";
 
 const DEFAULT_PROFILES: InsertGpuProfile[] = [
+  // ── NIM Workspace profile — used for all hosted-inference (NIM) sessions ──
+  // No local GPU needed: the workspace container just runs code-server + LiteLLM
+  // pointed at the NIM/partner API. We rent the cheapest available CPU instance.
+  {
+    name: "nim-workspace",
+    displayName: "NIM Workspace",
+    gpuName: "CPU",
+    numGpus: 0,
+    totalVram: 0,
+    dockerImageTag: "gheeklabs/coding-env:latest",
+    defaultQuant: "nim-hosted",
+    quantSizeGb: 0,
+    diskSizeGb: 50,
+    estimatedSpeedMin: 0,
+    estimatedSpeedMax: 0,
+    estimatedCostMin: 0.05,
+    estimatedCostMax: 0.15,
+    llamaCtxSize: 131072,
+    llamaBatchSize: 1,
+    llamaExtraArgs: "",
+    searchParams: { type: "on-demand", num_gpus: 0, min_gpu_ram: 0 },
+    startupTimeMin: 2,
+    modelRepo: "nim-hosted",
+    servedModelName: "nim-hosted",
+    modelDisplayName: "NIM Hosted",
+    benchmarkCallout: null,
+    swarmWorkerCap: 200,
+  },
+
   // ── Kimi K2.6 profiles (default / recommended) ───────────────────────────
   // modelRepo → unsloth/Kimi-K2.6-GGUF (passed as MODEL_REPO to huggingface-cli download)
   {
@@ -519,4 +548,13 @@ export async function getAllProfiles() {
 export async function getProfileById(id: number) {
   const [profile] = await db.select().from(gpuProfilesTable).where(eq(gpuProfilesTable.id, id));
   return profile || null;
+}
+
+export async function getProfileByName(name: string) {
+  const [profile] = await db.select().from(gpuProfilesTable).where(eq(gpuProfilesTable.name, name));
+  return profile || null;
+}
+
+export async function getNimWorkspaceProfile() {
+  return getProfileByName("nim-workspace");
 }
