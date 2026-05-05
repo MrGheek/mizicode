@@ -28,6 +28,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { toast } from "sonner";
 import type { MemoryGovernanceStatsResponse } from "@workspace/api-client-react";
@@ -961,7 +963,15 @@ interface RecallMetricsResponse {
   avgInjectedTokensEstimate: number;
 }
 
+interface PassiveConfigResponse {
+  globalDefault: boolean;
+  sessionEnabled: boolean | null;
+}
+
 function PassiveRecallPanel() {
+  const queryClient = useQueryClient();
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+
   const { data: metrics } = useQuery<RecallMetricsResponse>({
     queryKey: ["memory-recall-metrics"],
     queryFn: async () => {
@@ -984,22 +994,80 @@ function PassiveRecallPanel() {
     staleTime: 20000,
   });
 
+  const { data: recentSessions } = useQuery<MemSession[]>({
+    queryKey: ["mem-session-options"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/memory/sessions?limit=20&offset=0`);
+      if (!res.ok) throw new Error("Failed to fetch sessions");
+      return res.json() as Promise<MemSession[]>;
+    },
+    staleTime: 30000,
+  });
+
+  const { data: passiveConfig, isLoading: configLoading } = useQuery<PassiveConfigResponse>({
+    queryKey: ["memory-passive-config", selectedSessionId],
+    queryFn: async () => {
+      const url = selectedSessionId
+        ? `${BASE_URL}api/memory/passive-config?sessionId=${encodeURIComponent(selectedSessionId)}`
+        : `${BASE_URL}api/memory/passive-config`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Failed to fetch passive config");
+      return res.json() as Promise<PassiveConfigResponse>;
+    },
+    staleTime: 10000,
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: async ({ sessionId, enabled }: { sessionId: string; enabled: boolean }) => {
+      const res = await fetch(`${BASE_URL}api/memory/passive-config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, enabled }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error || "Failed to update passive recall");
+      }
+      return res.json() as Promise<{ ok: boolean; sessionId: string; enabled: boolean; globalDefault: boolean }>;
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData<PassiveConfigResponse>(["memory-passive-config", data.sessionId], {
+        globalDefault: data.globalDefault,
+        sessionEnabled: data.enabled,
+      });
+      toast.success(`Passive recall ${data.enabled ? "enabled" : "disabled"} for this session`);
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "Failed to update passive recall");
+    },
+  });
+
   const entries = auditData?.entries ?? [];
-  const enabled = metrics?.enabled ?? false;
+  const globalEnabled = passiveConfig?.globalDefault ?? metrics?.enabled ?? false;
+  const sessionEnabled = passiveConfig?.sessionEnabled ?? null;
+  const effectiveEnabled = sessionEnabled !== null ? sessionEnabled : globalEnabled;
+  const isOverriding = selectedSessionId !== null && sessionEnabled !== null && sessionEnabled !== globalEnabled;
+
   const acceptRatePct = Math.round((metrics?.acceptRate ?? 0) * 100);
   const injectRatePct = Math.round((metrics?.injectRate ?? 0) * 100);
+
+  function handleToggle(checked: boolean) {
+    if (!selectedSessionId) return;
+    toggleMutation.mutate({ sessionId: selectedSessionId, enabled: checked });
+  }
 
   return (
     <Card className="bg-card/50 border-border/50">
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
           <Zap className="w-4 h-4" /> Passive Recall
-          <span className={`ml-auto text-[10px] font-semibold normal-case px-2 py-0.5 rounded-full border ${enabled ? "text-emerald-400 border-emerald-400 bg-emerald-400/10" : "text-muted-foreground border-border bg-secondary/30"}`}>
-            {enabled ? "Enabled (global)" : "Disabled (global)"}
+          <span className={`ml-auto text-[10px] font-semibold normal-case px-2 py-0.5 rounded-full border ${globalEnabled ? "text-emerald-400 border-emerald-400/50 bg-emerald-400/10" : "text-muted-foreground border-border bg-secondary/30"}`}>
+            {globalEnabled ? "On (global)" : "Off (global)"}
           </span>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Metrics row */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="rounded-lg border border-border/40 bg-secondary/20 p-3">
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Candidates</div>
@@ -1019,13 +1087,85 @@ function PassiveRecallPanel() {
           </div>
         </div>
 
+        {/* Per-session toggle */}
+        <div className="rounded-lg border border-border/40 bg-secondary/10 p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Per-session override</div>
+            {isOverriding && (
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border text-amber-400 border-amber-400/40 bg-amber-400/10">
+                Overrides global default
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="relative flex-1">
+              <select
+                value={selectedSessionId ?? ""}
+                onChange={e => setSelectedSessionId(e.target.value || null)}
+                className="w-full pl-3 pr-8 py-1.5 text-xs rounded-md border border-border/50 bg-secondary/30 text-foreground appearance-none focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer"
+              >
+                <option value="">— pick a session —</option>
+                {(recentSessions ?? []).map(s => {
+                  const label = s.summary
+                    ? s.summary.slice(0, 50)
+                    : format(new Date(s.startedAt), "MMM d, yyyy HH:mm");
+                  return (
+                    <option key={s.id} value={s.id}>
+                      {label} ({s.id.slice(0, 8)}…)
+                    </option>
+                  );
+                })}
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
+            </div>
+          </div>
+
+          {selectedSessionId ? (
+            <div className="flex items-center gap-3 pt-1">
+              {configLoading ? (
+                <Skeleton className="h-5 w-8 rounded-full" />
+              ) : (
+                <Switch
+                  id="session-recall-toggle"
+                  checked={effectiveEnabled}
+                  onCheckedChange={handleToggle}
+                  disabled={toggleMutation.isPending}
+                  size="sm"
+                />
+              )}
+              <Label
+                htmlFor="session-recall-toggle"
+                className="text-xs cursor-pointer select-none"
+              >
+                Passive recall on this session
+              </Label>
+              {!configLoading && (
+                <span className={`ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full border ${effectiveEnabled ? "text-emerald-400 border-emerald-400/40 bg-emerald-400/10" : "text-muted-foreground border-border bg-secondary/30"}`}>
+                  {sessionEnabled !== null
+                    ? effectiveEnabled ? "Enabled (session)" : "Disabled (session)"
+                    : effectiveEnabled ? "Enabled (global)" : "Disabled (global)"}
+                </span>
+              )}
+              {toggleMutation.isPending && (
+                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground ml-1" />
+              )}
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              Select a session above to override passive recall for that session only.
+            </p>
+          )}
+        </div>
+
+        {/* Recent recalls audit log */}
         <div className="space-y-2">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Recent recalls</div>
           {isLoading ? (
             <Skeleton className="h-24 w-full rounded-md" />
           ) : entries.length === 0 ? (
             <p className="text-xs text-muted-foreground py-3 text-center">
-              No recall activity yet. Set <code className="text-foreground bg-secondary/40 px-1 rounded">OMNIQL_MEM_PASSIVE_RECALL=1</code> or enable per session.
+              No recall activity yet. Set <code className="text-foreground bg-secondary/40 px-1 rounded">OMNIQL_MEM_PASSIVE_RECALL=1</code> or enable per session above.
             </p>
           ) : (
             <div className="max-h-64 overflow-y-auto space-y-1.5">
