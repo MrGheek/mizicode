@@ -72,7 +72,7 @@ export function LauncherFirst() {
           <div className="w-7 h-7 rounded-md bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
             <Terminal className="w-3.5 h-3.5 text-white" />
           </div>
-          <span className="font-bold text-sm text-white tracking-wide">FLOATR</span>
+          <span className="font-bold text-sm text-white tracking-wide">MIZI</span>
           <span className="text-slate-600 mx-1">·</span>
           <span className="flex items-center gap-1.5 text-xs text-slate-400">
             <span className="w-1.5 h-1.5 rounded-full bg-slate-600 inline-block"></span>

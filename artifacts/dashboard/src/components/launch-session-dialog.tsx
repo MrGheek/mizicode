@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { SkillClassBadge } from "@/components/skill-badges";
 
-const LS_PAT_PREFIX = "floatr:github_pat:";
+const LS_PAT_PREFIX = "mizi:github_pat:";
 
 function loadSavedPat(repoUrl: string): string {
   if (!repoUrl.trim()) return "";
@@ -298,7 +298,7 @@ export function LaunchSessionDialog({
             <p className="text-[10px] text-muted-foreground flex items-center gap-1">
               <Info className="w-3 h-3 shrink-0" />
               {githubToken && repoUrl.trim()
-                ? "Token saved for this repo — pre-fills next time. Pushes go to floatr/session branch."
+                ? "Token saved for this repo — pre-fills next time. Pushes go to mizi/session branch."
                 : "Stored locally per repo — never sent to our servers. Pushes always go to a new branch."}
             </p>
           </div>

@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "FLOATR Cloud Coding"
+title = "MIZI Code"
 version = "1.0.0"
 id = "artifacts/dashboard"
 router = "path"

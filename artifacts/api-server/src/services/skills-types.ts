@@ -1,12 +1,12 @@
 export type SkillClass = "doctrine" | "workflow" | "context" | "efficiency" | "team" | "repo";
-export type TrustTier = "floatr_native" | "reviewed" | "user_approved" | "experimental";
+export type TrustTier = "mizi_native" | "reviewed" | "user_approved" | "experimental";
 export type InstallRisk = "virtual" | "config" | "hooked" | "binary" | "networked";
 export type ReviewStatus = "pending" | "approved" | "rejected";
 export type TokenMode = "full" | "core" | "lean" | "ultra";
 export type TaskMode = "build" | "review" | "debug" | "refactor" | "explore" | "team";
 export type SessionType = "solo" | "team";
 
-export interface FloatrSkillManifest {
+export interface MiziSkillManifest {
   schemaVersion: 1;
   id: string;
   name: string;
@@ -167,7 +167,7 @@ export interface CompiledBundle {
   bundleId: number;
   slug: string;
   name: string;
-  skills: FloatrSkillManifest[];
+  skills: MiziSkillManifest[];
   reasoning: {
     task: string;
     repo: string;

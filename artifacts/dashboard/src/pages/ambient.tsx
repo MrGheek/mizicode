@@ -95,7 +95,7 @@ interface SafetyAction {
 // this page exposes a small input so the operator can paste the token
 // once. This matches reviewer guidance that the secret must not ship in
 // the bundle and must not be served by an open browser-proxy.
-const OPERATOR_TOKEN_LS_KEY = "floatr.ambient.operatorToken";
+const OPERATOR_TOKEN_LS_KEY = "mizi.ambient.operatorToken";
 function getOperatorToken(): string {
   try { return localStorage.getItem(OPERATOR_TOKEN_LS_KEY) ?? ""; } catch { return ""; }
 }
@@ -434,7 +434,7 @@ function OperatorTokenCard() {
           Mutating actions (kill switch, force cycle, approve / deny, config &amp; policy updates)
           are sent to the token-gated <code className="font-mono">/api/ambient</code> and{" "}
           <code className="font-mono">/api/safety</code> surface. Paste your{" "}
-          <code className="font-mono">OMNIQL_MEM_TOKEN</code> here once — it is stored only in
+          <code className="font-mono">MIZI_MEM_TOKEN</code> here once — it is stored only in
           this browser&apos;s localStorage and is never bundled into the deployed dashboard.
           Read-only views (status, timeline, pending approvals) keep working without a token.
         </p>

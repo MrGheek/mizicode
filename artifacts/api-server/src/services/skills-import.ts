@@ -3,7 +3,7 @@ import { db, skillSourcesTable, skillsTable, skillVersionsTable } from "@workspa
 import { eq, desc } from "drizzle-orm";
 import { normalizeSource } from "./skills-normalizer";
 import { logger } from "../lib/logger";
-import type { FloatrSkillManifest } from "./skills-types";
+import type { MiziSkillManifest } from "./skills-types";
 
 const CANDIDATE_PATHS = ["SKILL.md", "CLAUDE.md", "AGENTS.md", "README.md"];
 const SKILL_DIR_PATHS = ["skills/", "commands/"];
@@ -163,7 +163,7 @@ export async function importSkillFromUrl(url: string): Promise<ImportResult> {
   return { source, skills: createdSkills };
 }
 
-export async function getLatestManifestForSkill(skillId: number): Promise<FloatrSkillManifest | null> {
+export async function getLatestManifestForSkill(skillId: number): Promise<MiziSkillManifest | null> {
   const [version] = await db
     .select()
     .from(skillVersionsTable)
@@ -172,5 +172,5 @@ export async function getLatestManifestForSkill(skillId: number): Promise<Floatr
     .limit(1);
 
   if (!version) return null;
-  return version.manifestJson as unknown as FloatrSkillManifest;
+  return version.manifestJson as unknown as MiziSkillManifest;
 }

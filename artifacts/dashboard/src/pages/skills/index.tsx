@@ -38,7 +38,7 @@ import type { FeedbackScoreEntry } from "@/components/skill-badges";
 
 type LibTab = "installed" | "pending" | "disabled" | "bundles";
 
-const FALLBACK_DEFAULT_SLUGS = ["floatr-builder", "floatr-reviewer", "floatr-debugger", "floatr-team-studio"];
+const FALLBACK_DEFAULT_SLUGS = ["mizi-builder", "mizi-reviewer", "mizi-debugger", "mizi-team-studio"];
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
 
 type ManifestSource = { repoUrl?: string; commitSha?: string; license?: string; trust?: string };
@@ -928,7 +928,7 @@ function BundleSheet({
           <div className="flex flex-wrap gap-1.5 mt-2">
             {bundle.isDefault && (
               <Badge variant="outline" className="text-[10px] bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
-                FLOATR Native
+                MIZI Native
               </Badge>
             )}
             {bundle.taskMode && (
@@ -1001,7 +1001,7 @@ function ImportModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
         </DialogHeader>
         <div className="space-y-3 py-2">
           <p className="text-sm text-muted-foreground">
-            Paste a GitHub repository URL containing a <code className="bg-secondary px-1 rounded text-xs">floatr-skills.json</code> manifest.
+            Paste a GitHub repository URL containing a <code className="bg-secondary px-1 rounded text-xs">mizi-skills.json</code> manifest.
           </p>
           <Input
             placeholder="https://github.com/org/repo"
@@ -1360,7 +1360,7 @@ export default function SkillsLibrary() {
                 <div>
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-2">
                     <Badge variant="outline" className="text-[10px] bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
-                      FLOATR Native
+                      MIZI Native
                     </Badge>
                     Default Bundles
                   </h3>

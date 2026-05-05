@@ -378,10 +378,10 @@ export default function SessionsList() {
         if (window.location.pathname.replace(/\/$/, "") !== "") {
           setLocation("/");
           setTimeout(() => {
-            window.dispatchEvent(new CustomEvent("floatr:open-launch-dialog"));
+            window.dispatchEvent(new CustomEvent("mizi:open-launch-dialog"));
           }, 50);
         } else {
-          window.dispatchEvent(new CustomEvent("floatr:open-launch-dialog"));
+          window.dispatchEvent(new CustomEvent("mizi:open-launch-dialog"));
         }
       };
       if (!filteredSessions || filteredSessions.length === 0) {

@@ -21,7 +21,7 @@ export interface Notification {
   sessionId?: number;
 }
 
-const STORAGE_KEY = "floatr:notifications:v1";
+const STORAGE_KEY = "mizi:notifications:v1";
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_ITEMS = 50;
 

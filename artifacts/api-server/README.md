@@ -1,6 +1,6 @@
 # API Server
 
-OmniQL Cloud Coding — API server (Fastify + TypeScript).
+MIZI Cloud Coding — API server (Fastify + TypeScript).
 
 ---
 
@@ -10,7 +10,7 @@ The memory database is a SQLite file managed by `better-sqlite3`. Its location i
 
 ### Why a persistent volume is required
 
-By default (when `MEM_DATA_DIR` is unset) the database is written to `~/omniql-memory`. In a containerised or cloud deployment this path lives inside the ephemeral container filesystem and **will be wiped on every restart**, losing all memory data.
+By default (when `MEM_DATA_DIR` is unset) the database is written to `~/mizi-memory`. In a containerised or cloud deployment this path lives inside the ephemeral container filesystem and **will be wiped on every restart**, losing all memory data.
 
 To survive restarts you must:
 
@@ -42,7 +42,7 @@ ERROR [mem] FATAL: Memory data directory "/data/memory" exists but is not writab
 # In your docker-compose.yml or Dockerfile / run command:
 services:
   api:
-    image: omniql-api
+    image: mizi-api
     environment:
       MEM_DATA_DIR: /data/memory
     volumes:
@@ -66,7 +66,7 @@ volumes:
 
 ### Replit Autoscale / Cloud Run
 
-Set the `MEM_DATA_DIR` secret/env var to a path backed by a mounted persistent disk or Cloud Storage FUSE volume. Without a persistent mount the default `~/omniql-memory` path will be lost on every cold start.
+Set the `MEM_DATA_DIR` secret/env var to a path backed by a mounted persistent disk or Cloud Storage FUSE volume. Without a persistent mount the default `~/mizi-memory` path will be lost on every cold start.
 
 ---
 
@@ -77,5 +77,5 @@ See `.env.example` for the full list. Key variables:
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | *(required)* | Port the server listens on |
-| `MEM_DATA_DIR` | `~/omniql-memory` | Path for the SQLite memory database — **must be on a persistent volume in production** |
+| `MEM_DATA_DIR` | `~/mizi-memory` | Path for the SQLite memory database — **must be on a persistent volume in production** |
 | `LOG_LEVEL` | `info` | Pino log level (`trace` \| `debug` \| `info` \| `warn` \| `error` \| `fatal`) |

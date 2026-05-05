@@ -3,6 +3,6 @@ generated = []
 
 [[outputs]]
 id = "hhVKVeq0PfaayBrKuVHYc"
-uri = "file://FLOATR_SPEC.md"
+uri = "file://MIZI_SPEC.md"
 type = "text"
-title = "FLOATR Product Specification"
+title = "MIZI Product Specification"

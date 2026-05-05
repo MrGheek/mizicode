@@ -3,11 +3,11 @@ import { eq } from "drizzle-orm";
 import * as vastai from "./vastai";
 import { logger } from "../lib/logger";
 
-const DEFAULT_TEMPLATE_NAME = "OmniQL Coding Environment";
+const DEFAULT_TEMPLATE_NAME = "MIZI Coding Environment";
 const DEFAULT_IMAGE = "gheeklabs/coding-env:cuda12.4";
 
 const DEFAULT_ONSTART = `#!/bin/bash
-# OmniQL Coding Environment - parameterized via env vars
+# MIZI Coding Environment - parameterized via env vars
 # MODEL_REPO, MODEL_QUANT, LLAMA_CTX_SIZE, LLAMA_BATCH_SIZE, LLAMA_EXTRA_ARGS
 /opt/onstart.sh
 `;
@@ -31,7 +31,7 @@ export async function registerDefaultTemplate(): Promise<void> {
     return;
   }
 
-  logger.info("Registering default OmniQL template on Vast.ai...");
+  logger.info("Registering default MIZI template on Vast.ai...");
 
   try {
     const vastResult = await vastai.createTemplate({
@@ -40,7 +40,7 @@ export async function registerDefaultTemplate(): Promise<void> {
       onstart: DEFAULT_ONSTART,
       env: DEFAULT_ENV_VARS,
       disk_space: 400,
-      readme: "OmniQL Cloud Coding environment with llama.cpp (Kimi K2.6), code-server, and Bolt.diy",
+      readme: "MIZI Cloud Coding environment with llama.cpp (Kimi K2.6), code-server, and Bolt.diy",
     });
 
     const templateHash = vastResult.template?.hash_id || vastResult.template_hash || vastResult.hash_id || "";

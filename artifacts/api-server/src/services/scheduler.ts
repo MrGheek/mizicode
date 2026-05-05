@@ -354,14 +354,14 @@ async function launchScheduledSession(profileId: number, teamMemberNames: string
     const SERVED_MODEL_NAME = profile.servedModelName;
 
     // Resolve memory proxy and callback credentials (same logic as manual launch)
-    const memProxyUrl = process.env["OMNIQL_MEM_PROXY_URL"]
+    const memProxyUrl = process.env["MIZI_MEM_PROXY_URL"]
       || (process.env["REPLIT_DEV_DOMAIN"]
         ? `https://${process.env["REPLIT_DEV_DOMAIN"]}`
         : undefined);
 
-    const memUserId = process.env["OMNIQL_MEM_USER_ID"] || "operator";
-    // Support both OMNIQL_MEM_AUTH_TOKEN (task contract) and OMNIQL_MEM_TOKEN (current manual launch name)
-    const memAuthToken = process.env["OMNIQL_MEM_AUTH_TOKEN"] || process.env["OMNIQL_MEM_TOKEN"];
+    const memUserId = process.env["MIZI_MEM_USER_ID"] || "operator";
+    // Support both MIZI_MEM_AUTH_TOKEN (task contract) and MIZI_MEM_TOKEN (current manual launch name)
+    const memAuthToken = process.env["MIZI_MEM_AUTH_TOKEN"] || process.env["MIZI_MEM_TOKEN"];
     const callbackBaseUrl = memProxyUrl;
 
     // Derive repo fingerprint from repoUrl (mirrors manual session launch logic)

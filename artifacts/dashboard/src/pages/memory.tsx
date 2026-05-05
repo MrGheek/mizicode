@@ -170,7 +170,7 @@ function useOpenConflicts() {
   });
 }
 
-const LAST_BACKUP_KEY = "floatr:last-memory-backup";
+const LAST_BACKUP_KEY = "mizi:last-memory-backup";
 const LAST_BACKUP_KEY_LEGACY = "omniql:last-memory-backup";
 const BACKUP_WARNING_DAYS = 7;
 
@@ -1166,7 +1166,7 @@ function PassiveRecallPanel() {
             <Skeleton className="h-24 w-full rounded-md" />
           ) : entries.length === 0 ? (
             <p className="text-xs text-muted-foreground py-3 text-center">
-              No recall activity yet. Set <code className="text-foreground bg-secondary/40 px-1 rounded">OMNIQL_MEM_PASSIVE_RECALL=1</code> or enable per session above.
+              No recall activity yet. Set <code className="text-foreground bg-secondary/40 px-1 rounded">MIZI_MEM_PASSIVE_RECALL=1</code> or enable per session above.
             </p>
           ) : (
             <div className="max-h-64 overflow-y-auto space-y-1.5">

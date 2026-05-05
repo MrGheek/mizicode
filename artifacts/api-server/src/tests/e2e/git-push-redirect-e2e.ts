@@ -1,6 +1,6 @@
 #!/usr/bin/env -S npx tsx
 /**
- * E2E verification: git push → floatr/session-{id} inside a real Vast.ai container
+ * E2E verification: git push → mizi/session-{id} inside a real Vast.ai container
  * Task #265
  *
  * This script provisions a live Vast.ai container, waits for it to boot, SSHes
@@ -9,7 +9,7 @@
  *   1. GITHUB_TOKEN is exported in the container environment.
  *   2. /usr/local/bin/git exists and is executable.
  *   3. Running `git push origin main` from inside the container redirects the
- *      push to floatr/session-{id} on GitHub (verified via GitHub API).
+ *      push to mizi/session-{id} on GitHub (verified via GitHub API).
  *   4. Non-push commands pass through to the real /usr/bin/git unchanged.
  *
  * No git stub is used — the real /usr/bin/git binary executes the push so that
@@ -27,7 +27,7 @@
  *   GITHUB_TOKEN    — GitHub PAT with `repo` scope (used for push + branch verification)
  *   GITHUB_REPO     — Repository to push to, in `owner/repo` form.
  *                     The repo must exist. The test creates and deletes the branch
- *                     floatr/session-{E2E_SESSION_ID} — no other branches are touched.
+ *                     mizi/session-{E2E_SESSION_ID} — no other branches are touched.
  *
  * Optional env vars:
  *   E2E_SESSION_ID   — integer used as the mock session ID (default: 9999)
@@ -49,7 +49,7 @@ const GITHUB_TOKEN    = process.env["GITHUB_TOKEN"];
 const GITHUB_REPO     = process.env["GITHUB_REPO"];       // e.g. "acme/my-repo"
 const SESSION_ID      = parseInt(process.env["E2E_SESSION_ID"] ?? "9999", 10);
 const BOOT_TIMEOUT_S  = parseInt(process.env["E2E_BOOT_TIMEOUT"] ?? "300", 10);
-const SESSION_BRANCH  = `floatr/session-${SESSION_ID}`;
+const SESSION_BRANCH  = `mizi/session-${SESSION_ID}`;
 
 // ─── skip guard ──────────────────────────────────────────────────────────────
 
@@ -59,12 +59,12 @@ if (!VASTAI_API_KEY || !GITHUB_TOKEN || !GITHUB_REPO) {
     "\n" +
     "       GITHUB_TOKEN must be a PAT with 'repo' scope. GITHUB_REPO must be an\n" +
     "       existing repository in 'owner/repo' form. The test creates and immediately\n" +
-    "       deletes the branch floatr/session-{E2E_SESSION_ID} — no other data is modified.\n" +
+    "       deletes the branch mizi/session-{E2E_SESSION_ID} — no other data is modified.\n" +
     "\n" +
     "       Example:\n" +
     "         VASTAI_API_KEY=vai-xxx \\\n" +
     "         GITHUB_TOKEN=ghp_xxx \\\n" +
-    "         GITHUB_REPO=acme/floatr-e2e \\\n" +
+    "         GITHUB_REPO=acme/mizi-e2e \\\n" +
     "           pnpm tsx src/tests/e2e/git-push-redirect-e2e.ts",
   );
   process.exit(0);
@@ -74,11 +74,11 @@ const [GITHUB_OWNER, GITHUB_REPONAME] = GITHUB_REPO.split("/");
 
 // ─── ephemeral SSH key ────────────────────────────────────────────────────────
 
-const sshDir = fs.mkdtempSync(path.join(os.tmpdir(), "floatr-e2e-ssh-"));
+const sshDir = fs.mkdtempSync(path.join(os.tmpdir(), "mizi-e2e-ssh-"));
 const keyPath = path.join(sshDir, "e2e_ed25519");
 
 function generateSshKey(): string {
-  execSync(`ssh-keygen -t ed25519 -N "" -f "${keyPath}" -C "floatr-e2e-verify"`, {
+  execSync(`ssh-keygen -t ed25519 -N "" -f "${keyPath}" -C "mizi-e2e-verify"`, {
     stdio: "pipe",
   });
   return fs.readFileSync(`${keyPath}.pub`, "utf8").trim();
@@ -140,8 +140,8 @@ function buildE2eOnstart(sshPubKey: string): string {
     // this plain https:// clone will be rewritten to use the PAT automatically.
     `git clone https://github.com/${GITHUB_REPO}.git /tmp/test-repo`,
     "cd /tmp/test-repo",
-    `git config user.email "e2e@floatr.test"`,
-    `git config user.name "FLOATR E2E"`,
+    `git config user.email "e2e@mizi.test"`,
+    `git config user.name "MIZI E2E"`,
     // Ensure a `main` branch exists with at least one commit so that
     // `git push origin main` (the command the wrapper intercepts) always works
     // regardless of the test repo's default branch name or empty state.
@@ -152,12 +152,12 @@ function buildE2eOnstart(sshPubKey: string): string {
     "  git checkout -b main 2>/dev/null || true",
     "fi",
     // If there are still no commits (completely empty repo), create one.
-    "git log --oneline -1 2>/dev/null || git commit --allow-empty -m 'floatr-e2e-init'",
+    "git log --oneline -1 2>/dev/null || git commit --allow-empty -m 'mizi-e2e-init'",
     // Ensure main branch is checked out for the push.
     "git checkout main 2>/dev/null || true",
     "",
     "# ── 4. Signal readiness ──────────────────────────────────────────────────",
-    "touch /tmp/floatr-e2e-ready",
+    "touch /tmp/mizi-e2e-ready",
     "",
     "# Keep the container alive so we can SSH in for verification.",
     "sleep infinity",
@@ -334,11 +334,11 @@ async function main() {
     console.log("  Waiting for SSH…");
     await waitForSsh(host, sshPort, 120_000);
 
-    console.log("  Waiting for onstart sentinel (/tmp/floatr-e2e-ready)…");
+    console.log("  Waiting for onstart sentinel (/tmp/mizi-e2e-ready)…");
     const sentinelDeadline = Date.now() + 180_000;
     while (Date.now() < sentinelDeadline) {
       try {
-        const r = sshRun(host, sshPort, "test -f /tmp/floatr-e2e-ready && echo yes || echo no");
+        const r = sshRun(host, sshPort, "test -f /tmp/mizi-e2e-ready && echo yes || echo no");
         if (r === "yes") break;
       } catch { /* not ready yet */ }
       await new Promise(r => setTimeout(r, 5_000));
@@ -369,9 +369,9 @@ async function main() {
     const execCheck = sshRun(host, sshPort, "test -x /usr/local/bin/git && echo yes || echo no");
     assert("Git wrapper is executable", execCheck === "yes", `test -x → ${execCheck}`);
 
-    // (d) git push redirects to floatr/session-{id} on GitHub (real push)
+    // (d) git push redirects to mizi/session-{id} on GitHub (real push)
     //   We use the wrapper at /usr/local/bin/git — no stub, real /usr/bin/git.
-    //   The wrapper rewrites "push origin main" → "push origin HEAD:floatr/session-{id}".
+    //   The wrapper rewrites "push origin main" → "push origin HEAD:mizi/session-{id}".
     const pushOut = sshRun(
       host, sshPort,
       `cd /tmp/test-repo && /usr/local/bin/git push origin main 2>&1 || true`,

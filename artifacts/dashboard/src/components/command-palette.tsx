@@ -169,7 +169,7 @@ export function CommandPalette() {
   // dialog (and its routing-stats bytesAvoided telemetry) is reused. This
   // keeps the palette and the "s" cockpit shortcut behaviourally identical.
   const handleStopSession = useCallback(() => {
-    window.dispatchEvent(new CustomEvent("floatr:request-stop-session"));
+    window.dispatchEvent(new CustomEvent("mizi:request-stop-session"));
   }, []);
 
   const handleRelaunch = useCallback(
@@ -261,10 +261,10 @@ export function CommandPalette() {
       setLocation("/");
       // Wait for the dashboard to mount its ProfileCards before signalling.
       setTimeout(() => {
-        window.dispatchEvent(new CustomEvent("floatr:open-launch-dialog"));
+        window.dispatchEvent(new CustomEvent("mizi:open-launch-dialog"));
       }, 50);
     } else {
-      window.dispatchEvent(new CustomEvent("floatr:open-launch-dialog"));
+      window.dispatchEvent(new CustomEvent("mizi:open-launch-dialog"));
     }
   }, [location, setLocation]);
 
@@ -341,10 +341,10 @@ export function CommandPalette() {
           if (sessionId != null && !location.startsWith(`/sessions/${sessionId}`)) {
             setLocation(`/sessions/${sessionId}`);
             setTimeout(() => {
-              window.dispatchEvent(new CustomEvent("floatr:request-stop-session"));
+              window.dispatchEvent(new CustomEvent("mizi:request-stop-session"));
             }, 300);
           } else {
-            window.dispatchEvent(new CustomEvent("floatr:request-stop-session"));
+            window.dispatchEvent(new CustomEvent("mizi:request-stop-session"));
           }
           toast({ title: intent.explanation });
           break;
@@ -447,7 +447,7 @@ export function CommandPalette() {
         <DialogContent className="overflow-hidden p-0 max-w-xl">
           <DialogTitle className="sr-only">Command palette</DialogTitle>
           <DialogDescription className="sr-only">
-            Search for commands and navigate FLOATR with your keyboard.
+            Search for commands and navigate MIZI with your keyboard.
           </DialogDescription>
           <Command label="Command palette">
             <CommandInput

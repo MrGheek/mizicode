@@ -1192,7 +1192,7 @@ async function gatherTreatmentMetrics(
       .where(eq(skillsTable.id, run.targetSkillId));
 
     if (skillRow) {
-      // activatedSkillsJson stores FloatrSkillManifest objects; match on id field
+      // activatedSkillsJson stores MiziSkillManifest objects; match on id field
       const matchingSessions = await db
         .select({ sessionId: sessionSkillsTable.sessionId })
         .from(sessionSkillsTable)

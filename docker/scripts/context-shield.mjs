@@ -29,14 +29,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Override via environment variable; token-mode multiplier applied on top.
 
 const TOKEN_MODE_MULTIPLIERS   = { ultra: 0.25, lean: 0.5, core: 1.0, full: 3.0 };
-const BASE_INLINE_BYTES        = parseInt(process.env.FLOATR_SHIELD_INLINE_BYTES    || '8000',          10);
-const MAX_ARTIFACT_BYTES       = parseInt(process.env.FLOATR_SHIELD_ARTIFACT_BYTES  || String(10 * 1024 * 1024),  10);
-const MAX_SESSION_BYTES        = parseInt(process.env.FLOATR_SHIELD_SESSION_BYTES   || String(200 * 1024 * 1024), 10);
-const ARTIFACT_RETENTION_MS    = parseInt(process.env.FLOATR_SHIELD_RETENTION_HOURS || '24',            10) * 3_600_000;
-const EXEC_TIMEOUT_MS          = parseInt(process.env.FLOATR_SHIELD_TIMEOUT_MS      || '30000',         10);
-const MAX_BATCH_COMMANDS       = parseInt(process.env.FLOATR_SHIELD_BATCH_MAX       || '10',            10);
+const BASE_INLINE_BYTES        = parseInt(process.env.MIZI_SHIELD_INLINE_BYTES    || '8000',          10);
+const MAX_ARTIFACT_BYTES       = parseInt(process.env.MIZI_SHIELD_ARTIFACT_BYTES  || String(10 * 1024 * 1024),  10);
+const MAX_SESSION_BYTES        = parseInt(process.env.MIZI_SHIELD_SESSION_BYTES   || String(200 * 1024 * 1024), 10);
+const ARTIFACT_RETENTION_MS    = parseInt(process.env.MIZI_SHIELD_RETENTION_HOURS || '24',            10) * 3_600_000;
+const EXEC_TIMEOUT_MS          = parseInt(process.env.MIZI_SHIELD_TIMEOUT_MS      || '30000',         10);
+const MAX_BATCH_COMMANDS       = parseInt(process.env.MIZI_SHIELD_BATCH_MAX       || '10',            10);
 
-const ARTIFACTS_DIR  = process.env.FLOATR_ARTIFACTS_DIR || '/workspace/.floatr/artifacts';
+const ARTIFACTS_DIR  = process.env.MIZI_ARTIFACTS_DIR || '/workspace/.mizi/artifacts';
 const STATE_SCRIPT   = join(__dirname, 'session-state.mjs');
 
 // ── Dangerous command patterns ────────────────────────────────────────────────
@@ -56,13 +56,13 @@ const DANGEROUS_PATTERNS = [
 
 export function getTokenMode() {
   try {
-    const modeFile = '/workspace/.floatr/token-mode.json';
+    const modeFile = '/workspace/.mizi/token-mode.json';
     if (existsSync(modeFile)) {
       const data = JSON.parse(readFileSync(modeFile, 'utf8'));
       return (data.tokenMode || 'core').toLowerCase();
     }
   } catch {}
-  return (process.env.FLOATR_TOKEN_MODE || 'core').toLowerCase();
+  return (process.env.MIZI_TOKEN_MODE || 'core').toLowerCase();
 }
 
 export function getInlineLimit() {
@@ -360,7 +360,7 @@ export function batchExec(commands, opts = {}) {
 
 // ── Observability ─────────────────────────────────────────────────────────────
 
-export function floatr_stats() {
+export function mizi_stats() {
   let dbStats = {};
   let routingBreakdown = [];
 
@@ -419,12 +419,12 @@ export function floatr_stats() {
 
 const SNAPSHOT_STALE_HOURS = 2;
 
-export function floatr_doctor() {
+export function mizi_doctor() {
   const issues = [];
   const checks = {};
 
   // Journal DB check
-  const dbPath = process.env.FLOATR_STATE_DB || '/workspace/.floatr/session-state.db';
+  const dbPath = process.env.MIZI_STATE_DB || '/workspace/.mizi/session-state.db';
   checks.journalExists = existsSync(dbPath);
   if (!checks.journalExists) issues.push('WARN: Session journal DB not found — event capture unavailable');
 
@@ -477,7 +477,7 @@ export function floatr_doctor() {
   }
 
   // Token mode and state script
-  checks.tokenModeFile     = existsSync('/workspace/.floatr/token-mode.json');
+  checks.tokenModeFile     = existsSync('/workspace/.mizi/token-mode.json');
   checks.tokenMode         = getTokenMode();
   checks.stateScriptExists = existsSync(STATE_SCRIPT);
   if (!checks.stateScriptExists) issues.push('WARN: session-state.mjs not found — routing stats and snapshots unavailable');
@@ -517,7 +517,7 @@ function _dbAppendEvent(event) {
 }
 
 // ── CLI entry point ───────────────────────────────────────────────────────────
-// Usage (also available as /usr/local/bin/floatr_execute via onstart.sh):
+// Usage (also available as /usr/local/bin/mizi_execute via onstart.sh):
 //   node context-shield.mjs exec      <bash command>
 //   node context-shield.mjs exec-file <path>
 //   node context-shield.mjs batch     '[{"cmd":"ls","opts":{}}]'
@@ -563,11 +563,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     }
 
     case 'stats':
-      process.stdout.write(JSON.stringify(floatr_stats(), null, 2) + '\n');
+      process.stdout.write(JSON.stringify(mizi_stats(), null, 2) + '\n');
       break;
 
     case 'doctor': {
-      const result = floatr_doctor();
+      const result = mizi_doctor();
       process.stdout.write(JSON.stringify(result, null, 2) + '\n');
       process.exit(result.healthy ? 0 : 1);
       break;

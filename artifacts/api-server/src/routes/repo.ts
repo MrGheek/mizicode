@@ -114,9 +114,9 @@ const router = Router({ mergeParams: true });
 
 const ACTIVE_JOB_STATUSES = ["queued", "scanning", "fingerprinting", "indexing_graph", "indexing_fts", "indexing_vectors", "summarizing"];
 
-// Canonical token: server reads OMNIQL_MEM_TOKEN; instances receive it as OMNIQL_MEM_AUTH_TOKEN.
+// Canonical token: server reads MIZI_MEM_TOKEN; instances receive it as MIZI_MEM_AUTH_TOKEN.
 // Accept both to handle both server-side and direct instance-callback auth.
-const CALLBACK_TOKEN = process.env["OMNIQL_MEM_TOKEN"] || process.env["OMNIQL_MEM_AUTH_TOKEN"] || "";
+const CALLBACK_TOKEN = process.env["MIZI_MEM_TOKEN"] || process.env["MIZI_MEM_AUTH_TOKEN"] || "";
 
 const DEFAULT_REPO_PATH = "/workspace/projects";
 const IS_DEV = process.env.NODE_ENV === "development";
@@ -795,15 +795,15 @@ type SearchResult = {
 
 // ─── Remote query embedding for real MiniLM vectors ─────────────────────────
 
-const REMOTE_EMBEDDINGS_URL = process.env["FLOATR_REMOTE_EMBEDDINGS_URL"] || "";
+const REMOTE_EMBEDDINGS_URL = process.env["MIZI_REMOTE_EMBEDDINGS_URL"] || "";
 const REMOTE_EMBEDDINGS_TOKEN =
-  process.env["FLOATR_REMOTE_EMBEDDINGS_TOKEN"] ||
-  process.env["OMNIQL_MEM_AUTH_TOKEN"] ||
+  process.env["MIZI_REMOTE_EMBEDDINGS_TOKEN"] ||
+  process.env["MIZI_MEM_AUTH_TOKEN"] ||
   "";
 const MINILM_DIM = 384;
 
 async function embedQueryRemote(text: string): Promise<number[]> {
-  if (!REMOTE_EMBEDDINGS_URL) throw new Error("FLOATR_REMOTE_EMBEDDINGS_URL not configured");
+  if (!REMOTE_EMBEDDINGS_URL) throw new Error("MIZI_REMOTE_EMBEDDINGS_URL not configured");
   const res = await fetch(REMOTE_EMBEDDINGS_URL, {
     method: "POST",
     headers: {

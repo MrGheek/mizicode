@@ -1,5 +1,5 @@
 /**
- * git push → floatr/session-{id} redirection tests (Task #265).
+ * git push → mizi/session-{id} redirection tests (Task #265).
  *
  * Verifies that the git wrapper installed by buildOnStartScript() actually
  * redirects pushes to the correct session branch.  Tests are run locally
@@ -31,8 +31,8 @@ import fs from "fs";
 function extractWrapperScript(onstart: string): string {
   const start = onstart.indexOf("#!/bin/bash\nGIT=/usr/bin/git");
   if (start === -1) throw new Error("Wrapper script not found in onstart");
-  const end = onstart.indexOf("\nFLOATR_GIT_WRAPPER\n", start);
-  if (end === -1) throw new Error("FLOATR_GIT_WRAPPER end delimiter not found");
+  const end = onstart.indexOf("\nMIZI_GIT_WRAPPER\n", start);
+  if (end === -1) throw new Error("MIZI_GIT_WRAPPER end delimiter not found");
   return onstart.slice(start, end);
 }
 
@@ -112,7 +112,7 @@ describe("buildOnStartScript — git wrapper presence", () => {
       llamaCtxSize: 4096, llamaBatchSize: 32, llamaExtraArgs: "",
       githubToken: token, sessionId,
     });
-    expect(script).toContain("cat > /usr/local/bin/git << 'FLOATR_GIT_WRAPPER'");
+    expect(script).toContain("cat > /usr/local/bin/git << 'MIZI_GIT_WRAPPER'");
     expect(script).toContain("chmod +x /usr/local/bin/git");
   });
 
@@ -126,8 +126,8 @@ describe("buildOnStartScript — git wrapper presence", () => {
     // shell script must contain the integer literally, NOT a shell ${...}
     // expansion, so it works even when the wrapper is run in a shell that has
     // no SESSION_ID variable set.
-    expect(script).toContain(`HEAD:floatr/session-${sessionId}`);
-    expect(script).not.toContain("HEAD:floatr/session-${");
+    expect(script).toContain(`HEAD:mizi/session-${sessionId}`);
+    expect(script).not.toContain("HEAD:mizi/session-${");
   });
 
   it("omits the git wrapper when githubToken is not provided", () => {
@@ -135,7 +135,7 @@ describe("buildOnStartScript — git wrapper presence", () => {
       modelRepo: "test/model", modelQuant: "Q4", servedModelName: "test",
       llamaCtxSize: 4096, llamaBatchSize: 32, llamaExtraArgs: "",
     });
-    expect(script).not.toContain("FLOATR_GIT_WRAPPER");
+    expect(script).not.toContain("MIZI_GIT_WRAPPER");
     expect(script).not.toContain("GITHUB_TOKEN");
   });
 
@@ -146,7 +146,7 @@ describe("buildOnStartScript — git wrapper presence", () => {
       githubToken: token,
       // sessionId intentionally omitted
     });
-    expect(script).not.toContain("FLOATR_GIT_WRAPPER");
+    expect(script).not.toContain("MIZI_GIT_WRAPPER");
   });
 
   it("configures git credential substitution for the PAT", () => {
@@ -165,13 +165,13 @@ describe("buildOnStartScript — git wrapper presence", () => {
 describe("git wrapper shell behaviour — push redirection", () => {
   const sessionId = 99;
 
-  it("redirects plain `git push` to HEAD:floatr/session-{id} on remote origin", () => {
+  it("redirects plain `git push` to HEAD:mizi/session-{id} on remote origin", () => {
     const wrapper = makeWrapper(sessionId);
     const recorded = runWrapper(wrapper, ["push"]);
     const args = recorded.split("\n");
     expect(args).toContain("push");
     expect(args).toContain("origin");
-    expect(args).toContain(`HEAD:floatr/session-${sessionId}`);
+    expect(args).toContain(`HEAD:mizi/session-${sessionId}`);
   });
 
   it("redirects `git push origin` (explicit remote) to correct branch", () => {
@@ -179,7 +179,7 @@ describe("git wrapper shell behaviour — push redirection", () => {
     const recorded = runWrapper(wrapper, ["push", "origin"]);
     const args = recorded.split("\n");
     expect(args).toContain("origin");
-    expect(args).toContain(`HEAD:floatr/session-${sessionId}`);
+    expect(args).toContain(`HEAD:mizi/session-${sessionId}`);
   });
 
   it("redirects `git push upstream` (non-default remote) preserving remote name", () => {
@@ -187,7 +187,7 @@ describe("git wrapper shell behaviour — push redirection", () => {
     const recorded = runWrapper(wrapper, ["push", "upstream"]);
     const args = recorded.split("\n");
     expect(args).toContain("upstream");
-    expect(args).toContain(`HEAD:floatr/session-${sessionId}`);
+    expect(args).toContain(`HEAD:mizi/session-${sessionId}`);
     expect(args).not.toContain("origin");
   });
 
@@ -196,7 +196,7 @@ describe("git wrapper shell behaviour — push redirection", () => {
     const recorded = runWrapper(wrapper, ["status"]);
     const args = recorded.split("\n");
     expect(args).toContain("status");
-    expect(recorded).not.toContain("floatr/session");
+    expect(recorded).not.toContain("mizi/session");
   });
 
   it("passes `git commit -m msg` through unchanged", () => {
@@ -206,7 +206,7 @@ describe("git wrapper shell behaviour — push redirection", () => {
     expect(args).toContain("commit");
     expect(args).toContain("-m");
     expect(args).toContain("test commit");
-    expect(recorded).not.toContain("floatr/session");
+    expect(recorded).not.toContain("mizi/session");
   });
 
   it("passes `git fetch origin` through unchanged", () => {
@@ -215,7 +215,7 @@ describe("git wrapper shell behaviour — push redirection", () => {
     const args = recorded.split("\n");
     expect(args).toContain("fetch");
     expect(args).toContain("origin");
-    expect(recorded).not.toContain("floatr/session");
+    expect(recorded).not.toContain("mizi/session");
   });
 
   it("handles `git -c color.ui=never push origin` (global flag before subcommand)", () => {
@@ -224,7 +224,7 @@ describe("git wrapper shell behaviour — push redirection", () => {
     const args = recorded.split("\n");
     expect(args).toContain("push");
     expect(args).toContain("origin");
-    expect(args).toContain(`HEAD:floatr/session-${sessionId}`);
+    expect(args).toContain(`HEAD:mizi/session-${sessionId}`);
   });
 
   it("handles `git --no-pager push` (long flag before subcommand)", () => {
@@ -232,7 +232,7 @@ describe("git wrapper shell behaviour — push redirection", () => {
     const recorded = runWrapper(wrapper, ["--no-pager", "push"]);
     const args = recorded.split("\n");
     expect(args).toContain("push");
-    expect(args).toContain(`HEAD:floatr/session-${sessionId}`);
+    expect(args).toContain(`HEAD:mizi/session-${sessionId}`);
   });
 });
 
@@ -243,9 +243,9 @@ describe("git wrapper — session ID isolation", () => {
     const r1 = runWrapper(makeWrapper(1), ["push"]);
     const r2 = runWrapper(makeWrapper(2), ["push"]);
 
-    expect(r1).toContain("HEAD:floatr/session-1");
-    expect(r2).toContain("HEAD:floatr/session-2");
-    expect(r1).not.toContain("floatr/session-2");
-    expect(r2).not.toContain("floatr/session-1");
+    expect(r1).toContain("HEAD:mizi/session-1");
+    expect(r2).toContain("HEAD:mizi/session-2");
+    expect(r1).not.toContain("mizi/session-2");
+    expect(r2).not.toContain("mizi/session-1");
   });
 });

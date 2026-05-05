@@ -15,7 +15,7 @@ import { logger } from "../lib/logger";
  * approval rails by calling `requestPermission`.
  */
 
-const DATA_DIR = process.env["MEM_DATA_DIR"] || path.join(os.homedir(), "omniql-memory");
+const DATA_DIR = process.env["MEM_DATA_DIR"] || path.join(os.homedir(), "mizi-memory");
 const DB_PATH = path.join(DATA_DIR, "ambient.db");
 
 let _db: Database.Database | null = null;
@@ -337,7 +337,7 @@ registerNotificationChannel("email", async (action) => {
   }
   const payload = {
     to,
-    subject: `[Floatr Ambient] Approval needed: ${action.summary}`,
+    subject: `[Mizi Ambient] Approval needed: ${action.summary}`,
     actionId: action.id,
     accountId: action.accountId,
     kind: action.kind,

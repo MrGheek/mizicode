@@ -17,13 +17,13 @@ set_status() {
     log "STATUS: $1"
 }
 
-# Report phase to the FLOATR dashboard API so the boot log updates in real time.
-# OMNIQL_CALLBACK_URL and OMNIQL_MEM_AUTH_TOKEN are injected by the API server
+# Report phase to the MIZI dashboard API so the boot log updates in real time.
+# MIZI_CALLBACK_URL and MIZI_MEM_AUTH_TOKEN are injected by the API server
 # into the onstart environment. Safe no-op if not set.
 report_status() {
     local _phase="$1"
     local _msg="$2"
-    if [ -z "${OMNIQL_CALLBACK_URL:-}" ]; then
+    if [ -z "${MIZI_CALLBACK_URL:-}" ]; then
         return 0
     fi
     local _payload
@@ -32,8 +32,8 @@ report_status() {
     else
         _payload="{\"status\":\"${_phase}\"}"
     fi
-    curl -sf -X POST "${OMNIQL_CALLBACK_URL}" \
-        -H "Authorization: Bearer ${OMNIQL_MEM_AUTH_TOKEN:-}" \
+    curl -sf -X POST "${MIZI_CALLBACK_URL}" \
+        -H "Authorization: Bearer ${MIZI_MEM_AUTH_TOKEN:-}" \
         -H "Content-Type: application/json" \
         -d "$_payload" \
         --max-time 10 \
@@ -147,7 +147,7 @@ TEAM_MEMBERS_JSON="${TEAM_MEMBERS_JSON:-}"
 TEAM_MEMBER_INTERNAL_PORTS=(8093 8094 8095 8096)
 SHARED_INTERNAL_PORT=8097
 
-log "=== FLOATR Coding Environment Starting ==="
+log "=== MIZI Coding Environment Starting ==="
 log "Model: $MODEL_REPO (cached as $MODEL_QUANT)"
 log "GPUs: $NUM_GPUS | vLLM max-model-len: $VLLM_MAX_MODEL_LEN | max-num-seqs: $VLLM_MAX_NUM_SEQS"
 
@@ -208,7 +208,7 @@ PORT=$BOLT_PORT pnpm run dev > /var/log/bolt-diy.log 2>&1 &
 log "Bolt.diy started"
 
 log "Configuring nginx with basic auth for exposed services..."
-NGINX_AUTH_USER="${NGINX_AUTH_USER:-omniql}"
+NGINX_AUTH_USER="${NGINX_AUTH_USER:-mizi}"
 NGINX_AUTH_PASS="${NGINX_AUTH_PASS:-$CODE_SERVER_PASSWORD}"
 htpasswd -cb /etc/nginx/.htpasswd "$NGINX_AUTH_USER" "$NGINX_AUTH_PASS" 2>/dev/null
 log "Nginx credentials — user: $NGINX_AUTH_USER, pass: in /workspace/.code-server-password"
@@ -217,7 +217,7 @@ cat > /etc/nginx/sites-available/preview << 'NGINX'
 server {
     listen 3000;
     server_name _;
-    auth_basic "FLOATR Preview";
+    auth_basic "MIZI Preview";
     auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
@@ -235,7 +235,7 @@ server {
 server {
     listen 5180;
     server_name _;
-    auth_basic "FLOATR Bolt.diy";
+    auth_basic "MIZI Bolt.diy";
     auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
@@ -253,7 +253,7 @@ server {
 server {
     listen 5181;
     server_name _;
-    auth_basic "FLOATR Claw Runner";
+    auth_basic "MIZI Claw Runner";
     auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
@@ -294,7 +294,7 @@ server {
 
     # Owner IDE at /
     location / {
-        auth_basic "FLOATR";
+        auth_basic "MIZI";
         auth_basic_user_file /etc/nginx/.htpasswd;
         proxy_pass http://localhost:8090;
         proxy_http_version 1.1;
@@ -370,11 +370,11 @@ MEMBER_ENV
 
         if [ "$_TM_NAME" = "__shared__" ]; then
             # /shared/ uses the combined htpasswd (populated after all named members are processed)
-            printf '    location /shared/ {\n        auth_basic "FLOATR Shared";\n        auth_basic_user_file %s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
+            printf '    location /shared/ {\n        auth_basic "MIZI Shared";\n        auth_basic_user_file %s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
                 "$_SHARED_HTPASSWD" "$_TM_INT_PORT" \
                 >> /etc/nginx/sites-available/team-ide
         else
-            printf '    location %s {\n        auth_basic "FLOATR - %s";\n        auth_basic_user_file /etc/nginx/.htpasswd-%s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
+            printf '    location %s {\n        auth_basic "MIZI - %s";\n        auth_basic_user_file /etc/nginx/.htpasswd-%s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
                 "$_TM_PATH" "$_TM_NAME" "$_TM_NAME" "$_TM_INT_PORT" \
                 >> /etc/nginx/sites-available/team-ide
         fi
@@ -404,24 +404,24 @@ log "=== Phase 1 done — code-server and tools available (LLM loading in backgr
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 1.5: Smart Skills bundle activation
 # Runs synchronously after services_ready, before model download begins.
-# FLOATR_ACTIVE_BUNDLE_B64 is a base64-encoded JSON payload containing:
+# MIZI_ACTIVE_BUNDLE_B64 is a base64-encoded JSON payload containing:
 #   - bundleSlug, tokenMode, skills[], systemPromptFragment
 # ─────────────────────────────────────────────────────────────────────────────
-if [ -n "${FLOATR_ACTIVE_BUNDLE_B64:-}" ]; then
+if [ -n "${MIZI_ACTIVE_BUNDLE_B64:-}" ]; then
     log "=== Phase 1.5: Smart Skills bundle activation ==="
     set_status "skills_compiling"
     report_status "skills_compiling" "Activating Smart Skills bundle..."
 
-    FLOATR_DIR="/workspace/.floatr"
-    SKILLS_DIR="$FLOATR_DIR/skills"
-    PROMPTS_DIR="/workspace/.floatr/prompts"
+    MIZI_DIR="/workspace/.mizi"
+    SKILLS_DIR="$MIZI_DIR/skills"
+    PROMPTS_DIR="/workspace/.mizi/prompts"
     mkdir -p "$SKILLS_DIR" "$PROMPTS_DIR"
 
     SKILL_PROMPTS_DIR="$PROMPTS_DIR/skills"
     mkdir -p "$SKILL_PROMPTS_DIR"
 
     # Decode and write the bundle JSON
-    if printf '%s' "$FLOATR_ACTIVE_BUNDLE_B64" | base64 -d > "$SKILLS_DIR/active-bundle.json" 2>/dev/null; then
+    if printf '%s' "$MIZI_ACTIVE_BUNDLE_B64" | base64 -d > "$SKILLS_DIR/active-bundle.json" 2>/dev/null; then
         log "Smart Skills: active-bundle.json written to $SKILLS_DIR"
 
         if command -v jq > /dev/null 2>&1; then
@@ -430,18 +430,18 @@ if [ -n "${FLOATR_ACTIVE_BUNDLE_B64:-}" ]; then
             SKILL_COUNT=$(jq '.skills | length' "$SKILLS_DIR/active-bundle.json" 2>/dev/null || echo "0")
             log "Smart Skills: bundle=$BUNDLE_SLUG tokenMode=$TOKEN_MODE skillCount=$SKILL_COUNT"
 
-            # Write token-mode.json to floatr root (not skills/) for runtime layer inspection
+            # Write token-mode.json to mizi root (not skills/) for runtime layer inspection
             printf '{"tokenMode":"%s","bundleSlug":"%s","skillCount":%s,"activatedAt":"%s"}\n' \
                 "$TOKEN_MODE" "$BUNDLE_SLUG" "$SKILL_COUNT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                > "$FLOATR_DIR/token-mode.json"
-            log "Smart Skills: token-mode.json written to $FLOATR_DIR/token-mode.json"
+                > "$MIZI_DIR/token-mode.json"
+            log "Smart Skills: token-mode.json written to $MIZI_DIR/token-mode.json"
 
             # Write the combined system prompt fragment
             PROMPT_FRAGMENT=$(jq -r '.systemPromptFragment // empty' "$SKILLS_DIR/active-bundle.json" 2>/dev/null)
             if [ -n "$PROMPT_FRAGMENT" ]; then
                 printf '%s\n' "$PROMPT_FRAGMENT" > "$PROMPTS_DIR/active-bundle.md"
                 log "Smart Skills: prompt fragment written to $PROMPTS_DIR/active-bundle.md"
-                echo "FLOATR_SKILLS_PROMPT_PATH=$PROMPTS_DIR/active-bundle.md" >> /etc/environment
+                echo "MIZI_SKILLS_PROMPT_PATH=$PROMPTS_DIR/active-bundle.md" >> /etc/environment
             fi
 
             # Write individual per-skill prompt files: prompts/skills/<skill-id>.md
@@ -466,7 +466,7 @@ if [ -n "${FLOATR_ACTIVE_BUNDLE_B64:-}" ]; then
         # show a clear "Smart Skills compile failed" row rather than letting
         # the session look "starting" forever. Non-fatal: we proceed without
         # skills so the user can still SSH in and inspect.
-        report_failure "skills_compile_failed" "Failed to decode FLOATR_ACTIVE_BUNDLE_B64 — Smart Skills unavailable this session"
+        report_failure "skills_compile_failed" "Failed to decode MIZI_ACTIVE_BUNDLE_B64 — Smart Skills unavailable this session"
         # Clear the failure sentinel so subsequent phases (download, vLLM)
         # can still report their own status — Phase 1.5 is non-blocking.
         rm -f "$FAILURE_REPORTED_FILE"
@@ -477,18 +477,18 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 1.6: Repo Intelligence daemon (async, non-blocking)
-# Starts the repo-indexer in daemon (polling) mode if OMNIQL_SESSION_ID is set.
+# Starts the repo-indexer in daemon (polling) mode if MIZI_SESSION_ID is set.
 # The daemon polls for queued indexing jobs and processes them automatically.
-# FLOATR_REPO_JOB_ID can be pre-set to run a specific job immediately.
+# MIZI_REPO_JOB_ID can be pre-set to run a specific job immediately.
 # Hard limits: REPO_INDEX_MAX_DURATION_MS (default 300000ms = 5min).
 # ─────────────────────────────────────────────────────────────────────────────
 REPO_INTEL_DIR="/opt/repo-intelligence"
-FLOATR_DIR="/workspace/.floatr"
-mkdir -p "$FLOATR_DIR"
+MIZI_DIR="/workspace/.mizi"
+mkdir -p "$MIZI_DIR"
 
-if [ -n "${OMNIQL_SESSION_ID:-}" ] && [ -f "${REPO_INTEL_DIR}/repo-indexer.mjs" ]; then
-    log "=== Phase 1.6: Starting Repo Intelligence daemon (session ${OMNIQL_SESSION_ID}) ==="
-    export FLOATR_REPO_PATH="${FLOATR_REPO_PATH:-/workspace/projects}"
+if [ -n "${MIZI_SESSION_ID:-}" ] && [ -f "${REPO_INTEL_DIR}/repo-indexer.mjs" ]; then
+    log "=== Phase 1.6: Starting Repo Intelligence daemon (session ${MIZI_SESSION_ID}) ==="
+    export MIZI_REPO_PATH="${MIZI_REPO_PATH:-/workspace/projects}"
     export REPO_INDEX_POLL_INTERVAL_SECS="${REPO_INDEX_POLL_INTERVAL_SECS:-30}"
     export REPO_INDEX_MAX_DURATION_MS="${REPO_INDEX_MAX_DURATION_MS:-300000}"
 
@@ -498,8 +498,8 @@ if [ -n "${OMNIQL_SESSION_ID:-}" ] && [ -f "${REPO_INTEL_DIR}/repo-indexer.mjs" 
     log "Repo Intelligence: daemon started (PID ${REPO_INDEXER_PID}), polling every ${REPO_INDEX_POLL_INTERVAL_SECS}s"
     log "Repo Intelligence: tail /var/log/repo-indexer.log to monitor progress"
 else
-    if [ -z "${OMNIQL_SESSION_ID:-}" ]; then
-        log "Repo Intelligence: OMNIQL_SESSION_ID not set — skipping Phase 1.6"
+    if [ -z "${MIZI_SESSION_ID:-}" ]; then
+        log "Repo Intelligence: MIZI_SESSION_ID not set — skipping Phase 1.6"
     else
         log "WARNING: Repo Intelligence scripts not found at ${REPO_INTEL_DIR} — skipping Phase 1.6"
     fi
@@ -508,14 +508,14 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 1.7: Context Shield + Working State Continuity provisioning
 # Provisions the per-session SQLite event journal, creates the artifacts
-# directory, installs floatr_execute CLI wrapper, and runs artifact cleanup.
+# directory, installs mizi_execute CLI wrapper, and runs artifact cleanup.
 # Non-blocking: failures are logged but do not abort startup.
 # ─────────────────────────────────────────────────────────────────────────────
 log "=== Phase 1.7: Context Shield + Working State Continuity ==="
 
-FLOATR_DIR="/workspace/.floatr"
-ARTIFACTS_DIR="$FLOATR_DIR/artifacts"
-STATE_DB="$FLOATR_DIR/session-state.db"
+MIZI_DIR="/workspace/.mizi"
+ARTIFACTS_DIR="$MIZI_DIR/artifacts"
+STATE_DB="$MIZI_DIR/session-state.db"
 STATE_SCRIPT="${REPO_INTEL_DIR}/session-state.mjs"
 SHIELD_SCRIPT="${REPO_INTEL_DIR}/context-shield.mjs"
 
@@ -533,48 +533,48 @@ else
     log "Context Shield: session-state.mjs not found at $STATE_SCRIPT — skipping journal provisioning"
 fi
 
-# Install floatr_execute / floatr_execute_file / floatr_batch_execute wrappers
+# Install mizi_execute / mizi_execute_file / mizi_batch_execute wrappers
 # These are callable by the claw model via its bash tool.
 if [ -f "$SHIELD_SCRIPT" ]; then
-    cat > /usr/local/bin/floatr_execute << WRAPPER
+    cat > /usr/local/bin/mizi_execute << WRAPPER
 #!/bin/bash
-# floatr_execute — shielded command execution (Context Shield)
-# Usage: floatr_execute <command and args...>
+# mizi_execute — shielded command execution (Context Shield)
+# Usage: mizi_execute <command and args...>
 exec node "${SHIELD_SCRIPT}" exec "\$@"
 WRAPPER
-    chmod +x /usr/local/bin/floatr_execute
+    chmod +x /usr/local/bin/mizi_execute
 
-    cat > /usr/local/bin/floatr_execute_file << WRAPPER
+    cat > /usr/local/bin/mizi_execute_file << WRAPPER
 #!/bin/bash
-# floatr_execute_file — shielded file read (Context Shield)
-# Usage: floatr_execute_file <path>
+# mizi_execute_file — shielded file read (Context Shield)
+# Usage: mizi_execute_file <path>
 exec node "${SHIELD_SCRIPT}" exec-file "\$@"
 WRAPPER
-    chmod +x /usr/local/bin/floatr_execute_file
+    chmod +x /usr/local/bin/mizi_execute_file
 
-    cat > /usr/local/bin/floatr_batch_execute << WRAPPER
+    cat > /usr/local/bin/mizi_batch_execute << WRAPPER
 #!/bin/bash
-# floatr_batch_execute — shielded batch execution (Context Shield)
-# Usage: floatr_batch_execute '<json commands array>'
+# mizi_batch_execute — shielded batch execution (Context Shield)
+# Usage: mizi_batch_execute '<json commands array>'
 exec node "${SHIELD_SCRIPT}" batch "\$@"
 WRAPPER
-    chmod +x /usr/local/bin/floatr_batch_execute
+    chmod +x /usr/local/bin/mizi_batch_execute
 
-    cat > /usr/local/bin/floatr_stats << WRAPPER
+    cat > /usr/local/bin/mizi_stats << WRAPPER
 #!/bin/bash
-# floatr_stats — shielded execution statistics
+# mizi_stats — shielded execution statistics
 exec node "${SHIELD_SCRIPT}" stats
 WRAPPER
-    chmod +x /usr/local/bin/floatr_stats
+    chmod +x /usr/local/bin/mizi_stats
 
-    cat > /usr/local/bin/floatr_doctor << WRAPPER
+    cat > /usr/local/bin/mizi_doctor << WRAPPER
 #!/bin/bash
-# floatr_doctor — shield health diagnostics
+# mizi_doctor — shield health diagnostics
 exec node "${SHIELD_SCRIPT}" doctor
 WRAPPER
-    chmod +x /usr/local/bin/floatr_doctor
+    chmod +x /usr/local/bin/mizi_doctor
 
-    log "Context Shield: floatr_execute / floatr_execute_file / floatr_batch_execute / floatr_stats / floatr_doctor installed to /usr/local/bin/"
+    log "Context Shield: mizi_execute / mizi_execute_file / mizi_batch_execute / mizi_stats / mizi_doctor installed to /usr/local/bin/"
 
     # Run artifact cleanup in background (remove stale artifacts from prior runs)
     node "$SHIELD_SCRIPT" cleanup >> "$LOG_FILE" 2>&1 &
@@ -585,7 +585,7 @@ fi
 
 # Write boot event to the journal
 if [ -f "$STATE_SCRIPT" ]; then
-    _BOOT_EVENT="{\"actor_type\":\"onstart\",\"event_type\":\"session_boot\",\"payload\":{\"sessionId\":\"${OMNIQL_SESSION_ID:-unknown}\"}}"
+    _BOOT_EVENT="{\"actor_type\":\"onstart\",\"event_type\":\"session_boot\",\"payload\":{\"sessionId\":\"${MIZI_SESSION_ID:-unknown}\"}}"
     node "$STATE_SCRIPT" append-event "$_BOOT_EVENT" >> "$LOG_FILE" 2>&1 || true
 fi
 
@@ -903,7 +903,7 @@ print(shlex.join(result))
         echo "llm_ready" > "$STATUS_FILE"
         report_status "llm_ready"
     fi
-    log "=== FLOATR Coding Environment Fully Ready (vLLM online) ==="
+    log "=== MIZI Coding Environment Fully Ready (vLLM online) ==="
     log "  vLLM API:      http://localhost:$VLLM_INTERNAL_PORT/v1 (OpenAI format)"
     log "  LLM Proxy:     http://localhost:$VLLM_PORT (OpenAI + Anthropic via litellm)"
     log "  Bolt.diy:      http://localhost:$BOLT_PORT (proxied on 5180)"

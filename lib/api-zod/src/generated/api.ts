@@ -271,7 +271,7 @@ export const CreateSessionBody = zod.object({
     .string()
     .nullish()
     .describe(
-      "GitHub Personal Access Token — injected as GITHUB_TOKEN and used to force-push to floatr/session-{id} branch. Never stored in the database.",
+      "GitHub Personal Access Token — injected as GITHUB_TOKEN and used to force-push to mizi/session-{id} branch. Never stored in the database.",
     ),
 });
 
@@ -1037,7 +1037,7 @@ export const ListSkillsQueryParams = zod.object({
     .enum(["doctrine", "workflow", "context", "efficiency", "team", "repo"])
     .optional(),
   trustTier: zod
-    .enum(["floatr_native", "reviewed", "user_approved", "experimental"])
+    .enum(["mizi_native", "reviewed", "user_approved", "experimental"])
     .optional(),
   reviewStatus: zod.enum(["pending", "approved", "rejected"]).optional(),
   limit: zod.coerce
@@ -1974,7 +1974,7 @@ export const CreateSkillBundleBody = zod.object({
 });
 
 /**
- * Internal helper: idempotently seeds the four default skill bundles (floatr-builder/reviewer/debugger/team-studio) if they do not exist. Called automatically on server startup. Not part of the public API contract.
+ * Internal helper: idempotently seeds the four default skill bundles (mizi-builder/reviewer/debugger/team-studio) if they do not exist. Called automatically on server startup. Not part of the public API contract.
  * @summary Seed default bundles (internal helper, non-contractual)
  */
 export const SeedDefaultBundlesResponse = zod.object({
@@ -2261,7 +2261,7 @@ export const SubmitSkillFeedbackBody = zod.object({
     .string()
     .nullish()
     .describe(
-      'String manifest\/slug ID of the skill (e.g. \"floatr-decision-log-lite\"). Used when only a string ID is available from compiled manifests.',
+      'String manifest\/slug ID of the skill (e.g. \"mizi-decision-log-lite\"). Used when only a string ID is available from compiled manifests.',
     ),
   helpful: zod.boolean(),
   notes: zod.string().nullish(),
@@ -3570,7 +3570,7 @@ export const GetMemoryGovernanceStatsResponse = zod.object({
     .boolean()
     .optional()
     .describe(
-      "True only when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1 and a real embedding backend is wired. Always false while semantic path is a stub.",
+      "True only when MIZI_MEM_SEMANTIC_CONTRADICTION=1 and a real embedding backend is wired. Always false while semantic path is a stub.",
     ),
 });
 
@@ -4080,7 +4080,7 @@ export const ResolvePaletteIntentResponse = zod
       ])
       .nullish()
       .describe(
-        "Action type to execute on the client:\n- navigate — push a new route\n- stop-session — dispatch floatr:request-stop-session\n- reindex-session — trigger a repo re-index for the given sessionId\n- new-session — open the launch dialog\n- relaunch-session — relaunch the given sessionId\n- copy-ssh — copy SSH command for the given sessionId\n",
+        "Action type to execute on the client:\n- navigate — push a new route\n- stop-session — dispatch mizi:request-stop-session\n- reindex-session — trigger a repo re-index for the given sessionId\n- new-session — open the launch dialog\n- relaunch-session — relaunch the given sessionId\n- copy-ssh — copy SSH command for the given sessionId\n",
       ),
     payload: zod
       .object({

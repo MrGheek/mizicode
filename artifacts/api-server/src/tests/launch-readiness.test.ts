@@ -1,7 +1,7 @@
 /**
  * Launch-readiness tests (Task #233).
  *
- * Covers the critical user-facing flows that must work before FLOATR ships
+ * Covers the critical user-facing flows that must work before MIZI ships
  * to operators:
  *
  *   1. Passive recall backfill must not crash on a fresh memory DB. Reproduces
@@ -19,7 +19,7 @@
  *      with a `boot_failure:<cause>` marker the dashboard can parse.
  *
  *   4. The instance-status callback must reject unknown phase names and
- *      reject unauthenticated requests when OMNIQL_MEM_TOKEN is configured.
+ *      reject unauthenticated requests when MIZI_MEM_TOKEN is configured.
  */
 
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -30,19 +30,19 @@ import fs from "fs";
 // Use a fresh on-disk SQLite memory DB for the passive recall test.
 let tmpDir: string;
 const originalMemDir = process.env["MEM_DATA_DIR"];
-const originalToken = process.env["OMNIQL_MEM_TOKEN"];
+const originalToken = process.env["MIZI_MEM_TOKEN"];
 
 beforeAll(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "launch-readiness-"));
   process.env["MEM_DATA_DIR"] = tmpDir;
-  process.env["OMNIQL_MEM_TOKEN"] = "test-launch-readiness-token";
+  process.env["MIZI_MEM_TOKEN"] = "test-launch-readiness-token";
 });
 
 afterAll(() => {
   if (originalMemDir !== undefined) process.env["MEM_DATA_DIR"] = originalMemDir;
   else delete process.env["MEM_DATA_DIR"];
-  if (originalToken !== undefined) process.env["OMNIQL_MEM_TOKEN"] = originalToken;
-  else delete process.env["OMNIQL_MEM_TOKEN"];
+  if (originalToken !== undefined) process.env["MIZI_MEM_TOKEN"] = originalToken;
+  else delete process.env["MIZI_MEM_TOKEN"];
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
@@ -167,7 +167,7 @@ describe("launch readiness — instance status callback", () => {
       { cause: "download_failed",     message: "Model weight download from HuggingFace failed after 3 attempts" },
       { cause: "download_stalled",    message: "Model download stalled — no progress for 180s" },
       { cause: "vllm_warmup_failed",  message: "vLLM did not respond to /health within 600s — check /var/log/vllm-server.log" },
-      { cause: "skills_compile_failed", message: "Failed to decode FLOATR_ACTIVE_BUNDLE_B64 — Smart Skills unavailable this session" },
+      { cause: "skills_compile_failed", message: "Failed to decode MIZI_ACTIVE_BUNDLE_B64 — Smart Skills unavailable this session" },
       { cause: "disk_full",           message: "Host disk full during boot — destroy this session and retry on a different host" },
       // Bare cause with no message — fallback path. Marker must still survive.
       { cause: "vllm_warmup_failed" },
@@ -242,7 +242,7 @@ describe("launch readiness — instance status callback", () => {
     }
   });
 
-  it("rejects unauthenticated callback requests when OMNIQL_MEM_TOKEN is set", async () => {
+  it("rejects unauthenticated callback requests when MIZI_MEM_TOKEN is set", async () => {
     const request = (await import("supertest")).default;
     const app = (await import("../app")).default;
     const dbModule = await import("@workspace/db");

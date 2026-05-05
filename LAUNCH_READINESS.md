@@ -1,8 +1,8 @@
-# FLOATR Launch Readiness
+# MIZI Launch Readiness
 
 Last review: Task #233.
 
-This document tracks the launch-readiness posture of the FLOATR coding
+This document tracks the launch-readiness posture of the MIZI coding
 environment: what's covered, where the seams are, and the verifications
 operators must run before opening the product to outside users.
 
@@ -39,7 +39,7 @@ memoises the handle, so this is free on warm boots.
 
 ## 2. Authn / authz posture
 
-All control-plane surfaces share the same Bearer token: `OMNIQL_MEM_TOKEN`.
+All control-plane surfaces share the same Bearer token: `MIZI_MEM_TOKEN`.
 
 | Surface                                                | Production guard | Dev mode |
 | ------------------------------------------------------ | ---------------- | -------- |
@@ -49,16 +49,16 @@ All control-plane surfaces share the same Bearer token: `OMNIQL_MEM_TOKEN`.
 | `/api/dashboard/ambient/*`, `/api/dashboard/safety/*`  | Read-only mirror; no mutating routes registered | same |
 
 Before Task #233 the instance-status callback was the one hole: a
-production deploy without `OMNIQL_MEM_TOKEN` would silently accept any
+production deploy without `MIZI_MEM_TOKEN` would silently accept any
 internet host POSTing arbitrary status transitions for any session id.
 Now all three token-gated routes fail fast on boot if the env var is
 missing in production.
 
 ### Operator checklist
 
-- `OMNIQL_MEM_TOKEN` must be a high-entropy random string (≥ 32 bytes).
+- `MIZI_MEM_TOKEN` must be a high-entropy random string (≥ 32 bytes).
 - Same value must be passed to every Vast.ai instance as
-  `OMNIQL_MEM_AUTH_TOKEN` — see `sessions.ts` instance launch path.
+  `MIZI_MEM_AUTH_TOKEN` — see `sessions.ts` instance launch path.
 - Rotating the token requires restarting the API server **and** any
   in-flight instances (they cache it in `/etc/environment`).
 
@@ -102,7 +102,7 @@ the last-observed phase with no actionable hint.
 | ----------------------- | --------------- | ------- |
 | `provisioning_failed`   | container       | top-level `ERR` trap during Phase 1 |
 | `disk_full`             | weights         | onstart log contains "no space left on device", OR `df -P` reports any of `/workspace`, `/var/log`, `/tmp` with ≤1MB available |
-| `skills_compile_failed` | skills          | `FLOATR_ACTIVE_BUNDLE_B64` decode failure |
+| `skills_compile_failed` | skills          | `MIZI_ACTIVE_BUNDLE_B64` decode failure |
 | `download_failed`       | weights         | `huggingface-cli download` retry exhaustion (non-stall errors) |
 | `download_stalled`      | weights         | size-progress watchdog: no new bytes in `MODEL_DIR` for `DOWNLOAD_STALL_TIMEOUT_SEC` (default 180s) |
 | `vllm_warmup_failed`    | llm             | vLLM /health does not return within 600s |
@@ -130,7 +130,7 @@ extracts that marker and the BootTimeline component renders a
 `instructkr/claw-code` that contains both a Python tree (api/, commands/,
 runtime/, tools/) and a Rust workspace (`rust/`).
 
-**FLOATR ships only the Rust binary.** The Dockerfile builds
+**MIZI ships only the Rust binary.** The Dockerfile builds
 `rusty-claude-cli` from `/opt/claw-code-src/rust` and exposes it as the
 canonical `claw` CLI. The Python tree is included for upstream-compat
 reasons but is not invoked at runtime.
@@ -181,9 +181,9 @@ Run before opening to outside users:
 - [ ] `pnpm --filter @workspace/api-server test` — all tests green.
 - [ ] `pnpm --filter @workspace/api-server typecheck` — no errors.
 - [ ] Boot the API server with `NODE_ENV=production` and **no**
-      `OMNIQL_MEM_TOKEN` — confirm it refuses to start with a clear
+      `MIZI_MEM_TOKEN` — confirm it refuses to start with a clear
       error mentioning the env var.
-- [ ] Boot with `OMNIQL_MEM_TOKEN` set — confirm `/api/memory/*`,
+- [ ] Boot with `MIZI_MEM_TOKEN` set — confirm `/api/memory/*`,
       `/api/ambient/*`, `/api/safety/*`, `/api/sessions/:id/status` all
       return 401 without the bearer.
 - [ ] Boot the API server fresh against an empty `MEM_DATA_DIR` and
@@ -191,8 +191,8 @@ Run before opening to outside users:
 - [ ] In a real session, simulate the structured failure callbacks:
       `curl -X POST /api/sessions/<id>/status -H "Authorization: Bearer $TOKEN" -d '{"status":"vllm_warmup_failed"}'`
       and confirm the cockpit shows the suggested-next-step row.
-- [ ] Verify `OMNIQL_MEM_TOKEN` is also exported into the Vast.ai
-      onstart environment as `OMNIQL_MEM_AUTH_TOKEN` so callbacks
+- [ ] Verify `MIZI_MEM_TOKEN` is also exported into the Vast.ai
+      onstart environment as `MIZI_MEM_AUTH_TOKEN` so callbacks
       from the running instance authenticate.
 - [ ] Smoke-test the Team tab: create two lanes, claim graph-adjacent
       files in each, confirm the second claim's response includes a

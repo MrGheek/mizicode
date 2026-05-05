@@ -43,7 +43,7 @@ async function tryWriteActiveBundleViaSSH(
   sshPort: number,
   payload: string,
 ): Promise<void> {
-  const privateKey = process.env["FLOATR_SSH_PRIVATE_KEY"];
+  const privateKey = process.env["MIZI_SSH_PRIVATE_KEY"];
   if (!privateKey) return; // SSH key not configured — skip
 
   // Validate host and port strictly before invoking ssh
@@ -56,10 +56,10 @@ async function tryWriteActiveBundleViaSSH(
     return;
   }
 
-  const keyFile = join(tmpdir(), `floatr-ssh-${Date.now()}.pem`);
+  const keyFile = join(tmpdir(), `mizi-ssh-${Date.now()}.pem`);
   await writeFile(keyFile, privateKey, { mode: 0o600 });
 
-  const remoteDir = "/workspace/.floatr/skills";
+  const remoteDir = "/workspace/.mizi/skills";
   const remoteFile = `${remoteDir}/active-bundle.json`;
   // Write payload via stdin to avoid any shell-level interpolation of the JSON content
   const remoteCmd = `mkdir -p ${remoteDir} && cat > ${remoteFile}`;

@@ -3,15 +3,15 @@
  *
  * Strategy (in priority order):
  *   1. Local ONNX CPU inference — @xenova/transformers all-MiniLM-L6-v2 (quantized int8)
- *      Activated when FLOATR_EMBEDDINGS=local (default if not set)
- *   2. Remote HTTP fallback — POST to FLOATR_REMOTE_EMBEDDINGS_URL with Bearer token
- *      Activated when FLOATR_EMBEDDINGS=remote
+ *      Activated when MIZI_EMBEDDINGS=local (default if not set)
+ *   2. Remote HTTP fallback — POST to MIZI_REMOTE_EMBEDDINGS_URL with Bearer token
+ *      Activated when MIZI_EMBEDDINGS=remote
  *   3. Character n-gram TF-IDF (NGRAM_DIM=512) — always available, no dependencies
- *      Activated when FLOATR_EMBEDDINGS=ngram, or when local/remote fail
+ *      Activated when MIZI_EMBEDDINGS=ngram, or when local/remote fail
  *
  * CPU limits:
- *   ONNX runtime is constrained to FLOATR_EMBED_THREADS (default: 2) threads.
- *   Model cache is at /workspace/.floatr/models (configurable via FLOATR_MODEL_CACHE).
+ *   ONNX runtime is constrained to MIZI_EMBED_THREADS (default: 2) threads.
+ *   Model cache is at /workspace/.mizi/models (configurable via MIZI_MODEL_CACHE).
  *
  * Usage:
  *   import { embed, embedBatch, EMBEDDING_DIM } from './repo-embeddings.mjs';
@@ -19,12 +19,12 @@
  *   const vecs = await embedBatch(["text1", "text2", ...], { maxBatch: 32 });
  */
 
-const STRATEGY = process.env.FLOATR_EMBEDDINGS || 'local'; // local | remote | ngram
-const REMOTE_URL = process.env.FLOATR_REMOTE_EMBEDDINGS_URL || '';
-const REMOTE_TOKEN = process.env.FLOATR_REMOTE_EMBEDDINGS_TOKEN || process.env.OMNIQL_MEM_AUTH_TOKEN || '';
-const MODEL_CACHE = process.env.FLOATR_MODEL_CACHE || '/workspace/.floatr/models';
-const EMBED_THREADS = parseInt(process.env.FLOATR_EMBED_THREADS || '2', 10);
-const MODEL_NAME = process.env.FLOATR_EMBED_MODEL || 'Xenova/all-MiniLM-L6-v2';
+const STRATEGY = process.env.MIZI_EMBEDDINGS || 'local'; // local | remote | ngram
+const REMOTE_URL = process.env.MIZI_REMOTE_EMBEDDINGS_URL || '';
+const REMOTE_TOKEN = process.env.MIZI_REMOTE_EMBEDDINGS_TOKEN || process.env.MIZI_MEM_AUTH_TOKEN || '';
+const MODEL_CACHE = process.env.MIZI_MODEL_CACHE || '/workspace/.mizi/models';
+const EMBED_THREADS = parseInt(process.env.MIZI_EMBED_THREADS || '2', 10);
+const MODEL_NAME = process.env.MIZI_EMBED_MODEL || 'Xenova/all-MiniLM-L6-v2';
 
 export const NGRAM_DIM = 512;
 export const MINILM_DIM = 384; // all-MiniLM-L6-v2 output dimension
@@ -87,7 +87,7 @@ async function embedLocal(text) {
 // ─── Remote HTTP embedding ────────────────────────────────────────────────────
 
 async function embedRemote(text) {
-  if (!REMOTE_URL) throw new Error('FLOATR_REMOTE_EMBEDDINGS_URL not set');
+  if (!REMOTE_URL) throw new Error('MIZI_REMOTE_EMBEDDINGS_URL not set');
   const res = await fetch(REMOTE_URL, {
     method: 'POST',
     headers: {

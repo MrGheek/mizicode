@@ -16,7 +16,7 @@ export function subscribeToObservations(userId: string, handler: (obs: Observati
   return () => observationEmitter.off(event, handler);
 }
 
-const DATA_DIR = process.env["MEM_DATA_DIR"] || path.join(os.homedir(), "omniql-memory");
+const DATA_DIR = process.env["MEM_DATA_DIR"] || path.join(os.homedir(), "mizi-memory");
 const DB_PATH = path.join(DATA_DIR, "mem.db");
 
 // Disk space monitoring thresholds (configurable via env vars).
@@ -142,7 +142,7 @@ export function startMemoryDiskMonitor(): void {
  * volume is mounted at deploy time.
  */
 export function validateMemoryDataDir(): void {
-  const source = process.env["MEM_DATA_DIR"] ? "MEM_DATA_DIR env var" : "default (~omniql-memory)";
+  const source = process.env["MEM_DATA_DIR"] ? "MEM_DATA_DIR env var" : "default (~mizi-memory)";
 
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -680,11 +680,11 @@ export async function saveMemoryItem(params: {
   let conflictGroupId: number | null = null;
 
   const CONTRADICTION_THRESHOLD = 0.4;
-  // Feature flag: set OMNIQL_MEM_SEMANTIC_CONTRADICTION=1 to enable embedding-based
+  // Feature flag: set MIZI_MEM_SEMANTIC_CONTRADICTION=1 to enable embedding-based
   // semantic overlap as a secondary signal alongside lexical Jaccard.
   // When enabled, semantic similarity is computed via the OpenAI embeddings API
   // (text-embedding-3-small) with a TF-IDF cosine fallback if the API is unavailable.
-  const semanticContradictionEnabled = process.env["OMNIQL_MEM_SEMANTIC_CONTRADICTION"] === "1";
+  const semanticContradictionEnabled = process.env["MIZI_MEM_SEMANTIC_CONTRADICTION"] === "1";
 
   // Semantic path: fetch all candidate embeddings in one batched API call to
   // avoid N sequential network round-trips (up to 50 candidates per save).
@@ -1340,7 +1340,7 @@ export function getGovernanceStats(params: {
   avgInjectedTokensEstimate: number;
   hitRate: number;
   budgetProfile: MemoryBudgetProfile;
-  /** True when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1. computeSemanticSimilarity attempts
+  /** True when MIZI_MEM_SEMANTIC_CONTRADICTION=1. computeSemanticSimilarity attempts
    *  the OpenAI embeddings API (text-embedding-3-small) and falls back to TF-IDF cosine,
    *  so blending is always functional when the flag is set. */
   semanticContradictionActive: boolean;
@@ -1423,8 +1423,8 @@ export function getGovernanceStats(params: {
     budgetProfile,
     // Semantic path is active when the flag is set. computeSemanticSimilarity
     // attempts the OpenAI embeddings API and falls back to TF-IDF cosine, so
-    // blending is always functional when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1.
-    semanticContradictionActive: process.env["OMNIQL_MEM_SEMANTIC_CONTRADICTION"] === "1",
+    // blending is always functional when MIZI_MEM_SEMANTIC_CONTRADICTION=1.
+    semanticContradictionActive: process.env["MIZI_MEM_SEMANTIC_CONTRADICTION"] === "1",
   };
 }
 

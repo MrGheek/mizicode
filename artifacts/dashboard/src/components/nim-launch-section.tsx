@@ -183,7 +183,7 @@ interface NimLaunchDialogProps {
   isLaunching: boolean;
 }
 
-const NIM_GH_TOKEN_KEY = "floatr_nim_github_token";
+const NIM_GH_TOKEN_KEY = "mizi_nim_github_token";
 
 function NimLaunchDialog({ model, configured, onClose, onConfirm, isLaunching }: NimLaunchDialogProps) {
   const isFree = model.nimTypes.includes("nim_type_preview");

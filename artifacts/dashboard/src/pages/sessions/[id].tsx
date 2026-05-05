@@ -579,7 +579,7 @@ function MemoryTab({
   }
 
   // Project path filter — persisted in localStorage
-  const MEMORY_PROJECT_LS_KEY = "floatr:memory-project-filter";
+  const MEMORY_PROJECT_LS_KEY = "mizi:memory-project-filter";
   const [selectedProject, setSelectedProjectState] = useState(() => {
     try { return localStorage.getItem(MEMORY_PROJECT_LS_KEY) ?? ""; } catch { return ""; }
   });
@@ -2797,8 +2797,8 @@ export default function SessionDetail() {
       if (sess.status === "stopped" || sess.status === "error") return;
       handleStop();
     };
-    window.addEventListener("floatr:request-stop-session", onStopRequest);
-    return () => window.removeEventListener("floatr:request-stop-session", onStopRequest);
+    window.addEventListener("mizi:request-stop-session", onStopRequest);
+    return () => window.removeEventListener("mizi:request-stop-session", onStopRequest);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 

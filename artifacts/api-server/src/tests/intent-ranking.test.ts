@@ -18,21 +18,21 @@
 
 import { describe, it, expect } from "vitest";
 import { rankSkills, intentFit } from "../services/skills-ranker";
-import type { FloatrSkillManifest, SessionContext } from "../services/skills-types";
+import type { MiziSkillManifest, SessionContext } from "../services/skills-types";
 
 // ---------------------------------------------------------------------------
 // Minimal manifest factory
 // ---------------------------------------------------------------------------
 
-function makeManifest(overrides: Partial<FloatrSkillManifest> & { id: string }): FloatrSkillManifest {
+function makeManifest(overrides: Partial<MiziSkillManifest> & { id: string }): MiziSkillManifest {
   return {
     schemaVersion: 1,
     id: overrides.id,
     name: overrides.name ?? overrides.id,
     class: overrides.class ?? "workflow",
     source: overrides.source ?? {
-      repoUrl: "https://github.com/floatr/skills",
-      trust: "floatr_native",
+      repoUrl: "https://github.com/mizi/skills",
+      trust: "mizi_native",
     },
     summary: overrides.summary ?? "",
     triggers: overrides.triggers ?? {

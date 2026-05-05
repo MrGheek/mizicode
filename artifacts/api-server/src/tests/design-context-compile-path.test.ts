@@ -168,7 +168,7 @@ vi.mock("../services/lane-policy", () => {
 
 const fakeSessionCore = {
   id: 101,
-  slug: "floatr-team-coordination",
+  slug: "mizi-team-coordination",
   name: "Team Coordination",
   taskMode: "team",
   sessionMode: "team",
@@ -179,7 +179,7 @@ const fakeSessionCore = {
 
 const fakeSharedRepo = {
   id: 102,
-  slug: "floatr-builder",
+  slug: "mizi-builder",
   name: "Builder",
   taskMode: "build",
   sessionMode: "solo",

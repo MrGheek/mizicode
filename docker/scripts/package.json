@@ -1,9 +1,9 @@
 {
-  "name": "@floatr/repo-intelligence",
+  "name": "@mizi/repo-intelligence",
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Repo Intelligence scripts for FLOATR instances",
+  "description": "Repo Intelligence scripts for MIZI instances",
   "dependencies": {
     "better-sqlite3": "^9.4.3",
     "tree-sitter": "^0.21.1",

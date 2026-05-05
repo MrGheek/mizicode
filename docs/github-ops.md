@@ -156,7 +156,7 @@ This section covers all manual GitHub settings that must be applied after the La
 > 3. Enable merge queue on `main` (see below).
 > 4. Enable secret scanning and push protection (see `.github/security-hardening.md`).
 > 5. Observe CodeQL results for 1–2 weeks before deciding whether to make it a required check.
-> 6. Configure the FLOATR Project board following `.github/projects.md`.
+> 6. Configure the MIZI Project board following `.github/projects.md`.
 
 ---
 
@@ -304,12 +304,12 @@ See `.github/security-hardening.md` for the full ops guide covering:
 - How to enable secret scanning and push protection in **Settings → Code security and analysis**.
 - What contributors see when a push is blocked.
 - How to request and review bypasses.
-- Credential types especially relevant to FLOATR.
+- Credential types especially relevant to MIZI.
 - Onboarding checklist for new contributors.
 
 ---
 
-### FLOATR Project board
+### MIZI Project board
 
 See `.github/projects.md` for the full runbook covering:
 - Recommended board fields (Status, Component, Priority, Owner, Milestone/Release).

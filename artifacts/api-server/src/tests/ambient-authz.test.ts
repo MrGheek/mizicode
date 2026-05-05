@@ -3,7 +3,7 @@
  *
  * Posture:
  *   • `/api/ambient/*` and `/api/safety/*` — token-gated by
- *     `OMNIQL_MEM_TOKEN` (Bearer). Carry the full read + write surface.
+ *     `MIZI_MEM_TOKEN` (Bearer). Carry the full read + write surface.
  *   • `/api/dashboard/ambient/*` and `/api/dashboard/safety/*` —
  *     browser-safe proxy used by the dashboard. READ-ONLY by design;
  *     mutating endpoints are NOT registered there. Anything mutating
@@ -18,7 +18,7 @@ let app: import("express").Express;
 let request: typeof import("supertest");
 
 beforeAll(async () => {
-  process.env["OMNIQL_MEM_TOKEN"] = TEST_TOKEN;
+  process.env["MIZI_MEM_TOKEN"] = TEST_TOKEN;
   request = (await import("supertest")).default as unknown as typeof import("supertest");
   app = (await import("../app")).default as unknown as import("express").Express;
 });

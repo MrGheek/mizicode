@@ -4,7 +4,7 @@ import { eq, and, inArray, desc, asc } from "drizzle-orm";
 import { DEFAULT_SKILLS, DEFAULT_BUNDLES } from "./default-skills";
 import { rankSkills, intentFit, buildRepoIntelligenceContext, getSkillFeedbackScores, buildHistoryScoresMap, getEvalLiftScoresMap } from "./skills-ranker";
 import { TOKEN_MODE_PROFILES } from "./skills-types";
-import type { FloatrSkillManifest, SessionContext, CompiledBundle, TokenMode, RepoIntelligenceContext, DesignContextEntry } from "./skills-types";
+import type { MiziSkillManifest, SessionContext, CompiledBundle, TokenMode, RepoIntelligenceContext, DesignContextEntry } from "./skills-types";
 import { logger } from "../lib/logger";
 import { LANE_POLICIES } from "./lane-policy";
 
@@ -17,7 +17,7 @@ import { LANE_POLICIES } from "./lane-policy";
  * to only palette and typography:
  * ```json
  * {
- *   "skillIds": ["floatr-builder", "karpathy-doctrine"],
+ *   "skillIds": ["mizi-builder", "karpathy-doctrine"],
  *   "designCategoryOverrides": {
  *     "ux":      ["palette", "typography"],
  *     "debug":   [],
@@ -41,7 +41,7 @@ export interface BundleJsonShape {
   designCategoryOverrides?: Record<string, string[]>;
 }
 
-async function getAllEnabledManifests(): Promise<FloatrSkillManifest[]> {
+async function getAllEnabledManifests(): Promise<MiziSkillManifest[]> {
   const enabledSkills = await db
     .select({ id: skillsTable.id })
     .from(skillsTable)
@@ -62,7 +62,7 @@ async function getAllEnabledManifests(): Promise<FloatrSkillManifest[]> {
   }
 
   return Array.from(bySkillId.values())
-    .map(v => v.manifestJson as unknown as FloatrSkillManifest)
+    .map(v => v.manifestJson as unknown as MiziSkillManifest)
     .filter(Boolean);
 }
 
@@ -243,7 +243,7 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
 
   // Deduplicate by manifest.id: DB manifests take precedence over built-in defaults
   // (allows updated seeded skills to override the embedded DEFAULT_SKILLS copy)
-  const manifestsById = new Map<string, FloatrSkillManifest>();
+  const manifestsById = new Map<string, MiziSkillManifest>();
   for (const s of DEFAULT_SKILLS.filter(s => requestedIds.includes(s.id))) {
     manifestsById.set(s.id, s);
   }
@@ -306,8 +306,8 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
   const ranked = rankSkills(candidateManifests, ctxWithHistory);
 
   // ── Step 1: Reserve mandatory slots for doctrine + workflow coverage ──
-  const mandatory: FloatrSkillManifest[] = [];
-  const remaining: FloatrSkillManifest[] = [];
+  const mandatory: MiziSkillManifest[] = [];
+  const remaining: MiziSkillManifest[] = [];
 
   const hasDoctrine = () => mandatory.some(s => s.class === "doctrine");
   const hasWorkflow = () => mandatory.some(s => s.class === "workflow");
@@ -323,7 +323,7 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
   }
 
   // ── Step 2: Fill remaining slots up to maxSkills, enforcing conflict resolution ──
-  const selected: FloatrSkillManifest[] = [...mandatory];
+  const selected: MiziSkillManifest[] = [...mandatory];
   let tokenBudget = selected.reduce((sum, s) => sum + s.cost.tokenOverheadEstimate, 0);
 
   for (const manifest of remaining) {
@@ -429,7 +429,7 @@ export async function compileBundle(bundleId: number, ctx: SessionContext): Prom
 export function buildSystemPromptFragment(compiled: CompiledBundle, tokenMode: TokenMode): string {
   const profile = TOKEN_MODE_PROFILES[tokenMode];
   const lines: string[] = [];
-  lines.push(`<!-- FLOATR Smart Skills — bundle: ${compiled.slug}, tokenMode: ${tokenMode} -->`);
+  lines.push(`<!-- MIZI Smart Skills — bundle: ${compiled.slug}, tokenMode: ${tokenMode} -->`);
   lines.push(`${profile.responseStyleDirective}`);
   lines.push("");
 
@@ -484,19 +484,19 @@ export async function recordSessionActivation(sessionId: number, compiled: Compi
 }
 
 export async function seedDefaultSkills(): Promise<void> {
-  // Ensure floatr-native skill source exists
+  // Ensure mizi-native skill source exists
   let [nativeSource] = await db
     .select({ id: skillSourcesTable.id })
     .from(skillSourcesTable)
-    .where(eq(skillSourcesTable.repoUrl, "https://github.com/floatr/skills"));
+    .where(eq(skillSourcesTable.repoUrl, "https://github.com/mizi/skills"));
 
   if (!nativeSource) {
     [nativeSource] = await db
       .insert(skillSourcesTable)
       .values({
-        repoUrl: "https://github.com/floatr/skills",
+        repoUrl: "https://github.com/mizi/skills",
         sourceType: "builtin",
-        trustLevel: "floatr_native",
+        trustLevel: "mizi_native",
       })
       .returning({ id: skillSourcesTable.id });
   }
@@ -602,12 +602,12 @@ export async function compileLaneBundles(
   const all = await db.select().from(skillBundlesTable).where(eq(skillBundlesTable.isDefault, true));
 
   // 1. Session core — always the team coordination bundle (mandatory, shared across ALL lanes)
-  const sessionCoreBundle = all.find(b => b.slug === "floatr-team-coordination")
+  const sessionCoreBundle = all.find(b => b.slug === "mizi-team-coordination")
     ?? all.find(b => b.taskMode === "team" && b.sessionMode === "team")
     ?? null;
 
   // 2. Shared repo bundle — builder bundle as shared read-only baseline
-  const sharedRepoBundle = all.find(b => b.slug === "floatr-builder") ?? null;
+  const sharedRepoBundle = all.find(b => b.slug === "mizi-builder") ?? null;
 
   // Compile session-core and shared-repo bundles upfront (required by all lanes)
   let sessionCoreCompiled: CompiledBundle | null = null;
@@ -748,11 +748,11 @@ export async function getDefaultBundleForContext(
   const all = await db.select().from(skillBundlesTable).where(eq(skillBundlesTable.isDefault, true));
   if (all.length === 0) return null;
 
-  // Spec: when repo context is absent, always fall back to floatr-builder (generic safe default)
+  // Spec: when repo context is absent, always fall back to mizi-builder (generic safe default)
   if (!hasRepoContext) {
-    const builder = all.find(b => b.slug === "floatr-builder");
+    const builder = all.find(b => b.slug === "mizi-builder");
     if (builder) return builder;
-    // If floatr-builder not present yet, fall through to context scoring
+    // If mizi-builder not present yet, fall through to context scoring
   }
 
   // Context-scored selection when repo context is available

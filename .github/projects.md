@@ -1,6 +1,6 @@
-# FLOATR Engineering Project Board — Ops Runbook
+# MIZI Engineering Project Board — Ops Runbook
 
-This document describes the intended configuration for the FLOATR engineering GitHub Project board. All automation described here uses **GitHub's built-in Project automations** — no custom workflow code is required or added.
+This document describes the intended configuration for the MIZI engineering GitHub Project board. All automation described here uses **GitHub's built-in Project automations** — no custom workflow code is required or added.
 
 ---
 
@@ -82,7 +82,7 @@ When triaging a new issue or PR, apply the relevant labels in GitHub — the lab
 ## Creating the board
 
 1. Go to **github.com/orgs/gheeklabs/projects** (or the repo's **Projects** tab) → **New project** → **Board** or **Table** view.
-2. Name it `FLOATR Engineering`.
+2. Name it `MIZI Engineering`.
 3. Add the fields from the table above (Status and Component are single-select; Priority is single-select; Owner is a person field; Milestone is text or iteration).
 4. Configure the Status column values in the listed order.
 5. Enable the built-in automations described above under **Settings → Workflows**.

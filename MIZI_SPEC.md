@@ -1,4 +1,4 @@
-# FLOATR — Product Specification
+# MIZI — Product Specification
 
 > GPU-powered cloud coding platform. Spin up a private AI coding environment on rented GPUs in minutes — open-source model running locally on your instance, full VS Code in the browser, no API costs.
 
@@ -32,7 +32,7 @@
 
 ## 1. Product Overview
 
-FLOATR lets you rent raw GPU compute from [Vast.ai](https://vast.ai), boot a pre-configured AI coding environment on it, and access everything through a hosted dashboard — without managing servers, Kubernetes, or cloud accounts yourself.
+MIZI lets you rent raw GPU compute from [Vast.ai](https://vast.ai), boot a pre-configured AI coding environment on it, and access everything through a hosted dashboard — without managing servers, Kubernetes, or cloud accounts yourself.
 
 Each **session** is a rented GPU machine running:
 - A frontier open-source LLM (Kimi K2.6, Qwen3-Coder-Next, DeepSeek V3.2, etc.)
@@ -62,7 +62,7 @@ The hosted dashboard (this app) handles instance provisioning, status tracking, 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                          FLOATR Dashboard                                    │
+│                          MIZI Dashboard                                    │
 │                    (React + Vite, hosted on Replit)                          │
 │                                                                              │
 │  Pages: Dashboard / Sessions / Cockpit / Templates / Memory /                │
@@ -128,7 +128,7 @@ The hosted dashboard (this app) handles instance provisioning, status tracking, 
 ## 3. Monorepo Structure
 
 ```
-floatr/
+mizi/
 ├── artifacts/
 │   ├── api-server/               # Express API server
 │   │   └── src/
@@ -625,19 +625,19 @@ server {
   listen 8080;
 
   location / {
-    auth_basic "OmniQL";
+    auth_basic "MIZI";
     auth_basic_user_file /etc/nginx/.htpasswd;       # owner credentials
     proxy_pass http://localhost:8090;                 # owner code-server
   }
 
   location /ide/alice/ {
-    auth_basic "OmniQL - alice";
+    auth_basic "MIZI - alice";
     auth_basic_user_file /etc/nginx/.htpasswd-alice;  # alice's own creds
     proxy_pass http://localhost:8093;
   }
 
   location /shared/ {
-    auth_basic "OmniQL Shared";
+    auth_basic "MIZI Shared";
     auth_basic_user_file /etc/nginx/.htpasswd-shared; # all members combined
     proxy_pass http://localhost:8097;                 # shared code-server
   }
@@ -667,11 +667,11 @@ Steps:
 1. `fs.mkdirSync(DATA_DIR, { recursive: true })` — creates the data directory if missing. Failure is fatal.
 2. Write + delete a per-process probe file (`.write-probe-<pid>-<ts>`) to verify actual write access (a read-only volume mount will pass `mkdirSync` but fail this step). Failure is fatal.
 
-The `DATA_DIR` is resolved from `MEM_DATA_DIR` env var (default: `~/omniql-memory/`). The SQLite DB lives at `DATA_DIR/mem.db`. On fatal failure, a structured error is logged with `DATA_DIR`, the source of the path (`MEM_DATA_DIR env var` or `"default (~omniql-memory)"`), and the underlying OS error.
+The `DATA_DIR` is resolved from `MEM_DATA_DIR` env var (default: `~/mizi-memory/`). The SQLite DB lives at `DATA_DIR/mem.db`. On fatal failure, a structured error is logged with `DATA_DIR`, the source of the path (`MEM_DATA_DIR env var` or `"default (~mizi-memory)"`), and the underlying OS error.
 
 ### Storage
-- Location: controlled by `MEM_DATA_DIR` env var (default: `~/omniql-memory/mem.db`)
-- Auth: optional Bearer token via `OMNIQL_MEM_TOKEN`
+- Location: controlled by `MEM_DATA_DIR` env var (default: `~/mizi-memory/mem.db`)
+- Auth: optional Bearer token via `MIZI_MEM_TOKEN`
 
 ### Token modes (memory budget profiles)
 Memory retrieval respects the session's `tokenMode`:
@@ -689,9 +689,9 @@ Memory retrieval respects the session's `tokenMode`:
 
 | Variable | Value |
 |----------|-------|
-| `OMNIQL_MEM_PROXY_URL` | Base URL of this API server |
-| `OMNIQL_MEM_AUTH_TOKEN` | Bearer token (or empty in dev) |
-| `OMNIQL_MEM_USER_ID` | User ID scope (default: `"operator"`) |
+| `MIZI_MEM_PROXY_URL` | Base URL of this API server |
+| `MIZI_MEM_AUTH_TOKEN` | Bearer token (or empty in dev) |
+| `MIZI_MEM_USER_ID` | User ID scope (default: `"operator"`) |
 
 ### Memory API endpoints
 
@@ -737,7 +737,7 @@ The UI shows a "Reconnecting…" banner while `memReconnecting && !memStreaming`
 | GET | `/api/memory/backup` | Download the full SQLite memory DB as a binary attachment (`mem-backup-<date>.db`) |
 | POST | `/api/memory/restore` | Upload a SQLite DB file to replace the in-memory store; server responds with `{ok, message}` |
 
-Both endpoints are unprotected in development (no `OMNIQL_MEM_TOKEN`); in production the token gate applies.
+Both endpoints are unprotected in development (no `MIZI_MEM_TOKEN`); in production the token gate applies.
 
 ---
 
@@ -1002,10 +1002,10 @@ These are **not** proxied through the API server. The dashboard reaches them via
 | `VASTAI_API_KEY` | Yes | Vast.ai API key for all instance operations |
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `PORT` | No | API server port (default: 8080) |
-| `OMNIQL_MEM_TOKEN` | No | Bearer token for memory API (open in dev if not set). Also used to authenticate instance callbacks on `/sessions/:id/status` and `/sessions/:id/repo/*` |
-| `OMNIQL_MEM_PROXY_URL` | No | Public URL of this API server. Defaults to `https://$REPLIT_DEV_DOMAIN` |
-| `OMNIQL_MEM_USER_ID` | No | Memory user scope (default: `operator`) |
-| `MEM_DATA_DIR` | No | **New** — Override for SQLite memory DB directory (default: `~/omniql-memory`) |
+| `MIZI_MEM_TOKEN` | No | Bearer token for memory API (open in dev if not set). Also used to authenticate instance callbacks on `/sessions/:id/status` and `/sessions/:id/repo/*` |
+| `MIZI_MEM_PROXY_URL` | No | Public URL of this API server. Defaults to `https://$REPLIT_DEV_DOMAIN` |
+| `MIZI_MEM_USER_ID` | No | Memory user scope (default: `operator`) |
+| `MEM_DATA_DIR` | No | **New** — Override for SQLite memory DB directory (default: `~/mizi-memory`) |
 | `REPLIT_DEV_DOMAIN` | Auto | Set by Replit. Used to construct callback and memory proxy URLs |
 | `DESIGN_SYNC_INTERVAL_MS` | No | **New** — Design Intelligence full-sync interval (default: 6 hours = 21 600 000 ms) |
 | `ADMIN_SWEEP_TOKEN` | No | **New** — Secret value checked via `X-Admin-Token` request header (header equality, not Bearer) to protect the `/admin/sweep-claims` endpoint |
@@ -1024,11 +1024,11 @@ These are **not** proxied through the API server. The dashboard reaches them via
 | `NUM_GPUS` | GPU count |
 | `SWARM_MAX_WORKERS` | **New** — Max concurrent Claw Runner workers (from `gpu_profiles.swarmWorkerCap`) |
 | `VLLM_API_KEY` | **New** — Optional key for the vLLM server's built-in auth (when set, all litellm → vLLM calls must include it) |
-| `OMNIQL_MEM_PROXY_URL` | Memory API base URL |
-| `OMNIQL_MEM_AUTH_TOKEN` | Memory API bearer token |
-| `OMNIQL_MEM_USER_ID` | Memory user scope |
-| `OMNIQL_SESSION_ID` | Session ID for status callbacks |
-| `OMNIQL_CALLBACK_URL` | Full URL for status callbacks |
+| `MIZI_MEM_PROXY_URL` | Memory API base URL |
+| `MIZI_MEM_AUTH_TOKEN` | Memory API bearer token |
+| `MIZI_MEM_USER_ID` | Memory user scope |
+| `MIZI_SESSION_ID` | Session ID for status callbacks |
+| `MIZI_CALLBACK_URL` | Full URL for status callbacks |
 | `TEAM_MEMBERS_JSON` | JSON array of team members (team sessions only) |
 
 ---
@@ -1127,11 +1127,11 @@ export VLLM_EXTRA_ARGS="--enable-expert-parallel"
 export NUM_GPUS="4"
 export SWARM_MAX_WORKERS="48"         # from gpu_profiles.swarmWorkerCap
 # export VLLM_API_KEY="..."           # optional, omitted if not set
-export OMNIQL_MEM_PROXY_URL="https://your-api.replit.dev"
-export OMNIQL_MEM_AUTH_TOKEN=""
-export OMNIQL_MEM_USER_ID="operator"
-export OMNIQL_SESSION_ID="42"
-export OMNIQL_CALLBACK_URL="https://your-api.replit.dev/api/sessions/42/status"
+export MIZI_MEM_PROXY_URL="https://your-api.replit.dev"
+export MIZI_MEM_AUTH_TOKEN=""
+export MIZI_MEM_USER_ID="operator"
+export MIZI_SESSION_ID="42"
+export MIZI_CALLBACK_URL="https://your-api.replit.dev/api/sessions/42/status"
 # (team sessions only):
 export TEAM_MEMBERS_JSON='[{"name":"__shared__","password":"abc","path":"/shared/"},{"name":"alice","password":"xyz","path":"/ide/alice/"}]'
 /opt/onstart.sh
@@ -1150,7 +1150,7 @@ export TEAM_MEMBERS_JSON='[{"name":"__shared__","password":"abc","path":"/shared
 8. (Team only) Build per-member nginx config, start per-member code-server instances
 9. Compile Smart Skills bundle → `report_status skills_compiling` / `skills_ready`
 10. (If `repoUrl` provided) Kick off Repo Intelligence indexer → `report_status services_ready`
-11. `report_status services_ready` → POSTs to `OMNIQL_CALLBACK_URL`
+11. `report_status services_ready` → POSTs to `MIZI_CALLBACK_URL`
 
 **Phase 2** (background subshell, takes 10–45 min):
 1. Check model cache at `/workspace/models/$MODEL_QUANT/`
@@ -1163,7 +1163,7 @@ export TEAM_MEMBERS_JSON='[{"name":"__shared__","password":"abc","path":"/shared
 8. Watchdog loop: restart vLLM if it dies (checks every 30s)
 
 ### `report_status` helper
-Calls `OMNIQL_CALLBACK_URL` with `Authorization: Bearer $OMNIQL_MEM_AUTH_TOKEN`. Safe no-op if URL is not set. On failure it logs a warning but does not abort the boot sequence.
+Calls `MIZI_CALLBACK_URL` with `Authorization: Bearer $MIZI_MEM_AUTH_TOKEN`. Safe no-op if URL is not set. On failure it logs a warning but does not abort the boot sequence.
 
 ### Runtime flag-gating
 `onstart.sh` probes `python3 -m vllm.entrypoints.openai.api_server --help` before starting and removes any `VLLM_EXTRA_ARGS` flags not present in the help output. This keeps the image forward-compatible with future vLLM versions that may rename or remove flags.
@@ -1269,13 +1269,13 @@ The API server push handler is:
 POST /sessions/:sessionId/swarm-push
 ```
 
-The Claw Runner determines its push target at startup by applying a regex substitution to `OMNIQL_CALLBACK_URL`:
+The Claw Runner determines its push target at startup by applying a regex substitution to `MIZI_CALLBACK_URL`:
 
 ```js
-const swarmCallbackUrl = OMNIQL_CALLBACK_URL.replace(/\/status$/, '/swarm-status');
+const swarmCallbackUrl = MIZI_CALLBACK_URL.replace(/\/status$/, '/swarm-status');
 ```
 
-**Important:** The Claw Runner sends snapshots to the path ending in `/swarm-status`; the API server handler is at `/swarm-push`. These suffixes differ because the derivation regex targets `/status` (the regular status-callback suffix). For swarm push to function, `OMNIQL_CALLBACK_URL` must be configured to **not end in `/status`** so the regex is a no-op, or an HTTP alias must forward `/swarm-status` requests to the `/swarm-push` handler. This is a known discrepancy in the current implementation.
+**Important:** The Claw Runner sends snapshots to the path ending in `/swarm-status`; the API server handler is at `/swarm-push`. These suffixes differ because the derivation regex targets `/status` (the regular status-callback suffix). For swarm push to function, `MIZI_CALLBACK_URL` must be configured to **not end in `/status`** so the regex is a no-op, or an HTTP alias must forward `/swarm-status` requests to the `/swarm-push` handler. This is a known discrepancy in the current implementation.
 
 Snapshots are stored in `sessions.swarmSnapshotJson` and cached in-memory. The server broadcasts each incoming snapshot to all open SSE connections on that session.
 
@@ -1435,7 +1435,7 @@ When a new index job is enqueued for a session that already has a `ready` index,
 `GET /api/sessions/repo/status?ids=1,2,3` returns `{statuses: {[sessionId]: {indexStatus, isStale, confidenceLevel}}}` — used by the sessions list to show repo intelligence indicators per row.
 
 ### Authentication
-`GET /sessions/:id/repo/jobs/pending` and `POST /sessions/:id/repo/sync` require `Authorization: Bearer <OMNIQL_MEM_TOKEN>`. In development (`NODE_ENV=development`) with no token configured, requests are allowed (fail-closed in production).
+`GET /sessions/:id/repo/jobs/pending` and `POST /sessions/:id/repo/sync` require `Authorization: Bearer <MIZI_MEM_TOKEN>`. In development (`NODE_ENV=development`) with no token configured, requests are allowed (fail-closed in production).
 
 ### Repo fingerprint at session launch
 When `repoUrl` is passed to `POST /sessions`, the API fetches the repo's language breakdown and common marker files (package.json, requirements.txt, go.mod, etc.) from the GitHub API and stores the derived fingerprint in `sessions.repoFingerprintJson`. This lets the skill bundler pre-select languages before the on-instance indexer runs.
@@ -1652,4 +1652,4 @@ Standardised templates ensure consistent bug reports, feature requests, and PR c
 
 ---
 
-*End of FLOATR_SPEC.md*
+*End of MIZI_SPEC.md*

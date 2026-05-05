@@ -39,7 +39,7 @@ import {
  * next wake out into the future.
  */
 
-const DEFAULT_OPERATOR_USER_ID = process.env["OMNIQL_MEM_USER_ID"] || "operator";
+const DEFAULT_OPERATOR_USER_ID = process.env["MIZI_MEM_USER_ID"] || "operator";
 const DEFAULT_ACCOUNT_ID = process.env["AMBIENT_ACCOUNT_ID"] || "default";
 const RUNNER_HOLDER = `${process.pid}:${Math.random().toString(36).slice(2, 8)}`;
 const LOCK_TTL_MS = 90 * 1000;

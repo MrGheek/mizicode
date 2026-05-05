@@ -78,8 +78,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <Database className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="font-bold text-lg tracking-tight leading-none">OmniQL</h1>
-            <p className="text-[10px] uppercase tracking-widest text-primary font-mono font-bold">Cloud Coding</p>
+            <h1 className="font-bold text-lg tracking-tight leading-none">MIZI</h1>
+            <p className="text-[10px] uppercase tracking-widest text-primary font-mono font-bold">Code</p>
           </div>
         </div>
 

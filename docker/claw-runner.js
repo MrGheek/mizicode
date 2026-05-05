@@ -30,7 +30,7 @@ const SWARM_WORKER_RETRY      = 1; // one automatic retry on transient failure
 // Default assumes litellm proxy at 8081 with standard /v1 prefix.
 const VLLM_BASE_URL           = process.env.VLLM_BASE_URL || 'http://localhost:8081/v1';
 const SERVED_MODEL            = process.env.SERVED_MODEL_NAME || 'kimi-k2-6';
-// Separate API key for vLLM/litellm proxy (internal). Defaults to OMNIQL_MEM_AUTH_TOKEN
+// Separate API key for vLLM/litellm proxy (internal). Defaults to MIZI_MEM_AUTH_TOKEN
 // for environments where the same token is reused, but can be overridden independently.
 const VLLM_API_KEY            = process.env.VLLM_API_KEY || '';
 const SYNTHESIS_MAX_TOKENS    = parseInt(process.env.SYNTHESIS_MAX_TOKENS || '8192', 10);
@@ -72,7 +72,7 @@ function resetSwarmState() {
 
 // ── Module-level shared state ─────────────────────────────────────────────────
 let currentTaskId      = null;
-let compactionPending  = false; // Set by /floatr/compact — cleared after restore injection
+let compactionPending  = false; // Set by /mizi/compact — cleared after restore injection
 
 // ── Tmux helpers ──────────────────────────────────────────────────────────────
 
@@ -123,12 +123,12 @@ function incrementStats(delta) {
   } catch {}
 }
 
-// Derive the routing-stats callback URL from OMNIQL_CALLBACK_URL.
-const _rawCallbackUrl = process.env.OMNIQL_CALLBACK_URL || '';
+// Derive the routing-stats callback URL from MIZI_CALLBACK_URL.
+const _rawCallbackUrl = process.env.MIZI_CALLBACK_URL || '';
 const ROUTING_STATS_URL = _rawCallbackUrl
   ? _rawCallbackUrl.replace(/\/status$/, '/routing-stats')
   : '';
-const CALLBACK_BEARER_TOKEN = process.env.OMNIQL_MEM_AUTH_TOKEN || '';
+const CALLBACK_BEARER_TOKEN = process.env.MIZI_MEM_AUTH_TOKEN || '';
 
 function pushRoutingStats() {
   if (!ROUTING_STATS_URL) return;
@@ -1246,7 +1246,7 @@ pre{background:#07090f;border:1px solid #1a2035;border-radius:8px;padding:14px 1
       Restore context on start
     </label>
   </div>
-  <p class="hint">Claw works inside /workspace/projects. Shielded execution routes high-output commands through /workspace/.floatr/artifacts/.</p>
+  <p class="hint">Claw works inside /workspace/projects. Shielded execution routes high-output commands through /workspace/.mizi/artifacts/.</p>
 </section>
 
 <section>
@@ -1322,7 +1322,7 @@ pre{background:#07090f;border:1px solid #1a2035;border-radius:8px;padding:14px 1
     const btn  = document.getElementById('snapshotBtn');
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      const r = await fetch('/floatr/snapshot', {
+      const r = await fetch('/mizi/snapshot', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ activeTask: task.slice(0, 200) || 'unknown', tokenMode: 'core' })
@@ -1338,7 +1338,7 @@ pre{background:#07090f;border:1px solid #1a2035;border-radius:8px;padding:14px 1
     const btn  = document.getElementById('compactBtn');
     btn.disabled = true; btn.textContent = 'Compacting…';
     try {
-      const r = await fetch('/floatr/compact', {
+      const r = await fetch('/mizi/compact', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ activeTask: task.slice(0, 200) || 'unknown', tokenMode: 'core' })
@@ -1544,9 +1544,9 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true, message: 'abort signal sent' });
   }
 
-  // ── Context Shield routes (/floatr/*) ─────────────────────────────────────
+  // ── Context Shield routes (/mizi/*) ─────────────────────────────────────
 
-  if (url === '/floatr/execute' && method === 'POST') {
+  if (url === '/mizi/execute' && method === 'POST') {
     let body;
     try { body = await parseBody(req); }
     catch { return sendJson(res, 400, { error: 'invalid json' }); }
@@ -1558,7 +1558,7 @@ const server = http.createServer(async (req, res) => {
       actor_type: 'tool',
       task_id:    currentTaskId || '',
       event_type: 'tool_use',
-      payload:    { tool: 'floatr_execute', cmd: String(cmd).slice(0, 300) },
+      payload:    { tool: 'mizi_execute', cmd: String(cmd).slice(0, 300) },
     });
 
     const result = callShield('exec', [cmd]);
@@ -1568,7 +1568,7 @@ const server = http.createServer(async (req, res) => {
       actor_type: 'tool',
       task_id:    currentTaskId || '',
       event_type: 'tool_result',
-      payload:    { tool: 'floatr_execute', exitCode: result.exitCode, outputBytes: Buffer.byteLength(output, 'utf8') },
+      payload:    { tool: 'mizi_execute', exitCode: result.exitCode, outputBytes: Buffer.byteLength(output, 'utf8') },
     });
 
     if (result.exitCode === 2) {
@@ -1581,7 +1581,7 @@ const server = http.createServer(async (req, res) => {
     return sendText(res, 200, output + (result.stderr ? `\n[stderr]\n${result.stderr}` : ''));
   }
 
-  if (url === '/floatr/execute-file' && method === 'POST') {
+  if (url === '/mizi/execute-file' && method === 'POST') {
     let body;
     try { body = await parseBody(req); }
     catch { return sendJson(res, 400, { error: 'invalid json' }); }
@@ -1593,7 +1593,7 @@ const server = http.createServer(async (req, res) => {
       actor_type: 'tool',
       task_id:    currentTaskId || '',
       event_type: 'tool_use',
-      payload:    { tool: 'floatr_execute_file', path: filePath },
+      payload:    { tool: 'mizi_execute_file', path: filePath },
     });
 
     const result = callShield('exec-file', [filePath]);
@@ -1602,7 +1602,7 @@ const server = http.createServer(async (req, res) => {
       actor_type: 'tool',
       task_id:    currentTaskId || '',
       event_type: 'tool_result',
-      payload:    { tool: 'floatr_execute_file', exitCode: result.exitCode },
+      payload:    { tool: 'mizi_execute_file', exitCode: result.exitCode },
     });
 
     if (!result.ok) {
@@ -1611,7 +1611,7 @@ const server = http.createServer(async (req, res) => {
     return sendText(res, 200, result.stdout || '');
   }
 
-  if (url === '/floatr/batch-execute' && method === 'POST') {
+  if (url === '/mizi/batch-execute' && method === 'POST') {
     let body;
     try { body = await parseBody(req); }
     catch { return sendJson(res, 400, { error: 'invalid json' }); }
@@ -1623,7 +1623,7 @@ const server = http.createServer(async (req, res) => {
       actor_type: 'tool',
       task_id:    currentTaskId || '',
       event_type: 'tool_use',
-      payload:    { tool: 'floatr_batch_execute', count: commands.length },
+      payload:    { tool: 'mizi_batch_execute', count: commands.length },
     });
 
     const result = callShield('batch', [JSON.stringify(commands)]);
@@ -1635,7 +1635,7 @@ const server = http.createServer(async (req, res) => {
       actor_type: 'tool',
       task_id:    currentTaskId || '',
       event_type: 'tool_result',
-      payload:    { tool: 'floatr_batch_execute', ok: parsed.ok, totalBytesAvoided: parsed.totalBytesAvoided },
+      payload:    { tool: 'mizi_batch_execute', ok: parsed.ok, totalBytesAvoided: parsed.totalBytesAvoided },
     });
 
     if (parsed.totalBytesAvoided > 0) pushRoutingStats();
@@ -1643,7 +1643,7 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, result.ok ? 200 : 500, parsed);
   }
 
-  if (url === '/floatr/stats' && method === 'GET') {
+  if (url === '/mizi/stats' && method === 'GET') {
     const result = callShield('stats');
     let parsed;
     try { parsed = JSON.parse(result.stdout || '{}'); }
@@ -1651,7 +1651,7 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, parsed);
   }
 
-  if (url === '/floatr/doctor' && method === 'GET') {
+  if (url === '/mizi/doctor' && method === 'GET') {
     const result = callShield('doctor');
     let parsed;
     try { parsed = JSON.parse(result.stdout || '{}'); }
@@ -1659,7 +1659,7 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, result.ok ? 200 : 503, parsed);
   }
 
-  if (url === '/floatr/snapshot' && method === 'POST') {
+  if (url === '/mizi/snapshot' && method === 'POST') {
     let body;
     try { body = await parseBody(req); }
     catch { return sendJson(res, 400, { error: 'invalid json' }); }
@@ -1691,7 +1691,7 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  if (url === '/floatr/compact' && method === 'POST') {
+  if (url === '/mizi/compact' && method === 'POST') {
     let body;
     try { body = await parseBody(req); }
     catch { body = {}; }
@@ -1732,14 +1732,14 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  if (url === '/floatr/restore' && method === 'GET') {
+  if (url === '/mizi/restore' && method === 'GET') {
     const data = readRestoreData();
     if (!data) return sendJson(res, 200, { ok: true, snapshot: null, message: 'No restore data found' });
     const usable = isSnapshotUsable(data, false);
     return sendJson(res, 200, { ok: true, usable, compactionPending, ...data });
   }
 
-  if (url === '/floatr/event' && method === 'POST') {
+  if (url === '/mizi/event' && method === 'POST') {
     let body;
     try { body = await parseBody(req); }
     catch { return sendJson(res, 400, { error: 'invalid json' }); }
@@ -1769,7 +1769,7 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true });
   }
 
-  if (url === '/floatr/plan' && method === 'POST') {
+  if (url === '/mizi/plan' && method === 'POST') {
     let body;
     try { body = await parseBody(req); }
     catch { return sendJson(res, 400, { error: 'invalid json' }); }

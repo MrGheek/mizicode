@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and push OmniQL Docker images to Docker Hub under gheeklabs/
+# Build and push MIZI Docker images to Docker Hub under gheeklabs/
 # Usage: ./docker/build.sh [--push] [--tag cuda12.4|a100|h100|all]
 set -e
 

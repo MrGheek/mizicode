@@ -1,6 +1,6 @@
 import { db, skillsTable, skillFeedbackTable, skillEvalsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
-import type { FloatrSkillManifest, SessionContext, TrustTier, RepoIntelligenceContext } from "./skills-types";
+import type { MiziSkillManifest, SessionContext, TrustTier, RepoIntelligenceContext } from "./skills-types";
 
 const INSTALL_RISK_PENALTY: Record<string, number> = {
   virtual: 0,
@@ -11,13 +11,13 @@ const INSTALL_RISK_PENALTY: Record<string, number> = {
 };
 
 const TRUST_BONUS: Record<TrustTier, number> = {
-  floatr_native: 2.0,
+  mizi_native: 2.0,
   reviewed: 1.0,
   user_approved: 0.0,
   experimental: -1.0,
 };
 
-function taskFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
+function taskFit(manifest: MiziSkillManifest, ctx: SessionContext): number {
   const triggerTasks = manifest.triggers.tasks;
   if (triggerTasks.includes(ctx.taskMode)) return 1.0;
   const relatedMap: Record<string, string[]> = {
@@ -33,7 +33,7 @@ function taskFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
   return 0.0;
 }
 
-function repoFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
+function repoFit(manifest: MiziSkillManifest, ctx: SessionContext): number {
   const intel = ctx.repoIntelligence;
 
   const effectiveLangs = intel && intel.confidenceLevel !== "none"
@@ -78,7 +78,7 @@ function repoFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
  * Exported so callers (e.g. the bundler's reasoning path) can inspect per-skill
  * intent contributions without re-running the full ranking pipeline.
  */
-export function intentFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
+export function intentFit(manifest: MiziSkillManifest, ctx: SessionContext): number {
   const intent = ctx.intentText?.trim();
   if (!intent || intent.length <= 10) return 0;
   const STOP = new Set([
@@ -107,7 +107,7 @@ export function intentFit(manifest: FloatrSkillManifest, ctx: SessionContext): n
   return Math.min(1.0, hits / Math.max(3, tokens.length));
 }
 
-function modelFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
+function modelFit(manifest: MiziSkillManifest, ctx: SessionContext): number {
   const compat = manifest.compatibility.models;
   if (compat.includes("all")) return 1.0;
   const modelLower = ctx.modelProfile.toLowerCase();
@@ -115,16 +115,16 @@ function modelFit(manifest: FloatrSkillManifest, ctx: SessionContext): number {
   return match ? 1.0 : 0.3;
 }
 
-function freshness(manifest: FloatrSkillManifest): number {
-  if (manifest.source.trust === "floatr_native") return 1.0;
+function freshness(manifest: MiziSkillManifest): number {
+  if (manifest.source.trust === "mizi_native") return 1.0;
   return 0.5;
 }
 
-function tokenCostPenalty(manifest: FloatrSkillManifest): number {
+function tokenCostPenalty(manifest: MiziSkillManifest): number {
   return Math.min(1.0, manifest.cost.tokenOverheadEstimate / 500);
 }
 
-function conflictRisk(manifest: FloatrSkillManifest, selected: FloatrSkillManifest[]): number {
+function conflictRisk(manifest: MiziSkillManifest, selected: MiziSkillManifest[]): number {
   // "team" and "repo" class skills are complementary — they do not conflict with each other.
   // Coordination and repo skills are designed to coexist in the same bundle.
   if (manifest.class === "team" || manifest.class === "repo") return 0.0;
@@ -157,7 +157,7 @@ function conflictRisk(manifest: FloatrSkillManifest, selected: FloatrSkillManife
  *
  * measuredLiftWeight from the manifest scales the total blended signal.
  */
-function measuredLiftBonus(manifest: FloatrSkillManifest, ctx: SessionContext): number {
+function measuredLiftBonus(manifest: MiziSkillManifest, ctx: SessionContext): number {
   const historyScore = ctx.historyScores?.[manifest.id] ?? null;
   const evalLift = ctx.evalLiftScores?.[manifest.id] ?? null;
   const weight = manifest.rankingHints.measuredLiftWeight || 0;
@@ -240,14 +240,14 @@ export async function getEvalLiftScoresMap(): Promise<Record<string, number>> {
 }
 
 export interface RankedSkill {
-  manifest: FloatrSkillManifest;
+  manifest: MiziSkillManifest;
   score: number;
 }
 
 export function rankSkills(
-  manifests: FloatrSkillManifest[],
+  manifests: MiziSkillManifest[],
   ctx: SessionContext,
-  alreadySelected: FloatrSkillManifest[] = []
+  alreadySelected: MiziSkillManifest[] = []
 ): RankedSkill[] {
   const ranked = manifests.map(manifest => {
     const tf = taskFit(manifest, ctx) * (manifest.rankingHints.taskFitWeight || 1.0);

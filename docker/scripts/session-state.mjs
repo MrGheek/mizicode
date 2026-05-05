@@ -2,7 +2,7 @@
 /**
  * session-state.mjs — Per-session SQLite event journal and working state store
  *
- * DB path: /workspace/.floatr/session-state.db  (FLOATR_STATE_DB override)
+ * DB path: /workspace/.mizi/session-state.db  (MIZI_STATE_DB override)
  *
  * Tables:
  *   events        — append-only actor/event log (task, tool use, plan changes, etc.)
@@ -17,7 +17,7 @@ import { dirname } from 'path';
 
 const require = createRequire(import.meta.url);
 
-export const DB_PATH = process.env.FLOATR_STATE_DB || '/workspace/.floatr/session-state.db';
+export const DB_PATH = process.env.MIZI_STATE_DB || '/workspace/.mizi/session-state.db';
 export const SCHEMA_VERSION = 1;
 
 // ── DB open + schema provision ────────────────────────────────────────────────

@@ -25,7 +25,7 @@ export function TwoColumn() {
               <Terminal className="w-4 h-4 text-white" />
             </div>
             <div>
-              <div className="font-bold tracking-wide text-sm">FLOATR</div>
+              <div className="font-bold tracking-wide text-sm">MIZI</div>
               <div className="text-xs text-slate-500 font-mono">MISSION_CONTROL</div>
             </div>
           </div>

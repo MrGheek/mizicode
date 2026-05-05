@@ -10,7 +10,7 @@
  *   - markRecallInjected flips the audit's injected flag and getRecallMetrics
  *     reflects it.
  *   - Per-session feature flag (mem_passive_settings) overrides the global
- *     OMNIQL_MEM_PASSIVE_RECALL env var.
+ *     MIZI_MEM_PASSIVE_RECALL env var.
  *   - backfillItemEmbeddings is idempotent and embeds only items that lack
  *     an embedding row.
  *
@@ -54,20 +54,20 @@ function deterministicLexical(a: string, b: string): number {
 
 let tmpDir: string;
 const originalDir = process.env["MEM_DATA_DIR"];
-const originalGlobalFlag = process.env["OMNIQL_MEM_PASSIVE_RECALL"];
+const originalGlobalFlag = process.env["MIZI_MEM_PASSIVE_RECALL"];
 
 beforeAll(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mem-passive-test-"));
   process.env["MEM_DATA_DIR"] = tmpDir;
   // Default to globally OFF so we can test per-session override flipping it on.
-  delete process.env["OMNIQL_MEM_PASSIVE_RECALL"];
+  delete process.env["MIZI_MEM_PASSIVE_RECALL"];
 });
 
 afterAll(() => {
   if (originalDir !== undefined) process.env["MEM_DATA_DIR"] = originalDir;
   else delete process.env["MEM_DATA_DIR"];
-  if (originalGlobalFlag !== undefined) process.env["OMNIQL_MEM_PASSIVE_RECALL"] = originalGlobalFlag;
-  else delete process.env["OMNIQL_MEM_PASSIVE_RECALL"];
+  if (originalGlobalFlag !== undefined) process.env["MIZI_MEM_PASSIVE_RECALL"] = originalGlobalFlag;
+  else delete process.env["MIZI_MEM_PASSIVE_RECALL"];
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
@@ -219,13 +219,13 @@ describe("memory-passive — passive recall pipeline", () => {
     expect(passive.isPassiveRecallEnabled(sessionB)).toBe(false);
 
     // Per-session override beats global ON when explicitly disabled.
-    process.env["OMNIQL_MEM_PASSIVE_RECALL"] = "1";
+    process.env["MIZI_MEM_PASSIVE_RECALL"] = "1";
     try {
       expect(passive.isPassiveRecallEnabled(sessionB)).toBe(true);
       passive.setPassiveRecallForSession(sessionB, false);
       expect(passive.isPassiveRecallEnabled(sessionB)).toBe(false);
     } finally {
-      delete process.env["OMNIQL_MEM_PASSIVE_RECALL"];
+      delete process.env["MIZI_MEM_PASSIVE_RECALL"];
     }
   });
 
@@ -334,11 +334,11 @@ describe("memory-passive — passive recall pipeline", () => {
    *   4. POST /mem/recall/inject — closes the audit loop (marks ✓ injected).
    *   5. GET /mem/recall again — must return empty (single-use semantics).
    *
-   * The test runs with OMNIQL_MEM_PASSIVE_RECALL=1 scoped to this block.
+   * The test runs with MIZI_MEM_PASSIVE_RECALL=1 scoped to this block.
    */
-  it("end-to-end: item saved in turn 1 surfaces in turn 2 recall shortlist when OMNIQL_MEM_PASSIVE_RECALL=1", async () => {
-    const prevFlag = process.env["OMNIQL_MEM_PASSIVE_RECALL"];
-    process.env["OMNIQL_MEM_PASSIVE_RECALL"] = "1";
+  it("end-to-end: item saved in turn 1 surfaces in turn 2 recall shortlist when MIZI_MEM_PASSIVE_RECALL=1", async () => {
+    const prevFlag = process.env["MIZI_MEM_PASSIVE_RECALL"];
+    process.env["MIZI_MEM_PASSIVE_RECALL"] = "1";
     try {
       const { passive, memory } = await loadModules();
       const express = (await import("express")).default;
@@ -442,9 +442,9 @@ describe("memory-passive — passive recall pipeline", () => {
       expect(afterInjectRes.body.turnId).toBeNull();
     } finally {
       if (prevFlag !== undefined) {
-        process.env["OMNIQL_MEM_PASSIVE_RECALL"] = prevFlag;
+        process.env["MIZI_MEM_PASSIVE_RECALL"] = prevFlag;
       } else {
-        delete process.env["OMNIQL_MEM_PASSIVE_RECALL"];
+        delete process.env["MIZI_MEM_PASSIVE_RECALL"];
       }
     }
   });

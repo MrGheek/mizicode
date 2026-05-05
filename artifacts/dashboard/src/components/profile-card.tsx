@@ -12,7 +12,7 @@ interface ProfileCardProps {
   onLaunch: (profileId: number, opts?: Omit<LaunchOptions, "profileId">) => void;
   isLaunching?: boolean;
   /**
-   * If true, this card listens for the global "floatr:open-launch-dialog"
+   * If true, this card listens for the global "mizi:open-launch-dialog"
    * event (dispatched by the command palette / sessions-list "n" shortcut)
    * and opens its launch dialog. Exactly one card per page should be the
    * default.
@@ -55,8 +55,8 @@ export function ProfileCard({ profile, onLaunch, isLaunching, isDefaultLaunch, i
   useEffect(() => {
     if (!isDefaultLaunch) return;
     const onOpen = () => setDialogOpen(true);
-    window.addEventListener("floatr:open-launch-dialog", onOpen);
-    return () => window.removeEventListener("floatr:open-launch-dialog", onOpen);
+    window.addEventListener("mizi:open-launch-dialog", onOpen);
+    return () => window.removeEventListener("mizi:open-launch-dialog", onOpen);
   }, [isDefaultLaunch]);
 
   const handleConfirm = (opts: LaunchOptions) => {

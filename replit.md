@@ -2,7 +2,7 @@
 
 ## Overview
 
-OmniQL Cloud Coding Platform — a full-stack app that lets users spin up GPU-powered AI coding sessions on Vast.ai. The system provisions remote GPU machines running Bolt.diy (coding UI), llama.cpp with Kimi K2.6 GGUF models (default; K2.5 kept as legacy option), code-server (VS Code), and nginx preview proxy.
+MIZI Cloud Coding Platform — a full-stack app that lets users spin up GPU-powered AI coding sessions on Vast.ai. The system provisions remote GPU machines running Bolt.diy (coding UI), llama.cpp with Kimi K2.6 GGUF models (default; K2.5 kept as legacy option), code-server (VS Code), and nginx preview proxy.
 
 Built as a pnpm workspace monorepo using TypeScript.
 
@@ -49,7 +49,7 @@ artifacts-monorepo/
 - **sessions** — Coding session records with Vast.ai instance IDs, status tracking, service URLs, cost tracking. New: `taskMode`, `tokenMode`, `activeBundleId`, `repoFingerprintJson`
 - **templates** — Vast.ai template records with Docker image, on-start script, and env vars
 - **skill_sources** — GitHub repos imported as skill sources (url, branch, commit SHA, license, trust level)
-- **skills** — Individual skills with `trustTier` (floatr_native|reviewed|user_approved|experimental), `installRisk` (virtual|config|hooked|binary|networked), `reviewStatus` (pending|approved|rejected)
+- **skills** — Individual skills with `trustTier` (mizi_native|reviewed|user_approved|experimental), `installRisk` (virtual|config|hooked|binary|networked), `reviewStatus` (pending|approved|rejected)
 - **skill_versions** — Versioned manifest snapshots per skill (manifest JSON, extracted rules, version hash)
 - **skill_bundles** — Named skill sets with task/session/model/token mode metadata; 4 default bundles seeded at startup
 - **session_skills** — Records which skills were activated for each session (bundle, token mode, activation mode)
@@ -146,7 +146,7 @@ artifacts-monorepo/
 - `GET /api/mem/observations?userId=` — List recent tool observations
 - `GET /api/mem/sessions?userId=` — List past sessions with summaries
 
-Memory is scoped per `userId` (default: `"operator"`, override via `OMNIQL_MEM_USER_ID`). Optionally auth-gated via `OMNIQL_MEM_TOKEN` env var (required in `NODE_ENV=production`; warned-but-open in development). SQLite DB stored at `MEM_DATA_DIR` (defaults to `~/omniql-memory/mem.db` — outside workspace, not tracked by git).
+Memory is scoped per `userId` (default: `"operator"`, override via `MIZI_MEM_USER_ID`). Optionally auth-gated via `MIZI_MEM_TOKEN` env var (required in `NODE_ENV=production`; warned-but-open in development). SQLite DB stored at `MEM_DATA_DIR` (defaults to `~/mizi-memory/mem.db` — outside workspace, not tracked by git).
 
 Dashboard accesses memory via session-scoped proxy routes (`GET /api/sessions/:id/memory/sessions`, `/observations`, and `/search?q=`) and global proxy routes (`GET /api/memory/sessions` and `/api/memory/search?q=`) — no bearer token required for dashboard access.
 
@@ -155,9 +155,9 @@ The `searchMemory(userId, query)` service function in `artifacts/api-server/src/
 ## Docker Images
 
 Docker images are tagged by GPU architecture:
-- `omniqlabs/coding-env:cuda12.4` — RTX 4090 (CUDA 12.4)
-- `omniqlabs/coding-env:a100` — A100 GPUs
-- `omniqlabs/coding-env:h100` — H100 GPUs
+- `miziabs/coding-env:cuda12.4` — RTX 4090 (CUDA 12.4)
+- `miziabs/coding-env:a100` — A100 GPUs
+- `miziabs/coding-env:h100` — H100 GPUs
 
 Each instance runs:
 - llama.cpp server (port 8081) — Kimi K2.6 GGUF model inference (default; K2.5 legacy profiles still available)
@@ -188,7 +188,7 @@ Express 5 API server with Vast.ai integration. Routes in `src/routes/`, services
 
 - Entry: `src/index.ts` — reads `PORT`, starts Express, seeds GPU profiles
 - Routes: profiles, sessions, templates, offers, dashboard, memory, skills
-- Services: `vastai.ts` (Vast.ai API wrapper), `profiles.ts` (profile management + seeding), `memory.ts` (SQLite FTS5 session memory), `skills-types.ts` (types + token mode profiles), `default-skills.ts` (11 built-in skills + 4 default bundles), `skills-normalizer.ts` (GitHub repo → FloatrSkillManifest[]), `skills-import.ts` (GitHub import pipeline), `skills-ranker.ts` (multi-factor skill scorer), `skills-bundler.ts` (bundle compiler + env payload builder)
+- Services: `vastai.ts` (Vast.ai API wrapper), `profiles.ts` (profile management + seeding), `memory.ts` (SQLite FTS5 session memory), `skills-types.ts` (types + token mode profiles), `default-skills.ts` (11 built-in skills + 4 default bundles), `skills-normalizer.ts` (GitHub repo → MiziSkillManifest[]), `skills-import.ts` (GitHub import pipeline), `skills-ranker.ts` (multi-factor skill scorer), `skills-bundler.ts` (bundle compiler + env payload builder)
 
 ### `artifacts/dashboard` (`@workspace/dashboard`)
 

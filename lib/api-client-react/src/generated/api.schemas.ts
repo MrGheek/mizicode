@@ -36,7 +36,7 @@ export interface PaletteIntentRequest {
 /**
  * Action type to execute on the client:
 - navigate — push a new route
-- stop-session — dispatch floatr:request-stop-session
+- stop-session — dispatch mizi:request-stop-session
 - reindex-session — trigger a repo re-index for the given sessionId
 - new-session — open the launch dialog
 - relaunch-session — relaunch the given sessionId
@@ -75,7 +75,7 @@ export interface PaletteIntentResponse {
   ok: boolean;
   /** Action type to execute on the client:
 - navigate — push a new route
-- stop-session — dispatch floatr:request-stop-session
+- stop-session — dispatch mizi:request-stop-session
 - reindex-session — trigger a repo re-index for the given sessionId
 - new-session — open the launch dialog
 - relaunch-session — relaunch the given sessionId
@@ -258,7 +258,7 @@ export interface CreateSessionRequest {
   nimModelId?: string | null;
   /** Partner provider for NIM sessions: "nvidia" | "vultr" | "together" | "deepinfra". Defaults to "nvidia". */
   nimProvider?: string | null;
-  /** GitHub Personal Access Token — injected as GITHUB_TOKEN and used to force-push to floatr/session-{id} branch. */
+  /** GitHub Personal Access Token — injected as GITHUB_TOKEN and used to force-push to mizi/session-{id} branch. */
   githubToken?: string | null;
 }
 
@@ -602,7 +602,7 @@ export interface SessionSkillsResponse {
 export interface SkillFeedbackRequest {
   /** Numeric DB ID of the skill. Either skillId or manifestId must be provided. */
   skillId?: number | null;
-  /** String manifest/slug ID of the skill (e.g. "floatr-decision-log-lite"). Used when only a string ID is available from compiled manifests. */
+  /** String manifest/slug ID of the skill (e.g. "mizi-decision-log-lite"). Used when only a string ID is available from compiled manifests. */
   manifestId?: string | null;
   helpful: boolean;
   notes?: string | null;
@@ -1026,7 +1026,7 @@ export interface MemoryGovernanceStatsResponse {
   /** Ratio of injections to retrievals in [0,1] */
   hitRate: number;
   budgetProfile: MemoryBudgetProfile;
-  /** True only when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1 and a real embedding backend is wired. Always false while semantic path is a stub. */
+  /** True only when MIZI_MEM_SEMANTIC_CONTRADICTION=1 and a real embedding backend is wired. Always false while semantic path is a stub. */
   semanticContradictionActive?: boolean;
 }
 
@@ -2099,7 +2099,7 @@ export type ListSkillsTrustTier =
   (typeof ListSkillsTrustTier)[keyof typeof ListSkillsTrustTier];
 
 export const ListSkillsTrustTier = {
-  floatr_native: "floatr_native",
+  mizi_native: "mizi_native",
   reviewed: "reviewed",
   user_approved: "user_approved",
   experimental: "experimental",

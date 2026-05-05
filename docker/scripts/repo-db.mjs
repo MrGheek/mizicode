@@ -1,7 +1,7 @@
 /**
  * repo-db.mjs — SQLite graph/FTS/vector store for Repo Intelligence
  *
- * Creates and manages a SQLite database at /workspace/.floatr/repo-graph.db with:
+ * Creates and manages a SQLite database at /workspace/.mizi/repo-graph.db with:
  *   - files table (path, lang, size, centrality, hash, mtime)
  *   - symbols table (name, kind, path, line, lang, signature, docstring)
  *   - edges table (from_path, to_path, kind)
@@ -13,7 +13,7 @@
  * Falls back gracefully if better-sqlite3 is not available.
  */
 
-const DB_PATH = process.env.FLOATR_GRAPH_DB || '/workspace/.floatr/repo-graph.db';
+const DB_PATH = process.env.MIZI_GRAPH_DB || '/workspace/.mizi/repo-graph.db';
 
 let _db = null;
 let _available = null;

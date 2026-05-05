@@ -1,6 +1,6 @@
 # Security Hardening — Secret Scanning & Push Protection
 
-This document covers how to enable GitHub secret scanning and push protection for this repository, what contributors experience when a push is blocked, and the credential types most relevant to FLOATR.
+This document covers how to enable GitHub secret scanning and push protection for this repository, what contributors experience when a push is blocked, and the credential types most relevant to MIZI.
 
 ---
 
@@ -66,7 +66,7 @@ Any bypass for a credential that might be live should be rejected. The contribut
 
 ---
 
-## Credential types especially relevant to FLOATR
+## Credential types especially relevant to MIZI
 
 | Credential | Secret type GitHub detects | Where it appears |
 |---|---|---|

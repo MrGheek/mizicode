@@ -529,7 +529,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [floatr_native, reviewed, user_approved, experimental]
+            enum: [mizi_native, reviewed, user_approved, experimental]
         - name: reviewStatus
           in: query
           schema:
@@ -1235,7 +1235,7 @@ paths:
       operationId: seedDefaultBundles
       tags: [skills]
       summary: Seed default bundles (internal helper, non-contractual)
-      description: "Internal helper: idempotently seeds the four default skill bundles (floatr-builder/reviewer/debugger/team-studio) if they do not exist. Called automatically on server startup. Not part of the public API contract."
+      description: "Internal helper: idempotently seeds the four default skill bundles (mizi-builder/reviewer/debugger/team-studio) if they do not exist. Called automatically on server startup. Not part of the public API contract."
       responses:
         "200":
           description: Seed result
@@ -2853,7 +2853,7 @@ components:
           description: |
             Action type to execute on the client:
             - navigate — push a new route
-            - stop-session — dispatch floatr:request-stop-session
+            - stop-session — dispatch mizi:request-stop-session
             - reindex-session — trigger a repo re-index for the given sessionId
             - new-session — open the launch dialog
             - relaunch-session — relaunch the given sessionId
@@ -3220,7 +3220,7 @@ components:
         githubToken:
           type: string
           nullable: true
-          description: GitHub Personal Access Token — injected as GITHUB_TOKEN and used to force-push to floatr/session-{id} branch. Never stored in the database.
+          description: GitHub Personal Access Token — injected as GITHUB_TOKEN and used to force-push to mizi/session-{id} branch. Never stored in the database.
       required:
         - profileId
 
@@ -3955,7 +3955,7 @@ components:
         manifestId:
           type: string
           nullable: true
-          description: String manifest/slug ID of the skill (e.g. "floatr-decision-log-lite"). Used when only a string ID is available from compiled manifests.
+          description: String manifest/slug ID of the skill (e.g. "mizi-decision-log-lite"). Used when only a string ID is available from compiled manifests.
         helpful:
           type: boolean
         notes:
@@ -4645,7 +4645,7 @@ components:
           $ref: "#/components/schemas/MemoryBudgetProfile"
         semanticContradictionActive:
           type: boolean
-          description: "True only when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1 and a real embedding backend is wired. Always false while semantic path is a stub."
+          description: "True only when MIZI_MEM_SEMANTIC_CONTRADICTION=1 and a real embedding backend is wired. Always false while semantic path is a stub."
       required:
         - totalItems
         - staleCount

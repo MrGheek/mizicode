@@ -123,7 +123,7 @@ export default function Dashboard() {
     if (activeSession || !allSessions) return null;
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const isDismissed = (id: number): boolean => {
-      try { return localStorage.getItem(`floatr:continue-dismissed:${id}`) === "1"; } catch { return false; }
+      try { return localStorage.getItem(`mizi:continue-dismissed:${id}`) === "1"; } catch { return false; }
     };
     const candidate = allSessions
       .filter((s) => s.status === "stopped" && s.intentText)
@@ -142,7 +142,7 @@ export default function Dashboard() {
   }, [activeSession, allSessions, dismissTick]);
 
   const dismissContinue = (sessionId: number) => {
-    try { localStorage.setItem(`floatr:continue-dismissed:${sessionId}`, "1"); } catch { /* ignore */ }
+    try { localStorage.setItem(`mizi:continue-dismissed:${sessionId}`, "1"); } catch { /* ignore */ }
     setDismissTick((n) => n + 1);
   };
 
@@ -468,7 +468,7 @@ function ContinueCard({ session, onDismiss }: ContinueCardProps) {
   );
 }
 
-const PINNED_STORAGE_KEY = "floatr:pinned-profiles";
+const PINNED_STORAGE_KEY = "mizi:pinned-profiles";
 
 function usePinnedProfiles() {
   const [pinnedIds, setPinnedIds] = useState<number[]>(() => {

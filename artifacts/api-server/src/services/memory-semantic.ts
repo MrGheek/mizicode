@@ -42,7 +42,7 @@ export function tfidfCosineSimilarity(textA: string, textB: string): number {
  * TF-IDF cosine similarity for every candidate pair without a network call.
  *
  * One network call regardless of the number of candidates (up to 50).
- * Only called when OMNIQL_MEM_SEMANTIC_CONTRADICTION=1 is set.
+ * Only called when MIZI_MEM_SEMANTIC_CONTRADICTION=1 is set.
  */
 export async function computeSemanticSimilarityBatch(
   source: string,

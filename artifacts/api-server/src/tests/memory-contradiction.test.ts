@@ -29,7 +29,7 @@ function lexicalOverlapScore(a: string, b: string): number {
 
 /**
  * Mirrors the finalScore blending logic in saveMemoryItem.
- * semanticEnabled = true mimics OMNIQL_MEM_SEMANTIC_CONTRADICTION=1.
+ * semanticEnabled = true mimics MIZI_MEM_SEMANTIC_CONTRADICTION=1.
  */
 function blendedScore(lexScore: number, semScore: number, semanticEnabled: boolean): number {
   return semanticEnabled && semScore > 0

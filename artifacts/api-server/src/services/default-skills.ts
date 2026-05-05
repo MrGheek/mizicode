@@ -1,10 +1,10 @@
-import type { FloatrSkillManifest } from "./skills-types";
+import type { MiziSkillManifest } from "./skills-types";
 
-const FLOATR_NATIVE_SOURCE = {
-  repoUrl: "https://github.com/floatr/skills",
+const MIZI_NATIVE_SOURCE = {
+  repoUrl: "https://github.com/mizi/skills",
   commitSha: "builtin",
   license: "MIT",
-  trust: "floatr_native" as const,
+  trust: "mizi_native" as const,
 };
 
 const UI_UX_PRO_MAX_SOURCE = {
@@ -14,13 +14,13 @@ const UI_UX_PRO_MAX_SOURCE = {
   trust: "reviewed" as const,
 };
 
-export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
+export const DEFAULT_SKILLS: MiziSkillManifest[] = [
   {
     schemaVersion: 1,
     id: "karpathy-doctrine",
     name: "Karpathy Doctrine",
     class: "doctrine",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Coding doctrine favoring explicit assumptions, simplicity, surgical edits, and verifiable success criteria.",
     triggers: {
       tasks: ["build", "debug", "refactor", "review"],
@@ -48,7 +48,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "flow-router",
     name: "Flow Router",
     class: "workflow",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Structured plan → build → verify → ship workflow with routing for different task types.",
     triggers: {
       tasks: ["build", "refactor", "debug"],
@@ -76,7 +76,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "memory-compact",
     name: "Memory Compact",
     class: "context",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Cross-session memory context injection — retrieves the most relevant past observations into system prompt.",
     triggers: {
       tasks: ["build", "debug", "refactor", "explore"],
@@ -101,7 +101,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "lean-compression",
     name: "Lean Compression",
     class: "efficiency",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Response compression profile — reduces token usage by tightening response style.",
     triggers: {
       tasks: ["build", "debug", "refactor", "review", "explore", "team"],
@@ -127,7 +127,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "focused-memory",
     name: "Focused Memory",
     class: "context",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Retrieves only the most directly relevant past observations — lower token cost than Memory Compact.",
     triggers: {
       tasks: ["debug", "review", "refactor"],
@@ -151,7 +151,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "one-line-review",
     name: "One-Line Review Mode",
     class: "efficiency",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Maximally terse review output — one actionable line per file or issue.",
     triggers: {
       tasks: ["review"],
@@ -177,7 +177,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "debug-flow",
     name: "Debug Flow",
     class: "workflow",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Structured debugging workflow: reproduce → isolate → fix → confirm.",
     triggers: {
       tasks: ["debug"],
@@ -205,7 +205,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "checkpoints-lite",
     name: "Checkpoints Lite",
     class: "workflow",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Lightweight checkpoint pattern — placeholder; full implementation in Phase 2.",
     triggers: {
       tasks: ["debug", "build", "refactor"],
@@ -230,7 +230,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "compact-response",
     name: "Compact Response",
     class: "efficiency",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Minimal response style for debug and fix tasks — error + fix only, no narration.",
     triggers: {
       tasks: ["debug", "refactor"],
@@ -255,7 +255,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "shared-memory-lite",
     name: "Shared Memory Lite",
     class: "context",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Team session memory — placeholder; full shared-workspace memory tree in Phase 3.",
     triggers: {
       tasks: ["build", "review", "debug", "team"],
@@ -281,7 +281,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "decision-log-lite",
     name: "Decision Log Lite",
     class: "workflow",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Lightweight architectural decision logging — placeholder; full ADR system in Phase 3.",
     triggers: {
       tasks: ["build", "refactor", "team"],
@@ -306,7 +306,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "context-shield-core",
     name: "Context Shield",
     class: "efficiency",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Routes high-output operations through bounded subprocesses so compact summaries — not raw dumps — reach the model context.",
     triggers: {
       tasks: ["debug", "review", "build", "refactor", "explore"],
@@ -317,16 +317,16 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     instructions: {
       system: [
         "A shielded execution runtime is available on this instance. Use it for any command that may produce large output.",
-        "Use `floatr_execute <command>` instead of bare bash for: grep/rg/find, test runners, build commands, git log/diff/blame, and any command likely to produce >200 lines.",
-        "When floatr_execute returns a summary with an artifact path, reference the artifact path rather than re-running the command.",
-        "Use `floatr_execute_file <path>` instead of `cat` or `read_file` for files larger than a few hundred lines — you will receive a compact summary and the artifact path.",
-        "Use `floatr_batch_execute '[{\"cmd\":\"...\"}]'` to run multiple commands in one shielded call and receive a single summary.",
+        "Use `mizi_execute <command>` instead of bare bash for: grep/rg/find, test runners, build commands, git log/diff/blame, and any command likely to produce >200 lines.",
+        "When mizi_execute returns a summary with an artifact path, reference the artifact path rather than re-running the command.",
+        "Use `mizi_execute_file <path>` instead of `cat` or `read_file` for files larger than a few hundred lines — you will receive a compact summary and the artifact path.",
+        "Use `mizi_batch_execute '[{\"cmd\":\"...\"}]'` to run multiple commands in one shielded call and receive a single summary.",
         "If a command is blocked by the shield (HTTP 403 response), do not attempt to bypass the safety check — report the block and suggest an alternative approach.",
         "Execution errors return HTTP 500. HTTP 200 means success (shielded or inline). 403 means dangerous pattern blocked.",
-        "Shielded output is saved to /workspace/.floatr/artifacts/ and is available for the duration of the session.",
-        "Run `floatr_stats` to see routing metrics, bytes avoided, per-class routing breakdown, and failure counts.",
-        "Run `floatr_doctor` to check shield health including stale snapshot detection and routing failure diagnostics.",
-        "Before a context compaction event, POST to /floatr/compact to save a snapshot and prime the restore path.",
+        "Shielded output is saved to /workspace/.mizi/artifacts/ and is available for the duration of the session.",
+        "Run `mizi_stats` to see routing metrics, bytes avoided, per-class routing breakdown, and failure counts.",
+        "Run `mizi_doctor` to check shield health including stale snapshot detection and routing failure diagnostics.",
+        "Before a context compaction event, POST to /mizi/compact to save a snapshot and prime the restore path.",
       ],
     },
     install: { type: "virtual", outputs: ["system_prompt_fragment"] },
@@ -339,7 +339,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "working-state-continuity",
     name: "Working State Continuity",
     class: "context",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Preserves task progress across compaction and reconnects — active task, plan checkpoint, active files, and unresolved errors survive context resets.",
     triggers: {
       tasks: ["build", "debug", "refactor", "review", "explore"],
@@ -349,15 +349,15 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw"] },
     instructions: {
       system: [
-        "This session has working state continuity. A per-session event journal is stored at /workspace/.floatr/session-state.db.",
+        "This session has working state continuity. A per-session event journal is stored at /workspace/.mizi/session-state.db.",
         "At the start of each task, a restore block may be injected from the latest snapshot — use it to pick up where the previous task left off without re-reading the entire codebase.",
-        "Before any compaction or major context reset, signal the Claw Runner via POST /floatr/compact with your current working state (activeTask, planCheckpoint, activeFiles, unresolvedErrors, bundleSlug, tokenMode). This saves a snapshot AND primes the next task start to force-inject the restore block via the compaction path.",
-        "Use POST /floatr/snapshot for manual saves between compaction events. Both endpoints accept the same payload.",
+        "Before any compaction or major context reset, signal the Claw Runner via POST /mizi/compact with your current working state (activeTask, planCheckpoint, activeFiles, unresolvedErrors, bundleSlug, tokenMode). This saves a snapshot AND primes the next task start to force-inject the restore block via the compaction path.",
+        "Use POST /mizi/snapshot for manual saves between compaction events. Both endpoints accept the same payload.",
         "Keep snapshots concise: one sentence per active task, a bulleted plan checkpoint, and a list of at most 5 active file paths.",
-        "Log plan changes via POST /floatr/plan with {checkpoint, activeFiles, taskSummary} — this updates the event journal and the active state.",
-        "Log tool use and tool results via POST /floatr/event with {event_type, payload}. Allowed types: tool_use, tool_result, plan_change, plan_checkpoint, user_note, error_observed, decision, task_progress.",
+        "Log plan changes via POST /mizi/plan with {checkpoint, activeFiles, taskSummary} — this updates the event journal and the active state.",
+        "Log tool use and tool results via POST /mizi/event with {event_type, payload}. Allowed types: tool_use, tool_result, plan_change, plan_checkpoint, user_note, error_observed, decision, task_progress.",
         "After restoring from a snapshot, validate its fields against the current filesystem state before using them — the snapshot may be stale if files changed.",
-        "Use GET /floatr/restore to read the current snapshot and recent events without starting a task.",
+        "Use GET /mizi/restore to read the current snapshot and recent events without starting a task.",
         "Working state is in-session only. For cross-session memory, use the memory layer (memory-compact or focused-memory skills).",
         "If no snapshot is available at task start, proceed normally — continuity is best-effort and never blocks execution.",
       ],
@@ -372,7 +372,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "memory-governance-core",
     name: "Memory Governance Core",
     class: "context",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Progressive-disclosure memory retrieval with contradiction awareness, staleness tracking, ROI promotion, and team-aware scope resolution for long-running and shared sessions.",
     triggers: {
       tasks: ["build", "debug", "review", "refactor", "explore", "team"],
@@ -401,7 +401,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "budgeted-retrieval",
     name: "Budgeted Retrieval",
     class: "efficiency",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Token-mode-aware memory budget enforcement — controls candidate count, layer availability, stale suppression, and metadata verbosity to keep context injection within budget.",
     triggers: {
       tasks: ["build", "debug", "refactor", "explore", "team"],
@@ -431,7 +431,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "team-coordination-core",
     name: "Team Coordination Core",
     class: "team",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Core coordination layer for multi-lane team sessions — session efficiency rules, contention management, and cross-lane communication protocols.",
     triggers: {
       tasks: ["build", "review", "debug", "team"],
@@ -461,7 +461,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "lane-awareness",
     name: "Lane Awareness",
     class: "team",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Per-member lane overlay awareness — injects lane type, task ownership, and retrieval emphasis into the member's own prompt path only.",
     triggers: {
       tasks: ["build", "debug", "review", "refactor", "team"],
@@ -490,7 +490,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "shared-repo-memory",
     name: "Shared Repo Memory",
     class: "team",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Shared architectural knowledge layer — reuses repo graph, architecture summary, and conventions across all lanes without duplicating context per member.",
     triggers: {
       tasks: ["build", "review", "debug", "refactor", "team"],
@@ -518,7 +518,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "contention-management-core",
     name: "Contention Management Core",
     class: "team",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "GPU contention and heavy-job fairness — schedules expensive coordination tasks through the weighted fair queue to prevent starvation of background indexing by foreground work.",
     triggers: {
       tasks: ["build", "debug", "team"],
@@ -547,7 +547,7 @@ export const DEFAULT_SKILLS: FloatrSkillManifest[] = [
     id: "handoff-discipline",
     name: "Handoff Discipline",
     class: "team",
-    source: FLOATR_NATIVE_SOURCE,
+    source: MIZI_NATIVE_SOURCE,
     summary: "Structured handoff signals between lanes — blocked, needs_review, safe_to_merge, watch_files, and related_lane types with optional free-text context.",
     triggers: {
       tasks: ["build", "review", "team"],
@@ -759,40 +759,40 @@ export interface DefaultBundleSpec {
 
 export const DEFAULT_BUNDLES: DefaultBundleSpec[] = [
   {
-    slug: "floatr-builder",
-    name: "FLOATR Builder",
+    slug: "mizi-builder",
+    name: "MIZI Builder",
     skillIds: ["karpathy-doctrine", "flow-router", "memory-compact", "lean-compression", "context-shield-core", "working-state-continuity"],
     taskMode: "build",
     sessionMode: "solo",
     description: "Default bundle for building new features — doctrine + flow + memory + compression + context shield + continuity.",
   },
   {
-    slug: "floatr-reviewer",
-    name: "FLOATR Reviewer",
+    slug: "mizi-reviewer",
+    name: "MIZI Reviewer",
     skillIds: ["karpathy-doctrine", "flow-router", "focused-memory", "one-line-review", "context-shield-core"],
     taskMode: "review",
     sessionMode: "solo",
     description: "Code review bundle — doctrine + flow + focused memory + terse review output + context shield.",
   },
   {
-    slug: "floatr-debugger",
-    name: "FLOATR Debugger",
+    slug: "mizi-debugger",
+    name: "MIZI Debugger",
     skillIds: ["debug-flow", "checkpoints-lite", "focused-memory", "compact-response", "context-shield-core", "working-state-continuity"],
     taskMode: "debug",
     sessionMode: "solo",
     description: "Debugging bundle — structured debug flow + checkpoints + focused memory + compact output + shield + continuity.",
   },
   {
-    slug: "floatr-team-studio",
-    name: "FLOATR Team Studio",
+    slug: "mizi-team-studio",
+    name: "MIZI Team Studio",
     skillIds: ["shared-memory-lite", "flow-router", "decision-log-lite", "lean-compression", "context-shield-core", "working-state-continuity"],
     taskMode: "team",
     sessionMode: "team",
     description: "Team session bundle — shared memory + flow + decision log + lean compression + shield + continuity.",
   },
   {
-    slug: "floatr-team-coordination",
-    name: "FLOATR Team Coordination",
+    slug: "mizi-team-coordination",
+    name: "MIZI Team Coordination",
     skillIds: ["team-coordination-core", "lane-awareness", "shared-repo-memory", "contention-management-core", "handoff-discipline", "memory-governance-core"],
     taskMode: "team",
     sessionMode: "team",

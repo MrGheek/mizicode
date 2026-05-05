@@ -6,7 +6,7 @@ import { logger } from "../lib/logger";
 const router = Router();
 
 /** Resolved from env at startup — scopes all palette history to this identity. */
-const PALETTE_USER_ID = process.env["OMNIQL_MEM_USER_ID"] || "operator";
+const PALETTE_USER_ID = process.env["MIZI_MEM_USER_ID"] || "operator";
 
 const VALID_ACTIONS = [
   "navigate",
@@ -27,7 +27,7 @@ const SESSION_ACTIONS = new Set<PaletteAction>([
   "copy-ssh",
 ]);
 
-const SYSTEM_PROMPT = `You are an AI assistant embedded in the FLOATR command palette — a cloud coding platform for managing GPU-backed coding sessions.
+const SYSTEM_PROMPT = `You are an AI assistant embedded in the MIZI command palette — a cloud coding platform for managing GPU-backed coding sessions.
 
 Your job is to parse a natural-language command from the user and return a structured JSON action object. The user is currently using the app; use the context provided to resolve ambiguous references like "my session", "the running one", "last night's session", etc.
 

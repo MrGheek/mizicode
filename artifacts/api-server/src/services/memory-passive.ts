@@ -11,7 +11,7 @@
  *      and POSTs /mem/recall/inject to mark which items were actually injected.
  *
  * Feature flagging:
- *   - Global:   OMNIQL_MEM_PASSIVE_RECALL=1
+ *   - Global:   MIZI_MEM_PASSIVE_RECALL=1
  *   - Per-session: row in mem_passive_settings (overrides global).
  */
 import Database from "better-sqlite3";
@@ -20,7 +20,7 @@ import os from "os";
 import { logger } from "../lib/logger";
 import { cosineSimilarity, computeSemanticSimilarityBatch, tfidfCosineSimilarity } from "./memory-semantic";
 
-const DATA_DIR = process.env["MEM_DATA_DIR"] || path.join(os.homedir(), "omniql-memory");
+const DATA_DIR = process.env["MEM_DATA_DIR"] || path.join(os.homedir(), "mizi-memory");
 const DB_PATH = path.join(DATA_DIR, "mem.db");
 
 let _db: Database.Database | null = null;
@@ -64,7 +64,7 @@ const SIDECAR_ACCEPT_THRESHOLD = 0.55;
 const RELATES_TO_AUTO_THRESHOLD = 0.75;
 
 export function passiveRecallGloballyEnabled(): boolean {
-  return process.env["OMNIQL_MEM_PASSIVE_RECALL"] === "1";
+  return process.env["MIZI_MEM_PASSIVE_RECALL"] === "1";
 }
 
 /**
@@ -408,7 +408,7 @@ async function sidecarVerify(
       : `heuristic-rejected: blended=${blended.toFixed(2)} below ${SIDECAR_ACCEPT_THRESHOLD}`,
   };
 
-  if (process.env["OMNIQL_MEM_RECALL_SIDECAR_LLM"] !== "1") {
+  if (process.env["MIZI_MEM_RECALL_SIDECAR_LLM"] !== "1") {
     return heuristic;
   }
   const baseUrl = process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"];
@@ -416,7 +416,7 @@ async function sidecarVerify(
   if (!baseUrl || !apiKey) return heuristic;
 
   try {
-    const model = process.env["OMNIQL_MEM_RECALL_SIDECAR_MODEL"] || "gpt-4o-mini";
+    const model = process.env["MIZI_MEM_RECALL_SIDECAR_MODEL"] || "gpt-4o-mini";
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },

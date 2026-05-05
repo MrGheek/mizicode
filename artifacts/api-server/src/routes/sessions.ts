@@ -168,20 +168,20 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
 // ─── Instance callback: the running instance POSTs its phase transitions here ──
 // Replaces the unreliable server-side probe (Vast.ai firewall blocks server→instance).
 //
-// Production posture: OMNIQL_MEM_TOKEN MUST be set when NODE_ENV=production,
+// Production posture: MIZI_MEM_TOKEN MUST be set when NODE_ENV=production,
 // otherwise the callback endpoint becomes an unauthenticated status-mutation
 // surface that any internet host can hit. Memory and ambient routes already
 // fail fast on the same env var; we mirror that here so the launch posture is
 // uniform across all token-gated surfaces.
-const CALLBACK_TOKEN = process.env["OMNIQL_MEM_TOKEN"] || "";
+const CALLBACK_TOKEN = process.env["MIZI_MEM_TOKEN"] || "";
 const CALLBACK_IS_PROD = process.env["NODE_ENV"] === "production";
 if (CALLBACK_IS_PROD && !CALLBACK_TOKEN) {
   throw new Error(
-    "OMNIQL_MEM_TOKEN must be set in production to protect the instance status callback endpoint",
+    "MIZI_MEM_TOKEN must be set in production to protect the instance status callback endpoint",
   );
 }
 if (!CALLBACK_TOKEN) {
-  logger.warn("[sessions] OMNIQL_MEM_TOKEN not set — instance status callback is unauthenticated (dev mode only)");
+  logger.warn("[sessions] MIZI_MEM_TOKEN not set — instance status callback is unauthenticated (dev mode only)");
 }
 
 /**
@@ -235,7 +235,7 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
     return;
   }
 
-  // Validate Bearer token when OMNIQL_MEM_TOKEN is configured.
+  // Validate Bearer token when MIZI_MEM_TOKEN is configured.
   if (CALLBACK_TOKEN) {
     const auth = req.headers["authorization"] || "";
     const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
@@ -599,7 +599,7 @@ router.patch("/sessions/:sessionId", async (req, res) => {
 
   if (nextIntentText && nextIntentText !== existing.intentText) {
     try {
-      const memUserId = process.env["OMNIQL_MEM_USER_ID"] || "operator";
+      const memUserId = process.env["MIZI_MEM_USER_ID"] || "operator";
       addObservation(String(id), memUserId, "session_goal", "", nextIntentText);
     } catch (memErr) {
       logger.warn({ err: memErr, sessionId: id }, "Failed to record updated session_goal observation (non-fatal)");
@@ -838,12 +838,12 @@ router.post("/sessions", async (req, res) => {
     const MODEL_QUANT = profile.defaultQuant;
     const SERVED_MODEL_NAME = profile.servedModelName;
 
-    const memProxyUrl = process.env["OMNIQL_MEM_PROXY_URL"]
+    const memProxyUrl = process.env["MIZI_MEM_PROXY_URL"]
       || (process.env["REPLIT_DEV_DOMAIN"]
         ? `https://${process.env["REPLIT_DEV_DOMAIN"]}`
         : undefined);
 
-    const memUserId = process.env["OMNIQL_MEM_USER_ID"] || "operator";
+    const memUserId = process.env["MIZI_MEM_USER_ID"] || "operator";
 
     const callbackBaseUrl = memProxyUrl; // same base URL the instance can already reach
 
@@ -875,7 +875,7 @@ router.post("/sessions", async (req, res) => {
         bundle = found || null;
       }
       if (!bundle) {
-        // Pass hasRepoContext so floatr-builder is forced when no repo URL was supplied
+        // Pass hasRepoContext so mizi-builder is forced when no repo URL was supplied
         bundle = await getDefaultBundleForContext(sessionCtx, !!(repoUrl && typeof repoUrl === "string" && repoUrl.trim()));
       }
 
@@ -908,7 +908,7 @@ router.post("/sessions", async (req, res) => {
       numGpus: profile.numGpus,
       swarmWorkerCap: profile.swarmWorkerCap,
       memProxyUrl,
-      memAuthToken: process.env["OMNIQL_MEM_TOKEN"],
+      memAuthToken: process.env["MIZI_MEM_TOKEN"],
       memUserId,
       teamMembers: teamMemberRecords,
       sessionId: insertedSessionId,
@@ -1149,13 +1149,13 @@ router.delete("/sessions/:sessionId", async (req, res) => {
   }
 });
 
-const MEM_USER_ID = process.env["OMNIQL_MEM_USER_ID"] || "operator";
+const MEM_USER_ID = process.env["MIZI_MEM_USER_ID"] || "operator";
 
 // Dashboard memory proxy — these routes exist so the dashboard can fetch
-// operator-scoped memory without needing the OMNIQL_MEM_TOKEN bearer header.
-// OmniQL is a single-operator platform: all sessions share one userId
-// (OMNIQL_MEM_USER_ID, default "operator") for cross-session memory continuity.
-// The :sessionId path parameter identifies the Vast.ai/OmniQL session for
+// operator-scoped memory without needing the MIZI_MEM_TOKEN bearer header.
+// MIZI is a single-operator platform: all sessions share one userId
+// (MIZI_MEM_USER_ID, default "operator") for cross-session memory continuity.
+// The :sessionId path parameter identifies the Vast.ai/MIZI session for
 // route namespacing; memory records are scoped by MEM_USER_ID globally, not
 // by individual session, since the intent is cross-session recall.
 router.get("/sessions/:sessionId/memory/observations", (_req, res) => {
@@ -1665,7 +1665,7 @@ const swarmSseSubscribers = new Map<number, Set<(snapshot: SwarmSnapshot) => voi
 //   POST /sessions/:id/swarm-status — alias for Claw Runner compatibility
 //
 // The Claw Runner derives its push URL by replacing /status with /swarm-status
-// on OMNIQL_CALLBACK_URL, so it always POSTs to /swarm-status rather than
+// on MIZI_CALLBACK_URL, so it always POSTs to /swarm-status rather than
 // /swarm-push.  Registering both routes here ensures snapshots are never silently
 // dropped without requiring an external proxy rewrite.
 //
@@ -1724,7 +1724,7 @@ const handleSwarmPush: RequestHandler = async (req, res) => {
 router.post("/sessions/:sessionId/swarm-push", handleSwarmPush);
 
 // POST /sessions/:sessionId/swarm-status — alias used by the Claw Runner.
-// The runner replaces /status with /swarm-status on OMNIQL_CALLBACK_URL, so
+// The runner replaces /status with /swarm-status on MIZI_CALLBACK_URL, so
 // without this alias every runner snapshot would 404 and be silently dropped.
 router.post("/sessions/:sessionId/swarm-status", handleSwarmPush);
 

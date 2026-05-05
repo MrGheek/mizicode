@@ -7,7 +7,7 @@
  *   → indexing_fts → indexing_vectors → summarizing → ready | error
  *
  * Storage:
- *   /workspace/.floatr/repo-graph.db — SQLite with FTS5 + optional vector table
+ *   /workspace/.mizi/repo-graph.db — SQLite with FTS5 + optional vector table
  *
  * Parsing:
  *   Tree-sitter (tree-sitter + language packs) with regex fallback
@@ -24,10 +24,10 @@
  *   REPO_INDEX_POLL_INTERVAL_SECS (default 30 — daemon mode)
  *
  * Env:
- *   OMNIQL_CALLBACK_URL, OMNIQL_MEM_AUTH_TOKEN, OMNIQL_SESSION_ID
- *   FLOATR_REPO_JOB_ID   — if set: single-job mode and exit
- *   FLOATR_REPO_PATH     — repo root (default /workspace/projects)
- *   FLOATR_GRAPH_DB      — SQLite path (default /workspace/.floatr/repo-graph.db)
+ *   MIZI_CALLBACK_URL, MIZI_MEM_AUTH_TOKEN, MIZI_SESSION_ID
+ *   MIZI_REPO_JOB_ID   — if set: single-job mode and exit
+ *   MIZI_REPO_PATH     — repo root (default /workspace/projects)
+ *   MIZI_GRAPH_DB      — SQLite path (default /workspace/.mizi/repo-graph.db)
  */
 
 import { fingerprint as runFingerprint } from './repo-fingerprint.mjs';
@@ -46,11 +46,11 @@ import { readFileSync, statSync, readdirSync } from 'fs';
 import { createHash } from 'crypto';
 import { join, extname, relative } from 'path';
 
-const CALLBACK_BASE_RAW = process.env.OMNIQL_CALLBACK_URL || '';
-const AUTH_TOKEN = process.env.OMNIQL_MEM_AUTH_TOKEN || '';
-const SESSION_ID = process.env.OMNIQL_SESSION_ID || '';
-const SPECIFIC_JOB_ID = parseInt(process.env.FLOATR_REPO_JOB_ID || '0', 10);
-const DEFAULT_REPO_PATH = process.env.FLOATR_REPO_PATH || '/workspace/projects';
+const CALLBACK_BASE_RAW = process.env.MIZI_CALLBACK_URL || '';
+const AUTH_TOKEN = process.env.MIZI_MEM_AUTH_TOKEN || '';
+const SESSION_ID = process.env.MIZI_SESSION_ID || '';
+const SPECIFIC_JOB_ID = parseInt(process.env.MIZI_REPO_JOB_ID || '0', 10);
+const DEFAULT_REPO_PATH = process.env.MIZI_REPO_PATH || '/workspace/projects';
 
 const MAX_DURATION_MS = parseInt(process.env.REPO_INDEX_MAX_DURATION_MS || '300000', 10);
 const MAX_SYMBOLS = parseInt(process.env.REPO_INDEX_MAX_SYMBOLS || '5000', 10);
@@ -190,7 +190,7 @@ function walkSourceFiles(dir, root, maxFiles) {
     try { entries = readdirSync(d, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
       if (results.length >= maxFiles) break;
-      if (e.name.startsWith('.') && e.name !== '.floatr') continue;
+      if (e.name.startsWith('.') && e.name !== '.mizi') continue;
       if (e.isDirectory()) {
         if (!SKIP_DIRS.has(e.name)) walk(join(d, e.name));
       } else if (e.isFile()) {
@@ -341,7 +341,7 @@ async function runJob({ jobId, repoPath }) {
     await postSync({ jobId, status: 'indexing_vectors', repoPath });
     let embeddingDim = 0;
     if (db) {
-      tlog(`Computing embeddings (strategy=${process.env.FLOATR_EMBEDDINGS || 'local'})...`);
+      tlog(`Computing embeddings (strategy=${process.env.MIZI_EMBEDDINGS || 'local'})...`);
       const embSymbols = getAllSymbols(db, 500); // cap at 500 to limit embedding time
       const embTexts = embSymbols.map(s => [s.name, s.kind, s.path, s.signature, s.docstring].filter(Boolean).join(' '));
       try {
@@ -491,7 +491,7 @@ async function runDaemon() {
 }
 
 async function main() {
-  if (!SESSION_ID) { console.error('[repo-indexer] OMNIQL_SESSION_ID required'); process.exit(1); }
+  if (!SESSION_ID) { console.error('[repo-indexer] MIZI_SESSION_ID required'); process.exit(1); }
   if (SPECIFIC_JOB_ID) await runJob({ jobId: SPECIFIC_JOB_ID, repoPath: DEFAULT_REPO_PATH });
   else await runDaemon();
 }

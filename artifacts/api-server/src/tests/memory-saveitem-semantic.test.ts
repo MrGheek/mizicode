@@ -41,7 +41,7 @@ import { saveMemoryItem } from "../services/memory";
 
 let tmpDir: string;
 const originalMEMDir = process.env["MEM_DATA_DIR"];
-const originalFlag = process.env["OMNIQL_MEM_SEMANTIC_CONTRADICTION"];
+const originalFlag = process.env["MIZI_MEM_SEMANTIC_CONTRADICTION"];
 
 // Note: MEM_DATA_DIR and the module-level DB singleton in memory.ts are
 // evaluated at import time.  We use a unique userId per test so that each
@@ -52,7 +52,7 @@ const originalFlag = process.env["OMNIQL_MEM_SEMANTIC_CONTRADICTION"];
 beforeAll(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mem-semantic-int-"));
   // Set flag before memory.ts lazily opens the DB (first call to saveMemoryItem)
-  process.env["OMNIQL_MEM_SEMANTIC_CONTRADICTION"] = "1";
+  process.env["MIZI_MEM_SEMANTIC_CONTRADICTION"] = "1";
 });
 
 afterAll(() => {
@@ -63,9 +63,9 @@ afterAll(() => {
     delete process.env["MEM_DATA_DIR"];
   }
   if (originalFlag !== undefined) {
-    process.env["OMNIQL_MEM_SEMANTIC_CONTRADICTION"] = originalFlag;
+    process.env["MIZI_MEM_SEMANTIC_CONTRADICTION"] = originalFlag;
   } else {
-    delete process.env["OMNIQL_MEM_SEMANTIC_CONTRADICTION"];
+    delete process.env["MIZI_MEM_SEMANTIC_CONTRADICTION"];
   }
   // Clean up temp dir
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }

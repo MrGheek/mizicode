@@ -215,7 +215,7 @@ export async function createTemplate(params: VastTemplateParams) {
     env: params.env || "",
     disk_space: params.disk_space || 400,
     readme: params.readme || "",
-    tag_name: "floatr-coding",
+    tag_name: "mizi-coding",
     allow_ssh: true,
   };
 
@@ -284,15 +284,15 @@ export function buildOnStartScript(profileConfig: {
   nimApiKey?: string;
   // GitHub PAT: injected as GITHUB_TOKEN. When set, git is configured to use
   // the token for HTTPS github.com operations and all pushes are redirected to
-  // a dedicated session branch (floatr/session-<id>) via a git wrapper script.
+  // a dedicated session branch (mizi/session-<id>) via a git wrapper script.
   // The token is never stored in the DB — only ever passed through the onstart script.
   githubToken?: string;
 }): string {
   const memLines = profileConfig.memProxyUrl
     ? [
-        `export OMNIQL_MEM_PROXY_URL="${profileConfig.memProxyUrl}"`,
-        `export OMNIQL_MEM_AUTH_TOKEN="${profileConfig.memAuthToken || ""}"`,
-        `export OMNIQL_MEM_USER_ID="${profileConfig.memUserId || "default"}"`,
+        `export MIZI_MEM_PROXY_URL="${profileConfig.memProxyUrl}"`,
+        `export MIZI_MEM_AUTH_TOKEN="${profileConfig.memAuthToken || ""}"`,
+        `export MIZI_MEM_USER_ID="${profileConfig.memUserId || "default"}"`,
       ].join("\n")
     : "";
 
@@ -300,8 +300,8 @@ export function buildOnStartScript(profileConfig: {
   // can track boot progress without needing to probe the instance (firewall blocks it).
   const callbackLines = profileConfig.callbackBaseUrl && profileConfig.sessionId != null
     ? [
-        `export OMNIQL_SESSION_ID="${profileConfig.sessionId}"`,
-        `export OMNIQL_CALLBACK_URL="${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/status"`,
+        `export MIZI_SESSION_ID="${profileConfig.sessionId}"`,
+        `export MIZI_CALLBACK_URL="${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/status"`,
       ].join("\n")
     : "";
 
@@ -311,10 +311,10 @@ export function buildOnStartScript(profileConfig: {
     ? `export TEAM_MEMBERS_JSON='${JSON.stringify(profileConfig.teamMembers)}'`
     : "";
 
-  // Smart Skills bundle: written to /workspace/.floatr/skills/active-bundle.json during boot.
+  // Smart Skills bundle: written to /workspace/.mizi/skills/active-bundle.json during boot.
   // The base64 payload contains the compiled bundle + system prompt fragment.
   const skillsLine = profileConfig.activeBundleB64
-    ? `export FLOATR_ACTIVE_BUNDLE_B64='${profileConfig.activeBundleB64}'`
+    ? `export MIZI_ACTIVE_BUNDLE_B64='${profileConfig.activeBundleB64}'`
     : "";
 
   const nimLines = profileConfig.nimModelId
@@ -327,7 +327,7 @@ export function buildOnStartScript(profileConfig: {
 
   // GitHub PAT: configure git credential substitution and install a lightweight
   // git wrapper that redirects all `git push` calls to the session-specific branch
-  // (floatr/session-<id>). The wrapper is placed at /usr/local/bin/git which is
+  // (mizi/session-<id>). The wrapper is placed at /usr/local/bin/git which is
   // ahead of /usr/bin/git in PATH. All non-push commands pass through unchanged.
   //
   // Security note: the token is injected only into the onstart script (passed
@@ -338,8 +338,8 @@ export function buildOnStartScript(profileConfig: {
     ? `export GITHUB_TOKEN="${profileConfig.githubToken}"
 git config --global url."https://${profileConfig.githubToken}@github.com/".insteadOf "https://github.com/"
 git config --global push.default current
-# Install git wrapper — forces all pushes to floatr/session-${profileConfig.sessionId}
-cat > /usr/local/bin/git << 'FLOATR_GIT_WRAPPER'
+# Install git wrapper — forces all pushes to mizi/session-${profileConfig.sessionId}
+cat > /usr/local/bin/git << 'MIZI_GIT_WRAPPER'
 #!/bin/bash
 GIT=/usr/bin/git
 # Walk args skipping global git options to find the actual subcommand.
@@ -368,11 +368,11 @@ if [ "$CMD" = "push" ]; then
         FOUND=1 ;;
     esac
   done
-  exec "$GIT" push "$REMOTE" HEAD:floatr/session-${profileConfig.sessionId}
+  exec "$GIT" push "$REMOTE" HEAD:mizi/session-${profileConfig.sessionId}
 else
   exec "$GIT" "$@"
 fi
-FLOATR_GIT_WRAPPER
+MIZI_GIT_WRAPPER
 chmod +x /usr/local/bin/git`
     : "";
 

@@ -44,7 +44,7 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 
-const MEM_TOKEN = process.env["OMNIQL_MEM_TOKEN"];
+const MEM_TOKEN = process.env["MIZI_MEM_TOKEN"];
 const IS_PROD = process.env["NODE_ENV"] === "production";
 
 const VALID_TOKEN_MODES = ["full", "core", "lean", "ultra"] as const;
@@ -70,9 +70,9 @@ function validateSessionType(raw: string | undefined, res: Response): string | n
 
 if (!MEM_TOKEN) {
   if (IS_PROD) {
-    throw new Error("OMNIQL_MEM_TOKEN must be set in production to protect memory endpoints");
+    throw new Error("MIZI_MEM_TOKEN must be set in production to protect memory endpoints");
   }
-  console.warn("[mem] OMNIQL_MEM_TOKEN not set — memory endpoints are unprotected (dev mode)");
+  console.warn("[mem] MIZI_MEM_TOKEN not set — memory endpoints are unprotected (dev mode)");
 }
 
 function verifyMemToken(req: Request, res: Response): boolean {

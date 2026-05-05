@@ -3,23 +3,23 @@
 This directory contains the upstream `instructkr/claw-code` repository
 checked in as a vendor copy. The Dockerfile builds the **Rust** binary
 from `claw-code-main/rust/` and ships it as the canonical `claw` CLI
-inside the FLOATR coding image.
+inside the MIZI coding image.
 
 ## Layout
 
 ```
 docker/claw-code-src/
 └── claw-code-main/        ← upstream snapshot (do not edit)
-    ├── rust/              ← Rust workspace — THIS is what FLOATR ships
+    ├── rust/              ← Rust workspace — THIS is what MIZI ships
     │   ├── Cargo.toml
     │   └── crates/        ← rusty-claude-cli, runtime, api, commands, ...
-    ├── api/               ← upstream Python port (NOT used by FLOATR)
-    ├── commands/          ← upstream Python port (NOT used by FLOATR)
-    ├── runtime/           ← upstream Python port (NOT used by FLOATR)
-    └── tools/             ← upstream Python port (NOT used by FLOATR)
+    ├── api/               ← upstream Python port (NOT used by MIZI)
+    ├── commands/          ← upstream Python port (NOT used by MIZI)
+    ├── runtime/           ← upstream Python port (NOT used by MIZI)
+    └── tools/             ← upstream Python port (NOT used by MIZI)
 ```
 
-## What FLOATR actually uses
+## What MIZI actually uses
 
 The Dockerfile (`docker/Dockerfile`) has two relevant references:
 
@@ -34,7 +34,7 @@ The Dockerfile (`docker/Dockerfile`) has two relevant references:
 The Python tree under `claw-code-main/` (api/, commands/, runtime/,
 tools/) is included for upstream-compatibility reasons only. It is
 **not invoked at runtime** by `onstart.sh`, `claw-runner.js`, or any
-service the FLOATR container runs. Do not assume it is loaded.
+service the MIZI container runs. Do not assume it is loaded.
 
 ## If you need to upgrade Claw Code
 
@@ -45,5 +45,5 @@ service the FLOATR container runs. Do not assume it is loaded.
 4. Smoke-test inside the container: `claw --version` should print the
    version baked into the Rust crate, not the Python package metadata.
 
-If upstream removes the Rust port, FLOATR will need a hard fork of the
+If upstream removes the Rust port, MIZI will need a hard fork of the
 last Rust-port commit — the Python port is not on the supported path.

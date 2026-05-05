@@ -26,7 +26,7 @@ import {
 // `/api/memory/*` browser-safe proxy used by the dashboard):
 //
 //   • `/api/ambient/*` and `/api/safety/*` — token-gated by
-//     `OMNIQL_MEM_TOKEN` (Bearer). This is the surface external
+//     `MIZI_MEM_TOKEN` (Bearer). This is the surface external
 //     operators / scripts integrate against.
 //   • `/api/dashboard/ambient/*` and `/api/dashboard/safety/*` — open
 //     browser-safe proxy that calls the same in-process services. The
@@ -40,16 +40,16 @@ import {
 // origin checks). Mutating routes still record operator-attribution via
 // the `decidedBy` body field; this matches the memory rail's posture.
 
-const OPERATOR_TOKEN = process.env["OMNIQL_MEM_TOKEN"];
+const OPERATOR_TOKEN = process.env["MIZI_MEM_TOKEN"];
 const IS_PROD = process.env["NODE_ENV"] === "production";
 
 if (!OPERATOR_TOKEN) {
   if (IS_PROD) {
     throw new Error(
-      "OMNIQL_MEM_TOKEN must be set in production to protect ambient/safety control-plane endpoints",
+      "MIZI_MEM_TOKEN must be set in production to protect ambient/safety control-plane endpoints",
     );
   }
-  logger.warn("[ambient] OMNIQL_MEM_TOKEN not set — ambient/safety token-gated endpoints are open (dev mode only)");
+  logger.warn("[ambient] MIZI_MEM_TOKEN not set — ambient/safety token-gated endpoints are open (dev mode only)");
 }
 
 function requireOperator(req: Request, res: Response, next: NextFunction): void {

@@ -3,7 +3,7 @@ import { GitBranch, Copy, Check } from "lucide-react";
 
 export function GitHubBranchChip({ sessionId }: { sessionId: number }) {
   const [copied, setCopied] = useState(false);
-  const branch = `floatr/session-${sessionId}`;
+  const branch = `mizi/session-${sessionId}`;
   const handleCopy = () => {
     navigator.clipboard.writeText(branch).then(() => {
       setCopied(true);

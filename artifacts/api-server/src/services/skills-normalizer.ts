@@ -1,4 +1,4 @@
-import type { FloatrSkillManifest, SkillClass, InstallRisk, TrustTier, TaskMode, SessionType } from "./skills-types";
+import type { MiziSkillManifest, SkillClass, InstallRisk, TrustTier, TaskMode, SessionType } from "./skills-types";
 import type { SkillSource } from "@workspace/db";
 
 interface RawFile {
@@ -113,7 +113,7 @@ function deriveSlugFromPath(path: string, repoUrl: string): string {
     .slice(0, 60);
 }
 
-function normalizeSingleFile(file: RawFile, source: SkillSource, trustTier: TrustTier): FloatrSkillManifest | null {
+function normalizeSingleFile(file: RawFile, source: SkillSource, trustTier: TrustTier): MiziSkillManifest | null {
   const { path, content } = file;
   if (!content || content.trim().length < 20) return null;
 
@@ -163,10 +163,10 @@ function normalizeSingleFile(file: RawFile, source: SkillSource, trustTier: Trus
   };
 }
 
-export function normalizeSource(rawFiles: RawFile[], source: SkillSource): FloatrSkillManifest[] {
+export function normalizeSource(rawFiles: RawFile[], source: SkillSource): MiziSkillManifest[] {
   const trustTier: TrustTier = "user_approved";
 
-  const results: FloatrSkillManifest[] = [];
+  const results: MiziSkillManifest[] = [];
   const seenSlugs = new Set<string>();
 
   for (const file of rawFiles) {

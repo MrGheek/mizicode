@@ -4129,7 +4129,7 @@ export const useCreateSkillBundle = <
 };
 
 /**
- * Internal helper: idempotently seeds the four default skill bundles (floatr-builder/reviewer/debugger/team-studio) if they do not exist. Called automatically on server startup. Not part of the public API contract.
+ * Internal helper: idempotently seeds the four default skill bundles (mizi-builder/reviewer/debugger/team-studio) if they do not exist. Called automatically on server startup. Not part of the public API contract.
  * @summary Seed default bundles (internal helper, non-contractual)
  */
 export const getSeedDefaultBundlesUrl = () => {
