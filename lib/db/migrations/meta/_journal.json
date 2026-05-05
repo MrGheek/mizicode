@@ -43,6 +43,13 @@
                         "when": 1777975800000,
                         "tag": "0016_gpu_profiles_nim_metadata",
                         "breakpoints": true
+                },
+                {
+                        "idx": 17,
+                        "version": "7",
+                        "when": 1777980000000,
+                        "tag": "0017_gpu_profiles_nim_model_metadata",
+                        "breakpoints": true
                 }
         ]
 }

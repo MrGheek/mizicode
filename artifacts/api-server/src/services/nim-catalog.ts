@@ -193,18 +193,16 @@ const SEED_MODELS: Omit<NimModel, "syncedAt">[] = [
 
 const NIM_API_BASE = "https://integrate.api.nvidia.com/v1";
 
-function getNimApiKey(): string | undefined {
-  return process.env["NVIDIA_NIM_API_KEY"];
-}
-
-async function fetchNimModels(): Promise<string[]> {
-  const key = getNimApiKey();
-  if (!key) return [];
+/** Fetch model IDs from a provider's /models endpoint. Returns [] on failure. */
+async function fetchProviderModels(apiBase: string, apiKey: string): Promise<string[]> {
   try {
-    const res = await fetch(`${NIM_API_BASE}/models`, {
-      headers: { Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(10000),
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(`${apiBase}/models`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: controller.signal,
     });
+    clearTimeout(tid);
     if (!res.ok) return [];
     const data = await res.json() as { data?: { id: string }[] };
     return (data.data ?? []).map((m) => m.id);
@@ -213,23 +211,76 @@ async function fetchNimModels(): Promise<string[]> {
   }
 }
 
+/**
+ * Sync the NIM catalog using live data from all configured providers.
+ *
+ * Strategy:
+ * 1. Fetch model IDs from NVIDIA /v1/models (if NVIDIA key configured).
+ * 2. Fetch model IDs from each configured partner's /models endpoint.
+ * 3. Build a cross-reference: for each model ID seen on a partner, record it as
+ *    a partner provider for that model — this dynamically discovers new partner models.
+ * 4. Upsert SEED_MODELS that are confirmed live on at least one provider, enriched
+ *    with any additional partner providers discovered in step 3.
+ * 5. For model IDs from partners that are NOT in SEED_MODELS, insert them with
+ *    nim_type_upgrade_available and the discovering provider as partner.
+ */
 export async function syncNimCatalog(): Promise<void> {
   try {
-    const liveModelIds = await fetchNimModels();
-    const liveSet = new Set(liveModelIds);
     const now = new Date();
 
+    // Step 1: Fetch NVIDIA live model IDs
+    const nvidiaKey = process.env["NVIDIA_NIM_API_KEY"];
+    const nvidiaModels = nvidiaKey
+      ? await fetchProviderModels(NIM_API_BASE, nvidiaKey)
+      : [];
+    const nvidiaSet = new Set(nvidiaModels);
+
+    // Step 2: Fetch partner model IDs from each configured partner
+    const partnerModelsByProvider: Record<string, Set<string>> = {};
+    for (const [providerKey, pc] of Object.entries(PROVIDER_CONFIG)) {
+      if (providerKey === "nvidia") continue;
+      const apiKey = process.env[pc.envKey];
+      if (!apiKey) continue;
+      const models = await fetchProviderModels(pc.apiBase, apiKey);
+      partnerModelsByProvider[providerKey] = new Set(models);
+    }
+
+    // Step 3: Build reverse map: modelId → partner providers that serve it
+    const discoveredPartners: Record<string, string[]> = {};
+    for (const [providerKey, modelSet] of Object.entries(partnerModelsByProvider)) {
+      for (const modelId of modelSet) {
+        if (!discoveredPartners[modelId]) discoveredPartners[modelId] = [];
+        discoveredPartners[modelId].push(providerKey);
+      }
+    }
+
+    // Step 4: Upsert SEED_MODELS (enriched with any additionally discovered partners)
+    const seedSet = new Set(SEED_MODELS.map((m) => m.nimModelId));
+    let upserted = 0;
+
     for (const model of SEED_MODELS) {
-      if (liveModelIds.length > 0 && !liveSet.has(model.nimModelId)) {
+      const onNvidia = nvidiaSet.has(model.nimModelId);
+      const extraPartners = discoveredPartners[model.nimModelId] ?? [];
+      // Merge seed partners with live-discovered partners, deduplicated
+      const mergedPartners = Array.from(
+        new Set([...model.partnerProviders, ...extraPartners])
+      );
+      const onPartner = mergedPartners.some((p) => partnerModelsByProvider[p]?.has(model.nimModelId));
+
+      // Skip if NVIDIA is configured but the model isn't live anywhere
+      const nvidiaConfigured = !!nvidiaKey;
+      const anyPartnerConfigured = Object.keys(partnerModelsByProvider).length > 0;
+      if (nvidiaConfigured && anyPartnerConfigured && !onNvidia && !onPartner) {
         continue;
       }
+
       await db
         .insert(nimCatalogTable)
         .values({
           nimModelId: model.nimModelId,
           displayName: model.displayName,
           nimTypes: model.nimTypes,
-          partnerProviders: model.partnerProviders,
+          partnerProviders: mergedPartners,
           shortDescription: model.shortDescription ?? null,
           usecaseTags: model.usecaseTags,
           contextLength: model.contextLength ?? null,
@@ -240,15 +291,49 @@ export async function syncNimCatalog(): Promise<void> {
           set: {
             displayName: model.displayName,
             nimTypes: model.nimTypes,
-            partnerProviders: model.partnerProviders,
+            partnerProviders: mergedPartners,
             shortDescription: model.shortDescription ?? null,
             usecaseTags: model.usecaseTags,
             contextLength: model.contextLength ?? null,
             syncedAt: now,
           },
         });
+      upserted++;
     }
-    logger.info({ count: SEED_MODELS.length }, "NIM catalog synced");
+
+    // Step 5: Insert dynamically discovered partner models not in SEED_MODELS
+    let discovered = 0;
+    for (const [modelId, providers] of Object.entries(discoveredPartners)) {
+      if (seedSet.has(modelId)) continue; // Already handled above
+      // Infer a display name from the model ID (last segment, title-cased)
+      const rawName = modelId.split("/").pop() ?? modelId;
+      const displayName = rawName
+        .split(/[-_]/)
+        .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+        .join(" ");
+      await db
+        .insert(nimCatalogTable)
+        .values({
+          nimModelId: modelId,
+          displayName,
+          nimTypes: ["nim_type_upgrade_available"],
+          partnerProviders: providers,
+          shortDescription: `Discovered via ${providers.map((p) => PROVIDER_CONFIG[p]?.displayName ?? p).join(", ")}.`,
+          usecaseTags: [],
+          contextLength: null,
+          syncedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: nimCatalogTable.nimModelId,
+          set: {
+            partnerProviders: providers,
+            syncedAt: now,
+          },
+        });
+      discovered++;
+    }
+
+    logger.info({ upserted, discovered }, "NIM catalog synced");
   } catch (err) {
     logger.error({ err }, "NIM catalog sync failed");
   }

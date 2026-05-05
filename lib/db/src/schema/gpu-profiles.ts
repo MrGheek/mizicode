@@ -41,6 +41,15 @@ export const gpuProfilesTable = pgTable("gpu_profiles", {
   // Default provider key (nvidia | vultr | together | deepinfra). Null for
   // standard Vast.ai GPU profiles that never use the NIM path.
   nimDefaultProvider: text("nim_default_provider"),
+  // The NIM catalog model ID this profile launches (e.g. "moonshotai/kimi-k2-instruct").
+  // Populated for NIM workspace profiles; null for GPU profiles.
+  nimModelId: text("nim_model_id"),
+  // Cached NIM type tags from the catalog (nim_type_preview | nim_type_upgrade_available).
+  // Stored here so the launch path can validate tier access without re-querying the catalog.
+  nimTypes: jsonb("nim_types").$type<string[]>(),
+  // Cached partner provider keys that can serve this model (vultr | together | deepinfra).
+  // Stored here for profile-level routing decisions and dashboard display.
+  nimPartnerProviders: jsonb("nim_partner_providers").$type<string[]>(),
 });
 
 export const insertGpuProfileSchema = createInsertSchema(gpuProfilesTable).omit({ id: true });

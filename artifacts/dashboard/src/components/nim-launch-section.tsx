@@ -117,34 +117,58 @@ function NimModelCard({
           </div>
         </div>
       </CardHeader>
-      <CardContent className="pb-3 px-4 pt-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          {model.contextLength && (
-            <span className="text-[10px] text-muted-foreground font-mono">{model.contextLength} ctx</span>
-          )}
+      <CardContent className="pb-3 px-4 pt-0 space-y-2">
+        {model.contextLength && (
+          <span className="text-[10px] text-muted-foreground font-mono">{model.contextLength} ctx</span>
+        )}
+
+        {/* Provider chips — ALL providers shown; unconfigured ones show inline Setup link */}
+        <div className="flex flex-wrap gap-1.5">
           {isFree && (
-            <span className="text-[10px] text-muted-foreground">
-              via {nvidiaConfigured ? (
-                <span className={health["nvidia"]?.live ? "text-emerald-400" : "text-muted-foreground"}>
-                  NVIDIA NIM{health["nvidia"]?.live && health["nvidia"]?.latencyMs ? ` (${health["nvidia"].latencyMs}ms)` : ""}
+            nvidiaConfigured ? (
+              <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+                health["nvidia"]?.live
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                  : "border-border/50 text-muted-foreground"
+              }`}>
+                NVIDIA NIM{health["nvidia"]?.live && health["nvidia"]?.latencyMs ? ` · ${health["nvidia"].latencyMs}ms` : ""}
+              </span>
+            ) : (
+              <a
+                href={`${BASE_URL}settings`}
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-dashed border-border/40 text-muted-foreground/50 hover:text-muted-foreground hover:border-border/60 transition-colors"
+              >
+                NVIDIA NIM · <span className="underline">Add key</span>
+              </a>
+            )
+          )}
+
+          {model.partnerProviders.map((p) => {
+            const isConfigured = !!configured[p];
+            const h = health[p];
+            if (isConfigured) {
+              return (
+                <span key={p} className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+                  h?.live
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                    : "border-amber-500/30 text-amber-400/70"
+                }`}>
+                  {PROVIDER_LABELS[p] ?? p}{h?.live && h?.latencyMs ? ` · ${h.latencyMs}ms` : ""}
                 </span>
-              ) : (
-                <span className="text-muted-foreground/50">NVIDIA NIM (key needed)</span>
-              )}
-            </span>
-          )}
-          {hasPartner && configuredPartners.length > 0 && (
-            <span className="text-[10px] text-muted-foreground">
-              {configuredPartners.map((p) => {
-                const h = health[p];
-                return (
-                  <span key={p} className={h?.live ? "text-emerald-400" : ""}>
-                    {PROVIDER_LABELS[p] ?? p}{h?.live && h?.latencyMs ? ` (${h.latencyMs}ms)` : ""}
-                  </span>
-                );
-              })}
-            </span>
-          )}
+              );
+            }
+            return (
+              <a
+                key={p}
+                href={`${BASE_URL}settings`}
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-dashed border-border/40 text-muted-foreground/50 hover:text-muted-foreground hover:border-border/60 transition-colors"
+              >
+                {PROVIDER_LABELS[p] ?? p} · <span className="underline">Add key</span>
+              </a>
+            );
+          })}
         </div>
       </CardContent>
     </Card>
