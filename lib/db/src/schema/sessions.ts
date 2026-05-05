@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, real, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, real, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { gpuProfilesTable } from "./gpu-profiles";
@@ -58,6 +58,10 @@ export const sessionsTable = pgTable("sessions", {
   // (e.g. swarm abort) from the dashboard. Not a team-member credential — the
   // owner token gates destructive controls that team members must not access.
   ownerToken: text("owner_token"),
+  // Whether the session was launched with a GitHub PAT. The token itself is
+  // never stored — it is passed only via the onstart script. This flag lets
+  // the dashboard show the session branch chip (floatr/session-<id>).
+  hasGithubToken: boolean("has_github_token").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -14,9 +14,32 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import {
   Loader2, ChevronDown, ChevronRight, Wand2, Info,
-  Users, Plus, X, Play,
+  Users, Plus, X, Play, Eye, EyeOff, KeyRound,
 } from "lucide-react";
 import { SkillClassBadge } from "@/components/skill-badges";
+
+const LS_PAT_PREFIX = "floatr:github_pat:";
+
+function loadSavedPat(repoUrl: string): string {
+  if (!repoUrl.trim()) return "";
+  try {
+    return localStorage.getItem(LS_PAT_PREFIX + repoUrl.trim().toLowerCase()) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function savePat(repoUrl: string, token: string) {
+  if (!repoUrl.trim()) return;
+  try {
+    const key = LS_PAT_PREFIX + repoUrl.trim().toLowerCase();
+    if (token) {
+      localStorage.setItem(key, token);
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch { /* ignore */ }
+}
 
 export interface LaunchOptions {
   profileId: number;
@@ -26,6 +49,7 @@ export interface LaunchOptions {
   repoUrl?: string | null;
   intentText?: string | null;
   teamMembers?: string[];
+  githubToken?: string | null;
 }
 
 export interface LaunchPrefill {
@@ -90,6 +114,8 @@ export function LaunchSessionDialog({
   const [taskMode, setTaskMode] = useState(() => prefill?.taskMode || "build");
   const [tokenMode, setTokenMode] = useState(() => prefill?.tokenMode || "core");
   const [repoUrl, setRepoUrl] = useState(() => prefill?.repoUrl ?? "");
+  const [githubToken, setGithubToken] = useState(() => loadSavedPat(prefill?.repoUrl ?? ""));
+  const [showToken, setShowToken] = useState(false);
   const [intentText, setIntentText] = useState(() => prefill?.intentText ?? "");
   // Track whether the user has manually edited the intent so we never
   // overwrite their text with a repo-URL-derived suggestion. When pre-filling
@@ -105,12 +131,9 @@ export function LaunchSessionDialog({
     if (intentEditedRef.current) return;
     const trimmed = repoUrl.trim();
     if (!trimmed) {
-      // Clearing the repo URL clears the auto-suggestion (only when the user
-      // hasn't manually edited intent).
       setIntentText("");
       return;
     }
-    // Match `github.com/<owner>/<repo>` (and similar) tolerantly.
     const match = trimmed.match(/[/:]([^/\s]+)\/([^/\s.]+)(?:\.git)?\/?$/);
     if (match) {
       const owner = match[1];
@@ -118,6 +141,21 @@ export function LaunchSessionDialog({
       setIntentText(`Index and explore \`${owner}/${repo}\``);
     }
   }, [repoUrl]);
+
+  // When repoUrl changes, load any saved PAT for that repo.
+  const prevRepoUrl = useRef(repoUrl);
+  useEffect(() => {
+    if (repoUrl === prevRepoUrl.current) return;
+    prevRepoUrl.current = repoUrl;
+    const saved = loadSavedPat(repoUrl);
+    setGithubToken(saved);
+  }, [repoUrl]);
+
+  // Persist PAT to localStorage whenever it changes (keyed by repoUrl).
+  useEffect(() => {
+    savePat(repoUrl, githubToken);
+  }, [repoUrl, githubToken]);
+
   const [bundleOverride, setBundleOverride] = useState<number | null | "none">(
     () => (prefill?.bundleId != null ? prefill.bundleId : null)
   );
@@ -171,6 +209,7 @@ export function LaunchSessionDialog({
       repoUrl: repoUrl.trim() || null,
       intentText: intentText.trim() || null,
       teamMembers: validTeam.length > 0 ? validTeam : undefined,
+      githubToken: githubToken.trim() || null,
     });
   };
 
@@ -226,6 +265,41 @@ export function LaunchSessionDialog({
             <p className="text-[10px] text-muted-foreground flex items-center gap-1">
               <Info className="w-3 h-3 shrink-0" />
               Used to recommend the best skill bundle for your repo
+            </p>
+          </div>
+
+          {/* GitHub PAT — always visible, right below Repo URL */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <KeyRound className="w-3 h-3" />
+              GitHub Token
+              <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground/60">(optional)</span>
+            </Label>
+            <div className="relative">
+              <Input
+                type={showToken ? "text" : "password"}
+                placeholder="ghp_••••••••••••••••••••••••••••••••••••••"
+                value={githubToken}
+                onChange={e => setGithubToken(e.target.value)}
+                className="text-sm font-mono pr-9"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                onClick={() => setShowToken(v => !v)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                tabIndex={-1}
+                aria-label={showToken ? "Hide token" : "Show token"}
+              >
+                {showToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+            <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+              <Info className="w-3 h-3 shrink-0" />
+              {githubToken && repoUrl.trim()
+                ? "Token saved for this repo — pre-fills next time. Pushes go to floatr/session branch."
+                : "Stored locally per repo — never sent to our servers. Pushes always go to a new branch."}
             </p>
           </div>
 

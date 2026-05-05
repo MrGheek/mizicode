@@ -71,6 +71,7 @@ export default function Dashboard() {
         bundleId: opts?.bundleId ?? null,
         repoUrl: opts?.repoUrl ?? null,
         intentText: opts?.intentText ?? null,
+        githubToken: opts?.githubToken ?? null,
       }
     }, {
       onSuccess: (session) => {

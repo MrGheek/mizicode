@@ -252,6 +252,8 @@ export interface CreateSessionRequest {
   nimModelId?: string | null;
   /** Partner provider for NIM sessions: "nvidia" | "vultr" | "together" | "deepinfra". Defaults to "nvidia". */
   nimProvider?: string | null;
+  /** GitHub Personal Access Token — injected as GITHUB_TOKEN and used to force-push to floatr/session-{id} branch. */
+  githubToken?: string | null;
 }
 
 export interface Template {

@@ -50,6 +50,13 @@
                         "when": 1777980000000,
                         "tag": "0017_gpu_profiles_nim_model_metadata",
                         "breakpoints": true
+                },
+                {
+                        "idx": 18,
+                        "version": "7",
+                        "when": 1777983600000,
+                        "tag": "0018_sessions_has_github_token",
+                        "breakpoints": true
                 }
         ]
 }

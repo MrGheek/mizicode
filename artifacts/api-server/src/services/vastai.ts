@@ -282,6 +282,11 @@ export function buildOnStartScript(profileConfig: {
   nimModelId?: string;
   nimApiBase?: string;
   nimApiKey?: string;
+  // GitHub PAT: injected as GITHUB_TOKEN. When set, git is configured to use
+  // the token for HTTPS github.com operations and all pushes are redirected to
+  // a dedicated session branch (floatr/session-<id>) via a git wrapper script.
+  // The token is never stored in the DB — only ever passed through the onstart script.
+  githubToken?: string;
 }): string {
   const memLines = profileConfig.memProxyUrl
     ? [
@@ -320,6 +325,36 @@ export function buildOnStartScript(profileConfig: {
       ].join("\n")
     : "";
 
+  // GitHub PAT: configure git credential substitution and install a lightweight
+  // git wrapper that redirects all `git push` calls to the session-specific branch
+  // (floatr/session-<id>). The wrapper is placed at /usr/local/bin/git which is
+  // ahead of /usr/bin/git in PATH. All non-push commands pass through unchanged.
+  //
+  // Security note: the token is injected only into the onstart script (passed
+  // in-memory to Vast.ai, not stored in any DB column). The heredoc uses a
+  // single-quoted delimiter so the wrapper's $-variables are written literally
+  // and only evaluated when the wrapper itself is called later.
+  const githubLines = profileConfig.githubToken && profileConfig.sessionId != null
+    ? `export GITHUB_TOKEN="${profileConfig.githubToken}"
+git config --global url."https://${profileConfig.githubToken}@github.com/".insteadOf "https://github.com/"
+git config --global push.default current
+# Install git wrapper — forces all pushes to floatr/session-${profileConfig.sessionId}
+cat > /usr/local/bin/git << 'FLOATR_GIT_WRAPPER'
+#!/bin/bash
+GIT=/usr/bin/git
+if [ "$1" = "push" ]; then
+  REMOTE="origin"
+  for a in "$@"; do
+    case "$a" in push|-*) continue ;; *) REMOTE="$a"; break ;; esac
+  done
+  exec "$GIT" push "$REMOTE" HEAD:floatr/session-${profileConfig.sessionId}
+else
+  exec "$GIT" "$@"
+fi
+FLOATR_GIT_WRAPPER
+chmod +x /usr/local/bin/git`
+    : "";
+
   return `#!/bin/bash
 export MODEL_REPO="${profileConfig.modelRepo}"
 export MODEL_QUANT="${profileConfig.modelQuant}"
@@ -334,6 +369,7 @@ ${memLines}
 ${callbackLines}
 ${teamLine}
 ${skillsLine}
+${githubLines}
 /opt/onstart.sh
 `;
 }

@@ -314,6 +314,7 @@ router.get("/sessions", async (_req, res) => {
       provider: sessionsTable.provider,
       nimProvider: sessionsTable.nimProvider,
       nimModelId: sessionsTable.nimModelId,
+      hasGithubToken: sessionsTable.hasGithubToken,
     })
     .from(sessionsTable)
     .leftJoin(gpuProfilesTable, eq(sessionsTable.profileId, gpuProfilesTable.id))
@@ -612,7 +613,11 @@ router.patch("/sessions/:sessionId", async (req, res) => {
 });
 
 router.post("/sessions", async (req, res) => {
-  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider } = req.body;
+  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider, githubToken: rawGithubToken } = req.body;
+
+  const githubToken: string | undefined = (typeof rawGithubToken === "string" && rawGithubToken.trim())
+    ? rawGithubToken.trim()
+    : undefined;
 
   // Sanitize and bound the natural-language session intent (optional).
   let intentText: string | null = null;
@@ -816,6 +821,8 @@ router.post("/sessions", async (req, res) => {
         // the dashboard to call owner-only endpoints (e.g. swarm abort). Not a
         // team-member credential — team members use their own name+password.
         ownerToken: generatePassword(32),
+        // Record that a GitHub PAT was supplied — the token itself is never stored.
+        hasGithubToken: !!githubToken,
       })
       .returning();
 
@@ -904,6 +911,7 @@ router.post("/sessions", async (req, res) => {
       nimModelId: nimModelId ? String(nimModelId) : undefined,
       nimApiBase,
       nimApiKey,
+      githubToken,
     });
 
     const result = await vastai.createInstance({
