@@ -52,6 +52,18 @@ export const ListProfilesResponseItem = zod.object({
   modelDisplayName: zod
     .string()
     .describe("Human-readable model name shown in the dashboard"),
+  swarmWorkerCap: zod
+    .number()
+    .nullish()
+    .describe(
+      "Maximum concurrent swarm workers this profile can support (null means not configured)",
+    ),
+  benchmarkCallout: zod
+    .string()
+    .nullish()
+    .describe(
+      'Short benchmark callout shown in the Quick Launch section header (e.g. \"65.8% SWE-Bench Verified\")',
+    ),
 });
 export const ListProfilesResponse = zod.array(ListProfilesResponseItem);
 
@@ -95,6 +107,18 @@ export const GetProfileResponse = zod.object({
   modelDisplayName: zod
     .string()
     .describe("Human-readable model name shown in the dashboard"),
+  swarmWorkerCap: zod
+    .number()
+    .nullish()
+    .describe(
+      "Maximum concurrent swarm workers this profile can support (null means not configured)",
+    ),
+  benchmarkCallout: zod
+    .string()
+    .nullish()
+    .describe(
+      'Short benchmark callout shown in the Quick Launch section header (e.g. \"65.8% SWE-Bench Verified\")',
+    ),
 });
 
 /**
@@ -3953,3 +3977,90 @@ export const UpdateHeavyJobStatusResponse = zod.object({
   completedAt: zod.coerce.date().nullish(),
   deferUntil: zod.coerce.date().nullish(),
 });
+
+/**
+ * Accepts a free-text user query from the command palette plus current
+context (route, active session, recent sessions) and returns a
+structured action the client can execute — navigate, mutate (stop /
+re-index), or copy. Returns an explanatory error message when the
+query cannot be parsed.
+
+ * @summary Resolve a natural-language command palette query into a structured action
+ */
+export const resolvePaletteIntentBodyQueryMax = 500;
+
+export const ResolvePaletteIntentBody = zod
+  .object({
+    query: zod
+      .string()
+      .min(1)
+      .max(resolvePaletteIntentBodyQueryMax)
+      .describe("The raw text the user typed into the command palette"),
+    context: zod
+      .object({
+        route: zod
+          .string()
+          .describe('Current client-side route (e.g. \"\/sessions\/42\")'),
+        activeSessionId: zod
+          .number()
+          .nullish()
+          .describe("ID of the currently active session, if any"),
+        activeSessionStatus: zod
+          .string()
+          .nullish()
+          .describe(
+            "Status of the active session (ready, starting, stopped, etc.)",
+          ),
+        recentSessionIds: zod
+          .array(zod.number())
+          .optional()
+          .describe(
+            "IDs of the 8 most-recent sessions shown in the quick-jump list",
+          ),
+      })
+      .describe(
+        "Current app context to help the LLM resolve ambiguous commands",
+      ),
+  })
+  .describe("Natural-language command palette query with current app context");
+
+export const ResolvePaletteIntentResponse = zod
+  .object({
+    ok: zod
+      .boolean()
+      .describe(
+        "Whether the query was successfully parsed into an actionable intent",
+      ),
+    action: zod
+      .enum([
+        "navigate",
+        "stop-session",
+        "reindex-session",
+        "new-session",
+        "relaunch-session",
+        "copy-ssh",
+      ])
+      .nullish()
+      .describe(
+        "Action type to execute on the client:\n- navigate — push a new route\n- stop-session — dispatch floatr:request-stop-session\n- reindex-session — trigger a repo re-index for the given sessionId\n- new-session — open the launch dialog\n- relaunch-session — relaunch the given sessionId\n- copy-ssh — copy SSH command for the given sessionId\n",
+      ),
+    payload: zod
+      .object({
+        route: zod
+          .string()
+          .nullish()
+          .describe("Route to navigate to (for action=navigate)"),
+        sessionId: zod
+          .number()
+          .nullish()
+          .describe("Target session ID (for session-specific actions)"),
+      })
+      .nullish()
+      .describe("Action-specific payload"),
+    explanation: zod
+      .string()
+      .describe(
+        "Human-readable description of what will happen (shown in toast) or error reason on failure",
+      ),
+  })
+  .describe("Structured action resolved from the natural-language query");

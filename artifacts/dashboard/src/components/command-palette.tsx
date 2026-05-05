@@ -9,13 +9,14 @@ import {
   useListProfiles,
   useCreateSession,
   cloneSession,
+  resolvePaletteIntent,
   getGetRepoSummaryQueryKey,
   getGetRepoFingerprintQueryKey,
   getCloneSessionQueryKey,
   getGetActiveSessionQueryKey,
   getGetDashboardSummaryQueryKey,
 } from "@workspace/api-client-react";
-import type { CloneSessionResponse } from "@workspace/api-client-react";
+import type { CloneSessionResponse, PaletteIntentResponse } from "@workspace/api-client-react";
 import { LaunchSessionDialog, type LaunchOptions, type LaunchPrefill } from "@/components/launch-session-dialog";
 import {
   Github,
@@ -34,6 +35,8 @@ import {
   Keyboard,
   Layers,
   Palette,
+  Sparkles,
+  Loader2,
 } from "lucide-react";
 import {
   Dialog,
@@ -73,6 +76,11 @@ export function CommandPalette() {
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Track the current search query so we can surface "Ask AI" when non-empty.
+  const [query, setQuery] = useState("");
+  // Track whether the AI is resolving an intent.
+  const [aiPending, setAiPending] = useState(false);
 
   const { data: sessions } = useListSessions();
   const { data: activeSessionResp } = useGetActiveSession();
@@ -303,6 +311,83 @@ export function CommandPalette() {
     [toast],
   );
 
+  // Execute a resolved palette intent action returned by the LLM.
+  const executeIntent = useCallback(
+    (intent: PaletteIntentResponse) => {
+      if (!intent.ok || !intent.action) {
+        toast({
+          title: "Could not understand command",
+          description: intent.explanation,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const sessionId = intent.payload?.sessionId ?? null;
+
+      switch (intent.action) {
+        case "navigate": {
+          const route = intent.payload?.route;
+          if (route) {
+            setLocation(route);
+            toast({ title: intent.explanation });
+          }
+          break;
+        }
+        case "stop-session": {
+          // If the targeted session is already in view, dispatch directly.
+          // Otherwise navigate to that session's page first so the page-level
+          // stop handler (which owns the confirmation dialog) is mounted.
+          if (sessionId != null && !location.startsWith(`/sessions/${sessionId}`)) {
+            setLocation(`/sessions/${sessionId}`);
+            setTimeout(() => {
+              window.dispatchEvent(new CustomEvent("floatr:request-stop-session"));
+            }, 300);
+          } else {
+            window.dispatchEvent(new CustomEvent("floatr:request-stop-session"));
+          }
+          toast({ title: intent.explanation });
+          break;
+        }
+        case "reindex-session":
+          if (sessionId != null) {
+            handleReindex(sessionId);
+          }
+          break;
+        case "new-session":
+          handleNewSession();
+          toast({ title: intent.explanation });
+          break;
+        case "relaunch-session":
+          if (sessionId != null) {
+            handleRelaunch(sessionId);
+            toast({ title: intent.explanation });
+          }
+          break;
+        case "copy-ssh": {
+          const target = sessionId != null ? sessions?.find((s) => s.id === sessionId) : null;
+          if (target) {
+            handleCopySsh(target);
+          } else {
+            toast({
+              title: "Session not found",
+              description: "Could not locate session to copy SSH command.",
+              variant: "destructive",
+            });
+          }
+          break;
+        }
+        default:
+          toast({
+            title: "Unknown action",
+            description: intent.explanation,
+            variant: "destructive",
+          });
+      }
+    },
+    [handleCopySsh, handleNewSession, handleReindex, handleRelaunch, location, sessions, setLocation, toast],
+  );
+
   // Most-recent stopped session (for "Re-launch last session").
   const lastStoppedSession = useMemo(() => {
     if (!sessions) return null;
@@ -329,18 +414,69 @@ export function CommandPalette() {
     return sorted.slice(0, 8);
   }, [sessions]);
 
+  // Send the current query to the LLM palette-intent endpoint and execute the result.
+  const handleAskAi = useCallback(async () => {
+    if (!query.trim() || aiPending) return;
+    setAiPending(true);
+    setOpen(false);
+    try {
+      const intent = await resolvePaletteIntent({
+        query: query.trim(),
+        context: {
+          route: location,
+          activeSessionId: activeSession?.id ?? null,
+          activeSessionStatus: activeSession?.status ?? null,
+          recentSessionIds: sessionsForJump.map((s) => s.id),
+        },
+      });
+      setTimeout(() => executeIntent(intent), 0);
+    } catch {
+      toast({
+        title: "AI command failed",
+        description: "Could not reach the AI service. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setAiPending(false);
+    }
+  }, [activeSession, aiPending, executeIntent, location, query, sessionsForJump, toast]);
+
   return (
     <>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setQuery(""); }}>
         <DialogContent className="overflow-hidden p-0 max-w-xl">
           <DialogTitle className="sr-only">Command palette</DialogTitle>
           <DialogDescription className="sr-only">
             Search for commands and navigate FLOATR with your keyboard.
           </DialogDescription>
           <Command label="Command palette">
-            <CommandInput placeholder="Type a command or search…" />
+            <CommandInput
+              placeholder="Type a command or ask AI…"
+              value={query}
+              onValueChange={setQuery}
+            />
             <CommandList>
-              <CommandEmpty>No results found.</CommandEmpty>
+              <CommandEmpty>
+                {query.trim().length > 0 ? (
+                  <CommandItem
+                    value={`ask-ai-${query}`}
+                    onSelect={() => { void handleAskAi(); }}
+                    disabled={aiPending}
+                    className="flex items-center gap-2 justify-center cursor-pointer"
+                  >
+                    {aiPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
+                    <span className="text-sm text-primary">
+                      {aiPending ? "Asking AI…" : `Ask AI: "${query.trim()}"`}
+                    </span>
+                  </CommandItem>
+                ) : (
+                  "No results found."
+                )}
+              </CommandEmpty>
 
               <CommandGroup heading="Navigation">
                 <CommandItem
@@ -510,6 +646,7 @@ export function CommandPalette() {
                   <CommandShortcut>?</CommandShortcut>
                 </CommandItem>
               </CommandGroup>
+
             </CommandList>
           </Command>
         </DialogContent>

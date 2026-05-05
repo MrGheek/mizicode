@@ -5,6 +5,89 @@
  * Cloud Coding Platform API
  * OpenAPI spec version: 0.1.0
  */
+/**
+ * Current app context to help the LLM resolve ambiguous commands
+ */
+export type PaletteIntentRequestContext = {
+  /** Current client-side route (e.g. "/sessions/42") */
+  route: string;
+  /** ID of the currently active session, if any */
+  activeSessionId?: number | null;
+  /** Status of the active session (ready, starting, stopped, etc.) */
+  activeSessionStatus?: string | null;
+  /** IDs of the 8 most-recent sessions shown in the quick-jump list */
+  recentSessionIds?: number[];
+};
+
+/**
+ * Natural-language command palette query with current app context
+ */
+export interface PaletteIntentRequest {
+  /**
+   * The raw text the user typed into the command palette
+   * @minLength 1
+   * @maxLength 500
+   */
+  query: string;
+  /** Current app context to help the LLM resolve ambiguous commands */
+  context: PaletteIntentRequestContext;
+}
+
+/**
+ * Action type to execute on the client:
+- navigate — push a new route
+- stop-session — dispatch floatr:request-stop-session
+- reindex-session — trigger a repo re-index for the given sessionId
+- new-session — open the launch dialog
+- relaunch-session — relaunch the given sessionId
+- copy-ssh — copy SSH command for the given sessionId
+
+ */
+export type PaletteIntentResponseAction =
+  | (typeof PaletteIntentResponseAction)[keyof typeof PaletteIntentResponseAction]
+  | null;
+
+export const PaletteIntentResponseAction = {
+  navigate: "navigate",
+  "stop-session": "stop-session",
+  "reindex-session": "reindex-session",
+  "new-session": "new-session",
+  "relaunch-session": "relaunch-session",
+  "copy-ssh": "copy-ssh",
+} as const;
+
+/**
+ * Action-specific payload
+ */
+export type PaletteIntentResponsePayload = {
+  /** Route to navigate to (for action=navigate) */
+  route?: string | null;
+  /** Target session ID (for session-specific actions) */
+  sessionId?: number | null;
+  [key: string]: unknown;
+} | null;
+
+/**
+ * Structured action resolved from the natural-language query
+ */
+export interface PaletteIntentResponse {
+  /** Whether the query was successfully parsed into an actionable intent */
+  ok: boolean;
+  /** Action type to execute on the client:
+- navigate — push a new route
+- stop-session — dispatch floatr:request-stop-session
+- reindex-session — trigger a repo re-index for the given sessionId
+- new-session — open the launch dialog
+- relaunch-session — relaunch the given sessionId
+- copy-ssh — copy SSH command for the given sessionId
+ */
+  action?: PaletteIntentResponseAction;
+  /** Action-specific payload */
+  payload?: PaletteIntentResponsePayload;
+  /** Human-readable description of what will happen (shown in toast) or error reason on failure */
+  explanation: string;
+}
+
 export interface HealthStatus {
   status: string;
 }
@@ -46,7 +129,7 @@ export interface GpuProfile {
   servedModelName: string;
   /** Human-readable model name shown in the dashboard */
   modelDisplayName: string;
-  /** Maximum concurrent swarm workers this profile can support */
+  /** Maximum concurrent swarm workers this profile can support (null means not configured) */
   swarmWorkerCap?: number | null;
   /** Short benchmark callout shown in the Quick Launch section header (e.g. "65.8% SWE-Bench Verified") */
   benchmarkCallout?: string | null;

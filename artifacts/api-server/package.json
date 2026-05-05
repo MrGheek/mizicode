@@ -16,6 +16,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
+    "@workspace/integrations-openai-ai-server": "workspace:*",
     "better-sqlite3": "^12.9.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2",

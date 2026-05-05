@@ -28,6 +28,8 @@ tags:
     description: Cross-session memory governance — progressive-disclosure retrieval, contradiction detection, TTL/decay, ROI promotion, and budgeted retrieval profiles
   - name: coordination
     description: Team lane coordination — per-member lane overlays, ownership claims, conflict detection, handoff signals, and heavy-job scheduling
+  - name: palette
+    description: Command palette AI intent parsing — natural-language command resolution
 
 paths:
   /healthz:
@@ -2766,8 +2768,116 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /palette/intent:
+    post:
+      operationId: resolvePaletteIntent
+      tags: [palette]
+      summary: Resolve a natural-language command palette query into a structured action
+      description: |
+        Accepts a free-text user query from the command palette plus current
+        context (route, active session, recent sessions) and returns a
+        structured action the client can execute — navigate, mutate (stop /
+        re-index), or copy. Returns an explanatory error message when the
+        query cannot be parsed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaletteIntentRequest"
+      responses:
+        "200":
+          description: Resolved intent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaletteIntentResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: LLM or server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
+
+    PaletteIntentRequest:
+      type: object
+      description: Natural-language command palette query with current app context
+      properties:
+        query:
+          type: string
+          description: The raw text the user typed into the command palette
+          minLength: 1
+          maxLength: 500
+        context:
+          type: object
+          description: Current app context to help the LLM resolve ambiguous commands
+          properties:
+            route:
+              type: string
+              description: Current client-side route (e.g. "/sessions/42")
+            activeSessionId:
+              type: integer
+              nullable: true
+              description: ID of the currently active session, if any
+            activeSessionStatus:
+              type: string
+              nullable: true
+              description: Status of the active session (ready, starting, stopped, etc.)
+            recentSessionIds:
+              type: array
+              items:
+                type: integer
+              description: IDs of the 8 most-recent sessions shown in the quick-jump list
+          required: [route]
+      required: [query, context]
+
+    PaletteIntentResponse:
+      type: object
+      description: Structured action resolved from the natural-language query
+      properties:
+        ok:
+          type: boolean
+          description: Whether the query was successfully parsed into an actionable intent
+        action:
+          type: string
+          nullable: true
+          description: |
+            Action type to execute on the client:
+            - navigate — push a new route
+            - stop-session — dispatch floatr:request-stop-session
+            - reindex-session — trigger a repo re-index for the given sessionId
+            - new-session — open the launch dialog
+            - relaunch-session — relaunch the given sessionId
+            - copy-ssh — copy SSH command for the given sessionId
+          enum: [navigate, stop-session, reindex-session, new-session, relaunch-session, copy-ssh]
+        payload:
+          type: object
+          nullable: true
+          description: Action-specific payload
+          properties:
+            route:
+              type: string
+              nullable: true
+              description: Route to navigate to (for action=navigate)
+            sessionId:
+              type: integer
+              nullable: true
+              description: Target session ID (for session-specific actions)
+          additionalProperties: true
+        explanation:
+          type: string
+          description: Human-readable description of what will happen (shown in toast) or error reason on failure
+      required: [ok, explanation]
+
     HealthStatus:
       type: object
       properties:

@@ -92,6 +92,8 @@ import type {
   MemorySearchResponse,
   MemoryStaleResponse,
   NotImplementedResponse,
+  PaletteIntentRequest,
+  PaletteIntentResponse,
   ProcessNextQueuedEvalRun200,
   PromotionUpdateResponse,
   RecordEvalVariantRequest,
@@ -8405,4 +8407,96 @@ export const useUpdateHeavyJobStatus = <
   TContext
 > => {
   return useMutation(getUpdateHeavyJobStatusMutationOptions(options));
+};
+
+/**
+ * Accepts a free-text user query from the command palette plus current
+context (route, active session, recent sessions) and returns a
+structured action the client can execute — navigate, mutate (stop /
+re-index), or copy. Returns an explanatory error message when the
+query cannot be parsed.
+
+ * @summary Resolve a natural-language command palette query into a structured action
+ */
+export const getResolvePaletteIntentUrl = () => {
+  return `/api/palette/intent`;
+};
+
+export const resolvePaletteIntent = async (
+  paletteIntentRequest: PaletteIntentRequest,
+  options?: RequestInit,
+): Promise<PaletteIntentResponse> => {
+  return customFetch<PaletteIntentResponse>(getResolvePaletteIntentUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(paletteIntentRequest),
+  });
+};
+
+export const getResolvePaletteIntentMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof resolvePaletteIntent>>,
+    TError,
+    { data: BodyType<PaletteIntentRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof resolvePaletteIntent>>,
+  TError,
+  { data: BodyType<PaletteIntentRequest> },
+  TContext
+> => {
+  const mutationKey = ["resolvePaletteIntent"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof resolvePaletteIntent>>,
+    { data: BodyType<PaletteIntentRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return resolvePaletteIntent(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ResolvePaletteIntentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof resolvePaletteIntent>>
+>;
+export type ResolvePaletteIntentMutationBody = BodyType<PaletteIntentRequest>;
+export type ResolvePaletteIntentMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Resolve a natural-language command palette query into a structured action
+ */
+export const useResolvePaletteIntent = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof resolvePaletteIntent>>,
+    TError,
+    { data: BodyType<PaletteIntentRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof resolvePaletteIntent>>,
+  TError,
+  { data: BodyType<PaletteIntentRequest> },
+  TContext
+> => {
+  return useMutation(getResolvePaletteIntentMutationOptions(options));
 };

@@ -12,6 +12,7 @@ import repoRouter, { batchRepoRouter } from "./repo";
 import coordinationRouter from "./coordination";
 import designIntelligenceRouter from "./design-intelligence";
 import ambientRouter from "./ambient";
+import paletteIntentRouter from "./palette-intent";
 
 const router: IRouter = Router();
 
@@ -29,5 +30,6 @@ router.use("/sessions/:sessionId/repo", repoRouter);
 router.use(coordinationRouter);
 router.use(designIntelligenceRouter);
 router.use(ambientRouter);
+router.use(paletteIntentRouter);
 
 export default router;
