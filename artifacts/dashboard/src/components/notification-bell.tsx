@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
-import { Bell, CheckCircle2, XCircle, Network, Database, Users, AlertTriangle, GitMerge } from "lucide-react";
+import { Bell, CheckCircle2, XCircle, Network, Database, Users, AlertTriangle, GitMerge, ShieldAlert } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { useNotifications, type Notification, type NotificationType } from "@/lib/notification-store";
@@ -15,6 +15,7 @@ function iconFor(type: NotificationType) {
     case "repo_indexed": return <Database className="w-4 h-4 text-emerald-500 shrink-0" />;
     case "handoff": return <Users className="w-4 h-4 text-primary shrink-0" />;
     case "conflict": return <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0" />;
+    case "approval_request": return <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />;
     default: return <GitMerge className="w-4 h-4 text-muted-foreground shrink-0" />;
   }
 }

@@ -1,6 +1,7 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Terminal, LayoutDashboard, Database, Layers, CheckCircle2, AlertCircle, Brain, Wand2, Palette } from "lucide-react";
+import { Terminal, LayoutDashboard, Database, Layers, CheckCircle2, AlertCircle, Brain, Wand2, Palette, Bot } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import {
   useHealthCheck,
   useGetActiveSession,
@@ -46,6 +47,17 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
   const memoryReviewTotal = reviewCount?.total ?? 0;
 
+  const { data: pendingApprovals } = useQuery<{ actions: Array<{ id: number }> }>({
+    queryKey: ["safety-pending-nav"],
+    queryFn: async () => {
+      const r = await fetch(`${import.meta.env.BASE_URL}api/dashboard/safety/pending`);
+      if (!r.ok) return { actions: [] };
+      return r.json();
+    },
+    refetchInterval: 10000,
+  });
+  const ambientBadge = pendingApprovals?.actions?.length ?? 0;
+
   const navigation = [
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
     { name: "Sessions", href: "/sessions", icon: Terminal },
@@ -53,6 +65,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { name: "Skills", href: "/skills", icon: Wand2 },
     { name: "Memory", href: "/memory", icon: Brain, badge: memoryReviewTotal > 0 ? memoryReviewTotal : undefined },
     { name: "Design Intelligence", href: "/design-intelligence", icon: Palette },
+    { name: "Ambient", href: "/ambient", icon: Bot, badge: ambientBadge > 0 ? ambientBadge : undefined },
   ];
 
   return (

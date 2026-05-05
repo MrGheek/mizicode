@@ -11,6 +11,7 @@ import skillsRouter from "./skills";
 import repoRouter, { batchRepoRouter } from "./repo";
 import coordinationRouter from "./coordination";
 import designIntelligenceRouter from "./design-intelligence";
+import ambientRouter from "./ambient";
 
 const router: IRouter = Router();
 
@@ -27,5 +28,6 @@ router.use("/sessions/repo", batchRepoRouter);
 router.use("/sessions/:sessionId/repo", repoRouter);
 router.use(coordinationRouter);
 router.use(designIntelligenceRouter);
+router.use(ambientRouter);
 
 export default router;

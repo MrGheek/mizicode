@@ -294,12 +294,66 @@ function PerSessionWatchers() {
 /**
  * Combines all global watchers. Mounted once in AppLayout.
  */
+/**
+ * Polls the safety subsystem's pending-approvals queue and emits a
+ * notification for any newly-seen action so it surfaces in the global
+ * notification bell, not just on the dedicated /ambient page.
+ */
+function ApprovalRequestWatcher() {
+  const seenIdsRef = useRef<Set<number> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const baseUrl = import.meta.env.BASE_URL ?? "/";
+
+    const poll = async () => {
+      try {
+        const r = await fetch(`${baseUrl}api/dashboard/safety/pending`);
+        if (!r.ok) return;
+        const data = (await r.json()) as { actions: Array<{ id: number; kind: string; summary: string; scope: string }> };
+        if (cancelled) return;
+
+        const actions = data.actions ?? [];
+        // Seed without firing on first poll so we don't replay old approvals.
+        if (seenIdsRef.current === null) {
+          seenIdsRef.current = new Set(actions.map((a) => a.id));
+          return;
+        }
+        const seen = seenIdsRef.current;
+        for (const a of actions) {
+          if (seen.has(a.id)) continue;
+          seen.add(a.id);
+          addNotification({
+            id: `approval-request:${a.id}`,
+            type: "approval_request",
+            title: `Approval needed: ${a.kind}`,
+            subtitle: a.summary,
+            href: `/ambient`,
+          });
+        }
+      } catch {
+        // Network blips are fine — try again next tick.
+      }
+    };
+
+    void poll();
+    const t = setInterval(() => { void poll(); }, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  return null;
+}
+
 export function NotificationWatchers() {
   return (
     <>
       <SessionStatusWatcher />
       <RepoIndexWatcher />
       <PerSessionWatchers />
+      <ApprovalRequestWatcher />
     </>
   );
 }

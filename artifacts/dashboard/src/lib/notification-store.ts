@@ -7,7 +7,8 @@ export type NotificationType =
   | "swarm_aborted"
   | "repo_indexed"
   | "handoff"
-  | "conflict";
+  | "conflict"
+  | "approval_request";
 
 export interface Notification {
   id: string;

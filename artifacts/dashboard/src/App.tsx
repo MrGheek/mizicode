@@ -11,6 +11,7 @@ import Templates from "@/pages/templates/index";
 import Memory from "@/pages/memory";
 import SkillsLibrary from "@/pages/skills/index";
 import DesignIntelligence from "@/pages/design-intelligence";
+import AmbientPage from "@/pages/ambient";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,6 +33,7 @@ function Router() {
         <Route path="/skills" component={SkillsLibrary} />
         <Route path="/memory" component={Memory} />
         <Route path="/design-intelligence" component={DesignIntelligence} />
+        <Route path="/ambient" component={AmbientPage} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

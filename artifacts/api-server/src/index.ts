@@ -7,6 +7,8 @@ import { seedDefaultBundles } from "./services/skills-bundler";
 import { seedCuratedSources } from "./services/curated-sources";
 import { startEvalScheduler } from "./services/skills-evals";
 import { validateMemoryDataDir, startMemoryDiskMonitor, runPassiveRecallBackfill } from "./services/memory";
+import { initSafetySubsystem, drainApprovedActions } from "./services/safety";
+import { startAmbientRunner, registerAmbientExecutors } from "./services/ambient";
 import { startClaimSweeper, sweepExpiredClaims, recordExternalSweep } from "./services/claim-sweeper";
 import { db, laneClaimsTable, claimPurgeLogsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
@@ -134,6 +136,16 @@ app.listen(port, async (err) => {
   startClaimPurger();
   startEvalScheduler(60);
   startMemoryDiskMonitor();
+
+  try {
+    initSafetySubsystem();
+    registerAmbientExecutors();
+    drainApprovedActions();
+    startAmbientRunner();
+    logger.info("Ambient mode runner started");
+  } catch (e) {
+    logger.error(e, "Failed to start ambient runner");
+  }
 
   // Passive memory recall (Task #225): embedding backfill for legacy items.
   // Runs in the background so startup is never blocked on embedding API calls.
