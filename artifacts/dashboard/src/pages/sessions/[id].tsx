@@ -227,31 +227,43 @@ function SearchResults({
             Matching Observations — showing {allObservations.length} of {totalObservations}
           </p>
           <div className="space-y-1.5">
-            {allObservations.map(obs => (
-              <div key={obs.id} className="border border-border/40 rounded p-2 text-xs font-mono">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-primary font-semibold">{obs.toolName}</span>
-                  <span className="text-muted-foreground text-[10px]">
-                    {format(new Date(obs.recordedAt * 1000), "MMM d HH:mm")}
-                  </span>
+            {allObservations.map(obs => {
+              const isGoal = obs.toolName === "session_goal";
+              return (
+                <div
+                  key={obs.id}
+                  className={`border rounded p-2 text-xs font-mono ${
+                    isGoal ? "border-amber-500/40 bg-amber-500/5" : "border-border/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`font-semibold flex items-center gap-1.5 ${isGoal ? "text-amber-400" : "text-primary"}`}>
+                      {isGoal ? (
+                        <><Target className="w-3 h-3 flex-shrink-0" /> Session goal</>
+                      ) : obs.toolName}
+                    </span>
+                    <span className="text-muted-foreground text-[10px]">
+                      {format(new Date(obs.recordedAt * 1000), "MMM d HH:mm")}
+                    </span>
+                  </div>
+                  {obs.inputSummary && (
+                    <p className={`truncate ${isGoal ? "text-amber-200/70" : "text-muted-foreground"}`} title={obs.inputSummary}>
+                      {isGoal ? obs.inputSummary : `In: ${obs.inputSummary}`}
+                    </p>
+                  )}
+                  {obs.outputSummary && (
+                    <p className="text-muted-foreground truncate" title={obs.outputSummary}>
+                      Out: {obs.outputSummary}
+                    </p>
+                  )}
+                  {obs.sessionSummary && (
+                    <p className="text-muted-foreground/60 text-[10px] mt-1 border-t border-border/30 pt-1 truncate" title={obs.sessionSummary}>
+                      Session: {obs.sessionSummary}
+                    </p>
+                  )}
                 </div>
-                {obs.inputSummary && (
-                  <p className="text-muted-foreground truncate" title={obs.inputSummary}>
-                    In: {obs.inputSummary}
-                  </p>
-                )}
-                {obs.outputSummary && (
-                  <p className="text-muted-foreground truncate" title={obs.outputSummary}>
-                    Out: {obs.outputSummary}
-                  </p>
-                )}
-                {obs.sessionSummary && (
-                  <p className="text-muted-foreground/60 text-[10px] mt-1 border-t border-border/30 pt-1 truncate" title={obs.sessionSummary}>
-                    Session: {obs.sessionSummary}
-                  </p>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -701,12 +713,32 @@ function MemoryTab({
                       {isExpanded && (
                         <div className="px-3 pb-3 space-y-1">
                           {sessObs.length > 0 ? (
-                            sessObs.map(obs => (
-                              <div key={obs.id} className="font-mono text-[10px] text-muted-foreground bg-secondary/20 rounded px-2 py-1">
-                                <span className="text-primary">{obs.toolName}</span>
-                                {obs.inputSummary && <span className="ml-2 truncate">({obs.inputSummary})</span>}
-                              </div>
-                            ))
+                            sessObs.map(obs => {
+                              const isGoal = obs.toolName === "session_goal";
+                              return (
+                                <div
+                                  key={obs.id}
+                                  className={`font-mono text-[10px] rounded px-2 py-1 flex items-center gap-1.5 ${
+                                    isGoal
+                                      ? "bg-amber-500/10 border border-amber-500/20 text-amber-400"
+                                      : "bg-secondary/20 text-muted-foreground"
+                                  }`}
+                                >
+                                  {isGoal ? (
+                                    <>
+                                      <Target className="w-3 h-3 flex-shrink-0" />
+                                      <span className="font-semibold">Session goal</span>
+                                      {obs.inputSummary && <span className="ml-1 truncate text-amber-200/60">({obs.inputSummary})</span>}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span className="text-primary">{obs.toolName}</span>
+                                      {obs.inputSummary && <span className="ml-2 truncate">({obs.inputSummary})</span>}
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })
                           ) : (
                             <p className="text-[10px] text-muted-foreground italic">No observations loaded for this session</p>
                           )}
@@ -738,26 +770,57 @@ function MemoryTab({
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                {(observations || []).slice(0, 20).map(obs => (
-                  <div key={obs.id} className="border border-border/40 rounded p-2 text-xs font-mono">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-primary font-semibold">{obs.toolName}</span>
-                      <span className="text-muted-foreground text-[10px]">
-                        {format(new Date(obs.recordedAt * 1000), "MMM d HH:mm")}
-                      </span>
-                    </div>
-                    {obs.inputSummary && (
-                      <p className="text-muted-foreground truncate" title={obs.inputSummary}>
-                        In: {obs.inputSummary}
-                      </p>
-                    )}
-                    {obs.outputSummary && (
-                      <p className="text-muted-foreground truncate" title={obs.outputSummary}>
-                        Out: {obs.outputSummary}
-                      </p>
-                    )}
-                  </div>
-                ))}
+                {(() => {
+                  const allObs = observations || [];
+                  const latestGoal = allObs
+                    .filter(o => o.toolName === "session_goal")
+                    .sort((a, b) => b.recordedAt - a.recordedAt)[0] ?? null;
+                  const nonGoalSlice = allObs.filter(o => o !== latestGoal).slice(0, latestGoal ? 19 : 20);
+                  const ordered = latestGoal ? [latestGoal, ...nonGoalSlice] : nonGoalSlice;
+                  return ordered.map((obs, idx) => {
+                    const isGoal = obs.toolName === "session_goal";
+                    const isPinnedGoal = isGoal && idx === 0 && latestGoal === obs;
+                    return (
+                      <div
+                        key={obs.id}
+                        className={`border rounded p-2 text-xs font-mono ${
+                          isGoal
+                            ? "border-amber-500/40 bg-amber-500/5"
+                            : "border-border/40"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className={`font-semibold flex items-center gap-1.5 ${isGoal ? "text-amber-400" : "text-primary"}`}>
+                            {isGoal ? (
+                              <>
+                                <Target className="w-3 h-3 flex-shrink-0" />
+                                Session goal
+                                {isPinnedGoal && (
+                                  <span className="text-[9px] font-normal px-1.5 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400/80 ml-1">
+                                    current
+                                  </span>
+                                )}
+                              </>
+                            ) : obs.toolName}
+                          </span>
+                          <span className="text-muted-foreground text-[10px]">
+                            {format(new Date(obs.recordedAt * 1000), "MMM d HH:mm")}
+                          </span>
+                        </div>
+                        {obs.inputSummary && (
+                          <p className={`truncate ${isGoal ? "text-amber-200/70" : "text-muted-foreground"}`} title={obs.inputSummary}>
+                            {isGoal ? obs.inputSummary : `In: ${obs.inputSummary}`}
+                          </p>
+                        )}
+                        {obs.outputSummary && (
+                          <p className="text-muted-foreground truncate" title={obs.outputSummary}>
+                            Out: {obs.outputSummary}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  });
+                })()}
               </CardContent>
             </Card>
           )}

@@ -23,6 +23,7 @@ import {
   Trash2,
   EyeOff,
   GitMerge,
+  Target,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -1479,31 +1480,43 @@ export default function MemoryPage() {
                       Tool Observations — showing {allObservations.length} of {totalObservations}
                     </p>
                     <div className="space-y-1.5">
-                      {allObservations.map(obs => (
-                        <div key={obs.id} className="border border-border/40 rounded p-2 text-xs font-mono">
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-primary font-semibold">{obs.toolName}</span>
-                            <span className="text-muted-foreground text-[10px]">
-                              {format(new Date(obs.recordedAt * 1000), "MMM d HH:mm")}
-                            </span>
+                      {allObservations.map(obs => {
+                        const isGoal = obs.toolName === "session_goal";
+                        return (
+                          <div
+                            key={obs.id}
+                            className={`border rounded p-2 text-xs font-mono ${
+                              isGoal ? "border-amber-500/40 bg-amber-500/5" : "border-border/40"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className={`font-semibold flex items-center gap-1.5 ${isGoal ? "text-amber-400" : "text-primary"}`}>
+                                {isGoal ? (
+                                  <><Target className="w-3 h-3 flex-shrink-0" /> Session goal</>
+                                ) : obs.toolName}
+                              </span>
+                              <span className="text-muted-foreground text-[10px]">
+                                {format(new Date(obs.recordedAt * 1000), "MMM d HH:mm")}
+                              </span>
+                            </div>
+                            {obs.inputSummary && (
+                              <p className={`truncate ${isGoal ? "text-amber-200/70" : "text-muted-foreground"}`} title={obs.inputSummary}>
+                                {isGoal ? obs.inputSummary : `In: ${obs.inputSummary}`}
+                              </p>
+                            )}
+                            {obs.outputSummary && (
+                              <p className="text-muted-foreground truncate" title={obs.outputSummary}>
+                                Out: {obs.outputSummary}
+                              </p>
+                            )}
+                            {obs.sessionSummary && (
+                              <p className="text-muted-foreground/60 text-[10px] mt-1 border-t border-border/30 pt-1 truncate" title={obs.sessionSummary}>
+                                Session: {obs.sessionSummary}
+                              </p>
+                            )}
                           </div>
-                          {obs.inputSummary && (
-                            <p className="text-muted-foreground truncate" title={obs.inputSummary}>
-                              In: {obs.inputSummary}
-                            </p>
-                          )}
-                          {obs.outputSummary && (
-                            <p className="text-muted-foreground truncate" title={obs.outputSummary}>
-                              Out: {obs.outputSummary}
-                            </p>
-                          )}
-                          {obs.sessionSummary && (
-                            <p className="text-muted-foreground/60 text-[10px] mt-1 border-t border-border/30 pt-1 truncate" title={obs.sessionSummary}>
-                              Session: {obs.sessionSummary}
-                            </p>
-                          )}
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
