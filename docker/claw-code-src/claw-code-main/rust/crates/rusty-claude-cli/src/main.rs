@@ -2494,11 +2494,17 @@ fn build_runtime(
         system_prompt,
         build_runtime_feature_config()?,
     );
-    // Activate the passive semantic memory recall pipeline (Task #225)
-    // when a mem client is configured. Without this wiring, the
-    // N → N+1 recall path stays dormant.
+    // Activate the passive semantic memory recall pipeline when both a mem
+    // client is configured AND the OMNIQL_MEM_PASSIVE_RECALL=1 env flag is
+    // set.  Requiring the flag at the Rust level prevents unnecessary network
+    // calls to /api/mem/turn and /api/mem/recall when the feature is
+    // disabled — the server already enforces the same flag, but checking it
+    // client-side gives a clean no-op and matches the "env-gated" contract
+    // stated in the task specification.
     if let Some(mem) = mem_client {
-        runtime = runtime.with_passive_recall(mem);
+        if MemClientConfig::passive_recall_globally_enabled() {
+            runtime = runtime.with_passive_recall(mem);
+        }
     }
     Ok(runtime)
 }

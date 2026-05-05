@@ -1328,4 +1328,122 @@ mod tests {
             DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD
         );
     }
+
+    /// Passive recall: items prefetched from turn N must appear in the
+    /// `system_prompt` that the API client receives for turn N+1.
+    ///
+    /// This test exercises the full `with_passive_recall` path
+    /// (conversation.rs lines 317–333) without any network calls:
+    ///   1. A `MemClientConfig` is built with `for_testing()`.
+    ///   2. A fake shortlist is injected into its prefetch cache via
+    ///      `inject_prefetch()` — simulating what `prefetch_recall()` would
+    ///      store after a real turn N API call.
+    ///   3. `run_turn` (turn N+1) is called.
+    ///   4. The `ApiClient::stream` impl asserts that its first call receives
+    ///      a system prompt containing the `<recalled_memory>` block with the
+    ///      expected item id and content.
+    ///
+    /// The background `record_turn` and `prefetch_recall` spawned inside
+    /// `run_turn` will attempt (and silently fail) to reach the fake proxy URL
+    /// — that's intentional and acceptable for a unit test.
+    #[test]
+    fn passive_recall_items_are_prepended_to_system_prompt_on_next_turn() {
+        use crate::mem_client::MemClientConfig;
+
+        struct RecallAwareApi {
+            calls: usize,
+        }
+
+        impl ApiClient for RecallAwareApi {
+            fn stream(
+                &mut self,
+                request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                self.calls += 1;
+                if self.calls == 1 {
+                    // The system prompt must contain the recalled memory block.
+                    let full_prompt = request.system_prompt.join("\n");
+                    assert!(
+                        full_prompt.contains("<recalled_memory>"),
+                        "system prompt must contain <recalled_memory> tag, got:\n{full_prompt}"
+                    );
+                    assert!(
+                        full_prompt.contains("[#42]"),
+                        "system prompt must reference item id #42, got:\n{full_prompt}"
+                    );
+                    assert!(
+                        full_prompt.contains("always run migrations before deploying"),
+                        "system prompt must contain item content, got:\n{full_prompt}"
+                    );
+                }
+                Ok(vec![
+                    AssistantEvent::TextDelta("understood".to_string()),
+                    AssistantEvent::MessageStop,
+                ])
+            }
+        }
+
+        let mem = MemClientConfig::for_testing("sess-recall-test", "user-recall-test");
+        // Simulate the shortlist that prefetch_recall() would have stored at
+        // the end of turn N: item #42 with a migration-related memory.
+        mem.inject_prefetch((
+            7_i64, // turn_id
+            vec![(42_i64, "always run migrations before deploying".to_string())],
+        ));
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            RecallAwareApi { calls: 0 },
+            StaticToolExecutor::new(),
+            PermissionPolicy::new(PermissionMode::DangerFullAccess),
+            vec!["base system prompt".to_string()],
+        )
+        .with_passive_recall(mem);
+
+        runtime
+            .run_turn("should I run migrations?", None)
+            .expect("turn must succeed with passive recall wired in");
+    }
+
+    /// Passive recall: when no prefetch has been stored yet (cold start), the
+    /// system prompt must NOT contain a `<recalled_memory>` block and the turn
+    /// must still succeed — the passive contract is non-blocking.
+    #[test]
+    fn passive_recall_skipped_gracefully_when_cache_is_cold() {
+        use crate::mem_client::MemClientConfig;
+
+        struct AssertNoRecallApi;
+        impl ApiClient for AssertNoRecallApi {
+            fn stream(
+                &mut self,
+                request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                let full_prompt = request.system_prompt.join("\n");
+                assert!(
+                    !full_prompt.contains("<recalled_memory>"),
+                    "system prompt must NOT contain recalled_memory on a cold cache, got:\n{full_prompt}"
+                );
+                Ok(vec![
+                    AssistantEvent::TextDelta("ok".to_string()),
+                    AssistantEvent::MessageStop,
+                ])
+            }
+        }
+
+        let mem = MemClientConfig::for_testing("sess-cold", "user-cold");
+        // Intentionally do NOT inject_prefetch — cache is empty.
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            AssertNoRecallApi,
+            StaticToolExecutor::new(),
+            PermissionPolicy::new(PermissionMode::DangerFullAccess),
+            vec!["system".to_string()],
+        )
+        .with_passive_recall(mem);
+
+        runtime
+            .run_turn("first turn ever", None)
+            .expect("turn must succeed even with no prefetch");
+    }
 }

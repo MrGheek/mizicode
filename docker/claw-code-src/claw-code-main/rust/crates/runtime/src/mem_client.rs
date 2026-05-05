@@ -26,6 +26,14 @@ pub struct MemClientConfig {
 }
 
 impl MemClientConfig {
+    /// Returns `true` when the passive semantic recall pipeline is globally
+    /// enabled via environment variable. Must be `1` to activate; any other
+    /// value (including unset) disables the feature.
+    #[must_use]
+    pub fn passive_recall_globally_enabled() -> bool {
+        env::var("OMNIQL_MEM_PASSIVE_RECALL").as_deref() == Ok("1")
+    }
+
     #[must_use]
     pub fn from_env(session_id: impl Into<String>) -> Option<Self> {
         let proxy_url = env::var("OMNIQL_MEM_PROXY_URL").ok()?;
@@ -275,4 +283,75 @@ fn truncate_summary(s: &str, max_chars: usize) -> String {
     }
     let truncated: String = trimmed.chars().take(max_chars).collect();
     format!("{truncated}…")
+}
+
+#[cfg(test)]
+impl MemClientConfig {
+    /// Build a minimal `MemClientConfig` suitable for unit tests. No env vars
+    /// are required and no network calls are made unless explicitly triggered.
+    #[must_use]
+    pub fn for_testing(
+        session_id: impl Into<String>,
+        user_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            proxy_url: "http://127.0.0.1:19999".to_string(),
+            auth_token: String::new(),
+            session_id: session_id.into(),
+            user_id: user_id.into(),
+            project_path: String::new(),
+            scopes: None,
+            prefetched: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Pre-populate the prefetch cache so that the next call to
+    /// `take_prefetched_recall` returns this entry without a network call.
+    pub fn inject_prefetch(&self, entry: RecallEntry) {
+        if let Ok(mut guard) = self.prefetched.lock() {
+            *guard = Some(entry);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::env;
+
+    use super::MemClientConfig;
+
+    /// The client-side env gate must be strict: only the literal string "1"
+    /// activates passive recall. Unset, "0", "true", or any other value must
+    /// all disable it so no extra network calls are made when the feature is
+    /// off.
+    #[test]
+    fn passive_recall_globally_enabled_requires_literal_one() {
+        let _lock = crate::test_env_lock();
+
+        env::remove_var("OMNIQL_MEM_PASSIVE_RECALL");
+        assert!(
+            !MemClientConfig::passive_recall_globally_enabled(),
+            "unset env var must disable passive recall"
+        );
+
+        env::set_var("OMNIQL_MEM_PASSIVE_RECALL", "0");
+        assert!(
+            !MemClientConfig::passive_recall_globally_enabled(),
+            "'0' must disable passive recall"
+        );
+
+        env::set_var("OMNIQL_MEM_PASSIVE_RECALL", "true");
+        assert!(
+            !MemClientConfig::passive_recall_globally_enabled(),
+            "'true' must NOT enable passive recall (only '1' counts)"
+        );
+
+        env::set_var("OMNIQL_MEM_PASSIVE_RECALL", "1");
+        assert!(
+            MemClientConfig::passive_recall_globally_enabled(),
+            "'1' must enable passive recall"
+        );
+
+        env::remove_var("OMNIQL_MEM_PASSIVE_RECALL");
+    }
 }

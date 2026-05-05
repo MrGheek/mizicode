@@ -319,4 +319,133 @@ describe("memory-passive — passive recall pipeline", () => {
     expect(Array.isArray(edges)).toBe(true);
     expect(edges.length).toBe(0);
   });
+
+  /**
+   * End-to-end integration: item saved before turn 1 surfaces in the recall
+   * shortlist that turn 2 would inject into its system prompt.
+   *
+   * Flow (mirrors what the Rust runtime does per turn):
+   *   1. Save a memory item (simulates accumulated long-term knowledge).
+   *   2. POST /mem/turn?awaitRecall=1  — records turn 1 and runs the full
+   *      passive recall pipeline synchronously so we can inspect results
+   *      immediately without timing races.
+   *   3. GET /mem/recall — returns the verified shortlist that turn 2 would
+   *      prepend as a "<recalled_memory>" block in its system prompt.
+   *   4. POST /mem/recall/inject — closes the audit loop (marks ✓ injected).
+   *   5. GET /mem/recall again — must return empty (single-use semantics).
+   *
+   * The test runs with OMNIQL_MEM_PASSIVE_RECALL=1 scoped to this block.
+   */
+  it("end-to-end: item saved in turn 1 surfaces in turn 2 recall shortlist when OMNIQL_MEM_PASSIVE_RECALL=1", async () => {
+    const prevFlag = process.env["OMNIQL_MEM_PASSIVE_RECALL"];
+    process.env["OMNIQL_MEM_PASSIVE_RECALL"] = "1";
+    try {
+      const { passive, memory } = await loadModules();
+      const express = (await import("express")).default;
+      const supertest = (await import("supertest")).default;
+      const memoryRouter = (await import("../routes/memory")).default;
+
+      const userId = FAKE_USER + "-e2e-recall";
+      const sessionId = "sess-e2e-recall-" + Date.now();
+
+      const app = express();
+      app.use(express.json());
+      app.use("/api", memoryRouter);
+
+      // ── Step 1: save a memory item (knowledge from before this session) ───
+      // Item and turn content share heavy token overlap so the lexical sidecar
+      // heuristic (Jaccard >= 0.55) accepts it without needing a live LLM or
+      // embeddings API.
+      const itemContent =
+        "run database migrations before deploying production code";
+      const turnContent =
+        "run database migrations before deploying production code today";
+      const savedItem = await memory.saveMemoryItem({
+        userId,
+        memoryType: "convention",
+        scope: "session_core",
+        content: itemContent,
+      });
+      expect(savedItem.itemId).toBeGreaterThan(0);
+
+      // ── Step 2: POST /mem/turn (turn 1) with awaitRecall=1 ───────────────
+      // The route records the turn, embeds it (or falls back to lexical), runs
+      // the full recall pipeline, and returns the audit before responding.
+      const turnRes = await supertest(app)
+        .post("/api/mem/turn")
+        .query({ awaitRecall: "1" })
+        .send({
+          sessionId,
+          userId,
+          role: "user",
+          content: turnContent,
+        });
+
+      expect(turnRes.status).toBe(200);
+      expect(turnRes.body.ok).toBe(true);
+      expect(turnRes.body.passiveRecallEnabled).toBe(true);
+      expect(typeof turnRes.body.turnId).toBe("number");
+      const turn1Id: number = turnRes.body.turnId;
+
+      // The audit array shows all candidates considered.
+      const audit: Array<{ itemId: number; accepted: boolean; similarity: number }> =
+        turnRes.body.audit ?? [];
+      expect(audit.length).toBeGreaterThan(0);
+      // Our saved item must appear in the audit and must be accepted:
+      // Jaccard("run database migrations before deploying production code",
+      //         "run database migrations before deploying production code today")
+      // = 7/8 = 0.875, well above the sidecar threshold of 0.55.
+      const auditEntry = audit.find(a => a.itemId === savedItem.itemId);
+      expect(auditEntry).toBeDefined();
+      expect(auditEntry!.accepted).toBe(true);
+
+      // ── Step 3: GET /mem/recall — shortlist for turn 2's system prompt ────
+      const recallRes = await supertest(app)
+        .get("/api/mem/recall")
+        .query({ sessionId, userId });
+
+      expect(recallRes.status).toBe(200);
+      expect(recallRes.body.enabled).toBe(true);
+      expect(typeof recallRes.body.turnId).toBe("number");
+      expect(Array.isArray(recallRes.body.items)).toBe(true);
+
+      // The saved item must appear in the shortlist.
+      const recalledItem = recallRes.body.items.find(
+        (it: { itemId: number; content: string }) => it.itemId === savedItem.itemId
+      );
+      expect(recalledItem).toBeDefined();
+      expect(recalledItem.content).toContain("migrations");
+
+      // ── Step 4: POST /mem/recall/inject — close the audit loop ───────────
+      const injectRes = await supertest(app)
+        .post("/api/mem/recall/inject")
+        .send({
+          turnId: turn1Id,
+          itemIds: recallRes.body.items.map((it: { itemId: number }) => it.itemId),
+        });
+
+      expect(injectRes.status).toBe(200);
+      expect(injectRes.body.ok).toBe(true);
+      expect(injectRes.body.updated).toBeGreaterThan(0);
+
+      // Verify the audit panel sees ✓ injected via the metrics endpoint.
+      const metrics = passive.getRecallMetrics(userId);
+      expect(metrics.injectedCandidates).toBeGreaterThan(0);
+
+      // ── Step 5: recall is single-use — shortlist must be empty now ────────
+      const afterInjectRes = await supertest(app)
+        .get("/api/mem/recall")
+        .query({ sessionId, userId });
+
+      expect(afterInjectRes.status).toBe(200);
+      expect(afterInjectRes.body.items).toEqual([]);
+      expect(afterInjectRes.body.turnId).toBeNull();
+    } finally {
+      if (prevFlag !== undefined) {
+        process.env["OMNIQL_MEM_PASSIVE_RECALL"] = prevFlag;
+      } else {
+        delete process.env["OMNIQL_MEM_PASSIVE_RECALL"];
+      }
+    }
+  });
 });
