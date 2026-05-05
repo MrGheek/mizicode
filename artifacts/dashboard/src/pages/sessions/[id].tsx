@@ -2987,9 +2987,18 @@ export default function SessionDetail() {
             <h1 className="text-2xl font-bold tracking-tight">Cockpit: {session.profileName}</h1>
             <SessionStatusBadge status={session.status} />
           </div>
-          <p className="text-muted-foreground font-mono text-sm">
-            Session #{session.id} · {session.gpuName} x{session.numGpus}
-            {session.vastInstanceId ? ` · Vast #${session.vastInstanceId}` : ""}
+          <p className="text-muted-foreground font-mono text-sm flex items-center gap-2 flex-wrap">
+            Session #{session.id}
+            {(session as typeof session & { provider?: string; nimModelId?: string; nimProvider?: string }).provider === "nim" ? (
+              <span className="inline-flex items-center gap-1 text-emerald-400 font-sans text-xs font-semibold not-italic border border-emerald-500/30 bg-emerald-500/10 rounded px-1.5 py-0.5">
+                ⚡ NIM · {(session as typeof session & { nimModelId?: string }).nimModelId}
+                {(session as typeof session & { nimProvider?: string }).nimProvider && (
+                  <span className="opacity-60 font-normal">via {(session as typeof session & { nimProvider?: string }).nimProvider}</span>
+                )}
+              </span>
+            ) : (
+              <>· {session.gpuName} x{session.numGpus}{session.vastInstanceId ? ` · Vast #${session.vastInstanceId}` : ""}</>
+            )}
           </p>
           {/* Session goal — compact badge, only shown when set. Truncated to
               80 chars with hover tooltip showing the full text. Click to edit

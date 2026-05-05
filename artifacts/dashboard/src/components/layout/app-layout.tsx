@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Terminal, LayoutDashboard, Database, Layers, CheckCircle2, AlertCircle, Brain, Wand2, Palette, Bot } from "lucide-react";
+import { Terminal, LayoutDashboard, Database, Layers, CheckCircle2, AlertCircle, Brain, Wand2, Palette, Bot, Settings } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import {
   useHealthCheck,
@@ -66,6 +66,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { name: "Memory", href: "/memory", icon: Brain, badge: memoryReviewTotal > 0 ? memoryReviewTotal : undefined },
     { name: "Design Intelligence", href: "/design-intelligence", icon: Palette },
     { name: "Ambient", href: "/ambient", icon: Bot, badge: ambientBadge > 0 ? ambientBadge : undefined },
+    { name: "Settings", href: "/settings", icon: Settings },
   ];
 
   return (
