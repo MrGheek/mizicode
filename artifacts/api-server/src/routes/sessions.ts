@@ -1889,4 +1889,180 @@ router.post("/sessions/:sessionId/swarm/abort", async (req, res) => {
   }
 });
 
+// ── Soft-interrupt message queue ─────────────────────────────────────────────
+// The dashboard can POST messages here during an active agent turn. Messages are
+// stored in memory with state "queued". When the Claw Runner injects the message
+// at the next safe boundary, it calls the /injected callback to transition state
+// to "sent". SSE subscribers receive real-time state-change events.
+
+interface SoftInterruptMessage {
+  id: string;
+  sessionId: number;
+  text: string;
+  state: "queued" | "sent";
+  sentAt: number;
+  injectedAt: number | null;
+}
+
+// In-memory store keyed by session ID. Messages for a session are evicted when
+// the session is destroyed (not strictly necessary but keeps memory tidy).
+const softInterruptQueues = new Map<number, SoftInterruptMessage[]>();
+
+// SSE subscriber sets keyed by session ID.
+const softInterruptSseSubscribers = new Map<number, Set<(msg: SoftInterruptMessage) => void>>();
+
+function getSoftInterruptMessages(sessionId: number): SoftInterruptMessage[] {
+  return softInterruptQueues.get(sessionId) ?? [];
+}
+
+function broadcastSoftInterruptUpdate(sessionId: number, msg: SoftInterruptMessage) {
+  const subs = softInterruptSseSubscribers.get(sessionId);
+  if (!subs || subs.size === 0) return;
+  for (const cb of subs) {
+    try { cb(msg); } catch { /* ignore broken pipe */ }
+  }
+}
+
+// POST /sessions/:sessionId/messages
+// Accept a user message mid-stream. Stored as "queued" immediately so the
+// dashboard can render the badge before the runtime acknowledges it.
+router.post("/sessions/:sessionId/messages", async (req, res) => {
+  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid sessionId" });
+    return;
+  }
+
+  const { text } = req.body as { text?: string };
+  if (!text || typeof text !== "string" || !text.trim()) {
+    res.status(400).json({ error: "text (non-empty string) is required" });
+    return;
+  }
+
+  const [session] = await db
+    .select({ status: sessionsTable.status })
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, sessionId));
+
+  if (!session) {
+    res.status(404).json({ error: "Session not found" });
+    return;
+  }
+
+  const msg: SoftInterruptMessage = {
+    id: randomBytes(8).toString("hex"),
+    sessionId,
+    text: text.trim().slice(0, 4000),
+    state: "queued",
+    sentAt: Date.now(),
+    injectedAt: null,
+  };
+
+  if (!softInterruptQueues.has(sessionId)) {
+    softInterruptQueues.set(sessionId, []);
+  }
+  softInterruptQueues.get(sessionId)!.push(msg);
+
+  broadcastSoftInterruptUpdate(sessionId, msg);
+
+  logger.info({ sessionId, msgId: msg.id }, "Soft-interrupt message queued");
+  res.status(201).json(msg);
+});
+
+// GET /sessions/:sessionId/messages
+// Return all messages for this session in send order.
+router.get("/sessions/:sessionId/messages", (req, res) => {
+  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid sessionId" });
+    return;
+  }
+  res.json(getSoftInterruptMessages(sessionId));
+});
+
+// POST /sessions/:sessionId/messages/:msgId/injected
+// Called by the Claw Runner (or any authorised caller) when it drains the
+// soft-interrupt queue and injects the message into the conversation history.
+// Validates the same CALLBACK_TOKEN bearer used by /status and /routing-stats.
+router.post("/sessions/:sessionId/messages/:msgId/injected", (req, res) => {
+  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  const msgId = req.params["msgId"] ?? "";
+  if (isNaN(sessionId) || !msgId) {
+    res.status(400).json({ error: "Invalid sessionId or msgId" });
+    return;
+  }
+
+  if (CALLBACK_TOKEN) {
+    const auth = req.headers["authorization"] || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    if (token !== CALLBACK_TOKEN) {
+      logger.warn({ sessionId, msgId }, "Messages /injected callback: invalid token");
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+  }
+
+  const queue = softInterruptQueues.get(sessionId);
+  const msg = queue?.find((m) => m.id === msgId);
+  if (!msg) {
+    res.status(404).json({ error: "Message not found" });
+    return;
+  }
+
+  if (msg.state === "sent") {
+    res.json(msg);
+    return;
+  }
+
+  msg.state = "sent";
+  msg.injectedAt = Date.now();
+  broadcastSoftInterruptUpdate(sessionId, msg);
+
+  logger.info({ sessionId, msgId }, "Soft-interrupt message marked injected");
+  res.json(msg);
+});
+
+// GET /sessions/:sessionId/messages/stream
+// SSE stream that pushes SoftInterruptMessage objects whenever their state changes.
+// Clients subscribe on page load and receive immediate snapshot + live updates.
+router.get("/sessions/:sessionId/messages/stream", (req, res) => {
+  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid sessionId" });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  // Send current snapshot so the client doesn't have to poll on connect.
+  const existing = getSoftInterruptMessages(sessionId);
+  if (existing.length > 0) {
+    res.write(`data: ${JSON.stringify({ type: "snapshot", messages: existing })}\n\n`);
+  }
+
+  const keepAlive = setInterval(() => { res.write(": ping\n\n"); }, 20000);
+
+  const cb = (msg: SoftInterruptMessage) => {
+    res.write(`data: ${JSON.stringify({ type: "update", message: msg })}\n\n`);
+  };
+
+  if (!softInterruptSseSubscribers.has(sessionId)) {
+    softInterruptSseSubscribers.set(sessionId, new Set());
+  }
+  softInterruptSseSubscribers.get(sessionId)!.add(cb);
+
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    const subs = softInterruptSseSubscribers.get(sessionId);
+    if (subs) {
+      subs.delete(cb);
+      if (subs.size === 0) softInterruptSseSubscribers.delete(sessionId);
+    }
+  });
+});
+
 export default router;

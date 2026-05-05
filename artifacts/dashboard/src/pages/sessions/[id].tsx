@@ -49,7 +49,7 @@ import { ToastAction } from "@/components/ui/toast";
 import { useHandoffNotificationPref } from "@/hooks/use-handoff-notification-pref";
 import { useVisibilityReconnect } from "@/hooks/use-visibility-reconnect";
 import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useListProfiles } from "@workspace/api-client-react";
 import { inferBootPhase } from "@/lib/boot-phases";
 import { BootTimeline, BootProgressStrip } from "@/components/boot-timeline";
@@ -59,6 +59,242 @@ import { TeamTab } from "@/components/team-tab";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 
 const BASE_URL = import.meta.env.BASE_URL ?? "/";
+
+// ── Soft-interrupt message queue ─────────────────────────────────────────────
+
+interface SoftInterruptMessage {
+  id: string;
+  sessionId: number;
+  text: string;
+  state: "queued" | "sent";
+  sentAt: number;
+  injectedAt: number | null;
+}
+
+function useSoftInterruptMessages(sessionId: number, isActive: boolean) {
+  const [messages, setMessages] = useState<SoftInterruptMessage[]>([]);
+  const esRef = useRef<EventSource | null>(null);
+
+  // Reset on session change
+  useEffect(() => {
+    setMessages([]);
+  }, [sessionId]);
+
+  // SSE subscription for live updates
+  useEffect(() => {
+    if (!sessionId || !isActive) return;
+    let cancelled = false;
+
+    const url = `${BASE_URL}api/sessions/${sessionId}/messages/stream`;
+    const es = new EventSource(url);
+    esRef.current = es;
+
+    es.onmessage = (event) => {
+      if (cancelled) return;
+      try {
+        const data = JSON.parse(event.data) as
+          | { type: "snapshot"; messages: SoftInterruptMessage[] }
+          | { type: "update"; message: SoftInterruptMessage };
+        if (data.type === "snapshot") {
+          setMessages(data.messages);
+        } else if (data.type === "update") {
+          setMessages((prev) => {
+            const idx = prev.findIndex((m) => m.id === data.message.id);
+            if (idx === -1) return [...prev, data.message];
+            const next = [...prev];
+            next[idx] = data.message;
+            return next;
+          });
+        }
+      } catch { /* ignore */ }
+    };
+
+    es.onerror = () => {
+      if (cancelled) return;
+      es.close();
+      esRef.current = null;
+    };
+
+    return () => {
+      cancelled = true;
+      es.close();
+      esRef.current = null;
+    };
+  }, [sessionId, isActive]);
+
+  const sendMessage = useCallback(
+    async (text: string): Promise<SoftInterruptMessage> => {
+      const res = await fetch(`${BASE_URL}api/sessions/${sessionId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error || "Failed to queue message");
+      }
+      const msg = await res.json() as SoftInterruptMessage;
+      // Optimistically add to local state in case SSE is slow to echo
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
+      return msg;
+    },
+    [sessionId],
+  );
+
+  return { messages, sendMessage };
+}
+
+function ChatPanel({
+  sessionId,
+  isActive,
+}: {
+  sessionId: number;
+  isActive: boolean;
+}) {
+  const { messages, sendMessage } = useSoftInterruptMessages(sessionId, isActive);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const { toast } = useToast();
+  const listEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Scroll to bottom whenever new messages arrive
+  useEffect(() => {
+    listEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+
+  const handleSend = async () => {
+    const text = draft.trim();
+    if (!text || sending) return;
+    setDraft("");
+    setSending(true);
+    try {
+      await sendMessage(text);
+    } catch (err) {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to queue message",
+        variant: "destructive",
+      });
+      setDraft(text);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const hasMessages = messages.length > 0;
+  const queuedCount = messages.filter((m) => m.state === "queued").length;
+
+  return (
+    <Card className="bg-card/50 border-border/50">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+          <Terminal className="w-4 h-4" />
+          Send Message to Agent
+          {queuedCount > 0 && (
+            <Badge
+              variant="outline"
+              className="ml-auto text-[10px] bg-amber-500/15 text-amber-400 border-amber-500/40 gap-1"
+            >
+              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+              {queuedCount} queued
+            </Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {/* Message list */}
+        {hasMessages && (
+          <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+            {messages.map((msg) => (
+              <div key={msg.id} className="flex flex-col gap-0.5">
+                <div
+                  className={`relative rounded-lg px-3 py-2 text-sm max-w-[90%] self-end text-right ${
+                    msg.state === "queued"
+                      ? "bg-amber-500/10 border border-amber-500/30 text-foreground/90"
+                      : "bg-primary/10 border border-primary/20 text-foreground/90"
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap break-words">{msg.text}</p>
+                  <div className="flex items-center justify-end gap-1 mt-1">
+                    <span className="text-[10px] text-muted-foreground">
+                      {new Date(msg.sentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                    {msg.state === "queued" ? (
+                      <Badge
+                        variant="outline"
+                        className="text-[9px] px-1.5 py-0 bg-amber-500/15 text-amber-400 border-amber-500/40 gap-0.5 h-4"
+                      >
+                        <Loader2 className="w-2 h-2 animate-spin" />
+                        Queued
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="text-[9px] px-1.5 py-0 bg-emerald-500/15 text-emerald-400 border-emerald-500/40 gap-0.5 h-4"
+                      >
+                        <CheckCircle2 className="w-2 h-2" />
+                        Sent
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div ref={listEndRef} />
+          </div>
+        )}
+
+        {/* Compose area */}
+        {isActive ? (
+          <div className="flex gap-2 items-end">
+            <Textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value.slice(0, 4000))}
+              onKeyDown={handleKeyDown}
+              placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
+              className="flex-1 resize-none text-sm bg-secondary/30 border-border/50 min-h-[60px] max-h-32"
+              rows={2}
+              disabled={sending}
+            />
+            <Button
+              size="sm"
+              className="h-9 px-3 shrink-0"
+              onClick={handleSend}
+              disabled={!draft.trim() || sending}
+            >
+              {sending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <span className="text-xs">Send</span>
+              )}
+            </Button>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground text-center py-2">
+            Messages can only be sent while the session is active.
+          </p>
+        )}
+
+        {/* Helper text */}
+        <p className="text-[11px] text-muted-foreground leading-snug">
+          Messages sent while the agent is generating will be queued and injected
+          at the next safe boundary.{" "}
+          <span className="text-amber-400/80">Queued</span> means waiting;{" "}
+          <span className="text-emerald-400/80">Sent</span> means the agent received it.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
 
 interface MemSession {
   id: string;
@@ -2677,6 +2913,15 @@ export default function SessionDetail() {
     setBootLog((prev) => [...prev.slice(-49), msg]);
   }, [session?.statusMessage, session?.status]);
 
+  const bootPhases = useMemo(
+    () => inferBootPhase({
+      status: session?.status ?? "",
+      statusMessage: session?.statusMessage ?? null,
+      bootLog,
+    }),
+    [session?.status, session?.statusMessage, bootLog],
+  );
+
   if (isLoading) {
     return <div className="p-8"><Skeleton className="h-64 w-full" /></div>;
   }
@@ -2692,14 +2937,6 @@ export default function SessionDetail() {
   // below the tab bar while the session is still booting; it disappears once
   // status reaches ready/stopped/error.
   const isBooting = ["pending", "provisioning", "downloading", "starting"].includes(session.status);
-  const bootPhases = useMemo(
-    () => inferBootPhase({
-      status: session.status,
-      statusMessage: session.statusMessage,
-      bootLog,
-    }),
-    [session.status, session.statusMessage, bootLog],
-  );
   const profileStartupMin = profiles?.find(p => p.id === session.profileId)?.startupTimeMin ?? null;
   const sessionStartedAt = session.startedAt
     ? new Date(session.startedAt)
@@ -3103,6 +3340,11 @@ export default function SessionDetail() {
               </CardContent>
             </Card>
           ) : null}
+
+          {/* Soft-interrupt chat panel — shown for all active sessions */}
+          {isActive && (
+            <ChatPanel sessionId={sessionId} isActive={isActive} />
+          )}
 
           {/* Team Activity — compact summary card for team sessions */}
           {hasNamedTeamMembers && (() => {
