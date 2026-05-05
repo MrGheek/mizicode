@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 
-const BASE_URL = import.meta.env.BASE_URL ?? "/";
+import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 
 interface AmbientConfig {
   accountId: string;

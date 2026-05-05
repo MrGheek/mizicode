@@ -1,0 +1,50 @@
+# ============================================================
+# Fly.io configuration — FLOATR Dashboard
+#
+# Deploy with:
+#   fly launch --config artifacts/dashboard/fly.toml
+#   fly deploy --config artifacts/dashboard/fly.toml \
+#       --dockerfile artifacts/dashboard/Dockerfile \
+#       --build-context . \
+#       --build-arg VITE_API_BASE_URL=https://floatr-api.fly.dev
+#
+# The dashboard has no runtime secrets of its own.
+# VITE_API_BASE_URL is baked in at build time via --build-arg.
+# ============================================================
+
+app = "floatr-dashboard"
+primary_region = "ord"
+
+[build]
+  dockerfile = "artifacts/dashboard/Dockerfile"
+
+  [build.args]
+    # Point the dashboard at your API server's Fly.io URL.
+    # Override this if you use a custom app name.
+    VITE_API_BASE_URL = "https://floatr-api.fly.dev"
+
+[[services]]
+  protocol      = "tcp"
+  internal_port = 80
+  auto_stop_machines  = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port     = 443
+    handlers = ["tls", "http"]
+
+  [[services.ports]]
+    port     = 80
+    handlers = ["http"]
+
+  [services.http_checks]
+    interval     = "30s"
+    timeout      = "5s"
+    grace_period = "10s"
+    method       = "GET"
+    path         = "/"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "256mb"

@@ -15,6 +15,7 @@ import { CommandPalette } from "@/components/command-palette";
 import { NotificationBell } from "@/components/notification-bell";
 import { NotificationWatchers } from "@/components/notification-watchers";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/api-url";
 import { useMemoryReviewCount } from "@/pages/memory";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
@@ -50,7 +51,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const { data: pendingApprovals } = useQuery<{ actions: Array<{ id: number }> }>({
     queryKey: ["safety-pending-nav"],
     queryFn: async () => {
-      const r = await fetch(`${import.meta.env.BASE_URL}api/dashboard/safety/pending`);
+      const r = await fetch(`${API_BASE_URL}api/dashboard/safety/pending`);
       if (!r.ok) return { actions: [] };
       return r.json();
     },

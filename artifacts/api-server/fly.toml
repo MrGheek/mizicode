@@ -1,0 +1,72 @@
+# ============================================================
+# Fly.io configuration — FLOATR API Server
+#
+# Deploy with:
+#   fly launch --config artifacts/api-server/fly.toml
+#   fly secrets set --config artifacts/api-server/fly.toml \
+#       DATABASE_URL="postgres://..." \
+#       VASTAI_API_KEY="..." \
+#       AI_INTEGRATIONS_OPENAI_API_KEY="..." \
+#       AI_INTEGRATIONS_OPENAI_BASE_URL="https://..." \
+#       NVIDIA_NIM_API_KEY="nvapi-..." \
+#       VULTR_INFERENCE_API_KEY="..." \
+#       TOGETHER_API_KEY="..." \
+#       DEEPINFRA_API_KEY="..."
+#   fly deploy --config artifacts/api-server/fly.toml \
+#       --dockerfile artifacts/api-server/Dockerfile \
+#       --build-context .
+#
+# Secrets (set via `fly secrets set`):
+#   Required:
+#     DATABASE_URL                     — PostgreSQL connection string
+#     VASTAI_API_KEY                   — Vast.ai REST API key
+#     AI_INTEGRATIONS_OPENAI_API_KEY   — OpenAI-compatible API key
+#     AI_INTEGRATIONS_OPENAI_BASE_URL  — OpenAI-compatible base URL
+#   Optional (non-secret env vars are in [env] below):
+#     NVIDIA_NIM_API_KEY               — NVIDIA NIM API key
+#     VULTR_INFERENCE_API_KEY          — Vultr Inference model provider
+#     TOGETHER_API_KEY                 — Together.xyz model provider
+#     DEEPINFRA_API_KEY                — DeepInfra model provider
+# ============================================================
+
+app = "floatr-api"
+primary_region = "ord"
+
+[build]
+  dockerfile = "artifacts/api-server/Dockerfile"
+
+[env]
+  PORT             = "8080"
+  MEM_DATA_DIR     = "/data/memory"
+  CLAIM_RETENTION_DAYS = "7"
+  NODE_ENV         = "production"
+
+[[mounts]]
+  source      = "floatr_memory"
+  destination = "/data/memory"
+
+[[services]]
+  protocol    = "tcp"
+  internal_port = 8080
+  auto_stop_machines  = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port     = 443
+    handlers = ["tls", "http"]
+
+  [[services.ports]]
+    port     = 80
+    handlers = ["http"]
+
+  [services.http_checks]
+    interval       = "15s"
+    timeout        = "5s"
+    grace_period   = "30s"
+    method         = "GET"
+    path           = "/api/healthz"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "512mb"

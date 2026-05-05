@@ -3,7 +3,7 @@ import { Globe, CheckCircle2, XCircle, Loader2, ExternalLink, WifiOff } from "lu
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-const BASE_URL = import.meta.env.BASE_URL ?? "/";
+import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 
 interface ProviderHealth {
   key: string;

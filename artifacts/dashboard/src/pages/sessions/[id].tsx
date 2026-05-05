@@ -59,7 +59,7 @@ import { TeamTab } from "@/components/team-tab";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 import { GitHubBranchChip } from "@/components/github-branch-chip";
 
-const BASE_URL = import.meta.env.BASE_URL ?? "/";
+import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 
 // ── Soft-interrupt message queue ─────────────────────────────────────────────
 

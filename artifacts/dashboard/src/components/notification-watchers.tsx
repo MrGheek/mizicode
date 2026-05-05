@@ -11,6 +11,7 @@ import {
 } from "@workspace/api-client-react";
 import type { Session } from "@workspace/api-client-react";
 import { addNotification } from "@/lib/notification-store";
+import { API_BASE_URL } from "@/lib/api-url";
 import { useSwarmStatus } from "@/components/swarm-activity-panel";
 
 /**
@@ -304,7 +305,7 @@ function ApprovalRequestWatcher() {
 
   useEffect(() => {
     let cancelled = false;
-    const baseUrl = import.meta.env.BASE_URL ?? "/";
+    const baseUrl = API_BASE_URL;
 
     const poll = async () => {
       try {

@@ -38,7 +38,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Cell,
 } from "recharts";
 
-const BASE_URL = import.meta.env.BASE_URL ?? "/";
+import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 const PAGE_SIZE = 30;
 const SESSIONS_PAGE_SIZE = 50;
 

@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { categoryIcon, SKILL_CLASS_COLORS } from "@/lib/design-intelligence";
 
-const BASE_URL = import.meta.env.BASE_URL ?? "/";
+import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 const PAGE_SIZE = 20;
 
 type SkillSummary = {

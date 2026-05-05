@@ -11,7 +11,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useVisibilityReconnect } from "@/hooks/use-visibility-reconnect";
 
-const BASE_URL = import.meta.env.BASE_URL ?? "/";
+import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 
 export interface SwarmWorker {
   id: string;

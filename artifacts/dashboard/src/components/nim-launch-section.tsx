@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Textarea } from "@/components/ui/textarea";
 import { Zap, Play, Loader2, ChevronRight, Globe, Lock, Info, CheckCircle2, WifiOff, Eye, EyeOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { API_BASE_URL } from "@/lib/api-url";
 
 interface ProviderHealth {
   key: string;
@@ -343,7 +344,7 @@ export function NimLaunchSection() {
   const [health, setHealth] = useState<Record<string, ProviderHealth>>({});
 
   useEffect(() => {
-    fetch(`${BASE_URL}api/nim/catalog`)
+    fetch(`${API_BASE_URL}api/nim/catalog`)
       .then((r) => r.ok ? r.json() as Promise<NimCatalogResponse> : null)
       .then((data) => { if (data) setCatalog(data); })
       .catch(() => {})
@@ -352,7 +353,7 @@ export function NimLaunchSection() {
 
   useEffect(() => {
     const fetchHealth = () => {
-      fetch(`${BASE_URL}api/nim/health`)
+      fetch(`${API_BASE_URL}api/nim/health`)
         .then((r) => r.ok ? r.json() as Promise<NimHealthResponse> : null)
         .then((data) => {
           if (data) {

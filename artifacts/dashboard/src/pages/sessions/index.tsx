@@ -18,7 +18,7 @@ import { GitHubBranchChip } from "@/components/github-branch-chip";
 
 const RELAUNCHABLE_STATUSES = new Set(["stopped"]);
 
-const BASE_URL = import.meta.env.BASE_URL ?? "/";
+import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 const BATCH_INTERVAL_MS = 3000;
 // When SSE is unavailable we fall back to polling, but at a much lower
 // frequency than the SSE update rate — there is no point hammering the

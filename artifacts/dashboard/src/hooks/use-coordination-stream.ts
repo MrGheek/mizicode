@@ -8,7 +8,7 @@ import {
 } from "@workspace/api-client-react";
 import { useVisibilityReconnect } from "./use-visibility-reconnect";
 
-const BASE_URL = import.meta.env.BASE_URL ?? "/";
+import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 
 const RETRY_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000];
 const MAX_BACKOFF_DELAY = 30000;

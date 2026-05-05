@@ -36,10 +36,11 @@ import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge, SkillEff
 import { categoryIcon } from "@/lib/design-intelligence";
 import type { FeedbackScoreEntry } from "@/components/skill-badges";
 
+import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
+
 type LibTab = "installed" | "pending" | "disabled" | "bundles";
 
 const FALLBACK_DEFAULT_SLUGS = ["mizi-builder", "mizi-reviewer", "mizi-debugger", "mizi-team-studio"];
-const BASE_URL = import.meta.env.BASE_URL ?? "/";
 
 type ManifestSource = { repoUrl?: string; commitSha?: string; license?: string; trust?: string };
 type SkillManifest = {
