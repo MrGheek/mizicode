@@ -1,3 +1,6 @@
+## v0.4.0 — 2026-05-06\n\n- feat: show live provisioning progress for orchestrated team sessions (task #289) (674afda)
+- Add a comprehensive wiki to explain the MIZI platform (9e4f20d)\n
+
 ## v0.3.0 — 2026-05-06\n\n- Update the visual appearance of the platform's overview page (3e9043c)
 - Add POST /sessions/orchestrate and GET /sessions/:id/orchestration-status (4ecab22)
 - feat(#288): NIM sessions provision Fly.io Machines instead of Vast.ai CPU instances (5ed784d)
