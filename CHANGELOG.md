@@ -1,3 +1,16 @@
+## v0.2.0 — 2026-05-06\n\n- Fix bridge: import bridgeKey, drop ws dep in claw-bridge, add exec lock cleanup (76d8f5f)
+- Apply new Command Center design to the dashboard interface (c2ceabf)
+- Ensure dashboard preview displays correctly by enforcing strict port usage (20a2020)
+- Present 3 dashboard design variants on canvas; fix env-var test (84d0991)
+- Present 3 dashboard design variants on canvas (ad3b42a)
+- Update the image showing where to select Postgres during app setup (8b12f3d)
+- Update UI screenshot for setting up application deployment (87e49b3)
+- Add API key management UI to the dashboard (Task #280) (e5da167)
+- Switch to NVIDIA NIM for AI services, making OpenAI optional (c242ea9)
+- Provide instructions for creating new applications and setting up services (c651e98)
+- feat: Add M2M API key auth for remote agents (task #277) (671e90f)
+- Remove environment restriction from deployment workflow (33477f2)\n
+
 ## v0.1.1 — 2026-05-05\n\n- fix: update GitHub Actions secret names to match MIZIAPI and MIZIDASHBOARD (162ff33)
 - Update references from Floatr to Mizi across project files (2dd4fec)
 - fix: rename floatr → mizi in Fly.io configs, CI workflow, and README (9e81ef2)
