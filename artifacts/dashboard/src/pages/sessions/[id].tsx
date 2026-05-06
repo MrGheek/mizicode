@@ -3361,7 +3361,12 @@ export default function SessionDetail() {
                 <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center">
                   <Terminal className="w-6 h-6 animate-pulse" />
                 </div>
-                <p className="text-sm">Waiting for environment to start — this takes ~25 minutes on first launch while the model downloads.</p>
+                <p className="text-sm">
+                  {(session as typeof session & { provider?: string }).provider === "nim"
+                    ? "Waiting for environment to start — NIM workspace boots in ~2 minutes (no model download needed)."
+                    : "Waiting for environment to start — this takes ~25 minutes on first launch while the model downloads."
+                  }
+                </p>
               </CardContent>
             </Card>
           ) : null}

@@ -94,6 +94,7 @@ export async function createMachine(params: CreateMachineParams): Promise<Create
         memory_mb: FLY_MACHINE_MEMORY_MB,
       },
       services: [
+        { ports: [{ port: 22,   handlers: ["tcp"]  }], protocol: "tcp", internal_port: 22   },
         { ports: [{ port: 3000,  handlers: ["http"] }], protocol: "tcp", internal_port: 3000  },
         { ports: [{ port: 5180,  handlers: ["http"] }], protocol: "tcp", internal_port: 5180  },
         { ports: [{ port: 5181,  handlers: ["http"] }], protocol: "tcp", internal_port: 5181  },

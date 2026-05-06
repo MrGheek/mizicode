@@ -553,16 +553,13 @@ export default function SessionsList() {
                     </TableCell>
                     <TableCell className="text-muted-foreground font-mono text-sm">
                       {(() => {
-                        const s = session as typeof session & { provider?: string; nimModelId?: string; nimProvider?: string };
+                        const s = session as typeof session & { provider?: string; nimModelId?: string; nimProvider?: string; flyMachineId?: string | null };
                         if (s.provider === "nim") {
-                          const providerLabel = s.nimProvider
-                            ? s.nimProvider.charAt(0).toUpperCase() + s.nimProvider.slice(1)
-                            : "NVIDIA NIM";
                           return (
                             <span className="inline-flex items-center gap-1.5 font-sans text-xs font-semibold">
                               <span className="text-emerald-400">⚡ NIM</span>
                               <span className="text-white/30">·</span>
-                              <span className="text-emerald-300">{providerLabel}</span>
+                              <span className="text-emerald-300">Fly</span>
                               {s.nimModelId && (
                                 <>
                                   <span className="text-white/30">·</span>
