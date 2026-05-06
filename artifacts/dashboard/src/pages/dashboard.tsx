@@ -22,10 +22,9 @@ import { X, History } from "lucide-react";
 import type { GpuProfile, SchedulerConfig, UpdateSchedulerRequest } from "@workspace/api-client-react";
 import type { LaunchOptions } from "@/components/launch-session-dialog";
 import { useQueryClient } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Activity, Clock, DollarSign, Server, Terminal, Play, ArrowRight,
-  Target, Trash2, Star, Network, Zap, Cpu, Calendar,
+  Activity, Clock, DollarSign, Server, Terminal, ArrowRight,
+  Target, Trash2, Star, Network, Zap, Cpu, Calendar, Monitor,
 } from "lucide-react";
 import { getGetClaimCleanupStatsQueryKey } from "@workspace/api-client-react";
 import { SwarmPill } from "@/components/swarm-activity-panel";
@@ -33,14 +32,16 @@ import { ProfileCard } from "@/components/profile-card";
 import { NimLaunchSection } from "@/components/nim-launch-section";
 import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
 import { SchedulerConfigCard } from "@/components/scheduler-config-card";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+
+type DashTab = "fast" | "gpu" | "scheduler";
 
 export default function Dashboard() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<DashTab>("fast");
   const [launchingProfileId, setLaunchingProfileId] = useState<number | null>(null);
   const [isSavingScheduler, setIsSavingScheduler] = useState(false);
   const [dismissTick, setDismissTick] = useState(0);
@@ -158,243 +159,241 @@ export default function Dashboard() {
       .slice(0, 4);
   }, [allSessions]);
 
-  const nextSchedule = useMemo(() => {
-    if (!schedulerConfig?.enabled) return null;
-    const days = schedulerConfig.daysOfWeek;
-    const time = schedulerConfig.launchTime;
-    if (!time) return null;
-    const dayLabel = days.length > 0
-      ? days[0].charAt(0).toUpperCase() + days[0].slice(1, 3)
-      : null;
-    return dayLabel ? `${dayLabel} ${time}` : time;
-  }, [schedulerConfig]);
+  const nim = activeSession as typeof activeSession & { provider?: string; nimModelId?: string; nimProvider?: string } | undefined;
+  const isNimSession = nim?.provider === "nim";
+  const sessionLabel = activeSession
+    ? (isNimSession ? (nim?.nimModelId ?? activeSession.profileName) : activeSession.profileName)
+    : null;
+
+  const tabs: Array<{ id: DashTab; icon: React.ElementType; label: string; sub: string; color: string }> = [
+    { id: "fast",      icon: Zap,      label: "Fast Launch",  sub: "~2 min",  color: "emerald" },
+    { id: "gpu",       icon: Monitor,  label: "GPU Sessions", sub: "~25 min", color: "cyan"    },
+    { id: "scheduler", icon: Calendar, label: "Scheduler",    sub: "",        color: "slate"   },
+  ];
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-[#0a0a0f] text-slate-300">
+    <div className="flex flex-col h-full overflow-hidden bg-[#0a0a0f] text-slate-300">
 
-      {/* ── LEFT DASHBOARD SIDEBAR ──────────────────────────────── */}
-      <div className="w-[280px] flex-shrink-0 border-r border-white/5 bg-[#0d0d14] flex flex-col h-full overflow-y-auto">
-        <div className="p-5 flex flex-col gap-5">
+      {/* ── TOP STATUS BAR ─────────────────────────────────────── */}
+      <div className="flex-shrink-0 bg-[#0d0d14] border-b border-white/5 px-6 py-3 flex items-center gap-6">
 
-          {/* Active Session */}
-          <div>
-            <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Active Session</p>
-            {isLoadingSession ? (
-              <div className="bg-white/[0.02] border border-white/10 rounded-xl p-4">
-                <Skeleton className="h-4 w-24 mb-2 bg-white/5" />
-                <Skeleton className="h-3 w-32 bg-white/5" />
-              </div>
-            ) : activeSession ? (
-              <div className="bg-white/[0.02] border border-white/10 rounded-xl p-4 relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-cyan-500 to-transparent opacity-50" />
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-1.5">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500" />
-                    </span>
-                    <span className="text-[10px] text-cyan-400 font-mono font-semibold tracking-wider">ONLINE</span>
-                  </div>
-                  <SessionStatusBadge status={activeSession.status} />
-                </div>
-                {(() => {
-                  const nim = activeSession as typeof activeSession & { provider?: string; nimModelId?: string; nimProvider?: string };
-                  const isNim = nim.provider === "nim";
-                  return (
-                    <>
-                      <div className="font-semibold text-white text-sm mb-0.5 truncate">
-                        {isNim ? (nim.nimModelId ?? activeSession.profileName) : activeSession.profileName}
-                      </div>
-                      {isNim && (
-                        <div className="mb-1 inline-flex items-center gap-1 text-emerald-400 font-sans text-[10px] font-semibold border border-emerald-500/30 bg-emerald-500/10 rounded px-1.5 py-0.5">
-                          ⚡ NIM{nim.nimProvider ? <span className="opacity-60 font-normal ml-0.5">via {nim.nimProvider}</span> : null}
-                        </div>
-                      )}
-                      <div className="text-xs text-slate-500 font-mono mb-1">
-                        {isNim
-                          ? `$${activeSession.costPerHour?.toFixed(2) ?? "0.00"}/hr`
-                          : `${activeSession.gpuName} · $${activeSession.costPerHour?.toFixed(2) ?? "0.00"}/hr`}
-                      </div>
-                    </>
-                  );
-                })()}
-                {activeSession.teamMembers && activeSession.teamMembers.length > 0 && (
-                  <div className="mb-2"><TeamSessionBadge members={activeSession.teamMembers} /></div>
+        {/* Active session indicator */}
+        <div className="flex items-center gap-2.5 min-w-0">
+          {isLoadingSession ? (
+            <Skeleton className="h-4 w-32 bg-white/5" />
+          ) : activeSession ? (
+            <>
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500" />
+              </span>
+              <div className="min-w-0">
+                <span className="text-sm font-medium text-white truncate">{sessionLabel}</span>
+                {isNimSession && nim?.nimProvider && (
+                  <span className="ml-2 text-[10px] text-emerald-400 font-mono">via {nim.nimProvider}</span>
                 )}
-                <SwarmPill sessionId={activeSession.id} isReady={activeSession.status === "ready"} />
-                <button
-                  onClick={() => setLocation(`/sessions/${activeSession.id}`)}
-                  className="mt-3 w-full py-2 bg-white/5 hover:bg-white/10 transition-colors border border-white/10 rounded-lg text-xs font-medium text-white flex items-center justify-center gap-2"
-                >
-                  <Terminal className="w-3.5 h-3.5" />
-                  View Cockpit
-                </button>
               </div>
-            ) : (
-              <div className="bg-white/[0.02] border border-dashed border-white/10 rounded-xl p-4 text-center">
-                <Terminal className="w-6 h-6 mx-auto mb-1.5 text-slate-600" />
-                <p className="text-xs text-slate-500">No active session</p>
-              </div>
-            )}
-          </div>
-
-          {/* Stats grid */}
-          <div>
-            <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Overview</p>
-            <div className="grid grid-cols-2 gap-2.5">
-              {[
-                { icon: Activity, label: "Active", value: isLoadingSummary ? "…" : String(summary?.activeSessions ?? 0) },
-                { icon: Server, label: "Total", value: isLoadingSummary ? "…" : String(summary?.totalSessions ?? 0) },
-                { icon: Clock, label: "Hours", value: isLoadingSummary ? "…" : `${(summary?.totalHours ?? 0).toFixed(1)}h` },
-                { icon: DollarSign, label: "Spend", value: isLoadingSummary ? "…" : `$${(summary?.totalCost ?? 0).toFixed(2)}` },
-              ].map(({ icon: Icon, label, value }) => (
-                <div key={label} className="bg-white/[0.02] border border-white/5 rounded-lg p-3">
-                  <div className="flex items-center gap-1.5 text-slate-500 mb-1">
-                    <Icon className="w-3.5 h-3.5" />
-                    <span className="text-[11px]">{label}</span>
-                  </div>
-                  <div className="text-base font-mono font-semibold text-white">{value}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="h-px w-full bg-white/5" />
-
-          {/* Scheduler compact */}
-          {schedulerConfig && (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-slate-400" />
-                <span className="text-sm font-medium text-slate-300">Scheduler</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {nextSchedule && (
-                  <span className="text-[10px] bg-white/8 border border-white/10 px-2 py-0.5 rounded font-mono text-slate-400 truncate max-w-[100px]">
-                    {nextSchedule}
-                  </span>
-                )}
-                <div className={`w-8 h-4 rounded-full relative border transition-colors ${
-                  schedulerConfig.enabled
-                    ? "bg-cyan-500/20 border-cyan-500/50"
-                    : "bg-white/5 border-white/10"
-                }`}>
-                  <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${
-                    schedulerConfig.enabled
-                      ? "right-0.5 bg-cyan-400"
-                      : "left-0.5 bg-slate-600"
-                  }`} />
-                </div>
-              </div>
-            </div>
+              <SessionStatusBadge status={activeSession.status} />
+              {activeSession.teamMembers && activeSession.teamMembers.length > 0 && (
+                <TeamSessionBadge members={activeSession.teamMembers} />
+              )}
+              {activeSession.costPerHour != null && (
+                <span className="text-[11px] font-mono text-slate-500 shrink-0">
+                  ${activeSession.costPerHour.toFixed(2)}/hr
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="w-2 h-2 rounded-full bg-slate-700 shrink-0" />
+              <span className="text-xs text-slate-500">No active session</span>
+            </>
           )}
+        </div>
 
-          <div className="h-px w-full bg-white/5" />
+        {/* View Cockpit */}
+        {activeSession && (
+          <button
+            onClick={() => setLocation(`/sessions/${activeSession.id}`)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-slate-300 transition-colors shrink-0"
+          >
+            <Terminal className="w-3.5 h-3.5" />
+            View Cockpit
+          </button>
+        )}
+        {activeSession && <SwarmPill sessionId={activeSession.id} isReady={activeSession.status === "ready"} />}
 
-          {/* Recent sessions */}
-          <div>
-            <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Recent Sessions</p>
-            {recentSessions.length === 0 ? (
-              <p className="text-xs text-slate-600 italic">No past sessions yet</p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {recentSessions.map((s) => {
-                  const ref = s.stoppedAt ? new Date(s.stoppedAt) : new Date(s.createdAt);
-                  const ago = formatDistanceToNow(ref, { addSuffix: true });
-                  const cost = s.totalCost ? `$${s.totalCost.toFixed(2)}` : "—";
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() => setLocation(`/sessions/${s.id}`)}
-                      className="flex items-center justify-between text-sm group w-full text-left"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-1.5 h-1.5 rounded-full bg-slate-600 group-hover:bg-slate-400 transition-colors shrink-0" />
-                        <span className="text-slate-400 group-hover:text-slate-200 transition-colors truncate text-xs">
-                          {s.profileName}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 font-mono text-[11px] text-slate-500 shrink-0 ml-2">
-                        <span className="hidden sm:inline">{ago.replace(" ago", "")}</span>
-                        <span>{cost}</span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+        {/* Spacer */}
+        <div className="flex-1" />
 
+        {/* Stats */}
+        <div className="flex items-center gap-6 text-xs font-mono text-slate-500 shrink-0">
+          {isLoadingSummary ? (
+            <Skeleton className="h-3 w-48 bg-white/5" />
+          ) : (
+            <>
+              <span><span className="text-slate-300">{summary?.activeSessions ?? 0}</span> active</span>
+              <span><span className="text-slate-300">{summary?.totalSessions ?? 0}</span> sessions</span>
+              <span><span className="text-slate-300">{(summary?.totalHours ?? 0).toFixed(1)}h</span> compute</span>
+              <span><span className="text-slate-300">${(summary?.totalCost ?? 0).toFixed(2)}</span> spent</span>
+            </>
+          )}
         </div>
       </div>
 
-      {/* ── RIGHT MAIN AREA ─────────────────────────────────────── */}
-      <div className="flex-1 h-full overflow-y-auto relative">
+      {/* ── TAB NAV ───────────────────────────────────────────── */}
+      <div className="flex-shrink-0 border-b border-white/5 px-6 flex items-end gap-0">
+        {tabs.map((tab) => {
+          const active = activeTab === tab.id;
+          const activeColor =
+            tab.color === "emerald" ? "border-emerald-500 text-emerald-300"
+            : tab.color === "cyan"  ? "border-cyan-500 text-cyan-300"
+            :                         "border-slate-400 text-slate-200";
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-all ${
+                active ? activeColor : "border-transparent text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+              {tab.sub && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                  active && tab.color === "emerald"
+                    ? "bg-emerald-500/15 text-emerald-400"
+                    : active && tab.color === "cyan"
+                    ? "bg-cyan-500/15 text-cyan-400"
+                    : "bg-white/5 text-slate-500"
+                }`}>
+                  {tab.sub}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── TAB CONTENT ──────────────────────────────────────── */}
+      <div className="flex-1 overflow-y-auto relative">
 
         {/* Background glow effects */}
         <div className="fixed top-[-200px] right-[-200px] w-[600px] h-[600px] bg-emerald-500/5 rounded-full blur-[120px] pointer-events-none z-0" />
         <div className="fixed bottom-[-200px] right-[200px] w-[500px] h-[500px] bg-cyan-500/5 rounded-full blur-[100px] pointer-events-none z-0" />
 
-        <div className="relative z-10 p-8 space-y-10 max-w-5xl">
+        <div className="relative z-10 p-8 max-w-5xl">
 
-          {/* Continue card */}
-          {continueCandidate && (
-            <ContinueCard session={continueCandidate} onDismiss={() => dismissContinue(continueCandidate.id)} />
+          {/* FAST LAUNCH TAB */}
+          {activeTab === "fast" && (
+            <div className="space-y-8">
+              {continueCandidate && (
+                <ContinueCard session={continueCandidate} onDismiss={() => dismissContinue(continueCandidate.id)} />
+              )}
+
+              <section>
+                <div className="flex items-center gap-3 mb-1">
+                  <Zap className="w-5 h-5 text-emerald-400" />
+                  <h2 className="text-xl font-bold text-white tracking-tight">Hosted Inference</h2>
+                </div>
+                <p className="text-emerald-400/70 text-xs mb-6 flex items-center gap-2">
+                  <span className="w-1 h-1 bg-emerald-500 rounded-full" />
+                  Start in ~2 minutes — no GPU rental needed
+                </p>
+                <NimLaunchSection />
+              </section>
+
+              {recentSessions.length > 0 && (
+                <>
+                  <div className="h-px w-full bg-gradient-to-r from-transparent via-white/5 to-transparent" />
+                  <section>
+                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-4">Recent Sessions</p>
+                    <div className="flex flex-col gap-3">
+                      {recentSessions.map((s) => {
+                        const ref = s.stoppedAt ? new Date(s.stoppedAt) : new Date(s.createdAt);
+                        const ago = formatDistanceToNow(ref, { addSuffix: true });
+                        const cost = s.totalCost ? `$${s.totalCost.toFixed(2)}` : "—";
+                        return (
+                          <button
+                            key={s.id}
+                            onClick={() => setLocation(`/sessions/${s.id}`)}
+                            className="flex items-center justify-between text-sm group w-full text-left"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="w-1.5 h-1.5 rounded-full bg-slate-600 group-hover:bg-slate-400 transition-colors shrink-0" />
+                              <span className="text-slate-400 group-hover:text-slate-200 transition-colors truncate text-xs">
+                                {s.profileName}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 font-mono text-[11px] text-slate-500 shrink-0 ml-2">
+                              <span>{ago.replace(" ago", "")}</span>
+                              <span>{cost}</span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+                </>
+              )}
+            </div>
           )}
 
-          {/* ── HOSTED INFERENCE ── */}
-          <section>
-            <div className="flex items-center gap-3 mb-1">
-              <Zap className="w-5 h-5 text-emerald-400" />
-              <h1 className="text-xl font-bold text-white tracking-tight">Hosted Inference</h1>
-            </div>
-            <p className="text-emerald-400/70 text-xs mb-6 flex items-center gap-2">
-              <span className="w-1 h-1 bg-emerald-500 rounded-full" />
-              Start in ~2 minutes — no GPU rental needed
-            </p>
-            <NimLaunchSection />
-          </section>
-
-          <div className="h-px w-full bg-gradient-to-r from-transparent via-white/5 to-transparent" />
-
-          {/* ── GPU SESSIONS ── */}
-          <section>
-            <div className="flex items-center gap-3 mb-1">
-              <Cpu className="w-5 h-5 text-cyan-400" />
-              <h2 className="text-xl font-bold text-white tracking-tight">GPU Sessions</h2>
-            </div>
-            <p className="text-slate-400 text-xs mb-6 flex items-center gap-2">
-              <span className="w-1 h-1 bg-slate-500 rounded-full" />
-              Full dedicated instances — boot time 25–35 min
-            </p>
-            <QuickLaunchProfiles
-              profiles={profiles}
-              isLoading={isLoadingProfiles}
-              launchingProfileId={launchingProfileId}
-              onLaunch={handleLaunch}
-              pinnedIds={pinnedIds}
-              onTogglePin={togglePin}
-            />
-          </section>
-
-          <div className="h-px w-full bg-gradient-to-r from-transparent via-white/5 to-transparent" />
-
-          {/* Scheduler full config */}
-          {schedulerConfig ? (
-            <section>
-              <SchedulerConfigCard
-                config={schedulerConfig}
-                profiles={profiles || []}
-                onSave={handleSaveScheduler}
-                isSaving={isSavingScheduler}
+          {/* GPU SESSIONS TAB */}
+          {activeTab === "gpu" && (
+            <div className="space-y-6">
+              <div>
+                <div className="flex items-center gap-3 mb-1">
+                  <Cpu className="w-5 h-5 text-cyan-400" />
+                  <h2 className="text-xl font-bold text-white tracking-tight">GPU Sessions</h2>
+                </div>
+                <p className="text-slate-400 text-xs mb-6 flex items-center gap-2">
+                  <span className="w-1 h-1 bg-slate-500 rounded-full" />
+                  Full dedicated instances — boot time 25–35 min
+                </p>
+              </div>
+              <QuickLaunchProfiles
+                profiles={profiles}
+                isLoading={isLoadingProfiles}
+                launchingProfileId={launchingProfileId}
+                onLaunch={handleLaunch}
+                pinnedIds={pinnedIds}
+                onTogglePin={togglePin}
               />
-            </section>
-          ) : (
-            <Skeleton className="h-48 w-full bg-white/5" />
+              {cleanupStats && (
+                <>
+                  <div className="h-px w-full bg-gradient-to-r from-transparent via-white/5 to-transparent" />
+                  <ClaimCleanupCard stats={cleanupStats} />
+                </>
+              )}
+            </div>
           )}
 
-          {/* Claim cleanup stats */}
-          {cleanupStats && <ClaimCleanupCard stats={cleanupStats} />}
+          {/* SCHEDULER TAB */}
+          {activeTab === "scheduler" && (
+            <div className="space-y-6">
+              <div>
+                <div className="flex items-center gap-3 mb-1">
+                  <Calendar className="w-5 h-5 text-slate-400" />
+                  <h2 className="text-xl font-bold text-white tracking-tight">Session Scheduler</h2>
+                </div>
+                <p className="text-slate-400 text-xs mb-6 flex items-center gap-2">
+                  <span className="w-1 h-1 bg-slate-500 rounded-full" />
+                  Auto-launch a session before your workday starts
+                </p>
+              </div>
+              {schedulerConfig ? (
+                <SchedulerConfigCard
+                  config={schedulerConfig}
+                  profiles={profiles || []}
+                  onSave={handleSaveScheduler}
+                  isSaving={isSavingScheduler}
+                />
+              ) : (
+                <Skeleton className="h-48 w-full bg-white/5" />
+              )}
+            </div>
+          )}
 
         </div>
       </div>
