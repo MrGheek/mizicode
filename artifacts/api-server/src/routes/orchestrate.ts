@@ -18,9 +18,10 @@
  */
 
 import { Router } from "express";
+import type { Response } from "express";
 import { createHash, randomBytes } from "crypto";
-import { db, sessionsTable, gpuProfilesTable, templatesTable, sessionLanesTable, laneClaimsTable, skillBundlesTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { db, sessionsTable, gpuProfilesTable, templatesTable, sessionLanesTable, laneClaimsTable, skillBundlesTable, orchestrationIdempotencyTable } from "@workspace/db";
+import { eq, desc, lt, sql } from "drizzle-orm";
 import { requireAgentAuth } from "../middlewares/agent-auth";
 import { getProfileById } from "../services/profiles";
 import * as vastai from "../services/vastai";
@@ -60,31 +61,149 @@ const ACTIVE_PROVISIONING_STATUSES: ReadonlySet<string> = new Set([
 router.post("/sessions/orchestrate", requireAgentAuth(["sessions:write"]));
 router.get("/sessions/:sessionId/orchestration-status", requireAgentAuth(["sessions:write"]));
 
-// ─── Idempotency cache ─────────────────────────────────────────────────────────
+// ─── Idempotency (DB-backed, race-safe) ───────────────────────────────────────
 // Keyed by SHA-256 of (goal + profileId + sorted member roles).
 // Within a 5-minute window a second identical call returns the existing session.
+// Keys are persisted in the database so server restarts don't cause duplicates.
+//
+// Race-safety: the first caller atomically INSERTs a row with session_id = NULL
+// (a "reservation"). Only if the INSERT wins does that caller proceed to provision.
+// Concurrent callers that lose the INSERT see the existing row and either wait
+// (session_id = NULL) or get the completed session (session_id = <id>).
+// A NULL reservation older than 60 s is treated as a stale crash and cleared.
 
 const IDEMPOTENCY_WINDOW_MS = 5 * 60 * 1000;
-
-interface IdempotencyEntry {
-  sessionId: number;
-  createdAt: number;
-}
-
-const idempotencyCache = new Map<string, IdempotencyEntry>();
-
-function pruneIdempotencyCache(): void {
-  const cutoff = Date.now() - IDEMPOTENCY_WINDOW_MS;
-  for (const [key, entry] of idempotencyCache) {
-    if (entry.createdAt < cutoff) idempotencyCache.delete(key);
-  }
-}
+// Time to wait before treating a NULL-session_id reservation as a stale crash.
+const IDEMPOTENCY_RESERVATION_STALE_MS = 60_000;
 
 function buildIdempotencyKey(goal: string, profileId: string | number, memberRoles: string[]): string {
   const sorted = [...memberRoles].sort().join(",");
   const raw = `${String(goal).trim()}|${profileId}|${sorted}`;
   return createHash("sha256").update(raw).digest("hex");
 }
+
+type AcquireOutcome =
+  | { outcome: "reserved" }
+  | { outcome: "in_progress" }
+  | { outcome: "exists"; sessionId: number }
+  | { outcome: "stale_cleared" };
+
+/**
+ * Atomically attempt to reserve the idempotency key.
+ *
+ * Returns:
+ *   "reserved"      — this caller won the race; proceed to provision, then call
+ *                     confirmIdempotencyEntry() with the real sessionId.
+ *   "exists"        — a completed session already exists; return it to the caller.
+ *   "in_progress"   — another request is currently provisioning; caller should
+ *                     respond with 409 and ask the client to retry shortly.
+ *   "stale_cleared" — a stale crash reservation was cleared; caller may retry
+ *                     immediately (treated the same as "reserved" on retry).
+ */
+async function acquireIdempotencyKey(key: string): Promise<AcquireOutcome> {
+  // Try to atomically claim the key with a NULL session_id ("in-progress" marker).
+  const inserted = await db
+    .insert(orchestrationIdempotencyTable)
+    .values({ idempotencyKey: key, sessionId: null })
+    .onConflictDoNothing()
+    .returning({ idempotencyKey: orchestrationIdempotencyTable.idempotencyKey });
+
+  if (inserted.length > 0) {
+    return { outcome: "reserved" };
+  }
+
+  // Another row already exists — read it.
+  const cutoff = new Date(Date.now() - IDEMPOTENCY_WINDOW_MS);
+  const [row] = await db
+    .select()
+    .from(orchestrationIdempotencyTable)
+    .where(eq(orchestrationIdempotencyTable.idempotencyKey, key));
+
+  if (!row || row.createdAt < cutoff) {
+    // Expired or gone (unlikely race) — clear and let caller retry.
+    if (row) await deleteIdempotencyEntry(key);
+    return { outcome: "stale_cleared" };
+  }
+
+  if (row.sessionId !== null) {
+    return { outcome: "exists", sessionId: row.sessionId };
+  }
+
+  // session_id is NULL: provisioning is in-progress.
+  // If the reservation is old enough to be a stale crash, clear it.
+  const age = Date.now() - row.createdAt.getTime();
+  if (age > IDEMPOTENCY_RESERVATION_STALE_MS) {
+    logger.warn({ key, ageMs: age }, "Orchestrate idempotency: stale NULL reservation — clearing for retry");
+    await deleteIdempotencyEntry(key);
+    return { outcome: "stale_cleared" };
+  }
+
+  return { outcome: "in_progress" };
+}
+
+/**
+ * After a session has been successfully created, update the reservation row
+ * with the real session_id so subsequent callers can return it idempotently.
+ */
+async function confirmIdempotencyEntry(key: string, sessionId: number): Promise<void> {
+  await db
+    .update(orchestrationIdempotencyTable)
+    .set({ sessionId })
+    .where(eq(orchestrationIdempotencyTable.idempotencyKey, key));
+}
+
+/**
+ * Non-reserving existence check used as an early fast-path before expensive
+ * pre-provisioning work (profile lookup, GPU offer search). Pure read — does
+ * NOT insert or modify any row.
+ */
+async function checkIdempotencyStatus(key: string): Promise<
+  | { status: "exists"; sessionId: number }
+  | { status: "in_progress" }
+  | { status: "not_found" }
+> {
+  const cutoff = new Date(Date.now() - IDEMPOTENCY_WINDOW_MS);
+  const [row] = await db
+    .select()
+    .from(orchestrationIdempotencyTable)
+    .where(
+      sql`${orchestrationIdempotencyTable.idempotencyKey} = ${key}
+          AND ${orchestrationIdempotencyTable.createdAt} >= ${cutoff}`
+    );
+
+  if (!row) return { status: "not_found" };
+  if (row.sessionId !== null) return { status: "exists", sessionId: row.sessionId };
+
+  // NULL session_id — another request is provisioning.
+  // If it looks like a stale crash reservation, treat as not_found (will be
+  // formally cleared by the next acquireIdempotencyKey call).
+  const age = Date.now() - row.createdAt.getTime();
+  if (age > IDEMPOTENCY_RESERVATION_STALE_MS) return { status: "not_found" };
+
+  return { status: "in_progress" };
+}
+
+/** Delete an idempotency entry so a failed provisioning attempt can be retried. */
+async function deleteIdempotencyEntry(key: string): Promise<void> {
+  await db
+    .delete(orchestrationIdempotencyTable)
+    .where(eq(orchestrationIdempotencyTable.idempotencyKey, key));
+}
+
+/** Periodically remove entries older than the 5-minute window. */
+async function pruneExpiredIdempotencyEntries(): Promise<void> {
+  const cutoff = new Date(Date.now() - IDEMPOTENCY_WINDOW_MS);
+  try {
+    await db
+      .delete(orchestrationIdempotencyTable)
+      .where(lt(orchestrationIdempotencyTable.createdAt, cutoff));
+  } catch (err) {
+    logger.warn({ err }, "Orchestrate: failed to prune expired idempotency entries (non-fatal)");
+  }
+}
+
+// Run cleanup every 5 minutes (matches the TTL window).
+setInterval(() => { pruneExpiredIdempotencyEntries().catch(() => undefined); }, IDEMPOTENCY_WINDOW_MS).unref();
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -121,6 +240,44 @@ async function upsertMemberSkillBundle(memberRole: string, skillIds: string[]): 
 
   logger.info({ memberRole, skillIds: sorted, bundleSlug: slug }, "Orchestrate: upserted member skill bundle");
   return created.id;
+}
+
+// ─── Idempotent-response helper ────────────────────────────────────────────────
+// Single source of truth for the "existing session" response shape. Used by
+// every "exists" branch so all callers get the same contract.
+
+async function sendExistingSessionResponse(res: Response, sessionId: number): Promise<boolean> {
+  const [sess] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+  if (!sess) return false;
+
+  const lanes = await db
+    .select()
+    .from(sessionLanesTable)
+    .where(eq(sessionLanesTable.sessionId, sessionId))
+    .orderBy(desc(sessionLanesTable.createdAt));
+
+  const baseUrl = (sess.codeServerUrl || "").replace(/\/$/, "");
+  const members = lanes.map((lane) => {
+    const member = (sess.teamMembers as TeamMemberRecord[] | null)
+      ?.find((tm) => tm.name === lane.memberIdentifier);
+    return {
+      laneId: lane.id,
+      memberIdentifier: lane.memberIdentifier,
+      role: lane.laneType,
+      overlayBundleId: lane.overlayBundleId ?? null,
+      ideUrl: member?.ideUrl || (baseUrl ? `${baseUrl}/ide/${lane.memberIdentifier}/` : null),
+      bridgeStatus: getBridgeStatus(sessionId, lane.id),
+    };
+  });
+
+  res.status(200).json({
+    idempotent: true,
+    sessionId,
+    status: ACTIVE_PROVISIONING_STATUSES.has(sess.status) ? "provisioning" : sess.status,
+    vastInstanceId: sess.vastInstanceId,
+    members,
+  });
+  return true;
 }
 
 // ─── POST /sessions/orchestrate ────────────────────────────────────────────────
@@ -181,47 +338,30 @@ router.post("/sessions/orchestrate", async (req, res) => {
   const repoUrl = typeof body.repoUrl === "string" && body.repoUrl.trim() ? body.repoUrl.trim() : undefined;
   const githubToken = typeof body.githubToken === "string" && body.githubToken.trim() ? body.githubToken.trim() : undefined;
 
-  // ── Idempotency check ───────────────────────────────────────────────────────
-  pruneIdempotencyCache();
+  // ── Idempotency fast-path (non-reserving read) ──────────────────────────────
+  // Avoids expensive profile/offer work for duplicate calls in the common case.
+  // No reservation is acquired here, so validation 400s below will never leak a key.
   const idempKey = buildIdempotencyKey(goal, profileId, teamMembers.map((m) => m.role));
-  const existingEntry = idempotencyCache.get(idempKey);
-  if (existingEntry && Date.now() - existingEntry.createdAt < IDEMPOTENCY_WINDOW_MS) {
+  const precheck = await checkIdempotencyStatus(idempKey);
+  if (precheck.status === "in_progress") {
+    res.status(409).json({
+      error: "provisioning_in_progress",
+      message: "An identical session is already being provisioned. Retry in a few seconds.",
+    });
+    return;
+  }
+  if (precheck.status === "exists") {
     try {
-      const [sess] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, existingEntry.sessionId));
-      if (sess) {
-        const lanes = await db
-          .select()
-          .from(sessionLanesTable)
-          .where(eq(sessionLanesTable.sessionId, existingEntry.sessionId))
-          .orderBy(desc(sessionLanesTable.createdAt));
-
-        const baseUrl = (sess.codeServerUrl || "").replace(/\/$/, "");
-        const members = lanes.map((lane) => {
-          const member = (sess.teamMembers as TeamMemberRecord[] | null)
-            ?.find((tm) => tm.name === lane.memberIdentifier);
-          return {
-            laneId: lane.id,
-            memberIdentifier: lane.memberIdentifier,
-            role: lane.laneType,
-            overlayBundleId: lane.overlayBundleId ?? null,
-            ideUrl: member?.ideUrl || (baseUrl ? `${baseUrl}/ide/${lane.memberIdentifier}/` : null),
-            bridgeStatus: getBridgeStatus(existingEntry.sessionId, lane.id),
-          };
-        });
-
-        res.status(200).json({
-          idempotent: true,
-          sessionId: existingEntry.sessionId,
-          status: ACTIVE_PROVISIONING_STATUSES.has(sess.status) ? "provisioning" : sess.status,
-          vastInstanceId: sess.vastInstanceId,
-          members,
-        });
-        return;
-      }
+      const sent = await sendExistingSessionResponse(res, precheck.sessionId);
+      if (sent) return;
+      // Session row is gone (hard-deleted) — stale key; clear it and fall through.
+      logger.warn({ sessionId: precheck.sessionId }, "Orchestrate idempotency fast-path: session row missing — clearing stale key");
+      await deleteIdempotencyEntry(idempKey);
     } catch (lookupErr) {
-      logger.warn({ err: lookupErr, sessionId: existingEntry.sessionId }, "Orchestrate idempotency: session lookup failed — creating fresh");
-      idempotencyCache.delete(idempKey);
+      logger.warn({ err: lookupErr, sessionId: precheck.sessionId }, "Orchestrate idempotency fast-path: session lookup failed — clearing and creating fresh");
+      deleteIdempotencyEntry(idempKey).catch(() => undefined);
     }
+    // Fall through to provision a fresh session.
   }
 
   // ── Profile lookup ──────────────────────────────────────────────────────────
@@ -233,6 +373,10 @@ router.post("/sessions/orchestrate", async (req, res) => {
 
   let insertedSessionId: number | undefined;
   let vastInstanceId: number | undefined;
+  // Tracks whether this request holds a NULL-session_id reservation in the DB.
+  // Set to true only inside the try block after a successful atomic INSERT.
+  // The catch block uses this flag to clean up on failure.
+  let keyReserved = false;
 
   try {
     // ── GPU offer selection ─────────────────────────────────────────────────
@@ -246,6 +390,7 @@ router.post("/sessions/orchestrate", async (req, res) => {
     });
 
     if (!offers || offers.length === 0) {
+      // No reservation has been acquired yet — safe to return 400 with no cleanup.
       res.status(400).json({ error: "No GPU offers available for this profile. Try again later or choose a different profile." });
       return;
     }
@@ -277,6 +422,39 @@ router.post("/sessions/orchestrate", async (req, res) => {
       repoFingerprintJson = { url: repoUrl, branch: "main", urlHash, langs: [], frameworks: [], derivedAt: new Date().toISOString() };
     }
 
+    // ── Atomic idempotency reservation ───────────────────────────────────────
+    // All validation is done above. Acquiring the key here (right before the
+    // session INSERT) minimises how long the NULL-reservation is held, and
+    // ensures that any validation 400 paths above never leave an orphaned key.
+    const acquired = await acquireIdempotencyKey(idempKey);
+    if (acquired.outcome === "exists") {
+      // Another request completed provisioning between our fast-path check and now.
+      const sent = await sendExistingSessionResponse(res, acquired.sessionId).catch(() => false);
+      if (!sent) res.status(409).json({ error: "provisioning_in_progress", message: "An identical session is already being provisioned. Retry in a few seconds." });
+      return;
+    }
+    if (acquired.outcome === "in_progress") {
+      // No reservation held (INSERT was a conflict) — safe to return with no cleanup.
+      res.status(409).json({ error: "provisioning_in_progress", message: "An identical session is already being provisioned. Retry in a few seconds." });
+      return;
+    }
+    if (acquired.outcome === "stale_cleared") {
+      // Stale reservation was cleared — retry the atomic acquire once.
+      const retry = await acquireIdempotencyKey(idempKey);
+      if (retry.outcome === "exists") {
+        const sent = await sendExistingSessionResponse(res, retry.sessionId).catch(() => false);
+        if (!sent) res.status(409).json({ error: "provisioning_in_progress", message: "An identical session is already being provisioned. Retry in a few seconds." });
+        return;
+      }
+      if (retry.outcome !== "reserved") {
+        // In-progress or another stale-cleared — give up cleanly.
+        res.status(409).json({ error: "provisioning_in_progress", message: "An identical session is already being provisioned. Retry in a few seconds." });
+        return;
+      }
+    }
+    // outcome === "reserved": we own the reservation. Track it for cleanup.
+    keyReserved = true;
+
     // ── Create session row ───────────────────────────────────────────────────
     const [session] = await db
       .insert(sessionsTable)
@@ -301,8 +479,10 @@ router.post("/sessions/orchestrate", async (req, res) => {
 
     insertedSessionId = session.id;
 
-    // Register idempotency entry immediately so concurrent requests don't duplicate
-    idempotencyCache.set(idempKey, { sessionId: insertedSessionId, createdAt: Date.now() });
+    // Confirm the reservation by updating the idempotency row with the real
+    // session_id. Concurrent callers will now see outcome "exists" instead of
+    // "in_progress" and get returned this session.
+    await confirmIdempotencyEntry(idempKey, insertedSessionId);
 
     // ── Per-member skill bundle upsert (before createInstance) ───────────────
     // Members with an explicit `skills` list get a deterministic ephemeral bundle.
@@ -555,10 +735,14 @@ router.post("/sessions/orchestrate", async (req, res) => {
       }
     }
 
-    if (insertedSessionId !== undefined) {
-      // Remove from idempotency cache so next call can retry
-      idempotencyCache.delete(idempKey);
+    // Release the idempotency reservation so the next call can retry cleanly.
+    // Use keyReserved (not insertedSessionId) so we also clean up if the session
+    // INSERT itself throws before insertedSessionId is assigned.
+    if (keyReserved) {
+      deleteIdempotencyEntry(idempKey).catch(() => undefined);
+    }
 
+    if (insertedSessionId !== undefined) {
       await db.update(sessionsTable).set({
         status: "error",
         statusMessage: `Orchestration failed: ${message}`,

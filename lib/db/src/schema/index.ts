@@ -7,3 +7,4 @@ export * from "./coordination";
 export * from "./palette-intents";
 export * from "./nim-catalog";
 export * from "./api-keys";
+export * from "./orchestration-idempotency";

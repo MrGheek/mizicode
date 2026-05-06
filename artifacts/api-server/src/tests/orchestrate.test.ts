@@ -30,6 +30,12 @@ vi.mock("../services/vastai", () => ({
   buildOnStartScript: vi.fn().mockReturnValue("#!/bin/bash\necho mocked"),
 }));
 
+vi.mock("../services/bridge-registry", () => ({
+  getBridgeStatus: vi.fn().mockReturnValue("disconnected"),
+  registerBridgeConnection: vi.fn(),
+  unregisterBridgeConnection: vi.fn(),
+}));
+
 // ─── Mock skills bundler (use controlled implementations) ─────────────────────
 
 vi.mock("../services/skills-bundler", async (importOriginal) => {
@@ -543,6 +549,24 @@ describe("POST /api/sessions/orchestrate — failure teardown", () => {
     expect(vi.mocked(destroyInstance)).toHaveBeenCalledWith(instanceId);
     expect(vi.mocked(destroyInstance)).toHaveBeenCalledTimes(1);
   });
+
+  it("still returns 500 when both compileLaneBundles and destroyInstance throw", async () => {
+    // Exercises the inner catch around destroyInstance (line 734 branch)
+    const instanceId = nextInstanceId();
+    const { searchOffers, createInstance, destroyInstance, buildOnStartScript } = await import("../services/vastai");
+    const { compileLaneBundles } = await import("../services/skills-bundler");
+
+    vi.mocked(searchOffers).mockResolvedValueOnce([{ id: 42 } as never]);
+    vi.mocked(createInstance).mockResolvedValueOnce({ new_contract: instanceId, expected_price: 0.35 } as never);
+    vi.mocked(buildOnStartScript).mockReturnValueOnce("#!/bin/bash\necho mocked");
+    vi.mocked(compileLaneBundles).mockRejectedValueOnce(new Error("Skills unavailable"));
+    vi.mocked(destroyInstance).mockRejectedValueOnce(new Error("Vast.ai destroy failed"));
+
+    const res = await orchestrate(baseBody({ goal: `Destroy fail teardown ${Date.now()}` }));
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/Orchestration failed/i);
+    expect(vi.mocked(destroyInstance)).toHaveBeenCalledWith(instanceId);
+  });
 });
 
 // ─── Orchestration status polling ─────────────────────────────────────────────
@@ -622,5 +646,16 @@ describe("GET /api/sessions/:id/orchestration-status", () => {
   it("returns 400 for an invalid session ID", async () => {
     const res = await request(app).get("/api/sessions/not-a-number/orchestration-status");
     expect(res.status).toBe(400);
+  });
+
+  it("returns 500 when an unexpected error occurs fetching status", async () => {
+    const { getBridgeStatus } = await import("../services/bridge-registry");
+    vi.mocked(getBridgeStatus).mockImplementationOnce(() => {
+      throw new Error("Bridge registry failure");
+    });
+
+    const res = await request(app).get(`/api/sessions/${pollingSessionId}/orchestration-status`);
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/Failed to fetch orchestration status/i);
   });
 });
