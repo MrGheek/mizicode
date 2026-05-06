@@ -3009,7 +3009,7 @@ export default function SessionDetail() {
                 )}
               </span>
             ) : (
-              <>· {session.gpuName} x{session.numGpus}{session.vastInstanceId ? ` · Vast #${session.vastInstanceId}` : ""}</>
+              <>· {session.gpuName} x{session.numGpus}{(session as typeof session & { flyMachineId?: string | null }).flyMachineId ? ` · Fly ${(session as typeof session & { flyMachineId?: string | null }).flyMachineId!.slice(0, 8)}` : session.vastInstanceId ? ` · Vast #${session.vastInstanceId}` : ""}</>
             )}
             {session.hasGithubToken && (session.nimModelId || session.repoUrl) && (
               <GitHubBranchChip sessionId={session.id} />

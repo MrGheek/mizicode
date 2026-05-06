@@ -62,6 +62,9 @@ export const sessionsTable = pgTable("sessions", {
   // never stored — it is passed only via the onstart script. This flag lets
   // the dashboard show the session branch chip (mizi/session-<id>).
   hasGithubToken: boolean("has_github_token").notNull().default(false),
+  // Fly.io Machine ID for NIM sessions provisioned on Fly.io instead of Vast.ai.
+  // Null for all Vast.ai GPU sessions.
+  flyMachineId: text("fly_machine_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

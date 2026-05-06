@@ -4,6 +4,7 @@ import { eq, desc, inArray } from "drizzle-orm";
 import { getProfileById, getNimWorkspaceProfile } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
+import * as fly from "../services/fly";
 import { logger } from "../lib/logger";
 import { listObservations, listSessions, searchMemory, subscribeToObservations, backupDb, restoreDb, addObservation, addSummary, getGovernanceStats, runStaleSweep, bulkUpdateStaleItems, getReviewNeededCount, listStaleItems, listConflicts } from "../services/memory";
 import { listRecallAudit, getRecallMetrics, setPassiveRecallForSession, isPassiveRecallEnabled, passiveRecallGloballyEnabled } from "../services/memory-passive";
@@ -674,9 +675,10 @@ router.post("/sessions", requireAgentAuth(["sessions:write"]), async (req, res) 
   let insertedSessionId: number | undefined;
 
   try {
-    let selectedOfferId = offerId;
+    // NIM sessions provision on Fly.io — skip Vast.ai offer search entirely.
+    let selectedOfferId: number | undefined = nimModelId ? undefined : offerId;
 
-    if (!selectedOfferId) {
+    if (!nimModelId && !selectedOfferId) {
       const searchParams = (profile.searchParams as Record<string, unknown>) || {};
       const offers = await vastai.searchOffers({
         gpu_name: searchParams.gpu_name as string,
@@ -921,23 +923,48 @@ router.post("/sessions", requireAgentAuth(["sessions:write"]), async (req, res) 
       githubToken,
     });
 
-    const result = await vastai.createInstance({
-      offerId: selectedOfferId,
-      image: profile.dockerImageTag,
-      onstart,
-      disk: profile.diskSizeGb,
-      templateHashId: templateHash,
-      env: {
-        MODEL_REPO,
-        MODEL_QUANT,
-        SERVED_MODEL_NAME,
-        VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
-        VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
-        NUM_GPUS: String(profile.numGpus),
-      },
-    });
+    // ── Provision the workspace machine ────────────────────────────────────────
+    // NIM sessions: Fly.io Machine (cheap always-on CPU host; brain is the NIM API).
+    // Vast.ai sessions: GPU instance via the Vast.ai API (existing path).
+    let provisionedFlyMachineId: string | undefined;
+    let provisionedVastInstanceId: number | undefined;
+    let provisionedCostPerHour: number | undefined;
 
-    const instanceId = result.new_contract;
+    if (nimModelId) {
+      const flyResult = await fly.createMachine({
+        image: profile.dockerImageTag,
+        env: {
+          MODEL_REPO,
+          MODEL_QUANT,
+          SERVED_MODEL_NAME,
+          VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
+          VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
+          NUM_GPUS: String(profile.numGpus),
+        },
+        startCmd: onstart,
+      });
+      provisionedFlyMachineId = flyResult.machineId;
+      provisionedCostPerHour = 0.08; // fixed estimate: Fly shared-CPU-1x (~$3–6/mo)
+      logger.info({ sessionId: insertedSessionId, flyMachineId: provisionedFlyMachineId }, "NIM session provisioned on Fly.io");
+    } else {
+      const result = await vastai.createInstance({
+        offerId: selectedOfferId!,
+        image: profile.dockerImageTag,
+        onstart,
+        disk: profile.diskSizeGb,
+        templateHashId: templateHash,
+        env: {
+          MODEL_REPO,
+          MODEL_QUANT,
+          SERVED_MODEL_NAME,
+          VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
+          VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
+          NUM_GPUS: String(profile.numGpus),
+        },
+      });
+      provisionedVastInstanceId = result.new_contract;
+      provisionedCostPerHour = result.expected_price ?? undefined;
+    }
 
     // Record Skills activation now that instance creation succeeded (deferred from compile step)
     if (pendingCompiled) {
@@ -951,11 +978,14 @@ router.post("/sessions", requireAgentAuth(["sessions:write"]), async (req, res) 
     const [updated] = await db
       .update(sessionsTable)
       .set({
-        vastInstanceId: instanceId,
+        vastInstanceId: provisionedVastInstanceId ?? null,
+        flyMachineId: provisionedFlyMachineId ?? null,
         status: "provisioning",
-        statusMessage: "Instance created — waiting for startup and model download...",
+        statusMessage: nimModelId
+          ? "Fly.io workspace machine started — NIM fast-boot running..."
+          : "Instance created — waiting for startup and model download...",
         startedAt: new Date(),
-        costPerHour: result.expected_price || null,
+        costPerHour: provisionedCostPerHour ?? null,
         updatedAt: new Date(),
       })
       .where(eq(sessionsTable.id, session.id))
@@ -1014,6 +1044,37 @@ router.post("/sessions/:sessionId/refresh", async (req, res) => {
   const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, id));
   if (!session) {
     res.status(404).json({ error: "Session not found" });
+    return;
+  }
+
+  // NIM sessions on Fly.io: status updates arrive via the onstart callback
+  // (POST /sessions/:id/status). Skip the Vast.ai poll entirely and return
+  // the current DB state. Optionally cross-check Fly Machine liveness so we
+  // can surface an unexpected machine destruction as a session error.
+  if (session.provider === "nim") {
+    if (session.flyMachineId && ACTIVE_STATUSES.includes(session.status)) {
+      try {
+        const machineState = await fly.getMachineState(session.flyMachineId);
+        if (machineState === "destroyed") {
+          const [updated] = await db
+            .update(sessionsTable)
+            .set({
+              status: "error",
+              statusMessage: "Fly.io workspace machine was destroyed unexpectedly",
+              updatedAt: new Date(),
+            })
+            .where(eq(sessionsTable.id, id))
+            .returning();
+          const [p] = await db.select().from(gpuProfilesTable).where(eq(gpuProfilesTable.id, session.profileId));
+          res.json({ ...redactOwnerToken(updated), profileName: p?.displayName || "" });
+          return;
+        }
+      } catch (flyErr) {
+        logger.warn({ err: flyErr, flyMachineId: session.flyMachineId }, "Failed to check Fly Machine state during refresh (non-fatal)");
+      }
+    }
+    const [p] = await db.select().from(gpuProfilesTable).where(eq(gpuProfilesTable.id, session.profileId));
+    res.json({ ...redactOwnerToken(session), profileName: p?.displayName || "" });
     return;
   }
 
@@ -1107,7 +1168,19 @@ router.delete("/sessions/:sessionId", async (req, res) => {
   }
 
   try {
-    if (session.vastInstanceId) {
+    if (session.provider === "nim" && session.flyMachineId) {
+      // NIM session: destroy the Fly.io Machine (404 = already gone, treat as success).
+      try {
+        await fly.destroyMachine(session.flyMachineId);
+      } catch (flyErr: unknown) {
+        const msg = flyErr instanceof Error ? flyErr.message : "";
+        if (msg.includes("404") || msg.includes("not found") || msg.includes("Not Found")) {
+          logger.warn({ flyMachineId: session.flyMachineId }, "Fly Machine already gone — cleaning up DB record");
+        } else {
+          throw flyErr;
+        }
+      }
+    } else if (session.vastInstanceId) {
       try {
         await vastai.destroyInstance(session.vastInstanceId);
       } catch (vastErr: unknown) {
