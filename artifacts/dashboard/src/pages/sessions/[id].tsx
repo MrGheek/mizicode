@@ -58,6 +58,8 @@ import { isTypingTarget } from "@/lib/shortcuts";
 import { TeamTab } from "@/components/team-tab";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 import { GitHubBranchChip } from "@/components/github-branch-chip";
+import { useOrchestrationStatus } from "@/hooks/use-orchestration-status";
+import { OrchestrationProgressPanel } from "@/components/orchestration-progress";
 
 import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 
@@ -2483,6 +2485,17 @@ export default function SessionDetail() {
   const sessionIsReady = session?.status === "ready";
   const { data: swarmData } = useSwarmStatus(sessionId, sessionIsReady, session?.ownerToken);
 
+  // Orchestration status polling — active for all team sessions.
+  // Deliberately NOT gated on session.status boot phases: the orchestration endpoint
+  // can remain "provisioning" after session.status === "ready" because lane bridges
+  // may still be connecting. The hook stops the interval internally once it sees a
+  // terminal status ("ready", "error", "stopped") from the endpoint itself.
+  const sessionHasTeam = ((session?.teamMembers ?? []) as Array<{ name: string }>).some((m) => m.name !== "__shared__");
+  const { data: orchStatus, fetchError: orchFetchError } = useOrchestrationStatus(
+    sessionId || null,
+    sessionHasTeam,
+  );
+
   // Fetch routing stats in the background so they are ready when the session stops.
   // bytesAvoided is passed to complete-feedback to signal context-shield-core effectiveness.
   const { data: routingStatsData } = useGetSessionRoutingStats(sessionId);
@@ -3300,6 +3313,17 @@ export default function SessionDetail() {
               rawStatusMessage={session.statusMessage}
               bootLog={bootLog}
               diskFullAction={{ onRetry: handleDestroyAndRetry, isRetrying }}
+            />
+          )}
+
+          {/* Orchestration provisioning panel — shown for active team sessions.
+              Visibility is driven by the orchestration endpoint's own status,
+              NOT by session.status, so the panel stays visible while lane bridges
+              are still connecting even after session.status reaches "ready". */}
+          {hasNamedTeamMembers && session.status !== "stopped" && (
+            <OrchestrationProgressPanel
+              data={orchStatus ?? null}
+              fetchError={orchFetchError}
             />
           )}
 
