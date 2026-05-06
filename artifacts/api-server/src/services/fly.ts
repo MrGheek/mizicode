@@ -93,8 +93,12 @@ export async function createMachine(params: CreateMachineParams): Promise<Create
         cpus: 1,
         memory_mb: FLY_MACHINE_MEMORY_MB,
       },
+      // Expose all required workspace ports as TCP services.
+      // Port 22 (SSH) uses a plain TCP handler so the SSH daemon can negotiate
+      // the protocol directly. Ports 3000/5180/5181/8080/8081 use http handlers
+      // so Fly's edge proxy can route HTTP traffic to the right service.
       services: [
-        { ports: [{ port: 22,   handlers: ["tcp"]  }], protocol: "tcp", internal_port: 22   },
+        { ports: [{ port: 22,    handlers: ["tcp"]  }], protocol: "tcp", internal_port: 22   },
         { ports: [{ port: 3000,  handlers: ["http"] }], protocol: "tcp", internal_port: 3000  },
         { ports: [{ port: 5180,  handlers: ["http"] }], protocol: "tcp", internal_port: 5180  },
         { ports: [{ port: 5181,  handlers: ["http"] }], protocol: "tcp", internal_port: 5181  },
@@ -103,8 +107,8 @@ export async function createMachine(params: CreateMachineParams): Promise<Create
       ],
       restart: { policy: "no" },
     },
-    // Skip the health check wait — the session status is tracked via the
-    // onstart callback (POST /sessions/:id/status) not Fly health checks.
+    // Skip the health-check wait — session status is tracked via the onstart
+    // callback (POST /sessions/:id/status), not Fly health probes.
     skip_launch: false,
   };
 

@@ -3003,9 +3003,9 @@ export default function SessionDetail() {
             Session #{session.id}
             {(session as typeof session & { provider?: string; nimModelId?: string; nimProvider?: string }).provider === "nim" ? (
               <span className="inline-flex items-center gap-1 text-emerald-400 font-sans text-xs font-semibold not-italic border border-emerald-500/30 bg-emerald-500/10 rounded px-1.5 py-0.5">
-                ⚡ NIM · {(session as typeof session & { nimModelId?: string }).nimModelId}
-                {(session as typeof session & { nimProvider?: string }).nimProvider && (
-                  <span className="opacity-60 font-normal">via {(session as typeof session & { nimProvider?: string }).nimProvider}</span>
+                ⚡ NIM · Fly
+                {(session as typeof session & { nimModelId?: string }).nimModelId && (
+                  <span className="opacity-60 font-normal">· {(session as typeof session & { nimModelId?: string }).nimModelId!.split("/").pop()}</span>
                 )}
               </span>
             ) : (

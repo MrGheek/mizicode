@@ -64,6 +64,13 @@
                         "when": 1746921600000,
                         "tag": "0019_api_keys",
                         "breakpoints": true
+                },
+                {
+                        "idx": 20,
+                        "version": "7",
+                        "when": 1746921700000,
+                        "tag": "0020_session_fly_machine_id",
+                        "breakpoints": true
                 }
         ]
 }
