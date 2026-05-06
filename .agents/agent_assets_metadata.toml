@@ -6,3 +6,9 @@ id = "hhVKVeq0PfaayBrKuVHYc"
 uri = "file://MIZI_SPEC.md"
 type = "text"
 title = "MIZI Product Specification"
+
+[[outputs]]
+id = "x5oZZ3XNbD8rOiER0I4Uf"
+uri = "file://wiki.md"
+type = "text"
+title = "MIZI Code — Platform Wiki"
