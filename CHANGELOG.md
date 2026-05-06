@@ -1,3 +1,12 @@
+## v0.3.0 — 2026-05-06\n\n- Update the visual appearance of the platform's overview page (3e9043c)
+- Add POST /sessions/orchestrate and GET /sessions/:id/orchestration-status (4ecab22)
+- feat(#288): NIM sessions provision Fly.io Machines instead of Vast.ai CPU instances (5ed784d)
+- feat(#288): NIM sessions provision Fly.io Machines instead of Vast.ai CPU instances (f01786f)
+- feat(#288): NIM sessions provision Fly.io Machines instead of Vast.ai CPU instances (ac7b7f2)
+- feat(#288): NIM sessions provision Fly.io Machines instead of Vast.ai CPU instances (51ed154)
+- Transitioned from Plan to Build mode (92cd568)
+- Update dashboard assets and add new screenshot (86dc171)\n
+
 ## v0.2.0 — 2026-05-06\n\n- Fix bridge: import bridgeKey, drop ws dep in claw-bridge, add exec lock cleanup (76d8f5f)
 - Apply new Command Center design to the dashboard interface (c2ceabf)
 - Ensure dashboard preview displays correctly by enforcing strict port usage (20a2020)
