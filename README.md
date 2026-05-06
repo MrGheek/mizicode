@@ -34,11 +34,11 @@ fly postgres attach mizi-db --app mizi-api
 fly volumes create mizi_memory --app mizi-api --region ord --size 1
 
 # Set the remaining secrets
+# NVIDIA_NIM_API_KEY is the recommended AI provider (free tier available at build.nvidia.com).
+# AI_INTEGRATIONS_OPENAI_* are only needed if you prefer a different OpenAI-compatible endpoint.
 fly secrets set --app mizi-api \
   VASTAI_API_KEY="<your vastai key>" \
-  AI_INTEGRATIONS_OPENAI_API_KEY="<your openai key>" \
-  AI_INTEGRATIONS_OPENAI_BASE_URL="https://api.openai.com/v1" \
-  NVIDIA_NIM_API_KEY="<your nim key>" \
+  NVIDIA_NIM_API_KEY="<your nvidia nim key>" \
   VULTR_INFERENCE_API_KEY="<optional>" \
   TOGETHER_API_KEY="<optional>" \
   DEEPINFRA_API_KEY="<optional>"

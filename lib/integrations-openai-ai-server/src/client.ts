@@ -1,18 +1,19 @@
 import OpenAI from "openai";
 
-if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) {
+const nimKey = process.env.NVIDIA_NIM_API_KEY;
+const openaiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+const openaiBase = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+
+const apiKey = nimKey || openaiKey;
+const baseURL = nimKey
+  ? "https://integrate.api.nvidia.com/v1"
+  : openaiBase;
+
+if (!apiKey || !baseURL) {
   throw new Error(
-    "AI_INTEGRATIONS_OPENAI_BASE_URL must be set. Did you forget to provision the OpenAI AI integration?",
+    "No AI provider configured. Set NVIDIA_NIM_API_KEY (recommended) or " +
+    "AI_INTEGRATIONS_OPENAI_API_KEY + AI_INTEGRATIONS_OPENAI_BASE_URL.",
   );
 }
 
-if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
-  throw new Error(
-    "AI_INTEGRATIONS_OPENAI_API_KEY must be set. Did you forget to provision the OpenAI AI integration?",
-  );
-}
-
-export const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+export const openai = new OpenAI({ apiKey, baseURL });

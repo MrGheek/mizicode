@@ -218,7 +218,7 @@ router.post("/palette/intent", async (req, res) => {
     const systemPrompt = fewShotBlock ? SYSTEM_PROMPT + fewShotBlock : SYSTEM_PROMPT;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-5-mini",
+      model: "meta/llama-3.1-8b-instruct",
       max_completion_tokens: 512,
       messages: [
         { role: "system", content: systemPrompt },

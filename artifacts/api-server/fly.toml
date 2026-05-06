@@ -18,12 +18,13 @@
 #
 # Secrets (set via `fly secrets set`):
 #   Required:
-#     DATABASE_URL                     — PostgreSQL connection string
+#     DATABASE_URL                     — PostgreSQL connection string (auto-set by fly postgres attach)
 #     VASTAI_API_KEY                   — Vast.ai REST API key
+#     NVIDIA_NIM_API_KEY               — NVIDIA NIM API key (recommended AI provider, free tier available)
+#   Optional AI providers (only needed if not using NVIDIA NIM):
 #     AI_INTEGRATIONS_OPENAI_API_KEY   — OpenAI-compatible API key
 #     AI_INTEGRATIONS_OPENAI_BASE_URL  — OpenAI-compatible base URL
-#   Optional (non-secret env vars are in [env] below):
-#     NVIDIA_NIM_API_KEY               — NVIDIA NIM API key
+#   Optional additional model providers:
 #     VULTR_INFERENCE_API_KEY          — Vultr Inference model provider
 #     TOGETHER_API_KEY                 — Together.xyz model provider
 #     DEEPINFRA_API_KEY                — DeepInfra model provider

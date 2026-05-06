@@ -56,7 +56,7 @@ export type EdgeType = "relates_to" | "supersedes" | "contradicts";
 
 export const VALID_EDGE_TYPES: EdgeType[] = ["relates_to", "supersedes", "contradicts"];
 
-const EMBEDDING_MODEL = "text-embedding-3-small";
+const EMBEDDING_MODEL = "nvidia/nv-embed-v1";
 const SIMILARITY_TOPK = 12;
 const BFS_MAX_DEPTH = 2;
 const BFS_FANOUT = 5;
@@ -170,10 +170,19 @@ export function setPassiveRecallForSession(sessionId: string, enabled: boolean):
  * Embed text via the OpenAI embeddings API (or compatible AI Integrations
  * proxy). Returns null on any failure so callers can fall back gracefully.
  */
-export async function embedText(text: string): Promise<{ vector: number[]; model: string } | null> {
+function getAiConfig(): { baseUrl: string; apiKey: string } | null {
+  const nimKey = process.env["NVIDIA_NIM_API_KEY"];
+  if (nimKey) return { baseUrl: "https://integrate.api.nvidia.com/v1", apiKey: nimKey };
   const baseUrl = process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"];
   const apiKey = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"];
-  if (!baseUrl || !apiKey) return null;
+  if (baseUrl && apiKey) return { baseUrl, apiKey };
+  return null;
+}
+
+export async function embedText(text: string): Promise<{ vector: number[]; model: string } | null> {
+  const cfg = getAiConfig();
+  if (!cfg) return null;
+  const { baseUrl, apiKey } = cfg;
   try {
     const response = await fetch(`${baseUrl}/embeddings`, {
       method: "POST",
@@ -411,12 +420,12 @@ async function sidecarVerify(
   if (process.env["MIZI_MEM_RECALL_SIDECAR_LLM"] !== "1") {
     return heuristic;
   }
-  const baseUrl = process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"];
-  const apiKey = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"];
-  if (!baseUrl || !apiKey) return heuristic;
+  const cfg = getAiConfig();
+  if (!cfg) return heuristic;
+  const { baseUrl, apiKey } = cfg;
 
   try {
-    const model = process.env["MIZI_MEM_RECALL_SIDECAR_MODEL"] || "gpt-4o-mini";
+    const model = process.env["MIZI_MEM_RECALL_SIDECAR_MODEL"] || "meta/llama-3.1-8b-instruct";
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },

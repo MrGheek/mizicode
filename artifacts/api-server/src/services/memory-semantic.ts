@@ -34,9 +34,9 @@ export function tfidfCosineSimilarity(textA: string, textB: string): number {
  * Compute semantic similarity scores between a source text and a batch of
  * candidate texts in a single embedding API call.
  *
- * Primary: embeds [source, ...candidates] in one request to the OpenAI
- * embeddings API (text-embedding-3-small) via AI_INTEGRATIONS_OPENAI_BASE_URL,
- * then returns the cosine similarity of source vs each candidate.
+ * Primary: embeds [source, ...candidates] in one request to NVIDIA NIM
+ * (nvidia/nv-embed-v1 via NVIDIA_NIM_API_KEY) or any OpenAI-compatible
+ * embeddings endpoint, then returns the cosine similarity of source vs each candidate.
  *
  * Fallback: if the embeddings endpoint is unavailable or throws, falls back to
  * TF-IDF cosine similarity for every candidate pair without a network call.
@@ -50,8 +50,11 @@ export async function computeSemanticSimilarityBatch(
 ): Promise<number[]> {
   if (candidates.length === 0) return [];
 
-  const baseUrl = process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"];
-  const apiKey = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"];
+  const nimKey = process.env["NVIDIA_NIM_API_KEY"];
+  const baseUrl = nimKey
+    ? "https://integrate.api.nvidia.com/v1"
+    : process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"];
+  const apiKey = nimKey || process.env["AI_INTEGRATIONS_OPENAI_API_KEY"];
 
   if (baseUrl && apiKey) {
     try {
@@ -62,7 +65,7 @@ export async function computeSemanticSimilarityBatch(
           "Authorization": `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: "text-embedding-3-small",
+          model: "nvidia/nv-embed-v1",
           input: [source, ...candidates],
         }),
       });
