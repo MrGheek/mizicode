@@ -72,8 +72,8 @@ export interface CreateMachineResult {
  * on boot — identical to the Vast.ai runtype:"ssh_proxy" onstart mechanism.
  *
  * Ports 3000, 5180, 5181, 8080, 8081 are declared as TCP services so Fly's
- * proxy can reach them; 22 is omitted (SSH into Fly machines requires flyctl,
- * not a direct TCP mapping, and we don't use SSH for NIM sessions).
+ * proxy can reach them. Port 22 is exposed as a plain TCP service so the
+ * workspace SSH daemon is reachable from the Fly edge network.
  */
 export async function createMachine(params: CreateMachineParams): Promise<CreateMachineResult> {
   const { token, app } = getConfig();
