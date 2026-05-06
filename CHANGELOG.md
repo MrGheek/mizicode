@@ -1,3 +1,7 @@
+## v0.5.0 — 2026-05-06\n\n- fix: resolve all CI TypeScript typecheck errors across api-server and dashboard (528dc9a)
+- Update dashboard Open Graph image (fc9b0e8)
+- feat: persist orchestration idempotency keys in DB (task #290) (f95b02c)\n
+
 ## v0.4.0 — 2026-05-06\n\n- feat: show live provisioning progress for orchestrated team sessions (task #289) (674afda)
 - Add a comprehensive wiki to explain the MIZI platform (9e4f20d)\n
 
