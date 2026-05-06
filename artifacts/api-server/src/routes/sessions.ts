@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from "express";
-import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable } from "@workspace/db";
-import { eq, desc, inArray } from "drizzle-orm";
+import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable, sessionLanesTable } from "@workspace/db";
+import { eq, desc, inArray, and } from "drizzle-orm";
 import { getProfileById, getNimWorkspaceProfile } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
@@ -281,6 +281,16 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
 
   if (mapped.status === "ready" && prevSession?.status !== "ready") {
     autoEnqueueRepoIndexIfNeeded(sessionId).catch(() => {});
+
+    // Activate lanes provisioned by POST /sessions/orchestrate.
+    // Orchestrate creates lanes with status="pending" so they don't appear
+    // functional until the GPU instance fires its llm_ready callback here.
+    db.update(sessionLanesTable)
+      .set({ status: "active", updatedAt: new Date() })
+      .where(and(eq(sessionLanesTable.sessionId, sessionId), eq(sessionLanesTable.status, "pending")))
+      .catch((laneErr: unknown) => {
+        logger.warn({ err: laneErr, sessionId }, "llm_ready: failed to activate pending lanes (non-fatal)");
+      });
   }
 
   res.json({ ok: true, status: mapped.status });

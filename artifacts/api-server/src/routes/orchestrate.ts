@@ -1,0 +1,651 @@
+/**
+ * POST /sessions/orchestrate — Single-call team provisioning
+ *
+ * Accepts a declarative team composition + goal and provisions a fully-configured
+ * session in one call:
+ *   1. GPU offer selection → session row creation
+ *   2. Per-member skill bundle upsert (from teamMembers[].skills)
+ *   3. Vast.ai instance creation
+ *   4. compileLaneBundles (session-core + per-lane overlays), lane row creation
+ *   5. Pre-registered file claims (from teamMembers[].claimPaths)
+ *   6. Returns 202 immediately; agents poll GET /sessions/:id/orchestration-status
+ *
+ * Orchestration design:
+ *   Lanes are DB records created in this call — they become functional (bridge
+ *   connected, IDE accessible) when the GPU instance fires the `llm_ready`
+ *   callback handled by PUT /sessions/:id/instance-status.
+ *   The polling endpoint reflects the live `bootPhase` and per-lane bridge state.
+ */
+
+import { Router } from "express";
+import { createHash, randomBytes } from "crypto";
+import { db, sessionsTable, gpuProfilesTable, templatesTable, sessionLanesTable, laneClaimsTable, skillBundlesTable } from "@workspace/db";
+import { eq, desc } from "drizzle-orm";
+import { requireAgentAuth } from "../middlewares/agent-auth";
+import { getProfileById } from "../services/profiles";
+import * as vastai from "../services/vastai";
+import type { VastOffer } from "../services/vastai";
+import { compileLaneBundles, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles } from "../services/skills-bundler";
+import type { SessionContext } from "../services/skills-types";
+import { getLanePolicy, VALID_LANE_TYPES, LANE_DEFAULT_TTL_SECONDS } from "../services/lane-policy";
+import { getBridgeStatus } from "../services/bridge-registry";
+import { logger } from "../lib/logger";
+import type { TeamMemberRecord } from "@workspace/db";
+
+const router = Router();
+
+// ─── Member name sanitization ─────────────────────────────────────────────────
+// Mirrors the same rules enforced by POST /sessions to prevent shell injection
+// via `teamMembers[].role`, which flows into teamMemberRecords and ultimately
+// into the onstart script's TEAM_MEMBERS_JSON env var.
+const ORCHESTRATE_RESERVED_NAMES = new Set([
+  "__shared__", "owner", "admin", "root", "shared",
+]);
+const ORCHESTRATE_SAFE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,30}$/;
+
+function sanitizeRole(raw: string): string | null {
+  const cleaned = (raw || "").trim().toLowerCase();
+  if (!ORCHESTRATE_SAFE_NAME_RE.test(cleaned)) return null;
+  if (ORCHESTRATE_RESERVED_NAMES.has(cleaned)) return null;
+  return cleaned;
+}
+
+// ─── Provisioning status set ──────────────────────────────────────────────────
+const ACTIVE_PROVISIONING_STATUSES: ReadonlySet<string> = new Set([
+  "pending", "provisioning", "downloading", "starting",
+]);
+
+// ─── Auth ──────────────────────────────────────────────────────────────────────
+
+router.post("/sessions/orchestrate", requireAgentAuth(["sessions:write"]));
+router.get("/sessions/:sessionId/orchestration-status", requireAgentAuth(["sessions:write"]));
+
+// ─── Idempotency cache ─────────────────────────────────────────────────────────
+// Keyed by SHA-256 of (goal + profileId + sorted member roles).
+// Within a 5-minute window a second identical call returns the existing session.
+
+const IDEMPOTENCY_WINDOW_MS = 5 * 60 * 1000;
+
+interface IdempotencyEntry {
+  sessionId: number;
+  createdAt: number;
+}
+
+const idempotencyCache = new Map<string, IdempotencyEntry>();
+
+function pruneIdempotencyCache(): void {
+  const cutoff = Date.now() - IDEMPOTENCY_WINDOW_MS;
+  for (const [key, entry] of idempotencyCache) {
+    if (entry.createdAt < cutoff) idempotencyCache.delete(key);
+  }
+}
+
+function buildIdempotencyKey(goal: string, profileId: string | number, memberRoles: string[]): string {
+  const sorted = [...memberRoles].sort().join(",");
+  const raw = `${String(goal).trim()}|${profileId}|${sorted}`;
+  return createHash("sha256").update(raw).digest("hex");
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+
+function generatePassword(length = 12): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const buf = randomBytes(length);
+  return Array.from(buf, (b) => chars[b % chars.length]).join("");
+}
+
+const CALLBACK_TOKEN = process.env["MIZI_MEM_TOKEN"] || "";
+
+/**
+ * Upsert an ephemeral (non-default) skill bundle for a member's explicit skill list.
+ * The bundle slug is deterministic from the sorted skill IDs so identical skill sets
+ * reuse the same row across sessions. Returns the bundle DB id.
+ */
+async function upsertMemberSkillBundle(memberRole: string, skillIds: string[]): Promise<number> {
+  const sorted = [...skillIds].sort();
+  const slugSuffix = createHash("sha256").update(sorted.join(",")).digest("hex").slice(0, 16);
+  const slug = `orchestrate-member-${memberRole}-${slugSuffix}`;
+
+  const [existing] = await db.select({ id: skillBundlesTable.id }).from(skillBundlesTable).where(eq(skillBundlesTable.slug, slug));
+  if (existing) return existing.id;
+
+  const [created] = await db.insert(skillBundlesTable).values({
+    slug,
+    name: `Orchestrate member overlay: ${memberRole} (${sorted.join(", ")})`,
+    bundleJson: { skillIds: sorted } as unknown as Record<string, unknown>,
+    taskMode: "team",
+    sessionMode: "solo",
+    tokenMode: "core",
+    isDefault: false,
+  }).returning({ id: skillBundlesTable.id });
+
+  logger.info({ memberRole, skillIds: sorted, bundleSlug: slug }, "Orchestrate: upserted member skill bundle");
+  return created.id;
+}
+
+// ─── POST /sessions/orchestrate ────────────────────────────────────────────────
+
+export interface OrchestrateTeamMember {
+  role: string;
+  skills?: string[];
+  claimPaths?: string[];
+}
+
+export interface OrchestrateBody {
+  goal: string;
+  teamMembers: OrchestrateTeamMember[];
+  profileId: string | number;
+  repoUrl?: string;
+  githubToken?: string;
+}
+
+router.post("/sessions/orchestrate", async (req, res) => {
+  const body = req.body as Partial<OrchestrateBody>;
+
+  // ── Validate ────────────────────────────────────────────────────────────────
+  if (!body.goal || typeof body.goal !== "string" || !body.goal.trim()) {
+    res.status(400).json({ error: "goal (string) is required" });
+    return;
+  }
+  if (!body.profileId) {
+    res.status(400).json({ error: "profileId is required" });
+    return;
+  }
+  if (!Array.isArray(body.teamMembers) || body.teamMembers.length === 0) {
+    res.status(400).json({ error: "teamMembers (non-empty array) is required" });
+    return;
+  }
+
+  const goal = body.goal.trim().slice(0, 500);
+  const profileId = body.profileId;
+
+  // ── Sanitize member roles to prevent shell injection via onstart script ──────
+  const rawMembers = body.teamMembers;
+  const sanitizedRoles: string[] = [];
+  for (let i = 0; i < rawMembers.length; i++) {
+    const m = rawMembers[i];
+    const safe = sanitizeRole(typeof m.role === "string" ? m.role : "");
+    if (!safe) {
+      res.status(400).json({
+        error: `teamMembers[${i}].role "${m.role}" is invalid — must match /^[a-z0-9][a-z0-9_-]{0,30}$/ and not be a reserved name`,
+      });
+      return;
+    }
+    sanitizedRoles.push(safe);
+  }
+  const teamMembers: OrchestrateTeamMember[] = rawMembers.map((m, i) => ({
+    role: sanitizedRoles[i],
+    skills: Array.isArray(m.skills) ? m.skills.filter((s) => typeof s === "string") : undefined,
+    claimPaths: Array.isArray(m.claimPaths) ? m.claimPaths.filter((p) => typeof p === "string") : undefined,
+  }));
+  const repoUrl = typeof body.repoUrl === "string" && body.repoUrl.trim() ? body.repoUrl.trim() : undefined;
+  const githubToken = typeof body.githubToken === "string" && body.githubToken.trim() ? body.githubToken.trim() : undefined;
+
+  // ── Idempotency check ───────────────────────────────────────────────────────
+  pruneIdempotencyCache();
+  const idempKey = buildIdempotencyKey(goal, profileId, teamMembers.map((m) => m.role));
+  const existingEntry = idempotencyCache.get(idempKey);
+  if (existingEntry && Date.now() - existingEntry.createdAt < IDEMPOTENCY_WINDOW_MS) {
+    try {
+      const [sess] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, existingEntry.sessionId));
+      if (sess) {
+        const lanes = await db
+          .select()
+          .from(sessionLanesTable)
+          .where(eq(sessionLanesTable.sessionId, existingEntry.sessionId))
+          .orderBy(desc(sessionLanesTable.createdAt));
+
+        const baseUrl = (sess.codeServerUrl || "").replace(/\/$/, "");
+        const members = lanes.map((lane) => {
+          const member = (sess.teamMembers as TeamMemberRecord[] | null)
+            ?.find((tm) => tm.name === lane.memberIdentifier);
+          return {
+            laneId: lane.id,
+            memberIdentifier: lane.memberIdentifier,
+            role: lane.laneType,
+            overlayBundleId: lane.overlayBundleId ?? null,
+            ideUrl: member?.ideUrl || (baseUrl ? `${baseUrl}/ide/${lane.memberIdentifier}/` : null),
+            bridgeStatus: getBridgeStatus(existingEntry.sessionId, lane.id),
+          };
+        });
+
+        res.status(200).json({
+          idempotent: true,
+          sessionId: existingEntry.sessionId,
+          status: ACTIVE_PROVISIONING_STATUSES.has(sess.status) ? "provisioning" : sess.status,
+          vastInstanceId: sess.vastInstanceId,
+          members,
+        });
+        return;
+      }
+    } catch (lookupErr) {
+      logger.warn({ err: lookupErr, sessionId: existingEntry.sessionId }, "Orchestrate idempotency: session lookup failed — creating fresh");
+      idempotencyCache.delete(idempKey);
+    }
+  }
+
+  // ── Profile lookup ──────────────────────────────────────────────────────────
+  const profile = await getProfileById(Number(profileId));
+  if (!profile) {
+    res.status(400).json({ error: `Profile "${profileId}" not found` });
+    return;
+  }
+
+  let insertedSessionId: number | undefined;
+  let vastInstanceId: number | undefined;
+
+  try {
+    // ── GPU offer selection ─────────────────────────────────────────────────
+    const searchParams = (profile.searchParams as Record<string, unknown>) || {};
+    const offers = await vastai.searchOffers({
+      gpu_name: searchParams.gpu_name as string,
+      num_gpus: searchParams.num_gpus as number,
+      min_gpu_ram: searchParams.min_gpu_ram as number,
+      disk_space: profile.diskSizeGb,
+      limit: 1,
+    });
+
+    if (!offers || offers.length === 0) {
+      res.status(400).json({ error: "No GPU offers available for this profile. Try again later or choose a different profile." });
+      return;
+    }
+    const selectedOfferId = (offers[0] as VastOffer).id;
+
+    // ── Template lookup ─────────────────────────────────────────────────────
+    const [defaultTemplate] = await db
+      .select()
+      .from(templatesTable)
+      .where(eq(templatesTable.isDefault, true))
+      .limit(1);
+    const templateHash = defaultTemplate?.templateHash || undefined;
+
+    // ── Build team member records ────────────────────────────────────────────
+    const teamMemberRecords: TeamMemberRecord[] = [
+      { name: "__shared__", password: generatePassword(), path: "/shared/", ideUrl: null },
+      ...teamMembers.map((m) => ({
+        name: m.role,
+        password: generatePassword(),
+        path: `/ide/${m.role}/`,
+        ideUrl: null,
+      })),
+    ];
+
+    // ── Repo fingerprint ─────────────────────────────────────────────────────
+    let repoFingerprintJson: Record<string, unknown> | null = null;
+    if (repoUrl) {
+      const urlHash = createHash("sha256").update(repoUrl.toLowerCase()).digest("hex").slice(0, 16);
+      repoFingerprintJson = { url: repoUrl, branch: "main", urlHash, langs: [], frameworks: [], derivedAt: new Date().toISOString() };
+    }
+
+    // ── Create session row ───────────────────────────────────────────────────
+    const [session] = await db
+      .insert(sessionsTable)
+      .values({
+        profileId: profile.id,
+        vastOfferId: selectedOfferId,
+        templateHash: templateHash || null,
+        status: "provisioning",
+        statusMessage: "Orchestration: finding GPU and provisioning instance...",
+        gpuName: profile.gpuName,
+        numGpus: profile.numGpus,
+        teamMembers: teamMemberRecords,
+        taskMode: "team",
+        tokenMode: "core",
+        repoFingerprintJson,
+        intentText: goal,
+        provider: "vastai",
+        ownerToken: generatePassword(32),
+        hasGithubToken: !!githubToken,
+      })
+      .returning();
+
+    insertedSessionId = session.id;
+
+    // Register idempotency entry immediately so concurrent requests don't duplicate
+    idempotencyCache.set(idempKey, { sessionId: insertedSessionId, createdAt: Date.now() });
+
+    // ── Per-member skill bundle upsert (before createInstance) ───────────────
+    // Members with an explicit `skills` list get a deterministic ephemeral bundle.
+    // This step runs before instance creation so any skills-service failure aborts
+    // cleanly without leaving an orphaned GPU instance.
+    const memberBundleIds = new Map<string, number | null>();
+    for (const member of teamMembers) {
+      if (member.skills && member.skills.length > 0) {
+        const bundleId = await upsertMemberSkillBundle(member.role, member.skills);
+        memberBundleIds.set(member.role, bundleId);
+      } else {
+        memberBundleIds.set(member.role, null);
+      }
+    }
+
+    // ── Session-level skills bundle (optional) ───────────────────────────────
+    let activeBundleB64: string | undefined;
+    let resolvedBundleId: number | undefined;
+
+    try {
+      await seedDefaultBundles();
+      const sessionCtx: SessionContext = {
+        sessionType: "team",
+        taskMode: "team",
+        modelProfile: profile.servedModelName || "kimi",
+        repoLangs: [],
+        tokenMode: "core",
+        intentText: goal,
+      };
+
+      const bundle = await getDefaultBundleForContext(sessionCtx, !!repoUrl);
+      if (bundle) {
+        resolvedBundleId = bundle.id;
+        // Compile the session bundle for the onstart script payload
+        const { compileBundle } = await import("../services/skills-bundler");
+        const compiled = await compileBundle(bundle.id, sessionCtx);
+        activeBundleB64 = buildActiveBundleEnvPayload(compiled, "core");
+
+        // Record activation once instance is up (best-effort, non-blocking)
+        recordSessionActivation(insertedSessionId, compiled, "core").catch((activationErr) => {
+          logger.warn({ err: activationErr, sessionId: insertedSessionId }, "Orchestrate: skills activation record failed (non-fatal)");
+        });
+      }
+    } catch (skillsErr) {
+      logger.warn({ err: skillsErr, sessionId: insertedSessionId }, "Orchestrate: session-level skills compilation failed — continuing without bundle");
+    }
+
+    if (resolvedBundleId) {
+      await db.update(sessionsTable)
+        .set({ activeBundleId: resolvedBundleId, updatedAt: new Date() })
+        .where(eq(sessionsTable.id, insertedSessionId));
+    }
+
+    // ── Build onstart script and create Vast.ai instance ────────────────────
+    const memProxyUrl = process.env["MIZI_MEM_PROXY_URL"]
+      || (process.env["REPLIT_DEV_DOMAIN"]
+        ? `https://${process.env["REPLIT_DEV_DOMAIN"]}`
+        : undefined);
+    const memUserId = process.env["MIZI_MEM_USER_ID"] || "operator";
+
+    const onstart = vastai.buildOnStartScript({
+      modelRepo: profile.modelRepo,
+      modelQuant: profile.defaultQuant,
+      servedModelName: profile.servedModelName,
+      llamaCtxSize: profile.llamaCtxSize,
+      llamaBatchSize: profile.llamaBatchSize,
+      llamaExtraArgs: profile.llamaExtraArgs || "",
+      numGpus: profile.numGpus,
+      swarmWorkerCap: profile.swarmWorkerCap,
+      memProxyUrl,
+      memAuthToken: CALLBACK_TOKEN || undefined,
+      memUserId,
+      teamMembers: teamMemberRecords,
+      sessionId: insertedSessionId,
+      callbackBaseUrl: memProxyUrl,
+      activeBundleB64,
+      githubToken,
+    });
+
+    const result = await vastai.createInstance({
+      offerId: selectedOfferId,
+      image: profile.dockerImageTag,
+      onstart,
+      disk: profile.diskSizeGb,
+      templateHashId: templateHash,
+      env: {
+        MODEL_REPO: profile.modelRepo,
+        MODEL_QUANT: profile.defaultQuant,
+        SERVED_MODEL_NAME: profile.servedModelName,
+        VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
+        VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
+        NUM_GPUS: String(profile.numGpus),
+      },
+    });
+
+    // vastInstanceId is now set — any throw after this point triggers teardown
+    vastInstanceId = result.new_contract;
+
+    await db.update(sessionsTable).set({
+      vastInstanceId: vastInstanceId ?? null,
+      status: "provisioning",
+      statusMessage: "Orchestration: instance created — waiting for startup and model download...",
+      startedAt: new Date(),
+      costPerHour: result.expected_price || null,
+      updatedAt: new Date(),
+    }).where(eq(sessionsTable.id, insertedSessionId));
+
+    // ── compileLaneBundles (synchronous — in main flow) ───────────────────────
+    // Runs in main try block so any failure here triggers teardown.
+    // For lanes with explicit member.skills, the member's custom bundle takes
+    // precedence as the overlay; for others, compileLaneBundles selects by policy.
+    const sessionCtx: SessionContext = {
+      sessionType: "team",
+      taskMode: "team",
+      modelProfile: profile.servedModelName || "kimi",
+      repoLangs: [],
+      tokenMode: "core",
+      intentText: goal,
+    };
+
+    const laneInputs = teamMembers.map((m) => {
+      const resolvedLaneType = VALID_LANE_TYPES.includes(m.role as typeof VALID_LANE_TYPES[number])
+        ? m.role as typeof VALID_LANE_TYPES[number]
+        : "general";
+      const policy = getLanePolicy(resolvedLaneType);
+      return {
+        laneId: 0, // placeholder — real IDs assigned after lane insert
+        memberIdentifier: m.role,
+        laneType: resolvedLaneType,
+        taskMode: policy.defaultTaskMode,
+        tokenMode: policy.defaultTokenMode,
+      };
+    });
+
+    const bundleResult = await compileLaneBundles(insertedSessionId, sessionCtx, laneInputs);
+
+    // Build a map: memberIdentifier → overlay bundle ID to use when creating lanes.
+    // Priority: explicit member.skills bundle > compileLaneBundles result > null
+    const laneOverlayBundleIds = new Map<string, number | null>();
+    for (const overlay of bundleResult.laneOverlays) {
+      const memberBundleId = memberBundleIds.get(overlay.memberIdentifier) ?? null;
+      laneOverlayBundleIds.set(overlay.memberIdentifier, memberBundleId ?? overlay.overlayBundleId);
+    }
+    // Ensure every member is covered (compileLaneBundles may not return all if it fails partially)
+    for (const member of teamMembers) {
+      if (!laneOverlayBundleIds.has(member.role)) {
+        laneOverlayBundleIds.set(member.role, memberBundleIds.get(member.role) ?? null);
+      }
+    }
+
+    // ── Create lanes for each team member ────────────────────────────────────
+    const laneInserts = await Promise.all(
+      teamMembers.map(async (member) => {
+        const resolvedLaneType = VALID_LANE_TYPES.includes(member.role as typeof VALID_LANE_TYPES[number])
+          ? member.role as typeof VALID_LANE_TYPES[number]
+          : "general";
+        const policy = getLanePolicy(resolvedLaneType);
+
+        const overlayBundleId = laneOverlayBundleIds.get(member.role) ?? null;
+
+        const [lane] = await db.insert(sessionLanesTable).values({
+          sessionId: insertedSessionId!,
+          memberIdentifier: member.role,
+          laneType: resolvedLaneType,
+          taskMode: policy.defaultTaskMode,
+          status: "pending",
+          tokenMode: policy.defaultTokenMode,
+          currentTask: goal.slice(0, 200),
+          overlayBundleId,
+        }).returning();
+
+        return { lane, member };
+      })
+    );
+
+    // ── Pre-register file claims ─────────────────────────────────────────────
+    const now = new Date();
+    const expiresAt = new Date(Date.now() + LANE_DEFAULT_TTL_SECONDS * 1000);
+    const claimInserts: Promise<void>[] = [];
+
+    for (const { lane, member } of laneInserts) {
+      if (!member.claimPaths || member.claimPaths.length === 0) continue;
+      for (const resourcePath of member.claimPaths) {
+        claimInserts.push(
+          db.insert(laneClaimsTable).values({
+            laneId: lane.id,
+            claimType: "file",
+            pathOrSymbol: resourcePath,
+            claimedAt: now,
+            lastHeartbeatAt: now,
+            expiresAt,
+            claimStrength: "owner",
+            active: true,
+          }).onConflictDoUpdate({
+            target: [laneClaimsTable.laneId, laneClaimsTable.pathOrSymbol],
+            targetWhere: eq(laneClaimsTable.active, true),
+            set: {
+              claimStrength: "owner",
+              lastHeartbeatAt: now,
+              expiresAt,
+            },
+          }).then(() => undefined)
+        );
+      }
+    }
+
+    await Promise.all(claimInserts);
+
+    // ── Build response ───────────────────────────────────────────────────────
+    const members = laneInserts.map(({ lane, member }) => ({
+      laneId: lane.id,
+      memberIdentifier: lane.memberIdentifier,
+      role: lane.laneType,
+      overlayBundleId: lane.overlayBundleId ?? null,
+      claimPaths: member.claimPaths ?? [],
+      skills: member.skills ?? [],
+      ideUrl: null, // available only after instance is running (llm_ready callback)
+      bridgeStatus: getBridgeStatus(insertedSessionId!, lane.id) as "connected" | "disconnected",
+    }));
+
+    logger.info({ sessionId: insertedSessionId, vastInstanceId, laneCount: members.length }, "Orchestrate: session + lanes provisioned");
+
+    res.status(202).json({
+      sessionId: insertedSessionId,
+      status: "provisioning",
+      vastInstanceId: vastInstanceId ?? null,
+      profile: {
+        id: profile.id,
+        name: profile.name,
+        gpuName: profile.gpuName,
+        numGpus: profile.numGpus,
+      },
+      goal,
+      taskMode: "team",
+      members,
+      sessionCoreBundleId: bundleResult.sessionCoreBundleId,
+      message: "Session provisioning started. Poll GET /sessions/:id/orchestration-status for readiness.",
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    logger.error(err, "Orchestrate: provisioning failed");
+
+    // Teardown: destroy the GPU instance if it was created
+    if (vastInstanceId !== undefined) {
+      try {
+        await vastai.destroyInstance(vastInstanceId);
+        logger.info({ vastInstanceId }, "Orchestrate: GPU instance destroyed after failure");
+      } catch (destroyErr) {
+        logger.warn({ err: destroyErr, vastInstanceId }, "Orchestrate: failed to destroy GPU instance on error cleanup");
+      }
+    }
+
+    if (insertedSessionId !== undefined) {
+      // Remove from idempotency cache so next call can retry
+      idempotencyCache.delete(idempKey);
+
+      await db.update(sessionsTable).set({
+        status: "error",
+        statusMessage: `Orchestration failed: ${message}`,
+        updatedAt: new Date(),
+      }).where(eq(sessionsTable.id, insertedSessionId)).catch((e) => {
+        logger.warn(e, "Orchestrate: failed to mark session as error");
+      });
+    }
+
+    res.status(500).json({ error: `Orchestration failed: ${message}` });
+  }
+});
+
+// ─── GET /sessions/:sessionId/orchestration-status ────────────────────────────
+// Polling endpoint for async readiness. Returns current boot phase, lane
+// readiness (bridge connected or not), and any errors.
+
+type SessionStatus = typeof sessionsTable.$inferSelect["status"];
+
+function deriveOrchestrationStatus(sessionStatus: SessionStatus): "provisioning" | "ready" | "error" | "stopped" {
+  if (sessionStatus === "ready") return "ready";
+  if (sessionStatus === "error") return "error";
+  if (sessionStatus === "stopped") return "stopped";
+  return "provisioning";
+}
+
+router.get("/sessions/:sessionId/orchestration-status", async (req, res) => {
+  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
+
+  try {
+    const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+    if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    const lanes = await db
+      .select()
+      .from(sessionLanesTable)
+      .where(eq(sessionLanesTable.sessionId, sessionId))
+      .orderBy(desc(sessionLanesTable.createdAt));
+
+    const baseUrl = (session.codeServerUrl || "").replace(/\/$/, "");
+    const teamMembers = (session.teamMembers as TeamMemberRecord[] | null) ?? [];
+
+    const laneStatuses = lanes.map((lane) => {
+      const bridgeStatus = getBridgeStatus(sessionId, lane.id);
+      const member = teamMembers.find((tm) => tm.name === lane.memberIdentifier);
+      const ideUrl = member?.ideUrl || (baseUrl ? `${baseUrl}${member?.path ?? `/ide/${lane.memberIdentifier}/`}` : null);
+      return {
+        laneId: lane.id,
+        memberIdentifier: lane.memberIdentifier,
+        role: lane.laneType,
+        laneStatus: lane.status,
+        overlayBundleId: lane.overlayBundleId ?? null,
+        ideUrl,
+        bridgeStatus,
+      };
+    });
+
+    const orchestrationStatus = deriveOrchestrationStatus(session.status);
+    const allLanesConnected = laneStatuses.length > 0 && laneStatuses.every((l) => l.bridgeStatus === "connected");
+
+    // Effective status upgrades to "ready" only when both the session is ready
+    // AND all bridge connections are established (or no lanes were requested).
+    const effectiveStatus = orchestrationStatus === "ready" && !allLanesConnected && laneStatuses.length > 0
+      ? "provisioning"
+      : orchestrationStatus;
+
+    res.json({
+      sessionId,
+      status: effectiveStatus,
+      bootPhase: session.status,
+      bootMessage: session.statusMessage ?? null,
+      vastInstanceId: session.vastInstanceId ?? null,
+      allLanesConnected,
+      lanes: laneStatuses,
+      error: session.status === "error" ? (session.statusMessage ?? "Provisioning failed") : null,
+    });
+  } catch (err) {
+    logger.error(err, "Orchestrate status: failed to fetch");
+    res.status(500).json({ error: "Failed to fetch orchestration status" });
+  }
+});
+
+export default router;

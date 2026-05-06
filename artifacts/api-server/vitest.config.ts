@@ -16,6 +16,7 @@ export default defineConfig({
       reporter: ["text", "lcov", "html"],
       include: [
         "src/routes/coordination.ts",
+        "src/routes/orchestrate.ts",
         "src/services/lane-policy.ts",
       ],
       thresholds: {
