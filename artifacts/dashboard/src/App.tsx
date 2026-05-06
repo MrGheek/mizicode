@@ -13,6 +13,7 @@ import SkillsLibrary from "@/pages/skills/index";
 import DesignIntelligence from "@/pages/design-intelligence";
 import AmbientPage from "@/pages/ambient";
 import SettingsPage from "@/pages/settings";
+import ApiKeysPage from "@/pages/api-keys";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -36,6 +37,7 @@ function Router() {
         <Route path="/design-intelligence" component={DesignIntelligence} />
         <Route path="/ambient" component={AmbientPage} />
         <Route path="/settings" component={SettingsPage} />
+        <Route path="/api-keys" component={ApiKeysPage} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>
