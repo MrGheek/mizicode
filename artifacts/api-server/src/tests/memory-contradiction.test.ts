@@ -245,6 +245,7 @@ describe("computeSemanticSimilarity", () => {
   it("falls back to TF-IDF when env vars are missing — no fetch call is made", async () => {
     delete process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"];
     delete process.env["AI_INTEGRATIONS_OPENAI_API_KEY"];
+    delete process.env["NVIDIA_NIM_API_KEY"];
 
     const mockFetch = vi.fn();
     vi.stubGlobal("fetch", mockFetch);
