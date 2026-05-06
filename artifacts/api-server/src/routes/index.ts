@@ -15,6 +15,7 @@ import ambientRouter from "./ambient";
 import paletteIntentRouter from "./palette-intent";
 import nimRouter from "./nim";
 import authRouter from "./auth";
+import bridgeRouter from "./bridge";
 
 const router: IRouter = Router();
 
@@ -35,5 +36,6 @@ router.use(designIntelligenceRouter);
 router.use(ambientRouter);
 router.use(paletteIntentRouter);
 router.use(nimRouter);
+router.use(bridgeRouter);
 
 export default router;

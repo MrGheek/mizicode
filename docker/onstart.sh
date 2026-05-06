@@ -195,6 +195,26 @@ log "Swarm orchestration: SWARM_MAX_WORKERS=${SWARM_MAX_WORKERS} (source: swarmW
 node /opt/claw-runner.js > /var/log/claw-runner.log 2>&1 &
 log "Claw Task Runner started"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Claw Bridge: outbound WebSocket connection to the MIZI API server
+# Allows external agents to send prompts to this lane and stream responses.
+# MIZI_BRIDGE_URL is set by the API server when launching the instance and
+# follows the pattern: wss://<api-host>/api/bridge/:sessionId/:laneId
+# MIZI_LANE_ID selects which lane this process is connected to (default: 0
+# for the primary/owner lane).
+# The bridge process handles reconnection with backoff, so we start it once.
+# ─────────────────────────────────────────────────────────────────────────────
+if [ -n "${MIZI_BRIDGE_URL:-}" ] && [ -f "/opt/claw-bridge.mjs" ]; then
+    log "Starting Claw Bridge (session=${MIZI_SESSION_ID:-?} lane=${MIZI_LANE_ID:-0})..."
+    MIZI_LANE_ID="${MIZI_LANE_ID:-0}" \
+    BRIDGE_LOG_FILE="/var/log/claw-bridge.log" \
+    node /opt/claw-bridge.mjs >> /var/log/claw-bridge.log 2>&1 &
+    BRIDGE_PID=$!
+    log "Claw Bridge started (PID ${BRIDGE_PID}) — connecting to ${MIZI_BRIDGE_URL}"
+else
+    log "Claw Bridge: MIZI_BRIDGE_URL not set or claw-bridge.mjs not installed — bridge skipped"
+fi
+
 log "Configuring Bolt.diy..."
 cd /opt/bolt-diy
 cat > .env.local << EOF

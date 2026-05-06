@@ -97,6 +97,7 @@ RUN mkdir -p /run/sshd /workspace/models /workspace/projects /var/log && \
     git config --global --add safe.directory '*'
 
 COPY onstart.sh /opt/onstart.sh
+COPY claw-bridge.mjs /opt/claw-bridge.mjs
 COPY claw-runner.js /opt/claw-runner.js
 COPY scripts/ /opt/repo-intelligence/
 RUN cd /opt/repo-intelligence && npm install --production --prefer-offline && \

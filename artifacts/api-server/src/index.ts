@@ -1,3 +1,5 @@
+import http from "http";
+import { WebSocketServer } from "ws";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { seedProfiles } from "./services/profiles";
@@ -11,6 +13,7 @@ import { initSafetySubsystem, drainApprovedActions } from "./services/safety";
 import { startAmbientRunner, registerAmbientExecutors } from "./services/ambient";
 import { startClaimSweeper, sweepExpiredClaims, recordExternalSweep } from "./services/claim-sweeper";
 import { syncNimCatalog } from "./services/nim-catalog";
+import { handleBridgeUpgrade } from "./routes/bridge";
 import { db, laneClaimsTable, claimPurgeLogsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
 
@@ -83,7 +86,42 @@ try {
   process.exit(1);
 }
 
-app.listen(port, async (err) => {
+// ─── HTTP server + WebSocket bridge ──────────────────────────────────────────
+// Wrap the Express app in a raw http.Server so we can intercept WebSocket
+// upgrade events for the claw bridge at /api/bridge/:sessionId/:laneId.
+
+const server = http.createServer(app);
+
+// A single no-listen WebSocketServer is used purely to parse upgrade requests.
+// We do NOT call wss.handleUpgrade for requests that don't match the bridge
+// path — those are passed through to Express as normal HTTP 400s.
+const wss = new WebSocketServer({ noServer: true });
+
+// Bridge URL pattern: /api/bridge/:sessionId/:laneId
+const BRIDGE_PATH_RE = /^\/api\/bridge\/(\d+)\/(\d+)(\/|\?.*)?$/;
+
+server.on("upgrade", (req, socket, head) => {
+  const url = req.url ?? "";
+  const match = BRIDGE_PATH_RE.exec(url);
+  if (!match) {
+    // Not a bridge path — reject the upgrade
+    socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  const sessionId = parseInt(match[1], 10);
+  const laneId    = parseInt(match[2], 10);
+  if (!Number.isFinite(sessionId) || !Number.isFinite(laneId)) {
+    socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    handleBridgeUpgrade(ws, req, sessionId, laneId);
+  });
+});
+
+server.listen(port, async (err?: Error) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);

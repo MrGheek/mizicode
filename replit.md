@@ -226,6 +226,21 @@ Generated Zod schemas from the OpenAPI spec.
 
 Generated React Query hooks and fetch client.
 
+### Remote CLI Bridge (Task #278)
+
+Enables agents to send prompts to `claw` processes running on GPU instances over WebSocket.
+
+- **Registry**: `artifacts/api-server/src/services/bridge-registry.ts` — in-memory Map keyed by `sessionId:laneId`
+- **Routes**: `artifacts/api-server/src/routes/bridge.ts`
+  - `WS  /api/bridge/:sessionId/:laneId` — claw instance connects outbound; upgrade handled in `src/index.ts`
+  - `GET /api/sessions/:id/lanes/:laneId/bridge/status` — readiness check (`connected`/`disconnected`)
+  - `POST /api/sessions/:id/lanes/:laneId/exec` — accept `{ prompt }`, relay frames from bridge as SSE (`observation`/`done`/`error`)
+- **Auth**: `MIZI_MEM_TOKEN` Bearer OR `?token=` query param on WS upgrade; dev bypass when token not set
+- **claw-side client**: `docker/claw-bridge.mjs` — outbound WS with exponential-backoff reconnect, spawns `claw prompt`, streams back frames
+- **Startup**: `docker/onstart.sh` starts bridge client when `MIZI_BRIDGE_URL` is set
+- **Tests**: `artifacts/api-server/src/tests/bridge.test.ts` — 17 tests covering registry, status, exec dispatch, SSE relay, 400/503 error paths
+- **Key gotcha**: use `res.on("close")` (not `req.on("close")`) to detect caller disconnect in SSE handlers — `req` close fires when the HTTP client half-closes the request body, prematurely removing the message listener.
+
 ### Ambient Mode + Safety Subsystem (Task #227)
 
 Always-on background agent with reusable safety/approval rails.
