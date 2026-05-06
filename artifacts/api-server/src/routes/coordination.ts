@@ -9,6 +9,7 @@
  */
 
 import { Router } from "express";
+import { requireAgentAuth } from "../middlewares/agent-auth";
 import {
   db,
   sessionLanesTable,
@@ -43,6 +44,30 @@ import { sweepExpiredClaims, expireStaleClaimsForSession } from "../services/cla
 import type { HeavyJobClass, HeavyJobStatus, HandoffType, ClaimType, SessionLane, LaneClaim, LaneHandoff, LaneHeavyJob } from "@workspace/db";
 
 const router = Router({ mergeParams: true });
+
+// ─── Per-method agent auth on lane routes ─────────────────────────────────────
+// GETs require coordination:read; mutations (POST/PUT/DELETE) require
+// coordination:write. MIZI_MEM_TOKEN bearer is accepted as a pass-through by
+// requireAgentAuth for internal callers. Dev-mode bypass applies when
+// MIZI_MEM_TOKEN is not set (open access, matching memory/ambient posture).
+
+router.get("/sessions/:id/lanes", requireAgentAuth(["coordination:read"]));
+router.get("/sessions/:id/lanes/:laneId", requireAgentAuth(["coordination:read"]));
+router.post("/sessions/:id/lanes", requireAgentAuth(["coordination:write"]));
+router.put("/sessions/:id/lanes/:laneId", requireAgentAuth(["coordination:write"]));
+router.post("/sessions/:id/lanes/:laneId/claim", requireAgentAuth(["coordination:write"]));
+router.delete("/sessions/:id/lanes/:laneId/claim/:claimId", requireAgentAuth(["coordination:write"]));
+router.post("/sessions/:id/lanes/:laneId/handoff", requireAgentAuth(["coordination:write"]));
+router.get("/sessions/:id/coordination", requireAgentAuth(["coordination:read"]));
+router.get("/sessions/:id/conflicts", requireAgentAuth(["coordination:read"]));
+router.post("/sessions/:id/heavy-jobs", requireAgentAuth(["coordination:write"]));
+router.get("/sessions/:id/heavy-jobs", requireAgentAuth(["coordination:read"]));
+router.get("/sessions/:id/heavy-jobs/next", requireAgentAuth(["coordination:read"]));
+router.patch("/sessions/:id/heavy-jobs/:jobId", requireAgentAuth(["coordination:write"]));
+router.patch("/sessions/:id/lanes/:laneId/handoff/:handoffId", requireAgentAuth(["coordination:write"]));
+router.get("/sessions/:id/coordination/stream", requireAgentAuth(["coordination:read"]));
+router.get("/admin/claim-cleanup-stats", requireAgentAuth(["coordination:read"]));
+router.post("/admin/sweep-claims", requireAgentAuth(["coordination:write"]));
 
 // ─── SSE broadcaster for real-time Team tab updates ───────────────────────────
 
@@ -970,11 +995,9 @@ router.get("/admin/claim-cleanup-stats", async (_req, res) => {
 // next scheduled interval. No session scope: sweeps ALL sessions globally.
 
 router.post("/admin/sweep-claims", async (req, res) => {
-  const adminToken = process.env.ADMIN_SWEEP_TOKEN;
-  if (!adminToken || req.headers["x-admin-token"] !== adminToken) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
+  // Auth is enforced by the requireAgentAuth(["coordination:write"]) middleware
+  // registered above. The legacy ADMIN_SWEEP_TOKEN/x-admin-token gate is removed
+  // so that valid API keys can trigger sweeps without an extra secret.
   try {
     const result = await sweepExpiredClaims();
     logger.info(result, "Manual claim sweep triggered via admin endpoint");

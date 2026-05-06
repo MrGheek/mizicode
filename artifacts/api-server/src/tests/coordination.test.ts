@@ -1336,36 +1336,42 @@ describe("expireStaleClaimsForSession", () => {
 });
 
 // ─── Admin sweep-claims auth tests ────────────────────────────────────────────
+// /admin/sweep-claims is now gated by requireAgentAuth(["coordination:write"]).
+// Auth is enforced when MIZI_MEM_TOKEN is set; the MIZI_MEM_TOKEN bearer is
+// accepted as the operator/internal credential (replacing the legacy X-Admin-Token).
 
 describe("POST /api/admin/sweep-claims authentication", () => {
-  const REAL_TOKEN = "test-admin-token-123";
+  const REAL_MEM_TOKEN = "test-mem-token-sweep-123";
+  const original = process.env["MIZI_MEM_TOKEN"];
 
   beforeAll(() => {
-    process.env.ADMIN_SWEEP_TOKEN = REAL_TOKEN;
+    process.env["MIZI_MEM_TOKEN"] = REAL_MEM_TOKEN;
   });
 
   afterAll(() => {
-    delete process.env.ADMIN_SWEEP_TOKEN;
+    if (original === undefined) {
+      delete process.env["MIZI_MEM_TOKEN"];
+    } else {
+      process.env["MIZI_MEM_TOKEN"] = original;
+    }
   });
 
-  it("returns 401 when no X-Admin-Token header is provided", async () => {
+  it("returns 401 when no Authorization header is provided", async () => {
     const res = await request(app).post("/api/admin/sweep-claims");
     expect(res.status).toBe(401);
-    expect(res.body).toMatchObject({ error: "Unauthorized" });
   });
 
-  it("returns 401 when an incorrect X-Admin-Token is provided", async () => {
+  it("returns 401 when an incorrect Bearer token is provided", async () => {
     const res = await request(app)
       .post("/api/admin/sweep-claims")
-      .set("X-Admin-Token", "wrong-token");
+      .set("Authorization", "Bearer wrong-token-definitely-invalid");
     expect(res.status).toBe(401);
-    expect(res.body).toMatchObject({ error: "Unauthorized" });
   });
 
-  it("returns 200 when the correct X-Admin-Token is provided", async () => {
+  it("returns 200 when the MIZI_MEM_TOKEN bearer is provided", async () => {
     const res = await request(app)
       .post("/api/admin/sweep-claims")
-      .set("X-Admin-Token", REAL_TOKEN);
+      .set("Authorization", `Bearer ${REAL_MEM_TOKEN}`);
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("sweptAt");
   });

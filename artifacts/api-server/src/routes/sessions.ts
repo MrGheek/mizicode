@@ -14,6 +14,7 @@ import type { SessionContext } from "../services/skills-types";
 import { autoEnqueueRepoIndexIfNeeded } from "./repo";
 
 import { randomBytes } from "crypto";
+import { requireAgentAuth } from "../middlewares/agent-auth";
 
 function generatePassword(length = 12): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -618,7 +619,7 @@ router.patch("/sessions/:sessionId", async (req, res) => {
   });
 });
 
-router.post("/sessions", async (req, res) => {
+router.post("/sessions", requireAgentAuth(["sessions:write"]), async (req, res) => {
   const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider, githubToken: rawGithubToken } = req.body;
 
   const githubToken: string | undefined = (typeof rawGithubToken === "string" && rawGithubToken.trim())

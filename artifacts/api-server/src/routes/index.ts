@@ -14,9 +14,11 @@ import designIntelligenceRouter from "./design-intelligence";
 import ambientRouter from "./ambient";
 import paletteIntentRouter from "./palette-intent";
 import nimRouter from "./nim";
+import authRouter from "./auth";
 
 const router: IRouter = Router();
 
+router.use(authRouter);
 router.use(healthRouter);
 router.use(profilesRouter);
 router.use(sessionsRouter);

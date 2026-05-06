@@ -166,6 +166,20 @@ Each instance runs:
 - nginx preview proxy (port 3000) — Proxies app previews
 - SSH (port 22) — Remote access
 
+## M2M API Key Auth
+
+Remote orchestration agents authenticate via scoped API keys rather than the shared `MIZI_MEM_TOKEN` secret.
+
+- **Schema**: `api_keys` table (`lib/db/src/schema/api-keys.ts`) — stores SHA-256 key hash, label, scopes (JSONB), expiry, last-used, revoked timestamps.
+- **Migration**: `lib/db/migrations/0019_api_keys.sql`
+- **Key management routes** (`artifacts/api-server/src/routes/auth.ts`):
+  - `POST /api/auth/keys` — create key; plaintext returned once, hash stored
+  - `GET /api/auth/keys` — list active (non-revoked) keys; values never returned
+  - `DELETE /api/auth/keys/:id` — revoke a key
+- **Middleware** (`artifacts/api-server/src/middlewares/agent-auth.ts`): `requireAgentAuth(scopes[])` — validates `Authorization: Bearer <key>`, checks expiry/revocation, enforces required scopes, records `last_used_at` async. Dev-mode bypass (no `MIZI_MEM_TOKEN` set) mirrors memory/ambient posture. `MIZI_MEM_TOKEN` bearer accepted as pass-through for internal callers.
+- **Protected routes**: `POST /api/sessions` (requires `sessions:write`), `GET|POST|PUT /api/sessions/:id/lanes` (requires `coordination:read`).
+- **Tests**: `artifacts/api-server/src/tests/agent-auth.test.ts`
+
 ## Environment Secrets
 
 - `VASTAI_API_KEY` — Vast.ai API key for instance management
