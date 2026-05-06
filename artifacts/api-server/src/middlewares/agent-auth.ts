@@ -6,7 +6,7 @@ import { logger } from "../lib/logger";
 
 export type ApiKeyRecord = typeof apiKeysTable.$inferSelect;
 
-declare module "express-serve-static-core" {
+declare module "express" {
   interface Request {
     apiKey?: ApiKeyRecord;
   }

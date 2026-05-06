@@ -1065,8 +1065,8 @@ export default function SkillsLibrary() {
     feedbackScoresMap[s.slug] = {
       helpfulRate: s.helpfulRate,
       totalCount: s.totalCount,
-      decayedTotalWeight: s.decayedTotalWeight ?? s.totalCount,
-      decayedHelpfulWeight: s.decayedHelpfulWeight ?? s.helpfulCount,
+      decayedTotalWeight: (s as typeof s & { decayedTotalWeight?: number }).decayedTotalWeight ?? s.totalCount,
+      decayedHelpfulWeight: (s as typeof s & { decayedHelpfulWeight?: number }).decayedHelpfulWeight ?? s.helpfulCount,
     };
   }
 

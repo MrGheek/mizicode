@@ -1574,7 +1574,7 @@ router.post("/memory/restore", (req, res) => {
 // coalesced at the same injection point. Logging here lets dashboards chart how
 // often soft interrupts fire and how long messages waited (the cache-warm UX win).
 router.post("/sessions/:sessionId/telemetry/soft-interrupts", (req, res) => {
-  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  const sessionId = parseInt(String(req.params["sessionId"] ?? ""), 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid sessionId" });
     return;
@@ -1626,7 +1626,7 @@ router.post("/sessions/:sessionId/telemetry/soft-interrupts", (req, res) => {
 // available. Stores the latest routing stats on the session row so the dashboard
 // can read them and pass bytesAvoided to the complete-feedback endpoint.
 router.post("/sessions/:sessionId/routing-stats", async (req, res) => {
-  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  const sessionId = parseInt(String(req.params["sessionId"] ?? ""), 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid sessionId" });
     return;
@@ -1683,7 +1683,7 @@ router.post("/sessions/:sessionId/routing-stats", async (req, res) => {
 // Returns the latest stored routing stats for a session (if any).
 // The dashboard uses this to read bytesAvoided for the complete-feedback call.
 router.get("/sessions/:sessionId/routing-stats", async (req, res) => {
-  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  const sessionId = parseInt(String(req.params["sessionId"] ?? ""), 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid sessionId" });
     return;
@@ -1756,7 +1756,7 @@ const swarmSseSubscribers = new Map<number, Set<(snapshot: SwarmSnapshot) => voi
 // GET /sessions/:id/swarm-status (below) is the dashboard reader and is unaffected
 // — Express matches routes by method, so the GET and POST on the same path coexist.
 const handleSwarmPush: RequestHandler = async (req, res) => {
-  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  const sessionId = parseInt(String(req.params["sessionId"] ?? ""), 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid sessionId" });
     return;
@@ -1819,7 +1819,7 @@ router.post("/sessions/:sessionId/swarm-status", handleSwarmPush);
 //   "starting"    — session not yet ready, runner hasn't started pushing
 //   "unavailable" — no snapshot has ever been received for this session
 router.get("/sessions/:sessionId/swarm-status", async (req, res) => {
-  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  const sessionId = parseInt(String(req.params["sessionId"] ?? ""), 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid sessionId" });
     return;
@@ -1897,7 +1897,7 @@ router.get("/sessions/:sessionId/swarm-status", async (req, res) => {
 // Unauthorized callers receive a 401 response before the SSE stream is opened;
 // the dashboard falls back to polling swarm-status (no auth required for reads).
 router.get("/sessions/:sessionId/swarm-stream", async (req, res) => {
-  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  const sessionId = parseInt(String(req.params["sessionId"] ?? ""), 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid sessionId" });
     return;
@@ -2012,7 +2012,7 @@ router.get("/sessions/:sessionId/swarm-stream", async (req, res) => {
 // This gates the destructive abort control against direct API calls from team members
 // or other unauthorized callers.
 router.post("/sessions/:sessionId/swarm/abort", async (req, res) => {
-  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  const sessionId = parseInt(String(req.params["sessionId"] ?? ""), 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid sessionId" });
     return;
@@ -2121,7 +2121,7 @@ function broadcastSoftInterruptUpdate(sessionId: number, msg: SoftInterruptMessa
 // Accept a user message mid-stream. Stored as "queued" immediately so the
 // dashboard can render the badge before the runtime acknowledges it.
 router.post("/sessions/:sessionId/messages", async (req, res) => {
-  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  const sessionId = parseInt(String(req.params["sessionId"] ?? ""), 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid sessionId" });
     return;
@@ -2166,7 +2166,7 @@ router.post("/sessions/:sessionId/messages", async (req, res) => {
 // GET /sessions/:sessionId/messages
 // Return all messages for this session in send order.
 router.get("/sessions/:sessionId/messages", (req, res) => {
-  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  const sessionId = parseInt(String(req.params["sessionId"] ?? ""), 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid sessionId" });
     return;
@@ -2179,7 +2179,7 @@ router.get("/sessions/:sessionId/messages", (req, res) => {
 // soft-interrupt queue and injects the message into the conversation history.
 // Validates the same CALLBACK_TOKEN bearer used by /status and /routing-stats.
 router.post("/sessions/:sessionId/messages/:msgId/injected", (req, res) => {
-  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  const sessionId = parseInt(String(req.params["sessionId"] ?? ""), 10);
   const msgId = req.params["msgId"] ?? "";
   if (isNaN(sessionId) || !msgId) {
     res.status(400).json({ error: "Invalid sessionId or msgId" });
@@ -2220,7 +2220,7 @@ router.post("/sessions/:sessionId/messages/:msgId/injected", (req, res) => {
 // SSE stream that pushes SoftInterruptMessage objects whenever their state changes.
 // Clients subscribe on page load and receive immediate snapshot + live updates.
 router.get("/sessions/:sessionId/messages/stream", (req, res) => {
-  const sessionId = parseInt(req.params["sessionId"] ?? "", 10);
+  const sessionId = parseInt(String(req.params["sessionId"] ?? ""), 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid sessionId" });
     return;

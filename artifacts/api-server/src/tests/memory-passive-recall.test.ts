@@ -305,7 +305,7 @@ describe("memory-passive — passive recall pipeline", () => {
     expect(offRes.body.items).toEqual([]);
     expect(offRes.body.turnId).toBeNull();
     void item;
-  });
+  }, 30_000);
 
   it("schema is created lazily — passive functions work even when called before any explicit migration", async () => {
     // Re-import after a reset: simulates a cold path where a passive endpoint

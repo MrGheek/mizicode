@@ -107,9 +107,7 @@ function setupDbError(err: Error) {
 // ---------------------------------------------------------------------------
 
 describe("queryDesignIntelligenceContext", () => {
-  let queryDesignIntelligenceContext: Awaited<
-    ReturnType<typeof import("../services/skills-bundler")>
-  >["queryDesignIntelligenceContext"];
+  let queryDesignIntelligenceContext: (typeof import("../services/skills-bundler"))["queryDesignIntelligenceContext"];
 
   let UX_LANE_CATEGORIES: string[];
   let FRONTEND_LANE_CATEGORIES: string[];

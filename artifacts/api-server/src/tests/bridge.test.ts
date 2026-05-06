@@ -393,7 +393,7 @@ describe("POST /api/sessions/:id/lanes/:laneId/exec", () => {
 
     // Abort the dangling first request so the server-side SSE stream closes
     // and finish() clears activeExecs before afterEach runs.
-    firstReqAbort?.();
+    (firstReqAbort as ((() => void) | null))?.();
     await mock.close();
   });
 

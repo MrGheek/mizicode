@@ -535,7 +535,7 @@ router.get("/skills/:skillId", async (req, res) => {
 
   const designCategories = Array.from(new Set([...explicitCats, ...computedCats])).sort();
 
-  res.json({ skill, latestManifest: latestVersion?.manifestJson || null, designCategories, feedbackStats });
+  res.json({ skill, latestManifest: latestVersion[0]?.manifestJson ?? null, designCategories, feedbackStats });
 });
 
 /**

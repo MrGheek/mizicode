@@ -700,7 +700,7 @@ router.post("/sync", async (req, res) => {
     edgesJson: edges ? (edges as Record<string, unknown>[]) : undefined,
     chunksJson: chunks ? (chunks as Record<string, unknown>[]) : undefined,
     embeddingsJson: incomingEmbeddings
-      ? (incomingEmbeddings as Record<string, unknown>[])
+      ? (incomingEmbeddings as unknown as Record<string, unknown>[])
       : shouldClearEmbeddings ? null : undefined,
     hasEmbeddings: incomingEmbeddings ? true : shouldClearEmbeddings ? false : undefined,
     embeddingDim: incomingEmbeddings

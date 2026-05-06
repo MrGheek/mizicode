@@ -23,7 +23,11 @@ import {
   useGetRepoSymbol,
   getGetRepoSummaryQueryKey,
   getGetRepoFingerprintQueryKey,
+  getSearchRepoQueryKey,
+  getGetRepoSymbolQueryKey,
+  getGetRepoBlastRadiusQueryKey,
   useAcknowledgeLaneHandoff,
+  Session,
 } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
@@ -1108,7 +1112,7 @@ function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?:
   const latestActivation = data?.activations?.[0] ?? null;
   const activeBundle = data?.activeBundle ?? null;
   const manifests = (data?.activeManifests ?? []) as ManifestItem[];
-  const designContext = data?.designContext ?? null;
+  const designContext = (data as typeof data & { designContext?: Array<{ category: string; name: string; data: Record<string, unknown> }> })?.designContext ?? null;
   const tokenMode = latestActivation?.tokenMode ?? null;
   const showDesignContext = designContext && designContext.length > 0 && tokenMode !== "lean" && tokenMode !== "ultra";
 
@@ -1329,8 +1333,8 @@ function SmartSkillsTab({ sessionId, taskMode }: { sessionId: number; taskMode?:
           {designContextExpanded && (
             <CardContent className="pt-0 pb-4">
               <div className="border-t border-border/40 pt-3 space-y-2">
-                {designContext!.map((entry, i) => {
-                  const dataEntries = Object.entries(entry.data).filter(([, v]) => v && v.trim().length > 0);
+                {(designContext as Array<{ category: string; name: string; data: Record<string, unknown> }>).map((entry, i) => {
+                  const dataEntries = Object.entries(entry.data).filter(([, v]) => v && typeof v === "string" && v.trim().length > 0) as [string, string][];
                   return (
                     <div key={i} className="rounded border border-border/40 bg-secondary/20 p-2.5 text-xs space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -1474,6 +1478,7 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
 
   const { data: fingerprintData } = useGetRepoFingerprint(sessionId, {
     query: {
+      queryKey: getGetRepoFingerprintQueryKey(sessionId),
       enabled: !!sessionId,
       refetchInterval: isActive(summaryStatus) ? 5000 : false,
     },
@@ -1527,7 +1532,7 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
   const { data: searchData, isLoading: searchLoading, isFetching: searchFetching, isError: searchError } = useSearchRepo(
     sessionId,
     { q: debouncedQuery || "_", type: searchType === "all" ? undefined : searchType, limit: 20 },
-    { query: { enabled: searchEnabled } },
+    { query: { queryKey: getSearchRepoQueryKey(sessionId, { q: debouncedQuery || "_", type: searchType === "all" ? undefined : searchType, limit: 20 }), enabled: searchEnabled } },
   );
 
   // Symbol detail drawer
@@ -1535,7 +1540,7 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
   const { data: symbolDetailData, isLoading: symbolDetailLoading } = useGetRepoSymbol(
     sessionId,
     selectedSymbol ? { name: selectedSymbol.name, path: selectedSymbol.path } : {},
-    { query: { enabled: !!selectedSymbol } },
+    { query: { queryKey: getGetRepoSymbolQueryKey(sessionId, selectedSymbol ?? {}), enabled: !!selectedSymbol } },
   );
   const symbolDetail = symbolDetailData?.symbols?.[0] ?? null;
 
@@ -1564,7 +1569,7 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
   const { data: blastData, isLoading: blastLoading, isError: blastError } = useGetRepoBlastRadius(
     sessionId,
     { file: blastFile || "_" },
-    { query: { enabled: !!blastFile } },
+    { query: { queryKey: getGetRepoBlastRadiusQueryKey(sessionId, { file: blastFile || "_" }), enabled: !!blastFile } },
   );
 
   if (isLoading) {
@@ -2483,7 +2488,7 @@ export default function SessionDetail() {
   // Swarm status — polled every 3 seconds when session is ready
   // Must be called unconditionally before early returns (rules of hooks)
   const sessionIsReady = session?.status === "ready";
-  const { data: swarmData } = useSwarmStatus(sessionId, sessionIsReady, session?.ownerToken);
+  const { data: swarmData } = useSwarmStatus(sessionId, sessionIsReady, undefined);
 
   // Orchestration status polling — active for all team sessions.
   // Deliberately NOT gated on session.status boot phases: the orchestration endpoint
@@ -3602,7 +3607,7 @@ export default function SessionDetail() {
                   <div className="flex items-center gap-2">
                     <span className="font-mono">{session.gpuName || "—"} x{session.numGpus || "—"}</span>
                     {(() => {
-                      const swarmCap = session.swarmWorkerCap ?? 0;
+                      const swarmCap = (session as Session & { swarmWorkerCap?: number }).swarmWorkerCap ?? 0;
                       if (swarmCap <= 0) return null;
                       const isLimited = swarmCap <= 8;
                       return (
@@ -3736,7 +3741,7 @@ export default function SessionDetail() {
           sessionId={sessionId}
           isReady={isReady}
           isSessionOwner={isSessionOwner}
-          ownerToken={session.ownerToken}
+          ownerToken={undefined}
         />
       )}
 

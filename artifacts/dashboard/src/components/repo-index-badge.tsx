@@ -1,4 +1,4 @@
-import { useGetRepoSummary } from "@workspace/api-client-react";
+import { useGetRepoSummary, getGetRepoSummaryQueryKey } from "@workspace/api-client-react";
 import { useLocation } from "wouter";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -39,6 +39,7 @@ export function RepoIndexBadge({ sessionId }: { sessionId: number }) {
 
   const { data, isLoading, isError } = useGetRepoSummary(sessionId, {
     query: {
+      queryKey: getGetRepoSummaryQueryKey(sessionId),
       staleTime: 60_000,
       refetchOnWindowFocus: false,
       retry: 1,
