@@ -25,6 +25,11 @@ jobs:
       - name: Set up flyctl
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
 
+      - name: Ensure app exists
+        run: flyctl apps create mizi-api --org personal 2>/dev/null || true
+        env:
+          FLY_API_TOKEN: ${{ secrets.MIZIAPI }}
+
       - name: Deploy
         run: |
           flyctl deploy \
@@ -46,6 +51,11 @@ jobs:
 
       - name: Set up flyctl
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+
+      - name: Ensure app exists
+        run: flyctl apps create mizi-dashboard --org personal 2>/dev/null || true
+        env:
+          FLY_API_TOKEN: ${{ secrets.MIZIDASHBOARD }}
 
       - name: Deploy
         # VITE_API_BASE_URL is defined in artifacts/dashboard/fly.toml [build.args]
