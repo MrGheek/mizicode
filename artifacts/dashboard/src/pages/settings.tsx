@@ -1,9 +1,15 @@
 import { useState, useEffect } from "react";
-import { Globe, CheckCircle2, XCircle, Loader2, ExternalLink, WifiOff } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-
+import {
+  Globe, CheckCircle2, XCircle, Loader2, ExternalLink, WifiOff, Activity,
+  ChevronDown, ChevronRight,
+} from "lucide-react";
 import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
+import { useGetSchedulerConfig, useUpdateSchedulerConfig, useListProfiles } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { SchedulerConfigCard } from "@/components/scheduler-config-card";
+import { useToast } from "@/hooks/use-toast";
+import type { SchedulerConfig, UpdateSchedulerRequest } from "@workspace/api-client-react";
+import { getGetSchedulerConfigQueryKey } from "@workspace/api-client-react";
 
 interface ProviderHealth {
   key: string;
@@ -46,58 +52,101 @@ const PROVIDER_INFO: Record<string, { desc: string; envKey: string; pricingUrl: 
 
 function ProviderRow({ provider }: { provider: ProviderHealth }) {
   const info = PROVIDER_INFO[provider.key];
+  const [connectOpen, setConnectOpen] = useState(false);
+
+  const statusColor = provider.configured
+    ? (provider.live ? "#10b981" : "#f59e0b")
+    : "var(--text-muted)";
+  const statusLabel = provider.configured
+    ? (provider.live ? `Live${provider.latencyMs != null ? ` · ${provider.latencyMs}ms` : ""}` : "Offline")
+    : "Not configured";
+
   return (
-    <div className="flex items-start gap-4 py-4 border-b border-border/40 last:border-0">
-      <div className="pt-0.5 shrink-0">
-        {provider.configured ? (
-          provider.live
-            ? <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            : <WifiOff className="w-4 h-4 text-amber-400" />
-        ) : (
-          <XCircle className="w-4 h-4 text-muted-foreground/40" />
-        )}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-semibold text-sm">{provider.displayName}</span>
+    <div className="py-4" style={{ borderBottom: "1px solid var(--border-glass)" }}>
+      <div className="flex items-start gap-4">
+        <div className="pt-0.5 shrink-0">
           {provider.configured ? (
-            provider.live ? (
-              <Badge className="text-[10px] bg-emerald-500/20 text-emerald-300 border-emerald-500/30 px-1.5 py-0">
-                Live {provider.latencyMs != null ? `· ${provider.latencyMs}ms` : ""}
-              </Badge>
-            ) : (
-              <Badge variant="outline" className="text-[10px] border-amber-500/30 text-amber-400 px-1.5 py-0">
-                Configured · Offline
-              </Badge>
-            )
+            provider.live
+              ? <CheckCircle2 className="w-4 h-4" style={{ color: "#10b981" }} />
+              : <WifiOff className="w-4 h-4" style={{ color: "#f59e0b" }} />
           ) : (
-            <Badge variant="outline" className="text-[10px] text-muted-foreground/60 px-1.5 py-0">
-              Not configured
-            </Badge>
-          )}
-          {info?.freeModels && (
-            <Badge className="text-[10px] bg-primary/10 text-primary border-primary/20 px-1.5 py-0">Free models</Badge>
+            <XCircle className="w-4 h-4" style={{ color: "var(--text-muted)" }} />
           )}
         </div>
-        {info && (
-          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{info.desc}</p>
-        )}
-        {!provider.configured && info && (
-          <div className="mt-2 flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-muted-foreground">
-              Set <code className="font-mono text-[11px] bg-secondary/60 px-1 rounded">{info.envKey}</code> in Replit Secrets to enable.
-            </span>
-            <a
-              href={info.pricingUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{provider.displayName}</span>
+            <span
+              className="text-[10px] font-medium px-2 py-0.5 rounded-full"
+              style={{ color: statusColor, background: `${statusColor}15`, border: `1px solid ${statusColor}25` }}
             >
-              Get API key <ExternalLink className="w-3 h-3" />
-            </a>
+              {statusLabel}
+            </span>
+            {info?.freeModels && (
+              <span
+                className="text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+                style={{ color: "var(--accent-cyan)", background: "rgba(0,200,255,0.1)", border: "1px solid rgba(0,200,255,0.15)" }}
+              >
+                Free models
+              </span>
+            )}
           </div>
+          {info && (
+            <p className="text-xs mt-1 leading-relaxed" style={{ color: "var(--text-secondary)" }}>{info.desc}</p>
+          )}
+        </div>
+        {!provider.configured && info && (
+          <button
+            onClick={() => setConnectOpen((v) => !v)}
+            className="shrink-0 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
+            style={{
+              color: "var(--accent-cyan)",
+              background: "rgba(0,200,255,0.08)",
+              border: "1px solid rgba(0,200,255,0.2)",
+            }}
+          >
+            Connect →
+          </button>
         )}
       </div>
+
+      {!provider.configured && info && connectOpen && (
+        <div
+          className="mt-3 ml-8 p-4 rounded-xl glass-emerge"
+          style={{ background: "var(--bg-glass)", border: "1px solid var(--border-glass)" }}
+        >
+          <p className="text-xs font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Connect in 3 steps</p>
+          <ol className="space-y-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+            <li className="flex items-start gap-2">
+              <span className="shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold"
+                style={{ background: "rgba(0,200,255,0.15)", color: "var(--accent-cyan)" }}>1</span>
+              <span>
+                Get your API key from{" "}
+                <a href={info.pricingUrl} target="_blank" rel="noopener noreferrer"
+                  className="underline inline-flex items-center gap-1" style={{ color: "var(--accent-cyan)" }}>
+                  {provider.displayName} <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold"
+                style={{ background: "rgba(0,200,255,0.15)", color: "var(--accent-cyan)" }}>2</span>
+              <span>
+                Add it to your Replit Secrets as{" "}
+                <code className="px-1.5 py-0.5 rounded text-[11px] font-mono"
+                  style={{ background: "var(--bg-glass-active)", color: "var(--text-primary)" }}>
+                  {info.envKey}
+                </code>
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold"
+                style={{ background: "rgba(0,200,255,0.15)", color: "var(--accent-cyan)" }}>3</span>
+              <span>Restart the API server — it will appear as Live above.</span>
+            </li>
+          </ol>
+        </div>
+      )}
     </div>
   );
 }
@@ -105,6 +154,16 @@ function ProviderRow({ provider }: { provider: ProviderHealth }) {
 export default function SettingsPage() {
   const [providers, setProviders] = useState<ProviderHealth[]>([]);
   const [loading, setLoading] = useState(true);
+  const [schedulerOpen, setSchedulerOpen] = useState(false);
+  const [isSavingScheduler, setIsSavingScheduler] = useState(false);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: schedulerConfig } = useGetSchedulerConfig({
+    query: { queryKey: getGetSchedulerConfigQueryKey() }
+  });
+  const updateScheduler = useUpdateSchedulerConfig();
+  const { data: profiles } = useListProfiles();
 
   const fetchHealth = () => {
     setLoading(true);
@@ -121,36 +180,61 @@ export default function SettingsPage() {
     return () => clearInterval(id);
   }, []);
 
+  const handleSaveScheduler = async (updates: Partial<SchedulerConfig>) => {
+    setIsSavingScheduler(true);
+    return new Promise<void>((resolve, reject) => {
+      updateScheduler.mutate({ data: updates as UpdateSchedulerRequest }, {
+        onSuccess: () => {
+          toast({ title: "Scheduler saved" });
+          queryClient.invalidateQueries({ queryKey: getGetSchedulerConfigQueryKey() });
+          setIsSavingScheduler(false);
+          resolve();
+        },
+        onError: (err: Error) => {
+          toast({ title: "Save failed", description: err?.message, variant: "destructive" });
+          setIsSavingScheduler(false);
+          reject(err);
+        }
+      });
+    });
+  };
+
   const configuredCount = providers.filter((p) => p.configured).length;
   const liveCount = providers.filter((p) => p.live).length;
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">Configure inference providers and platform options.</p>
-      </div>
+    <div className="min-h-full" style={{ background: "var(--bg-base)" }}>
+      <div className="fixed top-[-200px] right-[-100px] w-[500px] h-[500px] rounded-full pointer-events-none"
+        style={{ background: "radial-gradient(circle, rgba(0,200,255,0.03) 0%, transparent 70%)", filter: "blur(60px)" }} />
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Globe className="w-4 h-4 text-emerald-400" />
-            Inference Providers
-            {loading ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground ml-1" />
-            ) : (
-              <span className="text-xs font-normal text-muted-foreground ml-1">
-                {configuredCount} configured · {liveCount} live
-              </span>
-            )}
-          </CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Hosted-inference providers let you start a coding session in ~2 minutes without renting a GPU. Each provider requires an API key set as a Replit Secret.
+      <div className="relative max-w-2xl mx-auto px-8 py-10 space-y-8">
+        <div className="glass-emerge">
+          <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>
+            Provider Health
+          </h1>
+          <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
+            Monitor inference provider status and connectivity.
           </p>
-        </CardHeader>
-        <CardContent className="pt-0">
+        </div>
+
+        {/* Provider health card */}
+        <div className="glass-card p-6 glass-emerge" style={{ animationDelay: "50ms" }}>
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <Activity className="w-4 h-4" style={{ color: "var(--accent-cyan)" }} />
+              <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>Inference Providers</h2>
+              {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "var(--text-muted)" }} />}
+            </div>
+            <div className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>
+              {!loading && `${configuredCount} configured · ${liveCount} live`}
+            </div>
+          </div>
+          <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
+            Hosted inference providers let you start coding in ~2 minutes without GPU rental.
+          </p>
+
           {loading && providers.length === 0 ? (
-            <div className="py-6 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
+            <div className="py-6 flex items-center justify-center gap-2 text-sm" style={{ color: "var(--text-secondary)" }}>
               <Loader2 className="w-4 h-4 animate-spin" /> Checking provider status…
             </div>
           ) : (
@@ -160,8 +244,38 @@ export default function SettingsPage() {
               ))}
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+
+        {/* Scheduled sessions collapsible */}
+        <div className="glass-card overflow-hidden glass-emerge" style={{ animationDelay: "100ms" }}>
+          <button
+            type="button"
+            onClick={() => setSchedulerOpen((v) => !v)}
+            className="w-full flex items-center gap-3 px-6 py-4 transition-colors text-left"
+            style={{ color: "var(--text-primary)" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--bg-glass)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = ""; }}
+          >
+            <Globe className="w-4 h-4 shrink-0" style={{ color: "var(--text-secondary)" }} />
+            <span className="flex-1 font-semibold text-sm">Scheduled Sessions</span>
+            <span className="text-xs mr-2" style={{ color: "var(--text-muted)" }}>
+              {schedulerConfig?.enabled ? "Active" : "Off"}
+            </span>
+            {schedulerOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          </button>
+
+          {schedulerOpen && schedulerConfig && (
+            <div className="px-6 pb-6 glass-emerge">
+              <SchedulerConfigCard
+                config={schedulerConfig}
+                profiles={profiles ?? []}
+                onSave={handleSaveScheduler}
+                isSaving={isSavingScheduler}
+              />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

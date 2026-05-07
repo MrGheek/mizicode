@@ -1,4 +1,4 @@
-import { pgTable, text, jsonb, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, jsonb, timestamp, real } from "drizzle-orm/pg-core";
 
 export const nimCatalogTable = pgTable("nim_catalog", {
   nimModelId: text("nim_model_id").primaryKey(),
@@ -8,6 +8,8 @@ export const nimCatalogTable = pgTable("nim_catalog", {
   shortDescription: text("short_description"),
   usecaseTags: jsonb("usecase_tags").$type<string[]>().notNull().default([]),
   contextLength: text("context_length"),
+  sweBenchScore: real("swe_bench_score"),
+  benchmarkVariant: text("benchmark_variant"),
   syncedAt: timestamp("synced_at").notNull().defaultNow(),
 });
 

@@ -1,414 +1,59 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import {
   useGetDashboardSummary,
   useGetActiveSession,
   useListProfiles,
   useCreateSession,
-  useGetSchedulerConfig,
-  useUpdateSchedulerConfig,
   useListSessions,
-  useCloneSession,
-  useGetClaimCleanupStats,
+  useGetSchedulerConfig,
   getGetDashboardSummaryQueryKey,
   getGetActiveSessionQueryKey,
-  getGetSchedulerConfigQueryKey,
-  getCloneSessionQueryKey,
 } from "@workspace/api-client-react";
-import type { Session, ClaimCleanupStats } from "@workspace/api-client-react";
+import type { Session, GpuProfile } from "@workspace/api-client-react";
 import { formatDistanceToNow } from "date-fns";
 import { RelaunchButton } from "@/components/relaunch-button";
-import { X, History } from "lucide-react";
-import type { GpuProfile, SchedulerConfig, UpdateSchedulerRequest } from "@workspace/api-client-react";
-import type { LaunchOptions } from "@/components/launch-session-dialog";
-import { useQueryClient } from "@tanstack/react-query";
-import {
-  Activity, Clock, DollarSign, Server, Terminal, ArrowRight,
-  Target, Trash2, Star, Network, Zap, Cpu, Calendar, Monitor,
-} from "lucide-react";
-import { getGetClaimCleanupStatsQueryKey } from "@workspace/api-client-react";
-import { SwarmPill } from "@/components/swarm-activity-panel";
 import { ProfileCard } from "@/components/profile-card";
-import { NimLaunchSection } from "@/components/nim-launch-section";
 import { SessionStatusBadge, TeamSessionBadge } from "@/components/session-status-badge";
-import { SchedulerConfigCard } from "@/components/scheduler-config-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { useQueryClient } from "@tanstack/react-query";
+import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
+import type { LaunchOptions } from "@/components/launch-session-dialog";
+import {
+  Sparkles, Loader2, Terminal, ArrowRight,
+  GitBranch, Eye, EyeOff, Zap, Cpu,
+  ChevronDown, ChevronRight, RotateCcw, X, Globe,
+} from "lucide-react";
+import { SwarmPill } from "@/components/swarm-activity-panel";
 
-type DashTab = "fast" | "gpu" | "scheduler";
+// ── helpers ──────────────────────────────────────────────────────────────────
 
-export default function Dashboard() {
-  const [, setLocation] = useLocation();
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<DashTab>("fast");
-  const [launchingProfileId, setLaunchingProfileId] = useState<number | null>(null);
-  const [isSavingScheduler, setIsSavingScheduler] = useState(false);
-  const [dismissTick, setDismissTick] = useState(0);
-  const { pinnedIds, togglePin } = usePinnedProfiles();
-
-  const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary();
-  const { data: cleanupStats } = useGetClaimCleanupStats({ query: { queryKey: getGetClaimCleanupStatsQueryKey(), refetchInterval: 300000 } });
-  const { data: activeSessionResp, isLoading: isLoadingSession } = useGetActiveSession({
-    query: { refetchInterval: 10000, queryKey: getGetActiveSessionQueryKey() }
-  });
-  const { data: profiles, isLoading: isLoadingProfiles } = useListProfiles();
-  const { data: allSessions } = useListSessions();
-  const { data: schedulerConfig } = useGetSchedulerConfig({
-    query: { queryKey: getGetSchedulerConfigQueryKey() }
-  });
-
-  const createSession = useCreateSession();
-  const updateScheduler = useUpdateSchedulerConfig();
-
-  const handleLaunch = (profileId: number, opts?: Omit<LaunchOptions, "profileId">) => {
-    setLaunchingProfileId(profileId);
-    createSession.mutate({
-      data: {
-        profileId,
-        teamMembers: opts?.teamMembers ?? null,
-        taskMode: opts?.taskMode ?? null,
-        tokenMode: opts?.tokenMode ?? null,
-        bundleId: opts?.bundleId ?? null,
-        repoUrl: opts?.repoUrl ?? null,
-        intentText: opts?.intentText ?? null,
-        githubToken: opts?.githubToken ?? null,
-      }
-    }, {
-      onSuccess: (session) => {
-        toast({
-          title: "Session Launched",
-          description: "Provisioning GPU — model download will begin shortly (~30 min to ready).",
-        });
-        queryClient.invalidateQueries({ queryKey: getGetActiveSessionQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
-        setLocation(`/sessions/${session.id}`);
-      },
-      onError: (err: Error) => {
-        toast({
-          title: "Launch Failed",
-          description: err?.message || "Failed to start session. Please try again.",
-          variant: "destructive",
-        });
-        setLaunchingProfileId(null);
-      }
-    });
-  };
-
-  const handleSaveScheduler = async (updates: Partial<SchedulerConfig>) => {
-    setIsSavingScheduler(true);
-    return new Promise<void>((resolve, reject) => {
-      updateScheduler.mutate({ data: updates as UpdateSchedulerRequest }, {
-        onSuccess: () => {
-          toast({ title: "Scheduler saved" });
-          queryClient.invalidateQueries({ queryKey: getGetSchedulerConfigQueryKey() });
-          setIsSavingScheduler(false);
-          resolve();
-        },
-        onError: (err: Error) => {
-          toast({
-            title: "Save Failed",
-            description: err?.message || "Failed to save scheduler config.",
-            variant: "destructive",
-          });
-          setIsSavingScheduler(false);
-          reject(err);
-        }
-      });
-    });
-  };
-
-  const activeSession = activeSessionResp?.session;
-
-  const continueCandidate = useMemo<Session | null>(() => {
-    if (activeSession || !allSessions) return null;
-    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const isDismissed = (id: number): boolean => {
-      try { return localStorage.getItem(`mizi:continue-dismissed:${id}`) === "1"; } catch { return false; }
-    };
-    const candidate = allSessions
-      .filter((s) => s.status === "stopped" && s.intentText)
-      .filter((s) => {
-        const ts = s.stoppedAt ? new Date(s.stoppedAt).getTime() : new Date(s.createdAt).getTime();
-        return ts >= cutoff;
-      })
-      .filter((s) => !isDismissed(s.id))
-      .sort((a, b) => {
-        const ta = a.stoppedAt ? new Date(a.stoppedAt).getTime() : new Date(a.createdAt).getTime();
-        const tb = b.stoppedAt ? new Date(b.stoppedAt).getTime() : new Date(b.createdAt).getTime();
-        return tb - ta;
-      })[0];
-    return candidate ?? null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSession, allSessions, dismissTick]);
-
-  const dismissContinue = (sessionId: number) => {
-    try { localStorage.setItem(`mizi:continue-dismissed:${sessionId}`, "1"); } catch { /* ignore */ }
-    setDismissTick((n) => n + 1);
-  };
-
-  const recentSessions = useMemo(() => {
-    if (!allSessions) return [];
-    return [...allSessions]
-      .filter((s) => s.status === "stopped")
-      .sort((a, b) => {
-        const ta = a.stoppedAt ? new Date(a.stoppedAt).getTime() : new Date(a.createdAt).getTime();
-        const tb = b.stoppedAt ? new Date(b.stoppedAt).getTime() : new Date(b.createdAt).getTime();
-        return tb - ta;
-      })
-      .slice(0, 4);
-  }, [allSessions]);
-
-  const nim = activeSession as typeof activeSession & { provider?: string; nimModelId?: string; nimProvider?: string } | undefined;
-  const isNimSession = nim?.provider === "nim";
-  const sessionLabel = activeSession
-    ? (isNimSession ? (nim?.nimModelId ?? activeSession.profileName) : activeSession.profileName)
-    : null;
-
-  const tabs: Array<{ id: DashTab; icon: React.ElementType; label: string; sub: string; color: string }> = [
-    { id: "fast",      icon: Zap,      label: "Fast Launch",  sub: "~2 min",  color: "emerald" },
-    { id: "gpu",       icon: Monitor,  label: "GPU Sessions", sub: "~25 min", color: "cyan"    },
-    { id: "scheduler", icon: Calendar, label: "Scheduler",    sub: "",        color: "slate"   },
-  ];
-
-  return (
-    <div className="flex flex-col h-full overflow-hidden bg-[#0a0a0f] text-slate-300">
-
-      {/* ── TOP STATUS BAR ─────────────────────────────────────── */}
-      <div className="flex-shrink-0 bg-[#0d0d14] border-b border-white/5 px-6 py-3 flex items-center gap-6">
-
-        {/* Active session indicator */}
-        <div className="flex items-center gap-2.5 min-w-0">
-          {isLoadingSession ? (
-            <Skeleton className="h-4 w-32 bg-white/5" />
-          ) : activeSession ? (
-            <>
-              <span className="relative flex h-2 w-2 shrink-0">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500" />
-              </span>
-              <div className="min-w-0">
-                <span className="text-sm font-medium text-white truncate">{sessionLabel}</span>
-                {isNimSession && nim?.nimProvider && (
-                  <span className="ml-2 text-[10px] text-emerald-400 font-mono">via {nim.nimProvider}</span>
-                )}
-              </div>
-              <SessionStatusBadge status={activeSession.status} />
-              {activeSession.teamMembers && activeSession.teamMembers.length > 0 && (
-                <TeamSessionBadge members={activeSession.teamMembers} />
-              )}
-              {activeSession.costPerHour != null && (
-                <span className="text-[11px] font-mono text-slate-500 shrink-0">
-                  ${activeSession.costPerHour.toFixed(2)}/hr
-                </span>
-              )}
-            </>
-          ) : (
-            <>
-              <span className="w-2 h-2 rounded-full bg-slate-700 shrink-0" />
-              <span className="text-xs text-slate-500">No active session</span>
-            </>
-          )}
-        </div>
-
-        {/* View Cockpit */}
-        {activeSession && (
-          <button
-            onClick={() => setLocation(`/sessions/${activeSession.id}`)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-slate-300 transition-colors shrink-0"
-          >
-            <Terminal className="w-3.5 h-3.5" />
-            View Cockpit
-          </button>
-        )}
-        {activeSession && <SwarmPill sessionId={activeSession.id} isReady={activeSession.status === "ready"} />}
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Stats */}
-        <div className="flex items-center gap-6 text-xs font-mono text-slate-500 shrink-0">
-          {isLoadingSummary ? (
-            <Skeleton className="h-3 w-48 bg-white/5" />
-          ) : (
-            <>
-              <span><span className="text-slate-300">{summary?.activeSessions ?? 0}</span> active</span>
-              <span><span className="text-slate-300">{summary?.totalSessions ?? 0}</span> sessions</span>
-              <span><span className="text-slate-300">{(summary?.totalHours ?? 0).toFixed(1)}h</span> compute</span>
-              <span><span className="text-slate-300">${(summary?.totalCost ?? 0).toFixed(2)}</span> spent</span>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* ── TAB NAV ───────────────────────────────────────────── */}
-      <div className="flex-shrink-0 border-b border-white/5 px-6 flex items-end gap-0">
-        {tabs.map((tab) => {
-          const active = activeTab === tab.id;
-          const activeColor =
-            tab.color === "emerald" ? "border-emerald-500 text-emerald-300"
-            : tab.color === "cyan"  ? "border-cyan-500 text-cyan-300"
-            :                         "border-slate-400 text-slate-200";
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-all ${
-                active ? activeColor : "border-transparent text-slate-500 hover:text-slate-300"
-              }`}
-            >
-              <tab.icon className="w-4 h-4" />
-              {tab.label}
-              {tab.sub && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
-                  active && tab.color === "emerald"
-                    ? "bg-emerald-500/15 text-emerald-400"
-                    : active && tab.color === "cyan"
-                    ? "bg-cyan-500/15 text-cyan-400"
-                    : "bg-white/5 text-slate-500"
-                }`}>
-                  {tab.sub}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* ── TAB CONTENT ──────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto relative">
-
-        {/* Background glow effects */}
-        <div className="fixed top-[-200px] right-[-200px] w-[600px] h-[600px] bg-emerald-500/5 rounded-full blur-[120px] pointer-events-none z-0" />
-        <div className="fixed bottom-[-200px] right-[200px] w-[500px] h-[500px] bg-cyan-500/5 rounded-full blur-[100px] pointer-events-none z-0" />
-
-        <div className="relative z-10 p-8 max-w-5xl">
-
-          {/* FAST LAUNCH TAB */}
-          {activeTab === "fast" && (
-            <div className="space-y-8">
-              {continueCandidate && (
-                <ContinueCard session={continueCandidate} onDismiss={() => dismissContinue(continueCandidate.id)} />
-              )}
-
-              <section>
-                <div className="flex items-center gap-3 mb-1">
-                  <Zap className="w-5 h-5 text-emerald-400" />
-                  <h2 className="text-xl font-bold text-white tracking-tight">Hosted Inference</h2>
-                </div>
-                <p className="text-emerald-400/70 text-xs mb-6 flex items-center gap-2">
-                  <span className="w-1 h-1 bg-emerald-500 rounded-full" />
-                  Start in ~2 minutes — no GPU rental needed
-                </p>
-                <NimLaunchSection />
-              </section>
-
-              {recentSessions.length > 0 && (
-                <>
-                  <div className="h-px w-full bg-gradient-to-r from-transparent via-white/5 to-transparent" />
-                  <section>
-                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-4">Recent Sessions</p>
-                    <div className="flex flex-col gap-3">
-                      {recentSessions.map((s) => {
-                        const ref = s.stoppedAt ? new Date(s.stoppedAt) : new Date(s.createdAt);
-                        const ago = formatDistanceToNow(ref, { addSuffix: true });
-                        const cost = s.totalCost ? `$${s.totalCost.toFixed(2)}` : "—";
-                        return (
-                          <button
-                            key={s.id}
-                            onClick={() => setLocation(`/sessions/${s.id}`)}
-                            className="flex items-center justify-between text-sm group w-full text-left"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <div className="w-1.5 h-1.5 rounded-full bg-slate-600 group-hover:bg-slate-400 transition-colors shrink-0" />
-                              <span className="text-slate-400 group-hover:text-slate-200 transition-colors truncate text-xs">
-                                {s.profileName}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2 font-mono text-[11px] text-slate-500 shrink-0 ml-2">
-                              <span>{ago.replace(" ago", "")}</span>
-                              <span>{cost}</span>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </section>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* GPU SESSIONS TAB */}
-          {activeTab === "gpu" && (
-            <div className="space-y-6">
-              <div>
-                <div className="flex items-center gap-3 mb-1">
-                  <Cpu className="w-5 h-5 text-cyan-400" />
-                  <h2 className="text-xl font-bold text-white tracking-tight">GPU Sessions</h2>
-                </div>
-                <p className="text-slate-400 text-xs mb-6 flex items-center gap-2">
-                  <span className="w-1 h-1 bg-slate-500 rounded-full" />
-                  Full dedicated instances — boot time 25–35 min
-                </p>
-              </div>
-              <QuickLaunchProfiles
-                profiles={profiles}
-                isLoading={isLoadingProfiles}
-                launchingProfileId={launchingProfileId}
-                onLaunch={handleLaunch}
-                pinnedIds={pinnedIds}
-                onTogglePin={togglePin}
-              />
-              {cleanupStats && (
-                <>
-                  <div className="h-px w-full bg-gradient-to-r from-transparent via-white/5 to-transparent" />
-                  <ClaimCleanupCard stats={cleanupStats} />
-                </>
-              )}
-            </div>
-          )}
-
-          {/* SCHEDULER TAB */}
-          {activeTab === "scheduler" && (
-            <div className="space-y-6">
-              <div>
-                <div className="flex items-center gap-3 mb-1">
-                  <Calendar className="w-5 h-5 text-slate-400" />
-                  <h2 className="text-xl font-bold text-white tracking-tight">Session Scheduler</h2>
-                </div>
-                <p className="text-slate-400 text-xs mb-6 flex items-center gap-2">
-                  <span className="w-1 h-1 bg-slate-500 rounded-full" />
-                  Auto-launch a session before your workday starts
-                </p>
-              </div>
-              {schedulerConfig ? (
-                <SchedulerConfigCard
-                  config={schedulerConfig}
-                  profiles={profiles || []}
-                  onSave={handleSaveScheduler}
-                  isSaving={isSavingScheduler}
-                />
-              ) : (
-                <Skeleton className="h-48 w-full bg-white/5" />
-              )}
-            </div>
-          )}
-
-        </div>
-      </div>
-    </div>
-  );
+// URL preference (non-sensitive) → localStorage so it persists across sessions
+const LS_REPO_URL_KEY = "mizi:last_repo_url";
+function loadSavedRepoUrl() {
+  try { return localStorage.getItem(LS_REPO_URL_KEY) ?? ""; } catch { return ""; }
+}
+function saveRepoUrl(url: string) {
+  try { url ? localStorage.setItem(LS_REPO_URL_KEY, url) : localStorage.removeItem(LS_REPO_URL_KEY); } catch { /* ignore */ }
 }
 
-interface ContinueCardProps { session: Session; onDismiss: () => void; }
-
+// PAT (sensitive) → sessionStorage only — ephemeral per browser tab, not persisted
+// This limits XSS blast radius vs. localStorage while still providing in-session convenience.
+const SS_PAT_PREFIX = "mizi:session_pat:";
+function loadSessionPat(url: string) {
+  try { return sessionStorage.getItem(SS_PAT_PREFIX + url.trim().toLowerCase()) ?? ""; } catch { return ""; }
+}
+function saveSessionPat(url: string, token: string) {
+  try {
+    const key = SS_PAT_PREFIX + url.trim().toLowerCase();
+    token ? sessionStorage.setItem(key, token) : sessionStorage.removeItem(key);
+  } catch { /* ignore */ }
+}
 function projectNameFromRepoUrl(repoUrl: string | null | undefined): string | null {
   if (!repoUrl) return null;
   const trimmed = repoUrl.trim().replace(/\.git$/i, "").replace(/\/+$/, "");
   if (!trimmed) return null;
-  const sshMatch = trimmed.match(/[:/]([^/:]+\/[^/:]+)$/);
-  if (sshMatch) return sshMatch[1];
   try {
     const u = new URL(trimmed);
     const parts = u.pathname.split("/").filter(Boolean);
@@ -418,234 +63,541 @@ function projectNameFromRepoUrl(repoUrl: string | null | undefined): string | nu
   return trimmed.split("/").pop() || null;
 }
 
-function ContinueCard({ session, onDismiss }: ContinueCardProps) {
-  const stoppedRef = session.stoppedAt ? new Date(session.stoppedAt) : new Date(session.createdAt);
-  const ago = formatDistanceToNow(stoppedRef, { addSuffix: true });
-  const cost = session.totalCost?.toFixed(2) ?? "0.00";
-  const intent = session.intentText ?? "";
-  const { data: cloneData } = useCloneSession(session.id, {
-    query: { queryKey: getCloneSessionQueryKey(session.id), staleTime: 60_000 },
-  });
-  const projectName = projectNameFromRepoUrl(cloneData?.repoUrl);
+const GITHUB_URL_RE = /https?:\/\/(github|gitlab)\.com\/[\w.\-]+\/[\w.\-]+/i;
+const REPO_KEYWORD_RE =
+  /\b(my repo|existing (repo|project|code|codebase)|working on|add to my|fix in my|in the repo|in my codebase|clone|connect.*repo|pull request|pr review|open pr|my (github|gitlab)|push to|commit to|branch|checkout)\b/i;
+
+// ── types ────────────────────────────────────────────────────────────────────
+
+interface IntentResult {
+  path: "nim" | "gpu" | "choice";
+  reasoning: string;
+  nimSuggestion?: {
+    nimModelId: string;
+    nimProvider: string | null;
+    displayName: string;
+    providerLabel: string;
+    estimatedStartMin: number;
+    description?: string;
+  } | null;
+  gpuSuggestion?: { tier: string; description: string; estimatedStartMin: number };
+  repoSuggestion?: { message: string };
+}
+
+// ── RepoPanel ────────────────────────────────────────────────────────────────
+
+function RepoPanel({
+  repoUrl, setRepoUrl, githubToken, setGithubToken,
+}: {
+  repoUrl: string; setRepoUrl: (v: string) => void;
+  githubToken: string; setGithubToken: (v: string) => void;
+}) {
+  const [showToken, setShowToken] = useState(false);
+
+  // Load session-scoped PAT when repo URL changes (sessionStorage — ephemeral, not persisted)
+  useEffect(() => {
+    if (repoUrl.trim()) {
+      const saved = loadSessionPat(repoUrl);
+      if (saved && !githubToken) setGithubToken(saved);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repoUrl]);
+
+  // Persist URL to localStorage (non-sensitive) and token to sessionStorage (sensitive)
+  useEffect(() => { saveRepoUrl(repoUrl); }, [repoUrl]);
+  useEffect(() => { if (repoUrl.trim()) saveSessionPat(repoUrl, githubToken); }, [repoUrl, githubToken]);
+
   return (
-    <div className="bg-white/[0.02] border border-white/10 rounded-xl p-4 relative flex items-center gap-4 flex-wrap">
-      <button
-        type="button"
-        onClick={onDismiss}
-        title="Dismiss"
-        aria-label="Dismiss continue-where-you-left-off card"
-        className="absolute top-3 right-3 text-slate-500 hover:text-slate-300 transition-colors"
-        data-testid="button-dismiss-continue"
-      >
-        <X className="w-4 h-4" />
-      </button>
-      <div className="flex items-start gap-3 min-w-0 flex-1">
-        <div className="rounded-full bg-primary/15 p-2 mt-0.5 shrink-0">
-          <History className="w-4 h-4 text-primary" />
-        </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-sm font-bold text-white">Continue where you left off</h3>
-            {projectName && (
-              <span className="text-[10px] font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded">{projectName}</span>
-            )}
-            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
-              {session.profileName} · {ago}
-            </span>
-          </div>
-          <p className="text-xs text-slate-300 mt-1 flex items-start gap-1.5">
-            <Target className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
-            <span className="line-clamp-2">{intent}</span>
-          </p>
-          <p className="text-[11px] text-slate-500 font-mono mt-1">
-            Last run cost ${cost} · Session #{session.id}
-          </p>
-        </div>
+    <div
+      className="rounded-xl p-4 space-y-3 glass-emerge"
+      style={{ background: "rgba(124,111,247,0.06)", border: "1px solid rgba(124,111,247,0.18)" }}
+    >
+      <div className="flex items-center gap-2">
+        <GitBranch className="w-3.5 h-3.5" style={{ color: "var(--accent-violet)" }} />
+        <span className="text-xs font-semibold" style={{ color: "var(--accent-violet)" }}>
+          Connect your repository
+        </span>
       </div>
-      <RelaunchButton sessionId={session.id} variant="prominent" label="Re-launch" />
+
+      <div>
+        <label className="text-[10px] uppercase tracking-wider font-semibold block mb-1.5" style={{ color: "var(--text-muted)" }}>
+          Repository URL
+        </label>
+        <input
+          type="url"
+          value={repoUrl}
+          onChange={e => setRepoUrl(e.target.value)}
+          placeholder="https://github.com/you/your-repo"
+          className="w-full text-xs px-3 py-2 rounded-lg outline-none transition-all"
+          style={{
+            background: "var(--bg-glass)", border: "1px solid var(--border-glass)",
+            color: "var(--text-primary)",
+          }}
+        />
+      </div>
+
+      <div>
+        <label className="text-[10px] uppercase tracking-wider font-semibold block mb-1.5" style={{ color: "var(--text-muted)" }}>
+          GitHub PAT{" "}
+          <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>
+            (optional — private repos only)
+          </span>
+        </label>
+        <div className="relative">
+          <input
+            type={showToken ? "text" : "password"}
+            value={githubToken}
+            onChange={e => setGithubToken(e.target.value)}
+            placeholder="ghp_••••••••••••"
+            className="w-full text-xs px-3 py-2 pr-9 rounded-lg outline-none font-mono"
+            style={{
+              background: "var(--bg-glass)", border: "1px solid var(--border-glass)",
+              color: "var(--text-primary)",
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => setShowToken(v => !v)}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors"
+            style={{ color: "var(--text-muted)" }}
+          >
+            {showToken ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+          </button>
+        </div>
+        {githubToken && repoUrl.trim() && (
+          <p className="text-[10px] mt-1" style={{ color: "var(--accent-violet)" }}>
+            ✓ Token saved for this repo
+          </p>
+        )}
+      </div>
     </div>
   );
 }
 
-const PINNED_STORAGE_KEY = "mizi:pinned-profiles";
+// ── IntentBar ────────────────────────────────────────────────────────────────
 
-function usePinnedProfiles() {
-  const [pinnedIds, setPinnedIds] = useState<number[]>(() => {
+const TASK_MODES = [
+  { value: "build", label: "Build" },
+  { value: "review", label: "Review" },
+  { value: "debug", label: "Debug" },
+  { value: "refactor", label: "Refactor" },
+  { value: "explore", label: "Explore" },
+  { value: "team", label: "Team" },
+] as const;
+
+const TOKEN_MODES = [
+  { value: "core", label: "Core", hint: "balanced" },
+  { value: "full", label: "Full", hint: "max context" },
+  { value: "lean", label: "Lean", hint: "lower cost" },
+  { value: "ultra", label: "Ultra", hint: "minimal" },
+] as const;
+
+function IntentBar({ onGpuLaunch, onNimLaunch }: {
+  onGpuLaunch: (profileId: number, opts?: Omit<LaunchOptions, "profileId">) => void;
+  onNimLaunch: (opts: {
+    nimModelId: string; nimProvider: string;
+    intentText?: string; repoUrl?: string | null; githubToken?: string | null;
+    taskMode?: string | null; tokenMode?: string | null; skillBundle?: string | null;
+  }) => void;
+}) {
+  const [intent, setIntent] = useState("");
+  const [classifying, setClassifying] = useState(false);
+  const [result, setResult] = useState<IntentResult | null>(null);
+  const [showRepo, setShowRepo] = useState(false);
+  const [repoUrl, setRepoUrl] = useState(() => loadSavedRepoUrl());
+  const [githubToken, setGithubToken] = useState(() => repoUrl ? loadSessionPat(repoUrl) : "");
+  const [gpuOpen, setGpuOpen] = useState(false);
+  const [launchingNim, setLaunchingNim] = useState(false);
+  const [preClassifying, setPreClassifying] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [taskMode, setTaskMode] = useState<string>("build");
+  const [tokenMode, setTokenMode] = useState<string>("core");
+  const [skillBundle, setSkillBundle] = useState<string>("auto");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { data: profiles } = useListProfiles();
+
+  // Auto-resize textarea
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 140)}px`;
+  }, [intent]);
+
+  // Auto-detect repo URL or keywords in intent text
+  useEffect(() => {
+    const urlMatch = intent.match(GITHUB_URL_RE);
+    if (urlMatch && !repoUrl) setRepoUrl(urlMatch[0]);
+    if (urlMatch || REPO_KEYWORD_RE.test(intent)) setShowRepo(true);
+  }, [intent]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 600ms debounced pre-classification while typing (≥12 chars)
+  // Static baseline providers passed to classify so the backend can filter model suggestions.
+  // nvidia is always included; additional providers can be added when the catalog exposes a hook.
+  const knownProviders = useMemo(() => ["nvidia"], []);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (intent.trim().length < 12 || classifying) return;
+    debounceRef.current = setTimeout(() => {
+      classify(true); // silent pre-warm — shows subtle indicator via preClassifying
+    }, 600);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [intent, repoUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const classify = async (silent = false) => {
+    if (!intent.trim() || classifying) return;
+    if (!silent) setClassifying(true);
+    else setPreClassifying(true);
+    setResult(null);
     try {
-      const raw = localStorage.getItem(PINNED_STORAGE_KEY);
-      return raw ? (JSON.parse(raw) as number[]) : [];
-    } catch { return []; }
-  });
-
-  const togglePin = useCallback((profileId: number) => {
-    setPinnedIds((prev) => {
-      const next = prev.includes(profileId)
-        ? prev.filter((id) => id !== profileId)
-        : [...prev, profileId];
-      try { localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
-  }, []);
-
-  return { pinnedIds, togglePin };
-}
-
-interface QuickLaunchProfilesProps {
-  profiles: GpuProfile[] | undefined;
-  isLoading: boolean;
-  launchingProfileId: number | null;
-  onLaunch: (profileId: number, opts?: Omit<LaunchOptions, "profileId">) => void;
-  pinnedIds: number[];
-  onTogglePin: (profileId: number) => void;
-}
-
-const SWARM_CONSTRAINED_CAP = 8;
-function isSwarmConstrained(profile: GpuProfile): boolean {
-  const cap = profile.swarmWorkerCap ?? 0;
-  return cap > 0 && cap <= SWARM_CONSTRAINED_CAP;
-}
-
-function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch, pinnedIds, onTogglePin }: QuickLaunchProfilesProps) {
-  const [swarmOnly, setSwarmOnly] = useState(false);
-
-  const filteredProfiles = useMemo(() => {
-    if (!profiles) return undefined;
-    const base = swarmOnly ? profiles.filter((p) => (p.swarmWorkerCap ?? 0) > 8) : profiles;
-    return [...base].sort((a, b) => {
-      const ac = isSwarmConstrained(a) ? 1 : 0;
-      const bc = isSwarmConstrained(b) ? 1 : 0;
-      return ac - bc;
-    });
-  }, [profiles, swarmOnly]);
-
-  const modelGroups = useMemo(() => {
-    if (!filteredProfiles) return [];
-    const groupMap = new Map<string, GpuProfile[]>();
-    for (const profile of filteredProfiles) {
-      const model = profile.modelDisplayName;
-      if (!groupMap.has(model)) groupMap.set(model, []);
-      groupMap.get(model)!.push(profile);
-    }
-    for (const group of groupMap.values()) {
-      group.sort((a, b) => {
-        const ac = isSwarmConstrained(a) ? 1 : 0;
-        const bc = isSwarmConstrained(b) ? 1 : 0;
-        if (ac !== bc) return ac - bc;
-        return a.estimatedCostMin - b.estimatedCostMin;
+      const r = await fetch(`${BASE_URL}api/intent/classify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intentText: intent,
+          repoUrl: repoUrl || undefined,
+          hasGitHubToken: !!githubToken,
+          availableProviders: knownProviders,
+        }),
       });
+      const data: IntentResult = r.ok ? await r.json() : { path: "choice", reasoning: "Could not classify." };
+      setResult(data);
+      // Show repo panel when classify detects repo context (signalled by repoSuggestion)
+      if (data.repoSuggestion) setShowRepo(true);
+    } catch {
+      if (!silent) setResult({ path: "choice", reasoning: "Could not reach the classify endpoint." });
+    } finally {
+      if (!silent) setClassifying(false);
+      else setPreClassifying(false);
     }
-    const groups = Array.from(groupMap.entries()).map(([model, items]) => ({ model, items }));
-    groups.sort((a, b) => {
-      const aAllConstrained = a.items.every(isSwarmConstrained) ? 1 : 0;
-      const bAllConstrained = b.items.every(isSwarmConstrained) ? 1 : 0;
-      return aAllConstrained - bAllConstrained;
+  };
+
+  const handleNimLaunch = () => {
+    if (!result?.nimSuggestion || launchingNim) return;
+    setLaunchingNim(true);
+    onNimLaunch({
+      nimModelId: result.nimSuggestion.nimModelId,
+      nimProvider: result.nimSuggestion.nimProvider ?? "nvidia",
+      intentText: intent || undefined,
+      repoUrl: repoUrl || null,
+      githubToken: githubToken || null,
+      taskMode: taskMode || null,
+      tokenMode: tokenMode || null,
+      skillBundle: skillBundle !== "auto" ? skillBundle : null,
     });
-    return groups;
-  }, [filteredProfiles]);
+  };
 
-  const isGrouped = modelGroups.length >= 2;
+  const handleGpuLaunch = (profileId: number) => {
+    onGpuLaunch(profileId, {
+      intentText: intent || undefined,
+      repoUrl: repoUrl || null,
+      githubToken: githubToken || null,
+      taskMode: taskMode || null,
+      tokenMode: tokenMode || null,
+      skillBundle: skillBundle !== "auto" ? skillBundle : undefined,
+    } as Omit<LaunchOptions, "profileId">);
+    setResult(null);
+    setIntent("");
+  };
 
-  const pinnedProfiles = useMemo(() => {
-    if (!profiles) return [];
-    return pinnedIds
-      .map((id) => profiles.find((p) => p.id === id))
-      .filter((p): p is GpuProfile => p !== undefined);
-  }, [profiles, pinnedIds]);
-
-  const hasFavourites = pinnedProfiles.length > 0;
+  const repoLabel = repoUrl ? (projectNameFromRepoUrl(repoUrl) ?? "Repo") : "Existing repo";
+  const hasRepo = showRepo || !!result?.repoSuggestion;
+  const isActive = !!intent.trim();
 
   return (
-    <div>
-      <div className="flex justify-end mb-4">
-        <button
-          type="button"
-          onClick={() => setSwarmOnly((v) => !v)}
-          data-testid="filter-swarm-ready"
-          aria-pressed={swarmOnly}
-          className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
-            swarmOnly
-              ? "bg-primary text-primary-foreground border-primary"
-              : "bg-transparent text-slate-400 border-white/10 hover:border-white/20 hover:text-slate-200"
-          }`}
-        >
-          <Network className="w-3.5 h-3.5" />
-          Swarm-ready only
-        </button>
+    <div className="space-y-3">
+      {/* Hero field — elevated glass material with inner top highlight */}
+      <div
+        className="overflow-hidden transition-all duration-300"
+        style={{
+          borderRadius: "22px",
+          background: isActive
+            ? "linear-gradient(145deg, rgba(255,255,255,0.05) 0%, transparent 50%), rgba(255,255,255,0.038)"
+            : "linear-gradient(145deg, rgba(255,255,255,0.04) 0%, transparent 50%), rgba(255,255,255,0.028)",
+          border: `1px solid ${isActive ? "rgba(0,180,216,0.16)" : "var(--border-glass-soft)"}`,
+          backdropFilter: "blur(48px) saturate(200%)",
+          WebkitBackdropFilter: "blur(48px) saturate(200%)",
+          boxShadow: isActive
+            ? "inset 0 1px 0 rgba(255,255,255,0.09), 0 8px 40px rgba(0,0,0,0.32), 0 2px 8px rgba(0,0,0,0.2)"
+            : "inset 0 1px 0 var(--inner-highlight-sm), 0 4px 24px rgba(0,0,0,0.24)",
+        }}
+      >
+        <textarea
+          ref={textareaRef}
+          value={intent}
+          onChange={e => { setIntent(e.target.value); setResult(null); }}
+          onKeyDown={e => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); classify(); }
+          }}
+          placeholder="What are you building today?"
+          rows={3}
+          className="intent-field w-full bg-transparent px-6 pt-6 pb-2 text-base resize-none outline-none leading-relaxed"
+          style={{ color: "var(--text-primary)", fontWeight: 400, letterSpacing: "-0.01em" }}
+        />
+
+        <div className="flex items-center justify-between px-6 pb-5 mt-1">
+          <button
+            type="button"
+            onClick={() => setShowRepo(v => !v)}
+            className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-xl transition-all"
+            style={{
+              color: hasRepo ? "var(--accent-violet)" : "var(--text-muted)",
+              background: hasRepo ? "rgba(124,111,247,0.09)" : "rgba(255,255,255,0.03)",
+              border: `1px solid ${hasRepo ? "rgba(124,111,247,0.16)" : "var(--border-glass-ultra)"}`,
+            }}
+          >
+            <GitBranch className="w-3 h-3" />
+            {repoUrl ? repoLabel : "Existing repo"}
+          </button>
+
+          <button
+            onClick={() => classify()}
+            disabled={!intent.trim() || classifying}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all disabled:opacity-35"
+            style={{
+              background: intent.trim() ? "rgba(0,180,216,0.1)" : "rgba(255,255,255,0.04)",
+              color: intent.trim() ? "var(--accent-cyan)" : "var(--text-muted)",
+              border: `1px solid ${intent.trim() ? "rgba(0,180,216,0.2)" : "var(--border-glass-ultra)"}`,
+              boxShadow: intent.trim() ? "inset 0 1px 0 rgba(255,255,255,0.06)" : "none",
+            }}
+          >
+            {classifying
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Sparkles className="w-3.5 h-3.5" />}
+            {classifying ? "Thinking…" : "Ask MIZI"}
+          </button>
+        </div>
       </div>
 
-      {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-64 w-full bg-white/5" />
-          ))}
+      {/* Repo panel */}
+      {hasRepo && (
+        <RepoPanel
+          repoUrl={repoUrl} setRepoUrl={setRepoUrl}
+          githubToken={githubToken} setGithubToken={setGithubToken}
+        />
+      )}
+
+      {/* Advanced panel (progressive disclosure) */}
+      <div className="flex items-center justify-between px-0.5">
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(v => !v)}
+          className="flex items-center gap-1.5 text-[11px] transition-colors"
+          style={{ color: showAdvanced ? "var(--text-secondary)" : "var(--text-muted)", fontWeight: 400 }}
+        >
+          <ChevronRight className={`w-3 h-3 opacity-50 transition-transform ${showAdvanced ? "rotate-90" : ""}`} />
+          Advanced
+        </button>
+        {preClassifying && (
+          <span className="flex items-center gap-1.5 text-[10px]" style={{ color: "var(--text-muted)", opacity: 0.65 }}>
+            <Loader2 className="w-3 h-3 animate-spin" /> reading intent…
+          </span>
+        )}
+      </div>
+
+      {showAdvanced && (
+        <div
+          className="rounded-2xl px-5 py-4 space-y-4 glass-emerge"
+          style={{
+            background: "linear-gradient(145deg, rgba(255,255,255,0.03) 0%, transparent 60%), rgba(255,255,255,0.018)",
+            border: "1px solid var(--border-glass-soft)",
+            boxShadow: "inset 0 1px 0 var(--inner-highlight-sm)",
+          }}
+        >
+          {/* Task mode */}
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+              Task mode
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {TASK_MODES.map(m => (
+                <button
+                  key={m.value}
+                  type="button"
+                  onClick={() => setTaskMode(m.value)}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all"
+                  style={{
+                    background: taskMode === m.value ? "rgba(0,200,255,0.12)" : "rgba(255,255,255,0.04)",
+                    color: taskMode === m.value ? "var(--accent-cyan)" : "var(--text-secondary)",
+                    border: `1px solid ${taskMode === m.value ? "rgba(0,200,255,0.25)" : "var(--border-glass)"}`,
+                  }}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Token mode */}
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+              Context window
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {TOKEN_MODES.map(m => (
+                <button
+                  key={m.value}
+                  type="button"
+                  onClick={() => setTokenMode(m.value)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all"
+                  style={{
+                    background: tokenMode === m.value ? "rgba(124,111,247,0.12)" : "rgba(255,255,255,0.04)",
+                    color: tokenMode === m.value ? "var(--accent-violet)" : "var(--text-secondary)",
+                    border: `1px solid ${tokenMode === m.value ? "rgba(124,111,247,0.25)" : "var(--border-glass)"}`,
+                  }}
+                >
+                  {m.label}
+                  <span className="opacity-60">{m.hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Skill bundle */}
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+              Skill bundle
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { value: "auto", label: "Auto", hint: "MIZI picks" },
+                { value: "mizi-builder", label: "Builder", hint: "build focused" },
+                { value: "mizi-reviewer", label: "Reviewer", hint: "code review" },
+                { value: "mizi-debugger", label: "Debugger", hint: "debug & fix" },
+              ].map(b => (
+                <button
+                  key={b.value}
+                  type="button"
+                  onClick={() => setSkillBundle(b.value)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all"
+                  style={{
+                    background: skillBundle === b.value ? "rgba(16,185,129,0.12)" : "rgba(255,255,255,0.04)",
+                    color: skillBundle === b.value ? "#10b981" : "var(--text-secondary)",
+                    border: `1px solid ${skillBundle === b.value ? "rgba(16,185,129,0.25)" : "var(--border-glass)"}`,
+                  }}
+                >
+                  {b.label}
+                  <span className="opacity-60">{b.hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-      ) : !filteredProfiles?.length ? (
-        <div className="p-8 text-center border border-dashed rounded-xl border-white/10 text-slate-500 text-sm">
-          {swarmOnly ? "No swarm-ready profiles available." : "No GPU profiles configured."}
-        </div>
-      ) : (
-        <div className="space-y-8">
-          {hasFavourites && (
-            <div>
-              <div className="flex items-baseline gap-3 mb-3 pb-2 border-b border-yellow-500/20">
-                <h3 className="text-sm font-semibold flex items-center gap-2 text-slate-200">
-                  <Star className="w-4 h-4 text-yellow-400" fill="currentColor" />
-                  Favourites
-                </h3>
-                <span className="text-xs text-slate-500">Your pinned profiles</span>
+      )}
+
+      {/* Classify result */}
+      {result && (
+        <div
+          className="p-5 glass-emerge space-y-4"
+          style={{
+            borderRadius: "20px",
+            background: "linear-gradient(145deg, rgba(255,255,255,0.038) 0%, transparent 55%), rgba(255,255,255,0.022)",
+            border: "1px solid var(--border-glass-soft)",
+            backdropFilter: "blur(40px) saturate(180%)",
+            WebkitBackdropFilter: "blur(40px) saturate(180%)",
+            boxShadow: "inset 0 1px 0 var(--inner-highlight-sm), 0 2px 16px rgba(0,0,0,0.22)",
+          }}
+        >
+          <p className="text-xs leading-relaxed" style={{ color: "var(--text-secondary)", fontWeight: 400 }}>
+            {result.reasoning}
+          </p>
+
+          {result.repoSuggestion && (
+            <p className="text-[11px] font-mono px-3 py-2 rounded-xl" style={{ color: "var(--accent-violet)", background: "rgba(124,111,247,0.07)", border: "1px solid rgba(124,111,247,0.12)" }}>
+              {result.repoSuggestion.message}
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-3">
+            {/* NIM card */}
+            {result.nimSuggestion && (
+              <div
+                className="flex-1 min-w-[200px] rounded-xl p-3.5 space-y-2"
+                style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.14)" }}
+              >
+                <div className="flex items-center gap-2">
+                  <Zap className="w-3.5 h-3.5" style={{ color: "#10b981" }} />
+                  <span className="text-xs font-semibold" style={{ color: "#10b981" }}>
+                    {result.nimSuggestion.displayName} · ~{result.nimSuggestion.estimatedStartMin}m
+                  </span>
+                </div>
+                <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  via {result.nimSuggestion.providerLabel}
+                </p>
+                {result.nimSuggestion.description && (
+                  <p className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
+                    {result.nimSuggestion.description}
+                  </p>
+                )}
+                <button
+                  onClick={handleNimLaunch}
+                  disabled={launchingNim}
+                  className="mt-1 w-full py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                  style={{
+                    background: "rgba(16,185,129,0.15)", color: "#10b981",
+                    border: "1px solid rgba(16,185,129,0.25)",
+                  }}
+                >
+                  {launchingNim
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <Zap className="w-3 h-3" />}
+                  {launchingNim ? "Launching…" : "Launch session"}
+                </button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {pinnedProfiles.map((profile) => (
+            )}
+
+            {/* GPU card */}
+            {result.gpuSuggestion && (
+              <div
+                className="flex-1 min-w-[200px] rounded-xl p-3.5 space-y-2"
+                style={{ background: "rgba(0,180,216,0.04)", border: "1px solid rgba(0,180,216,0.10)" }}
+              >
+                <div className="flex items-center gap-2">
+                  <Cpu className="w-3.5 h-3.5" style={{ color: "var(--accent-cyan)" }} />
+                  <span className="text-xs font-medium" style={{ color: "var(--accent-cyan)" }}>
+                    GPU · ~{result.gpuSuggestion.estimatedStartMin}m
+                  </span>
+                </div>
+                <p className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
+                  {result.gpuSuggestion.description}
+                </p>
+                <button
+                  onClick={() => setGpuOpen(v => !v)}
+                  className="mt-1 w-full flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-medium transition-all"
+                  style={{
+                    background: "rgba(0,180,216,0.08)", color: "var(--accent-cyan)",
+                    border: "1px solid rgba(0,180,216,0.14)",
+                    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)",
+                  }}
+                >
+                  Choose GPU profile
+                  {gpuOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Profile picker */}
+          {gpuOpen && profiles && profiles.length > 0 && (
+            <div className="pt-1 glass-emerge">
+              <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>
+                Select GPU Profile
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {profiles.slice(0, 6).map((profile: GpuProfile) => (
                   <ProfileCard
                     key={profile.id}
                     profile={profile}
-                    onLaunch={onLaunch}
-                    isLaunching={launchingProfileId === profile.id}
+                    onLaunch={(pId) => handleGpuLaunch(pId)}
+                    isLaunching={false}
                     isDefaultLaunch={false}
-                    isPinned={true}
-                    onTogglePin={() => onTogglePin(profile.id)}
-                    pinTestIdSuffix="fav"
+                    isPinned={false}
+                    onTogglePin={() => { }}
                   />
                 ))}
               </div>
-            </div>
-          )}
-
-          {isGrouped ? (
-            modelGroups.map(({ model, items }, groupIdx) => (
-              <div key={model}>
-                <div className="flex items-baseline gap-3 mb-3 pb-2 border-b border-white/5">
-                  <h3 className="text-sm font-semibold text-slate-200">{model}</h3>
-                  <span className="text-xs text-slate-500">{items[0]?.benchmarkCallout ?? "Open-weight model"}</span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {items.map((profile, idx) => (
-                    <ProfileCard
-                      key={profile.id}
-                      profile={profile}
-                      onLaunch={onLaunch}
-                      isLaunching={launchingProfileId === profile.id}
-                      isDefaultLaunch={!hasFavourites && groupIdx === 0 && idx === 0}
-                      isPinned={pinnedIds.includes(profile.id)}
-                      onTogglePin={() => onTogglePin(profile.id)}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredProfiles.map((profile, idx) => (
-                <ProfileCard
-                  key={profile.id}
-                  profile={profile}
-                  onLaunch={onLaunch}
-                  isLaunching={launchingProfileId === profile.id}
-                  isDefaultLaunch={!hasFavourites && idx === 0}
-                  isPinned={pinnedIds.includes(profile.id)}
-                  onTogglePin={() => onTogglePin(profile.id)}
-                />
-              ))}
             </div>
           )}
         </div>
@@ -654,61 +606,356 @@ function QuickLaunchProfiles({ profiles, isLoading, launchingProfileId, onLaunch
   );
 }
 
-function ClaimCleanupCard({ stats }: { stats: ClaimCleanupStats }) {
-  const lastRun = stats.lastPurgedAt
-    ? formatDistanceToNow(new Date(stats.lastPurgedAt), { addSuffix: true })
-    : null;
+// ── ActiveSessionBanner ───────────────────────────────────────────────────────
+
+function ActiveSessionBanner({ session, onView }: { session: Session; onView: () => void }) {
+  const nim = session as Session & { provider?: string; nimModelId?: string; nimProvider?: string };
+  const isNim = nim?.provider === "nim";
+  const label = isNim ? (nim?.nimModelId ?? session.profileName) : session.profileName;
 
   return (
-    <section>
-      <div className="flex items-center gap-2 mb-4">
-        <Trash2 className="w-4 h-4 text-slate-500" />
-        <h3 className="text-sm font-semibold text-slate-400">Claim Cleanup Health</h3>
-      </div>
-      <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-4">
-          {[
-            { label: "Total Purge Runs", value: stats.totalRuns },
-            { label: "Total Rows Deleted", value: stats.totalRowsDeleted.toLocaleString() },
-            { label: "Last Run", value: lastRun ?? "—", mono: false },
-            { label: "Last Rows Deleted", value: stats.lastRowsDeleted ?? "—" },
-          ].map(({ label, value, mono = true }) => (
-            <div key={label}>
-              <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">{label}</p>
-              <p className={`text-lg font-semibold text-slate-200 ${mono ? "font-mono" : "text-sm"}`}>{value}</p>
-            </div>
-          ))}
+    <div
+      className="flex items-center gap-3 px-4 py-3 rounded-2xl session-glow-active"
+      style={{
+        background: "rgba(0,180,216,0.045)",
+        border: "1px solid rgba(0,180,216,0.13)",
+        backdropFilter: "blur(32px)",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.07), 0 2px 16px rgba(0,0,0,0.24)",
+      }}
+    >
+      <span className="relative flex h-2.5 w-2.5 shrink-0">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+          style={{ background: "var(--accent-cyan)" }} />
+        <span className="relative inline-flex rounded-full h-2.5 w-2.5"
+          style={{ background: "var(--accent-cyan)" }} />
+      </span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-semibold text-sm truncate" style={{ color: "var(--text-primary)" }}>
+            {label}
+          </span>
+          {isNim && nim?.nimProvider && (
+            <span className="text-[10px] font-mono" style={{ color: "#10b981" }}>
+              via {nim.nimProvider}
+            </span>
+          )}
+          <SessionStatusBadge status={session.status} />
+          {session.teamMembers && session.teamMembers.length > 0 && (
+            <TeamSessionBadge members={session.teamMembers} />
+          )}
+          {session.costPerHour != null && (
+            <span className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }}>
+              ${session.costPerHour.toFixed(2)}/hr
+            </span>
+          )}
         </div>
-        {stats.recentRuns.length > 0 && (
-          <div>
-            <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Recent Runs</p>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-white/5 text-slate-500">
-                    <th className="text-left pb-1 pr-4 font-medium">Time</th>
-                    <th className="text-right pb-1 pr-4 font-medium">Rows Deleted</th>
-                    <th className="text-right pb-1 font-medium">Retention (days)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats.recentRuns.slice(0, 10).map((run) => (
-                    <tr key={run.id} className="border-b border-white/5 last:border-0">
-                      <td className="py-1.5 pr-4 font-mono text-slate-500">
-                        {formatDistanceToNow(new Date(run.purgedAt), { addSuffix: true })}
-                      </td>
-                      <td className={`py-1.5 pr-4 text-right font-mono font-semibold ${run.rowsDeleted > 0 ? "text-slate-200" : "text-slate-500"}`}>
-                        {run.rowsDeleted}
-                      </td>
-                      <td className="py-1.5 text-right font-mono text-slate-500">{run.retentionDays}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      </div>
+      <SwarmPill sessionId={session.id} isReady={session.status === "ready"} />
+      <button
+        onClick={onView}
+        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg shrink-0 transition-colors"
+        style={{
+          background: "var(--bg-glass-hover)", border: "1px solid var(--border-glass)",
+          color: "var(--text-primary)",
+        }}
+      >
+        <Terminal className="w-3.5 h-3.5" />
+        Open cockpit
+      </button>
+    </div>
+  );
+}
+
+// ── RecentSessionRow — compact single-line list item ─────────────────────────
+
+function RecentSessionRow({ session, onClick }: { session: Session; onClick: () => void }) {
+  const ref = session.stoppedAt ? new Date(session.stoppedAt) : new Date(session.createdAt);
+  const ago = formatDistanceToNow(ref, { addSuffix: false });
+  const nim = session as Session & { provider?: string; nimModelId?: string };
+  const isNim = nim?.provider === "nim";
+  const label = isNim
+    ? (nim?.nimModelId?.split("/").pop() ?? session.profileName)
+    : session.profileName;
+  const snippet = session.intentText?.trim() ?? null;
+
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left group transition-all"
+      style={{ color: "var(--text-primary)" }}
+      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.045)"; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ""; }}
+    >
+      {/* Type badge */}
+      <span
+        className="text-[9px] uppercase tracking-wider font-semibold shrink-0 w-5 text-center"
+        style={{ color: isNim ? "#10b981" : "var(--text-muted)" }}
+      >
+        {isNim ? "⚡" : "▣"}
+      </span>
+
+      {/* Label */}
+      <span
+        className="text-xs shrink-0 font-mono"
+        style={{ color: "var(--text-muted)", maxWidth: "6rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+      >
+        {label}
+      </span>
+
+      {/* Intent text — fills remaining space */}
+      <span
+        className="flex-1 text-xs truncate"
+        style={{ color: snippet ? "var(--text-secondary)" : "var(--text-muted)", fontStyle: snippet ? "normal" : "italic" }}
+      >
+        {snippet ?? "No intent recorded"}
+      </span>
+
+      {/* Time + re-launch hint */}
+      <span className="text-[10px] shrink-0" style={{ color: "var(--text-muted)", opacity: 0.55 }}>{ago}</span>
+      <RotateCcw
+        className="w-3 h-3 shrink-0 opacity-0 group-hover:opacity-40 transition-opacity"
+        style={{ color: "var(--text-secondary)" }}
+      />
+    </button>
+  );
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+
+export default function Dashboard() {
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary();
+  const { data: activeSessionResp, isLoading: isLoadingSession } = useGetActiveSession({
+    query: { refetchInterval: 10_000, queryKey: getGetActiveSessionQueryKey() },
+  });
+  const { data: allSessions } = useListSessions();
+  const { data: schedulerConfig } = useGetSchedulerConfig();
+  const createSession = useCreateSession();
+
+  // Skill bundles — fetched once to resolve user's chosen bundle slug → numeric bundleId
+  const [skillBundleMap, setSkillBundleMap] = useState<Record<string, number>>({});
+  useEffect(() => {
+    fetch(`${BASE_URL}api/skills/skill-bundles`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { bundles?: Array<{ id: number; slug: string }> } | null) => {
+        if (!data?.bundles) return;
+        const map: Record<string, number> = {};
+        for (const b of data.bundles) map[b.slug] = b.id;
+        setSkillBundleMap(map);
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleGpuLaunch = (profileId: number, opts?: Omit<LaunchOptions, "profileId"> & { skillBundle?: string }) => {
+    // Resolve skillBundle slug → numeric bundleId if the user made a specific selection
+    const resolvedBundleId = opts?.skillBundle
+      ? (skillBundleMap[opts.skillBundle] ?? opts?.bundleId ?? null)
+      : (opts?.bundleId ?? null);
+    createSession.mutate({
+      data: {
+        profileId,
+        teamMembers: opts?.teamMembers ?? null,
+        taskMode: opts?.taskMode ?? null,
+        tokenMode: opts?.tokenMode ?? null,
+        bundleId: resolvedBundleId,
+        repoUrl: opts?.repoUrl ?? null,
+        intentText: opts?.intentText ?? null,
+        githubToken: opts?.githubToken ?? null,
+      },
+    }, {
+      onSuccess: (session) => {
+        toast({ title: "Session launched", description: "Provisioning GPU…" });
+        queryClient.invalidateQueries({ queryKey: getGetActiveSessionQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+        setLocation(`/sessions/${session.id}`);
+      },
+      onError: (err: Error) => {
+        toast({ title: "Launch failed", description: err?.message || "Please try again.", variant: "destructive" });
+      },
+    });
+  };
+
+  const handleNimLaunch = (opts: {
+    nimModelId: string; nimProvider: string;
+    intentText?: string; repoUrl?: string | null; githubToken?: string | null;
+    taskMode?: string | null; tokenMode?: string | null; skillBundle?: string | null;
+  }) => {
+    // Resolve skillBundle slug → numeric bundleId if the user made a specific selection
+    const resolvedBundleId = opts.skillBundle ? (skillBundleMap[opts.skillBundle] ?? null) : null;
+    createSession.mutate({
+      data: {
+        nimModelId: opts.nimModelId,
+        nimProvider: opts.nimProvider,
+        intentText: opts.intentText ?? null,
+        repoUrl: opts.repoUrl ?? null,
+        githubToken: opts.githubToken ?? null,
+        taskMode: opts.taskMode ?? null,
+        tokenMode: opts.tokenMode ?? null,
+        bundleId: resolvedBundleId,
+      } as Parameters<typeof createSession.mutate>[0]["data"],
+    }, {
+      onSuccess: (session) => {
+        toast({ title: "NIM session launching", description: "Ready in ~2 minutes." });
+        queryClient.invalidateQueries({ queryKey: getGetActiveSessionQueryKey() });
+        setLocation(`/sessions/${session.id}`);
+      },
+      onError: (err: Error) => {
+        toast({ title: "Launch failed", description: err?.message || "Please try again.", variant: "destructive" });
+      },
+    });
+  };
+
+  const activeSession = activeSessionResp?.session ?? null;
+
+  const recentSessions = useMemo(() => {
+    if (!allSessions) return [];
+    return [...allSessions]
+      .filter(s => s.status === "stopped")
+      .sort((a, b) => {
+        const ta = a.stoppedAt ? new Date(a.stoppedAt).getTime() : new Date(a.createdAt).getTime();
+        const tb = b.stoppedAt ? new Date(b.stoppedAt).getTime() : new Date(b.createdAt).getTime();
+        return tb - ta;
+      })
+      .slice(0, 6);
+  }, [allSessions]);
+
+  const stats = [
+    { label: "Active", value: summary?.activeSessions ?? 0, color: "#10b981" },
+    { label: "Sessions", value: summary?.totalSessions ?? 0, color: "var(--accent-cyan)" },
+    { label: "Compute", value: `${(summary?.totalHours ?? 0).toFixed(1)}h`, color: "var(--accent-violet)" },
+    { label: "Spent", value: `$${(summary?.totalCost ?? 0).toFixed(2)}`, color: "var(--text-secondary)" },
+  ];
+
+  return (
+    <div className="min-h-full" style={{ background: "var(--bg-base)" }}>
+      {/* Ambient depth glows — kept very subtle, Apple-style barely-visible washes */}
+      <div
+        className="fixed top-[-200px] right-[-120px] w-[700px] h-[700px] rounded-full pointer-events-none"
+        style={{
+          background: "radial-gradient(circle, rgba(0,180,216,0.028) 0%, transparent 65%)",
+          filter: "blur(100px)",
+        }}
+      />
+      <div
+        className="fixed bottom-[-120px] left-[60px] w-[550px] h-[550px] rounded-full pointer-events-none"
+        style={{
+          background: "radial-gradient(circle, rgba(124,111,247,0.028) 0%, transparent 65%)",
+          filter: "blur(100px)",
+        }}
+      />
+
+      <div className="relative max-w-2xl mx-auto px-8 py-14 space-y-10">
+
+        {/* Active session banner */}
+        {!isLoadingSession && activeSession && (
+          <div className="glass-emerge">
+            <ActiveSessionBanner
+              session={activeSession}
+              onView={() => setLocation(`/sessions/${activeSession.id}`)}
+            />
+          </div>
+        )}
+
+        {/* Intent field — hero */}
+        <div className="glass-emerge" style={{ animationDelay: "20ms" }}>
+          <IntentBar onGpuLaunch={handleGpuLaunch} onNimLaunch={handleNimLaunch} />
+        </div>
+
+        {/* Recent sessions — compact list */}
+        {recentSessions.length > 0 && (
+          <div className="glass-emerge" style={{ animationDelay: "60ms" }}>
+            <div className="flex items-center justify-between mb-2">
+              <p
+                className="text-[10px] font-medium uppercase tracking-widest"
+                style={{ color: "var(--text-muted)", letterSpacing: "0.1em" }}
+              >
+                Recent
+              </p>
+              <button
+                onClick={() => setLocation("/sessions")}
+                className="flex items-center gap-1 text-[11px] transition-colors"
+                style={{ color: "var(--text-muted)" }}
+                onMouseEnter={e => (e.currentTarget.style.color = "var(--text-secondary)")}
+                onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
+              >
+                All <ArrowRight className="w-3 h-3" />
+              </button>
+            </div>
+            <div className="space-y-0.5">
+              {recentSessions.slice(0, 5).map(s => (
+                <RecentSessionRow
+                  key={s.id}
+                  session={s}
+                  onClick={() => setLocation(`/sessions/${s.id}`)}
+                />
+              ))}
             </div>
           </div>
         )}
+
+        {/* Scheduler status — soft collapsed row */}
+        {schedulerConfig && (
+          <div className="glass-emerge" style={{ animationDelay: "80ms" }}>
+            <button
+              type="button"
+              onClick={() => setLocation("/settings")}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-xs transition-all"
+              style={{
+                background: "linear-gradient(145deg, rgba(255,255,255,0.026) 0%, transparent 60%), rgba(255,255,255,0.016)",
+                border: "1px solid var(--border-glass-soft)",
+                color: schedulerConfig.enabled ? "var(--text-secondary)" : "var(--text-muted)",
+                boxShadow: "inset 0 1px 0 var(--inner-highlight-sm)",
+              }}
+            >
+              <Globe className="w-3.5 h-3.5 shrink-0" style={{ color: schedulerConfig.enabled ? "#10b981" : "var(--text-muted)", opacity: 0.8 }} />
+              <span className="flex-1 text-left">Scheduled sessions</span>
+              <span
+                className="px-1.5 py-0.5 rounded-full text-[10px] font-medium"
+                style={{
+                  background: schedulerConfig.enabled ? "rgba(16,185,129,0.08)" : "rgba(255,255,255,0.03)",
+                  color: schedulerConfig.enabled ? "#10b981" : "var(--text-muted)",
+                  border: `1px solid ${schedulerConfig.enabled ? "rgba(16,185,129,0.14)" : "var(--border-glass-ultra)"}`,
+                }}
+              >
+                {schedulerConfig.enabled ? "Active" : "Off"}
+              </span>
+              <ChevronRight className="w-3 h-3 opacity-25 shrink-0" />
+            </button>
+          </div>
+        )}
+
+        {/* Stats — airy row */}
+        <div className="glass-emerge" style={{ animationDelay: "100ms" }}>
+          {isLoadingSummary ? (
+            <div className="grid grid-cols-4 gap-3">
+              {[1, 2, 3, 4].map(i => <div key={i} className="h-14 rounded-2xl shimmer" />)}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {stats.map(s => (
+                <div
+                  key={s.label}
+                  className="rounded-2xl px-5 py-4"
+                  style={{
+                    background: "linear-gradient(145deg, rgba(255,255,255,0.032) 0%, transparent 60%), rgba(255,255,255,0.018)",
+                    border: "1px solid var(--border-glass-soft)",
+                    boxShadow: "inset 0 1px 0 var(--inner-highlight-sm)",
+                  }}
+                >
+                  <p className="text-sm font-semibold" style={{ color: s.color }}>{s.value}</p>
+                  <p className="text-[10px] uppercase tracking-widest mt-0.5 font-medium" style={{ color: "var(--text-muted)", letterSpacing: "0.09em" }}>
+                    {s.label}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
       </div>
-    </section>
+    </div>
   );
 }

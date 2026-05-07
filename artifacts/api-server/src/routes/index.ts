@@ -17,6 +17,7 @@ import nimRouter from "./nim";
 import authRouter from "./auth";
 import bridgeRouter from "./bridge";
 import orchestrateRouter from "./orchestrate";
+import intentRouter from "./intent";
 
 const router: IRouter = Router();
 
@@ -37,6 +38,7 @@ router.use(designIntelligenceRouter);
 router.use(ambientRouter);
 router.use(paletteIntentRouter);
 router.use(nimRouter);
+router.use(intentRouter);
 router.use(bridgeRouter);
 router.use(orchestrateRouter);
 

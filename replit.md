@@ -73,6 +73,24 @@ artifacts-monorepo/
 | Pro | A100 80GB | 4 | 320GB | Q3_K_M | $2.00-$4.00 |
 | Ultra | H100 80GB | 8 | 640GB | IQ4_XS | $8.00-$16.00 |
 
+## Intent Classification API
+
+- `POST /api/intent/classify` — Classify user intent into `nim` | `gpu` | `choice` | `repo` paths. Accepts `{ intentText, repoUrl }`. Returns `nimSuggestion`, `gpuSuggestion`, `repoSuggestion` based on scored NIM models (SWE-bench weighted), provider latency, and task complexity. Repo path triggered by github.com/gitlab.com URLs or keywords like "my repo", "working on", "existing project", etc.
+
+## Dashboard UX
+
+Intent-first single-surface Home page (no tabs on first view):
+- **Intent field** — hero element; auto-detects github URLs + repo keywords → shows inline `RepoPanel` (URL + PAT with localStorage memory). ⌘↵ or "Ask MIZI" classifies intent.
+- **Classify result** — shows NIM launch card (direct session creation) and/or GPU profile picker inline
+- **ActiveSessionBanner** — live session status + "Open cockpit" shortcut above intent field
+- **Memory cards** — 2-col grid of recent stopped sessions below intent field
+- **Stats row** — compact 4-stat strip at bottom
+
+Cockpit (`sessions/[id].tsx`) — calm primary view:
+- **GlassBootBar** — fluid gradient progress bar (cyan→violet) with elapsed timer, human phase label, disk-full CTA, collapsible log. Replaces verbose BootTimeline.
+- **Glass cockpit bar** — replaces 6-tab bar. Shows intent text left; badge chips (memory, conflict, swarm) + "Details →" button right.
+- **Details Sheet** — slides in from right (`Sheet` component) with sub-tab nav: Memory, Skills, Repo, Coordination, Swarm. Closing returns to calm primary view.
+
 ## API Endpoints
 
 - `GET /api/profiles` — List GPU profiles

@@ -55,8 +55,7 @@ import { useVisibilityReconnect } from "@/hooks/use-visibility-reconnect";
 import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useListProfiles } from "@workspace/api-client-react";
-import { inferBootPhase } from "@/lib/boot-phases";
-import { BootTimeline, BootProgressStrip } from "@/components/boot-timeline";
+import { inferBootPhase, type BootPhase } from "@/lib/boot-phases";
 import { RelaunchButton } from "@/components/relaunch-button";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { TeamTab } from "@/components/team-tab";
@@ -2177,6 +2176,154 @@ function RepoIndexTab({ sessionId }: { sessionId: number }) {
   );
 }
 
+// ── GlassBootBar ─────────────────────────────────────────────────────────────
+
+function GlassBootBar({
+  phases,
+  startedAt,
+  rawStatusMessage,
+  bootLog,
+  diskFullAction,
+}: {
+  phases: BootPhase[];
+  startedAt: Date | null;
+  rawStatusMessage: string | null;
+  bootLog: string[];
+  diskFullAction?: { onRetry: () => void; isRetrying: boolean };
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  const [logOpen, setLogOpen] = useState(false);
+
+  useEffect(() => {
+    if (!startedAt) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+
+  const total = phases.length;
+  const done = phases.filter(p => p.status === "done").length;
+  const errorIdx = phases.findIndex(p => p.status === "error");
+  const activeIdx = phases.findIndex(p => p.status === "active");
+  const currentIdx = errorIdx >= 0 ? errorIdx : activeIdx;
+  const currentPhase = currentIdx >= 0 ? phases[currentIdx] : phases[done] ?? phases[phases.length - 1];
+  const pct = Math.max(4, Math.round(((errorIdx >= 0 ? currentIdx : done) / Math.max(total, 1)) * 100));
+  const isError = errorIdx >= 0;
+  const isDiskFull = phases.some(p => p.status === "error" && /disk|storage|space/i.test(p.label));
+
+  const elapsed = startedAt ? now - startedAt.getTime() : 0;
+  const elapsedMin = Math.floor(elapsed / 60000);
+  const elapsedSec = Math.floor((elapsed % 60000) / 1000);
+  const elapsedStr = elapsed > 3000 ? `${elapsedMin}m ${elapsedSec}s` : "";
+
+  const humanLabel = currentPhase?.label ?? "Starting…";
+
+  return (
+    <div
+      className="rounded-xl overflow-hidden"
+      style={{
+        background: "var(--bg-glass)",
+        border: `1px solid ${isError ? "rgba(244,63,94,0.3)" : "rgba(0,200,255,0.15)"}`,
+      }}
+    >
+      <div className="px-5 pt-4 pb-3">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2.5">
+            {isError ? (
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "#f43f5e" }} />
+            ) : (
+              <span className="w-2 h-2 rounded-full shrink-0 animate-pulse" style={{ background: "var(--accent-cyan)" }} />
+            )}
+            <span className="text-sm font-medium" style={{ color: isError ? "#f43f5e" : "var(--text-primary)" }}>
+              {humanLabel}
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            {elapsedStr && (
+              <span className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }}>{elapsedStr}</span>
+            )}
+            {bootLog.length > 0 && (
+              <button
+                onClick={() => setLogOpen(v => !v)}
+                className="text-[10px] transition-colors"
+                style={{ color: "var(--text-muted)" }}
+              >
+                {logOpen ? "Hide log" : "Show log"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {rawStatusMessage && !isError && (
+          <p className="text-[11px] font-mono mb-3 truncate" style={{ color: "var(--text-muted)" }}>
+            › {rawStatusMessage}
+          </p>
+        )}
+
+        {/* Fluid progress bar */}
+        <div className="h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+          <div
+            className="h-full rounded-full transition-all duration-700"
+            style={{
+              width: `${pct}%`,
+              background: isError
+                ? "#f43f5e"
+                : "linear-gradient(90deg, var(--accent-cyan), var(--accent-violet))",
+              boxShadow: isError ? "none" : "0 0 8px rgba(0,200,255,0.4)",
+            }}
+          />
+        </div>
+
+        <div className="flex items-center justify-between mt-2">
+          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+            {done} of {total} steps complete
+          </span>
+          {!isError && (
+            <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+              Usually 25–45 min total
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Disk full error state */}
+      {isDiskFull && diskFullAction && (
+        <div className="px-5 pb-4 pt-1 border-t" style={{ borderColor: "rgba(244,63,94,0.2)" }}>
+          <p className="text-xs mb-2" style={{ color: "#f43f5e" }}>
+            Disk full — the instance ran out of storage during provisioning.
+          </p>
+          <button
+            onClick={diskFullAction.onRetry}
+            disabled={diskFullAction.isRetrying}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
+            style={{ background: "rgba(244,63,94,0.1)", color: "#f43f5e", border: "1px solid rgba(244,63,94,0.25)" }}
+          >
+            {diskFullAction.isRetrying ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3 h-3" />
+            )}
+            {diskFullAction.isRetrying ? "Retrying…" : "Retry with fresh instance"}
+          </button>
+        </div>
+      )}
+
+      {/* Collapsible log */}
+      {logOpen && bootLog.length > 0 && (
+        <div
+          className="px-5 pb-4 pt-2 border-t max-h-48 overflow-y-auto"
+          style={{ borderColor: "var(--border-glass)" }}
+        >
+          {bootLog.slice(-40).map((line, i) => (
+            <p key={i} className="text-[10px] font-mono leading-relaxed" style={{ color: "var(--text-muted)" }}>
+              {line}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SessionDetail() {
   const { id } = useParams();
   const sessionId = id ? parseInt(id, 10) : 0;
@@ -2184,6 +2331,7 @@ export default function SessionDetail() {
   const { toast } = useToast();
   const { pref: handoffNotifPref, setPref: setHandoffNotifPref, browserPermission } = useHandoffNotificationPref();
   const [notifPopoverOpen, setNotifPopoverOpen] = useState(false);
+  const lastDetailTabRef = useRef<"memory" | "smart-skills" | "repo" | "coordination" | "swarm">("memory");
   const queryClient = useQueryClient();
   const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm"] as const;
   const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" => {
@@ -2993,7 +3141,7 @@ export default function SessionDetail() {
   const isSessionOwner = !hasNamedTeamMembers;
 
   return (
-    <div className="p-8 max-w-3xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto px-8 py-8 space-y-5">
 
       {/* Back */}
       <Button variant="ghost" className="gap-2 text-muted-foreground -ml-2" onClick={() => setLocation("/sessions")}>
@@ -3137,121 +3285,95 @@ export default function SessionDetail() {
         </div>
       </div>
 
-      {/* Compact progress strip below header — visible across all tabs while booting. */}
-      {isBooting && <BootProgressStrip phases={bootPhases} />}
-
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-border/50">
-        <button
-          onClick={() => setActiveTab("overview")}
-          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === "overview"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          Overview
-        </button>
-        <button
-          onClick={() => { setActiveTab("memory"); setNewObsCount(0); setBadgePulseKey(0); }}
-          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
-            activeTab === "memory"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Brain className="w-3.5 h-3.5" />
-          Memory
-          {isActive && newObsCount > 0 && (
-            <span
-              key={badgePulseKey}
-              className={`ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none ${badgePulseKey === 0 ? "animate-badge-pop" : "animate-badge-pulse"}`}
-            >
-              {newObsCount > 99 ? "99+" : newObsCount}
-            </span>
+      {/* Glass cockpit bar — calm single strip: intent context left, Details + notif right */}
+      <div
+        className="flex items-center justify-between px-4 py-2.5 rounded-xl"
+        style={{ background: "var(--bg-glass)", border: "1px solid var(--border-glass)" }}
+      >
+        {/* Left: intent text or profile name */}
+        <div className="flex items-center gap-2 min-w-0">
+          {session.intentText ? (
+            <p className="text-xs font-medium truncate max-w-[220px] sm:max-w-xs" style={{ color: "var(--text-secondary)" }}>
+              {session.intentText}
+            </p>
+          ) : (
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              {session.profileName ?? "Session"}
+            </p>
           )}
-        </button>
-        <button
-          onClick={() => setActiveTab("smart-skills")}
-          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
-            activeTab === "smart-skills"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Wand2 className="w-3.5 h-3.5" />
-          Smart Skills
-        </button>
-        <button
-          onClick={() => setActiveTab("repo")}
-          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
-            activeTab === "repo"
-              ? "border-primary text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <GitBranch className="w-3.5 h-3.5" />
-          Repo Intelligence
-        </button>
-        {hasNamedTeamMembers && (
+        </div>
+
+        {/* Right: badge chips + Details button + notif */}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Memory badge */}
+          {isActive && newObsCount > 0 && activeTab === "overview" && (
+            <button
+              onClick={() => { lastDetailTabRef.current = "memory"; setActiveTab("memory"); setNewObsCount(0); setBadgePulseKey(0); }}
+              className="flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+              style={{ background: "rgba(0,200,255,0.12)", color: "var(--accent-cyan)", border: "1px solid rgba(0,200,255,0.2)" }}
+            >
+              <Brain className="w-2.5 h-2.5" />
+              {newObsCount > 99 ? "99+" : newObsCount}
+            </button>
+          )}
+
+          {/* Conflict badge */}
+          {showConflictBadge && activeTab === "overview" && (
+            <button
+              onClick={() => { lastDetailTabRef.current = "coordination"; setActiveTab("coordination"); setSeenConflictFingerprint(conflictFingerprint); setSeenHandoffCount(bgPendingHandoffs); }}
+              className="flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+              style={{
+                background: hasBlockingConflict ? "rgba(244,63,94,0.12)" : "rgba(234,179,8,0.12)",
+                color: hasBlockingConflict ? "#f43f5e" : "#eab308",
+                border: `1px solid ${hasBlockingConflict ? "rgba(244,63,94,0.25)" : "rgba(234,179,8,0.25)"}`,
+              }}
+            >
+              <Users className="w-2.5 h-2.5" />
+              {hasBlockingConflict ? activeConflicts.filter(c => c.recommendation === "block").length : activeConflicts.length}
+            </button>
+          )}
+
+          {/* Swarm badge */}
+          {showSwarmTab && swarmBadge && activeTab === "overview" && (
+            <button
+              onClick={() => { lastDetailTabRef.current = "swarm"; setActiveTab("swarm"); }}
+              className="flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+              style={{
+                background: swarmIsLive ? "rgba(124,111,247,0.12)" : "rgba(100,100,100,0.1)",
+                color: swarmIsLive ? "var(--accent-violet)" : "var(--text-muted)",
+                border: `1px solid ${swarmIsLive ? "rgba(124,111,247,0.25)" : "var(--border-glass)"}`,
+              }}
+            >
+              <Network className={`w-2.5 h-2.5 ${swarmIsLive ? "animate-pulse" : ""}`} />
+              {swarmBadge}
+            </button>
+          )}
+
+          {/* Details → button */}
           <button
-            onClick={() => { setActiveTab("coordination"); setSeenConflictFingerprint(conflictFingerprint); setSeenHandoffCount(bgPendingHandoffs); }}
-            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
-              activeTab === "coordination"
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
+            onClick={() => {
+              if (activeTab !== "overview") {
+                setActiveTab("overview");
+              } else {
+                setActiveTab(lastDetailTabRef.current);
+              }
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+            style={{
+              background: activeTab !== "overview" ? "rgba(0,200,255,0.1)" : "var(--bg-glass-hover)",
+              color: activeTab !== "overview" ? "var(--accent-cyan)" : "var(--text-secondary)",
+              border: `1px solid ${activeTab !== "overview" ? "rgba(0,200,255,0.2)" : "var(--border-glass)"}`,
+            }}
           >
-            <Users className="w-3.5 h-3.5" />
-            Coordination
-            {showConflictBadge && (
-              <span
-                key={conflictBadgePulseKey}
-                className={`ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-semibold leading-none ${conflictBadgePulseKey === 0 ? "animate-badge-pop" : "animate-badge-pulse"} ${
-                  hasBlockingConflict
-                    ? "bg-red-500 text-white"
-                    : "bg-yellow-500 text-black"
-                }`}
-              >
-                {hasBlockingConflict ? activeConflicts.filter(c => c.recommendation === "block").length : activeConflicts.length}
-              </span>
-            )}
-            {showHandoffBadge && (
-              <span className="ml-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none animate-badge-pop">
-                {pendingHandoffBadgeCount > 99 ? "99+" : pendingHandoffBadgeCount}
-              </span>
-            )}
+            Details
+            <ChevronRight className={`w-3 h-3 transition-transform duration-200 ${activeTab !== "overview" ? "rotate-180" : ""}`} />
           </button>
-        )}
-        {showSwarmTab && (
-          <button
-            onClick={() => setActiveTab("swarm")}
-            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
-              activeTab === "swarm"
-                ? "border-primary text-foreground"
-                : swarmIsLive
-                  ? "border-transparent text-primary hover:text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <Network className={`w-3.5 h-3.5 ${swarmIsLive ? "animate-pulse" : ""}`} />
-            Swarm
-            {swarmBadge && (
-              <span className={`ml-0.5 px-1.5 py-0 flex items-center justify-center rounded-full text-[10px] font-semibold leading-none ${
-                swarmIsLive
-                  ? "bg-primary text-primary-foreground animate-badge-pop"
-                  : "bg-secondary text-secondary-foreground"
-              }`}>
-                {swarmBadge}
-              </span>
-            )}
-          </button>
-        )}
-        <div className="ml-auto flex items-center pr-1">
+
+          {/* Notification popover */}
           <Popover open={notifPopoverOpen} onOpenChange={setNotifPopoverOpen}>
             <PopoverTrigger asChild>
               <button
-                className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                className="p-1.5 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent"
                 title="Handoff notification settings"
               >
                 {handoffNotifPref === "none" ? (
@@ -3307,15 +3429,12 @@ export default function SessionDetail() {
 
       {activeTab === "overview" && (
         <>
-          {/* Boot Timeline — replaces the legacy raw-status block. Shown while
-              booting OR if the session ended before reaching ready, so users
-              can see where it stopped. */}
+          {/* Glass boot bar — fluid single-line progress, shown while booting */}
           {(isBooting || (!isReady && bootLog.length > 0)) && (
-            <BootTimeline
+            <GlassBootBar
               phases={bootPhases}
               startedAt={sessionStartedAt}
-              estimateMinutes={profileStartupMin}
-              rawStatusMessage={session.statusMessage}
+              rawStatusMessage={session.statusMessage ?? null}
               bootLog={bootLog}
               diskFullAction={{ onRetry: handleDestroyAndRetry, isRetrying }}
             />
@@ -3712,38 +3831,97 @@ export default function SessionDetail() {
         </>
       )}
 
-      <div className={activeTab === "memory" ? "" : "hidden"}>
-        <MemoryTab
-          sessionId={sessionId}
-          isActive={isActive}
-          streaming={memStreaming}
-          reconnecting={memReconnecting}
-          gaveUp={memGaveUp}
-          streamedObservations={streamedObservations}
-          onReconnect={handleMemoryReconnect}
-        />
-      </div>
+      {/* Details Sheet — slides in from the right when a secondary tab is active */}
+      <Sheet open={activeTab !== "overview"} onOpenChange={(open) => { if (!open) setActiveTab("overview"); }}>
+        <SheetContent side="right" className="w-[520px] sm:w-[600px] p-0 flex flex-col overflow-hidden">
+          <SheetHeader className="px-5 pt-4 pb-3 shrink-0 border-b border-border/40">
+            <SheetTitle className="sr-only">Session Details</SheetTitle>
+            {/* Sub-tab nav */}
+            <div className="flex gap-1 flex-wrap">
+              <button
+                onClick={() => { lastDetailTabRef.current = "memory"; setActiveTab("memory"); setNewObsCount(0); setBadgePulseKey(0); }}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "memory" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
+              >
+                <Brain className="w-3 h-3" /> Memory
+                {isActive && newObsCount > 0 && (
+                  <span className="min-w-[16px] h-4 px-0.5 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold leading-none">
+                    {newObsCount > 99 ? "99+" : newObsCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => { lastDetailTabRef.current = "smart-skills"; setActiveTab("smart-skills"); }}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "smart-skills" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
+              >
+                <Wand2 className="w-3 h-3" /> Skills
+              </button>
+              <button
+                onClick={() => { lastDetailTabRef.current = "repo"; setActiveTab("repo"); }}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "repo" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
+              >
+                <GitBranch className="w-3 h-3" /> Repo
+              </button>
+              {hasNamedTeamMembers && (
+                <button
+                  onClick={() => { lastDetailTabRef.current = "coordination"; setActiveTab("coordination"); setSeenConflictFingerprint(conflictFingerprint); setSeenHandoffCount(bgPendingHandoffs); }}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "coordination" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
+                >
+                  <Users className="w-3 h-3" /> Coordination
+                  {showConflictBadge && (
+                    <span className={`min-w-[16px] h-4 px-0.5 flex items-center justify-center rounded-full text-[10px] font-semibold leading-none ${hasBlockingConflict ? "bg-red-500 text-white" : "bg-yellow-500 text-black"}`}>
+                      {hasBlockingConflict ? activeConflicts.filter(c => c.recommendation === "block").length : activeConflicts.length}
+                    </span>
+                  )}
+                </button>
+              )}
+              {showSwarmTab && (
+                <button
+                  onClick={() => { lastDetailTabRef.current = "swarm"; setActiveTab("swarm"); }}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "swarm" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
+                >
+                  <Network className={`w-3 h-3 ${swarmIsLive ? "animate-pulse" : ""}`} /> Swarm
+                  {swarmBadge && (
+                    <span className={`min-w-[16px] h-4 px-0.5 flex items-center justify-center rounded-full text-[10px] font-semibold leading-none ${swarmIsLive ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground"}`}>
+                      {swarmBadge}
+                    </span>
+                  )}
+                </button>
+              )}
+            </div>
+          </SheetHeader>
 
-      {activeTab === "smart-skills" && (
-        <SmartSkillsTab sessionId={sessionId} taskMode={session.taskMode ?? null} />
-      )}
-
-      {activeTab === "repo" && (
-        <RepoIndexTab sessionId={sessionId} />
-      )}
-
-      {activeTab === "coordination" && hasNamedTeamMembers && (
-        <TeamTab sessionId={sessionId} />
-      )}
-
-      {activeTab === "swarm" && (
-        <SwarmActivityPanel
-          sessionId={sessionId}
-          isReady={isReady}
-          isSessionOwner={isSessionOwner}
-          ownerToken={undefined}
-        />
-      )}
+          <div className="flex-1 overflow-y-auto px-5 py-4">
+            <div className={activeTab === "memory" ? "" : "hidden"}>
+              <MemoryTab
+                sessionId={sessionId}
+                isActive={isActive}
+                streaming={memStreaming}
+                reconnecting={memReconnecting}
+                gaveUp={memGaveUp}
+                streamedObservations={streamedObservations}
+                onReconnect={handleMemoryReconnect}
+              />
+            </div>
+            {activeTab === "smart-skills" && (
+              <SmartSkillsTab sessionId={sessionId} taskMode={session.taskMode ?? null} />
+            )}
+            {activeTab === "repo" && (
+              <RepoIndexTab sessionId={sessionId} />
+            )}
+            {activeTab === "coordination" && hasNamedTeamMembers && (
+              <TeamTab sessionId={sessionId} />
+            )}
+            {activeTab === "swarm" && (
+              <SwarmActivityPanel
+                sessionId={sessionId}
+                isReady={isReady}
+                isSessionOwner={isSessionOwner}
+                ownerToken={undefined}
+              />
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {stopRatingOpen && (
         <Dialog open onOpenChange={(open) => { if (!open) setStopRatingOpen(false); }}>

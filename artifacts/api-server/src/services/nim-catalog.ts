@@ -11,8 +11,31 @@ export interface NimModel {
   shortDescription: string;
   usecaseTags: string[];
   contextLength: string | null;
+  sweBenchScore?: number | null;
+  benchmarkVariant?: string | null;
   syncedAt: string;
 }
+
+// Known SWE-bench scores used to seed the catalog (source of truth moves to DB over time)
+export const CATALOG_SWE_BENCH_SCORES: Record<string, { score: number; variant: string }> = {
+  "minimaxai/minimax-m2.5":                      { score: 80.2, variant: "SWE-bench Verified" },
+  "moonshotai/kimi-k2.6":                        { score: 65.8, variant: "SWE-bench Verified" },
+  "deepseek-ai/deepseek-v4-pro":                 { score: 67.0, variant: "SWE-bench Verified" },
+  "moonshotai/kimi-k2-instruct-0905":            { score: 63.6, variant: "SWE-bench Verified" },
+  "moonshotai/kimi-k2-instruct":                 { score: 63.6, variant: "SWE-bench Verified" },
+  "moonshotai/kimi-k2-thinking":                 { score: 63.6, variant: "SWE-bench Verified" },
+  "qwen/qwen3-coder-480b-a35b-instruct":         { score: 62.0, variant: "SWE-bench Verified" },
+  "z-ai/glm-5.1":                                { score: 58.4, variant: "SWE-bench Verified" },
+  "mistralai/devstral-2-123b-instruct-2512":     { score: 58.0, variant: "SWE-bench Verified" },
+  "deepseek-ai/deepseek-v4-flash":               { score: 55.0, variant: "SWE-bench Verified" },
+  "qwen/qwen3.5-397b-a17b":                      { score: 60.0, variant: "SWE-bench Verified" },
+  "qwen/qwen3.5-122b-a10b":                      { score: 55.0, variant: "SWE-bench Verified" },
+  "minimaxai/minimax-m2.7":                      { score: 55.0, variant: "SWE-bench Verified" },
+  "z-ai/glm-4.7":                                { score: 45.0, variant: "SWE-bench Verified" },
+  "mistralai/magistral-small-2506":              { score: 38.0, variant: "SWE-bench Verified" },
+  "mistralai/mistral-large-3-675b-instruct-2512":{ score: 46.0, variant: "SWE-bench Verified" },
+  "bytedance/seed-oss-36b-instruct":             { score: 42.0, variant: "SWE-bench Verified" },
+};
 
 const PARTNER_PROVIDERS: Record<string, string[]> = {
   "moonshotai/kimi-k2.6":                        ["vultr", "together", "bitdeer"],
@@ -274,6 +297,7 @@ export async function syncNimCatalog(): Promise<void> {
         continue;
       }
 
+      const benchSeed = CATALOG_SWE_BENCH_SCORES[model.nimModelId];
       await db
         .insert(nimCatalogTable)
         .values({
@@ -284,6 +308,8 @@ export async function syncNimCatalog(): Promise<void> {
           shortDescription: model.shortDescription ?? null,
           usecaseTags: model.usecaseTags,
           contextLength: model.contextLength ?? null,
+          sweBenchScore: benchSeed?.score ?? null,
+          benchmarkVariant: benchSeed?.variant ?? null,
           syncedAt: now,
         })
         .onConflictDoUpdate({
@@ -295,6 +321,8 @@ export async function syncNimCatalog(): Promise<void> {
             shortDescription: model.shortDescription ?? null,
             usecaseTags: model.usecaseTags,
             contextLength: model.contextLength ?? null,
+            // Only update benchmark fields if we have values (don't overwrite manual data)
+            ...(benchSeed ? { sweBenchScore: benchSeed.score, benchmarkVariant: benchSeed.variant } : {}),
             syncedAt: now,
           },
         });
@@ -341,16 +369,22 @@ export async function syncNimCatalog(): Promise<void> {
 
 export async function listNimModels(nimType?: string): Promise<NimModel[]> {
   const rows = await db.select().from(nimCatalogTable);
-  const models: NimModel[] = rows.map((r) => ({
-    nimModelId: r.nimModelId,
-    displayName: r.displayName,
-    nimTypes: (r.nimTypes as string[]) ?? [],
-    partnerProviders: (r.partnerProviders as string[]) ?? [],
-    shortDescription: r.shortDescription ?? "",
-    usecaseTags: (r.usecaseTags as string[]) ?? [],
-    contextLength: r.contextLength ?? null,
-    syncedAt: r.syncedAt.toISOString(),
-  }));
+  const models: NimModel[] = rows.map((r) => {
+    // Prefer DB-stored score; fall back to seed map for models not yet synced
+    const seed = CATALOG_SWE_BENCH_SCORES[r.nimModelId];
+    return {
+      nimModelId: r.nimModelId,
+      displayName: r.displayName,
+      nimTypes: (r.nimTypes as string[]) ?? [],
+      partnerProviders: (r.partnerProviders as string[]) ?? [],
+      shortDescription: r.shortDescription ?? "",
+      usecaseTags: (r.usecaseTags as string[]) ?? [],
+      contextLength: r.contextLength ?? null,
+      sweBenchScore: r.sweBenchScore ?? seed?.score ?? null,
+      benchmarkVariant: r.benchmarkVariant ?? seed?.variant ?? null,
+      syncedAt: r.syncedAt.toISOString(),
+    };
+  });
 
   if (nimType) {
     return models.filter((m) => m.nimTypes.includes(nimType));

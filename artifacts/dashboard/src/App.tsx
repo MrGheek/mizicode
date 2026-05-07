@@ -14,6 +14,7 @@ import DesignIntelligence from "@/pages/design-intelligence";
 import AmbientPage from "@/pages/ambient";
 import SettingsPage from "@/pages/settings";
 import ApiKeysPage from "@/pages/api-keys";
+import IntelligencePage from "@/pages/intelligence";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,6 +33,9 @@ function Router() {
         <Route path="/sessions" component={Sessions} />
         <Route path="/sessions/:id" component={SessionDetail} />
         <Route path="/templates" component={Templates} />
+        <Route path="/intelligence" component={IntelligencePage} />
+        <Route path="/intelligence/memory" component={Memory} />
+        <Route path="/intelligence/skills" component={SkillsLibrary} />
         <Route path="/skills" component={SkillsLibrary} />
         <Route path="/memory" component={Memory} />
         <Route path="/design-intelligence" component={DesignIntelligence} />
@@ -49,7 +53,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <div className="dark bg-background text-foreground min-h-screen">
+          <div className="min-h-screen" style={{ background: "var(--bg-base)", color: "var(--text-primary)" }}>
             <Router />
           </div>
         </WouterRouter>
