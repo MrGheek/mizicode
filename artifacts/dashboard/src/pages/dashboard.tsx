@@ -579,7 +579,7 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog }: {
                     onMouseEnter={e => (e.currentTarget.style.color = "#10b981")}
                     onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
                   >
-                    {showMoreModels ? "Hide models" : "More models…"}
+                    {showMoreModels ? "Hide" : "More models…"}
                   </button>
                 )}
 
