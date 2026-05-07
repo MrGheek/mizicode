@@ -37,11 +37,11 @@ function extractWrapperScript(onstart: string): string {
 }
 
 /** Build onstart + extract wrapper in one step (used by many tests). */
-function makeWrapper(sessionId: number, token = "ghp_testtoken123"): string {
+function makeWrapper(sessionId: number, token = "ghp_testtoken123", enableLaneBranches = false): string {
   const onstart = buildOnStartScript({
     modelRepo: "test/model", modelQuant: "Q4", servedModelName: "test",
     llamaCtxSize: 4096, llamaBatchSize: 32, llamaExtraArgs: "",
-    githubToken: token, sessionId,
+    githubToken: token, sessionId, enableLaneBranches,
   });
   return extractWrapperScript(onstart);
 }

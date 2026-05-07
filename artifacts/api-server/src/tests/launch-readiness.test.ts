@@ -71,7 +71,7 @@ describe("launch readiness — coordination claim blast radius", () => {
     const request = (await import("supertest")).default;
     const app = (await import("../app")).default;
     const dbModule = await import("@workspace/db");
-    const { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, sessionRepoContextTable } = dbModule;
+    const { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneEventsTable, sessionRepoContextTable } = dbModule;
     const { eq, inArray } = await import("drizzle-orm");
 
     // ── Test fixture ──────────────────────────────────────────────────────
@@ -132,6 +132,7 @@ describe("launch readiness — coordination claim blast radius", () => {
         .from(sessionLanesTable).where(eq(sessionLanesTable.sessionId, session.id));
       const laneIds = lanes.map(l => l.id);
       if (laneIds.length) await db.delete(laneClaimsTable).where(inArray(laneClaimsTable.laneId, laneIds));
+      await db.delete(laneEventsTable).where(eq(laneEventsTable.sessionId, session.id));
       await db.delete(sessionRepoContextTable).where(eq(sessionRepoContextTable.sessionId, session.id));
       await db.delete(sessionLanesTable).where(eq(sessionLanesTable.sessionId, session.id));
       await db.delete(sessionsTable).where(eq(sessionsTable.id, session.id));

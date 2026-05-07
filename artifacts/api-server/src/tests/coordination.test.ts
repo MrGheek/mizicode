@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import request from "supertest";
 import app from "../app";
-import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneHandoffsTable, laneHeavyJobsTable, claimPurgeLogsTable } from "@workspace/db";
+import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneHandoffsTable, laneHeavyJobsTable, laneEventsTable, claimPurgeLogsTable } from "@workspace/db";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { sweepExpiredClaims, expireStaleClaimsForSession } from "../services/claim-sweeper";
 import { LANE_HEARTBEAT_WINDOW_SECONDS } from "../services/lane-policy";
@@ -28,6 +28,7 @@ async function cleanupSession(sessionId: number) {
   const laneIds = lanes.map((l) => l.id);
 
   await db.delete(laneHeavyJobsTable).where(eq(laneHeavyJobsTable.sessionId, sessionId));
+  await db.delete(laneEventsTable).where(eq(laneEventsTable.sessionId, sessionId));
 
   if (laneIds.length > 0) {
     await db.delete(laneClaimsTable).where(inArray(laneClaimsTable.laneId, laneIds));
