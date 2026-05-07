@@ -298,6 +298,10 @@ export function buildOnStartScript(profileConfig: {
   // a dedicated session branch (mizi/session-<id>) via a git wrapper script.
   // The token is never stored in the DB — only ever passed through the onstart script.
   githubToken?: string;
+  // When true (and githubToken is set), each team member's pushes are redirected
+  // to a per-lane sub-branch (mizi/session-<id>/<username>) instead of the shared
+  // session branch. Defaults to true when a GitHub token is available.
+  enableLaneBranches?: boolean;
 }): string {
   const memLines = profileConfig.memProxyUrl
     ? [
@@ -409,11 +413,23 @@ export function buildOnStartScript(profileConfig: {
   // in-memory to Vast.ai, not stored in any DB column). The heredoc uses a
   // single-quoted delimiter so the wrapper's $-variables are written literally
   // and only evaluated when the wrapper itself is called later.
+  // When enableLaneBranches is true (default when token is present), the git
+  // wrapper pushes each user to their own sub-branch: mizi/session-<id>/$USER.
+  // When false, all users push to the shared session branch: mizi/session-<id>.
+  const laneBranchesEnabled = profileConfig.enableLaneBranches !== false;
+  const pushTarget = laneBranchesEnabled
+    ? `mizi/session-${profileConfig.sessionId}/$USER`
+    : `mizi/session-${profileConfig.sessionId}`;
+  const laneBranchExport = laneBranchesEnabled
+    ? `export GITHUB_LANE_BRANCHES_ENABLED=1`
+    : "";
+
   const githubLines = profileConfig.githubToken && profileConfig.sessionId != null
     ? `export GITHUB_TOKEN="${profileConfig.githubToken}"
+${laneBranchExport}
 git config --global url."https://${profileConfig.githubToken}@github.com/".insteadOf "https://github.com/"
 git config --global push.default current
-# Install git wrapper — forces all pushes to mizi/session-${profileConfig.sessionId}
+# Install git wrapper — forces all pushes to the session or lane branch
 cat > /usr/local/bin/git << 'MIZI_GIT_WRAPPER'
 #!/bin/bash
 GIT=/usr/bin/git
@@ -443,7 +459,7 @@ if [ "$CMD" = "push" ]; then
         FOUND=1 ;;
     esac
   done
-  exec "$GIT" push "$REMOTE" HEAD:mizi/session-${profileConfig.sessionId}
+  exec "$GIT" push "$REMOTE" HEAD:${pushTarget}
 else
   exec "$GIT" "$@"
 fi

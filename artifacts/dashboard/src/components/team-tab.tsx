@@ -58,6 +58,8 @@ import {
   Send,
   CheckCircle2,
   Plus,
+  GitPullRequest,
+  ExternalLink,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -762,13 +764,15 @@ function HeavyJobRow({ job }: { job: HeavyJobResponse }) {
   );
 }
 
+type HandoffResponseWithPr = HandoffResponse & { prUrl?: string | null };
+
 function HandoffFeedItem({
   handoff,
   lanes,
   sessionId,
   onAction,
 }: {
-  handoff: HandoffResponse;
+  handoff: HandoffResponseWithPr;
   lanes: LaneWithPolicy[];
   sessionId: number;
   onAction: () => void;
@@ -830,6 +834,18 @@ function HandoffFeedItem({
         )}
         {handoff.message && (
           <p className="text-[11px] text-muted-foreground mt-0.5 italic">{handoff.message}</p>
+        )}
+        {handoff.handoffType === "safe_to_merge" && handoff.prUrl && (
+          <a
+            href={handoff.prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 mt-1 text-[10px] font-medium text-emerald-400 hover:text-emerald-300 transition-colors"
+          >
+            <GitPullRequest className="w-3 h-3" />
+            View draft PR
+            <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+          </a>
         )}
       </div>
       <div className="flex items-center gap-1 shrink-0">
@@ -1127,7 +1143,7 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
             {visibleHandoffs.length === 0 ? (
               <p className="text-xs text-muted-foreground/60 text-center py-2">No pending handoffs.</p>
             ) : (
-              visibleHandoffs.map((handoff) => (
+              (visibleHandoffs as HandoffResponseWithPr[]).map((handoff) => (
                 <HandoffFeedItem
                   key={handoff.id}
                   handoff={handoff}

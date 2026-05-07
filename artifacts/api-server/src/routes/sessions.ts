@@ -645,7 +645,7 @@ router.patch("/sessions/:sessionId", async (req, res) => {
 });
 
 router.post("/sessions", requireAgentAuth(["sessions:write"]), async (req, res) => {
-  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider, githubToken: rawGithubToken, modelRoutingMode: rawModelRoutingMode } = req.body;
+  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider, githubToken: rawGithubToken, modelRoutingMode: rawModelRoutingMode, enableLaneBranches: rawEnableLaneBranches } = req.body;
   const modelRoutingMode: "auto" | "pinned" = rawModelRoutingMode === "pinned" ? "pinned" : "auto";
 
   // If no PAT was passed from the dashboard, attempt to load the stored OAuth token.
@@ -974,6 +974,10 @@ router.post("/sessions", requireAgentAuth(["sessions:write"]), async (req, res) 
       }
     }
 
+    // enableLaneBranches defaults to true when an OAuth/PAT token is present.
+    // Callers can pass false to revert to the legacy single-branch behaviour.
+    const enableLaneBranches: boolean = rawEnableLaneBranches === false ? false : !!githubToken;
+
     const onstart = vastai.buildOnStartScript({
       modelRepo: MODEL_REPO,
       modelQuant: MODEL_QUANT,
@@ -998,6 +1002,7 @@ router.post("/sessions", requireAgentAuth(["sessions:write"]), async (req, res) 
       swarmApiBase,
       swarmApiKey,
       githubToken,
+      enableLaneBranches,
     });
 
     // ── Provision the workspace machine ────────────────────────────────────────

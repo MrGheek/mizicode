@@ -47,6 +47,8 @@ import {
 import { compileLaneBundles } from "../services/skills-bundler";
 import { sweepExpiredClaims, expireStaleClaimsForSession } from "../services/claim-sweeper";
 import type { HeavyJobClass, HeavyJobStatus, HandoffType, ClaimType, SessionLane, LaneClaim, LaneHandoff, LaneHeavyJob } from "@workspace/db";
+import { createDraftPullRequest } from "../services/github-pr";
+import { getLaneBranchName, getSessionBranchName } from "../services/lane-branch";
 
 const router = Router({ mergeParams: true });
 
@@ -178,6 +180,7 @@ function serializeHandoff(handoff: LaneHandoff) {
     message: handoff.notes ?? null,
     status,
     acknowledgedAt: handoff.acknowledgedAt?.toISOString() ?? null,
+    prUrl: handoff.prUrl ?? null,
     createdAt: handoff.createdAt.toISOString(),
   };
 }
@@ -618,9 +621,59 @@ router.post("/sessions/:id/lanes/:laneId/handoff", async (req, res) => {
       .where(eq(sessionLanesTable.id, laneId));
   }
 
+  // When a lane signals "safe to merge", attempt to open a draft PR automatically.
+  // This is fire-and-forget: PR creation failure must never block the handoff response.
+  // The PR URL (if created) is stored in the handoff row so the Team tab can link to it.
+  let finalHandoff = handoff;
+  if (handoffType === "safe_to_merge") {
+    (async () => {
+      try {
+        const [session] = await db.select({ repoFingerprintJson: sessionsTable.repoFingerprintJson, hasGithubToken: sessionsTable.hasGithubToken })
+          .from(sessionsTable)
+          .where(eq(sessionsTable.id, sessionId));
+
+        if (!session?.hasGithubToken) return;
+
+        const fp = session.repoFingerprintJson as Record<string, unknown> | null;
+        const repoUrl = fp && typeof fp["url"] === "string" ? fp["url"] : null;
+        if (!repoUrl) {
+          logger.debug({ sessionId, laneId }, "handoff safe_to_merge: no repoUrl in session fingerprint — skipping PR");
+          return;
+        }
+
+        const headBranch = getLaneBranchName(sessionId, lane.memberIdentifier);
+        const baseBranch = getSessionBranchName(sessionId);
+
+        const prTitle = `[MIZI] ${lane.memberIdentifier} — safe to merge into session branch`;
+        const prBody = [
+          `Auto-opened by MIZI on lane handoff signal (\`safe_to_merge\`).`,
+          ``,
+          `**Lane:** \`${lane.memberIdentifier}\` (${lane.laneType})`,
+          `**Head branch:** \`${headBranch}\``,
+          `**Base branch:** \`${baseBranch}\``,
+          message ? `**Note:** ${message}` : "",
+        ].filter(Boolean).join("\n");
+
+        const prUrl = await createDraftPullRequest({ repoUrl, headBranch, baseBranch, title: prTitle, body: prBody });
+
+        if (prUrl) {
+          const [updated] = await db.update(laneHandoffsTable)
+            .set({ prUrl })
+            .where(eq(laneHandoffsTable.id, handoff.id))
+            .returning();
+          if (updated) finalHandoff = updated;
+          logger.info({ handoffId: handoff.id, prUrl }, "Draft PR opened for safe_to_merge handoff");
+          broadcastCoordinationUpdate(sessionId);
+        }
+      } catch (err) {
+        logger.warn({ err, handoffId: handoff.id }, "PR creation for safe_to_merge handoff failed (non-fatal)");
+      }
+    })();
+  }
+
   broadcastCoordinationUpdate(sessionId);
   logger.info({ handoffId: handoff.id, laneId, handoffType }, "Lane handoff signal created");
-  res.status(201).json(serializeHandoff(handoff));
+  res.status(201).json(serializeHandoff(finalHandoff));
 });
 
 // ─── PATCH /api/sessions/:id/lanes/:laneId/handoff/:handoffId ─────────────────
