@@ -5345,6 +5345,26 @@ components:
           enum: [full, core, lean, ultra]
           nullable: true
 
+    BlastEdge:
+      type: object
+      description: A dependency graph edge that triggered a blast-radius conflict warning.
+      properties:
+        fromPath:
+          type: string
+          description: File path of the caller.
+        toPath:
+          type: string
+          description: File path of the callee.
+        callerSymbol:
+          type: string
+          nullable: true
+          description: Symbol in fromPath that calls into toPath, if known.
+        calleeSymbol:
+          type: string
+          nullable: true
+          description: Symbol in toPath that is called, if known.
+      required: [fromPath, toPath]
+
     ClaimOverlapItem:
       type: object
       properties:
@@ -5359,7 +5379,23 @@ components:
         recommendation:
           type: string
           enum: [no_conflict, warn, block]
-      required: [conflictingLaneId, conflictingMember, overlapScore, blastRadiusOverlap, recommendation]
+        symbols:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: >
+            Specific symbol name(s) that collide between the two lanes.
+            Null when the conflict is at file level (no symbol metadata provided).
+        triggeringEdges:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlastEdge"
+          description: >
+            Dependency edges that triggered the blast-radius warning.
+            Empty when the conflict is a direct file/symbol overlap rather than
+            a call-graph dependency.
+      required: [conflictingLaneId, conflictingMember, overlapScore, blastRadiusOverlap, recommendation, triggeringEdges]
 
     ClaimResponse:
       type: object
@@ -5400,6 +5436,17 @@ components:
         symbolName:
           type: string
           nullable: true
+        claimSymbols:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: >
+            Optional list of specific function/class/variable names being
+            edited within resourcePath. When both the caller and the other
+            lane supply claimSymbols, conflict detection is refined to the
+            symbol level — two lanes editing distinct symbols in the same
+            file will NOT raise a conflict warning.
         taskDescription:
           type: string
           nullable: true
@@ -5535,6 +5582,14 @@ components:
         recommendation:
           type: string
           enum: [no_conflict, warn, block]
+        symbols:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: >
+            Specific symbol name(s) that collide between the two lanes.
+            Null when the conflict is at file level (no symbol metadata provided).
         detail:
           type: string
           nullable: true

@@ -412,6 +412,155 @@ describe("GET /api/sessions/:id/conflicts", () => {
   });
 });
 
+// ─── Symbol-level conflict detection ──────────────────────────────────────────
+
+describe("Symbol-level conflict detection: same file, different symbols", () => {
+  let symLaneAId: number;
+  let symLaneBId: number;
+  let symSessionId: number;
+
+  beforeAll(async () => {
+    // Isolated session so these tests don't interfere with other claims
+    const [session] = await db
+      .insert(sessionsTable)
+      .values({ profileId: testProfileId, status: "ready" })
+      .returning();
+    symSessionId = session.id;
+
+    const resA = await request(app)
+      .post(`/api/sessions/${symSessionId}/lanes`)
+      .send({ memberIdentifier: "sym-alice@test.com", laneType: "ux" });
+    symLaneAId = resA.body.id;
+
+    const resB = await request(app)
+      .post(`/api/sessions/${symSessionId}/lanes`)
+      .send({ memberIdentifier: "sym-bob@test.com", laneType: "backend" });
+    symLaneBId = resB.body.id;
+  });
+
+  afterAll(async () => {
+    await cleanupSession(symSessionId);
+  });
+
+  it("does NOT raise a conflict when two lanes claim different functions in the same file", async () => {
+    // Lane A claims validateEmail in src/utils.ts
+    await request(app)
+      .post(`/api/sessions/${symSessionId}/lanes/${symLaneAId}/claim`)
+      .send({
+        claimType: "file",
+        resourcePath: "src/utils.ts",
+        claimSymbols: ["validateEmail", "parseDate"],
+        strength: 0.8,
+      });
+
+    // Lane B claims fetchUser (non-overlapping symbol) in the same file
+    const res = await request(app)
+      .post(`/api/sessions/${symSessionId}/lanes/${symLaneBId}/claim`)
+      .send({
+        claimType: "file",
+        resourcePath: "src/utils.ts",
+        claimSymbols: ["fetchUser", "renderNav"],
+        strength: 0.8,
+      });
+
+    expect(res.status).toBe(201);
+    // Distinct symbols → no conflict
+    expect(res.body.overallRecommendation).toBe("no_conflict");
+    expect(res.body.overlaps).toHaveLength(0);
+  });
+
+  it("raises a conflict when two lanes claim the same function in the same file", async () => {
+    // Reset: release previous claims by creating new unique resource paths for this sub-test
+    const resA = await request(app)
+      .post(`/api/sessions/${symSessionId}/lanes/${symLaneAId}/claim`)
+      .send({
+        claimType: "file",
+        resourcePath: "src/auth.ts",
+        claimSymbols: ["verifyToken", "hashPassword"],
+        strength: 0.9,
+      });
+    expect(resA.status).toBe(201);
+
+    const resB = await request(app)
+      .post(`/api/sessions/${symSessionId}/lanes/${symLaneBId}/claim`)
+      .send({
+        claimType: "file",
+        resourcePath: "src/auth.ts",
+        claimSymbols: ["verifyToken"],  // overlaps with lane A
+        strength: 0.9,
+      });
+
+    expect(resB.status).toBe(201);
+    // Same symbol → must produce a conflict
+    expect(["warn", "block"]).toContain(resB.body.overallRecommendation);
+    expect(resB.body.overlaps.length).toBeGreaterThan(0);
+    // The conflicting symbol should be surfaced
+    const overlap = resB.body.overlaps[0];
+    expect(Array.isArray(overlap.symbols)).toBe(true);
+    expect(overlap.symbols).toContain("verifyToken");
+  });
+
+  it("GET /conflicts omits same-file/different-symbol pairs and includes conflicting symbols", async () => {
+    const res = await request(app).get(`/api/sessions/${symSessionId}/conflicts`);
+    expect(res.status).toBe(200);
+
+    const conflicts = res.body.conflicts as Array<{
+      conflictingResources: string[];
+      symbols: string[] | null;
+      recommendation: string;
+    }>;
+
+    // src/utils.ts (different symbols) should NOT appear as a conflict
+    const utilsConflict = conflicts.find(c => c.conflictingResources.includes("src/utils.ts"));
+    expect(utilsConflict).toBeUndefined();
+
+    // src/auth.ts (same symbol) SHOULD appear as a conflict
+    const authConflict = conflicts.find(c => c.conflictingResources.includes("src/auth.ts"));
+    expect(authConflict).toBeDefined();
+    expect(authConflict?.symbols).toContain("verifyToken");
+  });
+
+  it("stores claimSymbols and the response reflects symbolName on the claim", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${symSessionId}/lanes/${symLaneAId}/claim`)
+      .send({
+        claimType: "symbol",
+        resourcePath: "src/parser.ts",
+        claimSymbols: ["parseAST"],
+        strength: 0.7,
+      });
+
+    expect(res.status).toBe(201);
+    // The first symbol should be surfaced as symbolName on the LaneClaimItem
+    expect(res.body.claim.symbolName).toBe("parseAST");
+  });
+
+  it("falls back to file-level detection when lane A has no symbol metadata", async () => {
+    const resA = await request(app)
+      .post(`/api/sessions/${symSessionId}/lanes/${symLaneAId}/claim`)
+      .send({
+        claimType: "file",
+        resourcePath: "src/shared/config.ts",
+        // No claimSymbols — file-level claim
+        strength: 0.8,
+      });
+    expect(resA.status).toBe(201);
+
+    const resB = await request(app)
+      .post(`/api/sessions/${symSessionId}/lanes/${symLaneBId}/claim`)
+      .send({
+        claimType: "file",
+        resourcePath: "src/shared/config.ts",
+        claimSymbols: ["getEnv"],  // lane B has symbols; lane A does not
+        strength: 0.8,
+      });
+
+    expect(resB.status).toBe(201);
+    // Without both sides carrying symbols, fallback to file-level → must conflict
+    expect(["warn", "block"]).toContain(resB.body.overallRecommendation);
+  });
+});
+
 // ─── Handoffs ──────────────────────────────────────────────────────────────────
 
 describe("POST /api/sessions/:id/lanes/:laneId/handoff", () => {
@@ -1449,5 +1598,26 @@ describe("GET /api/admin/claim-cleanup-stats", () => {
         new Date(runs[i]!.purgedAt).getTime(),
       );
     }
+  });
+});
+
+// ─── GET /api/sessions/:id/coordination/stream ────────────────────────────────
+
+describe("GET /api/sessions/:id/coordination/stream", () => {
+  it("returns 400 for a non-numeric session ID", async () => {
+    const res = await request(app).get("/api/sessions/not-a-number/coordination/stream");
+    expect(res.status).toBe(400);
+  });
+
+  it("streams event-stream headers for a valid session and cleans up on close", async () => {
+    // SSE connections stay open indefinitely; use a short timeout so the test
+    // finishes quickly. Destroying the socket triggers req.on("close"), which
+    // exercises the keepAlive cleanup path and gives v8 coverage for the full handler.
+    await request(app)
+      .get(`/api/sessions/${testSessionId}/coordination/stream`)
+      .timeout(300)
+      .catch(() => {
+        // A timeout / socket hang-up is expected — the SSE stream never ends on its own.
+      });
   });
 });

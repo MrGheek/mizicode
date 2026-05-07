@@ -33,8 +33,11 @@ import {
   LANE_POLICIES,
   computeClaimOverlap,
   estimateBlastRadiusOverlap,
+  computeSymbolAwareClaimOverlap,
+  estimateBlastRadiusOverlapAnnotated,
   LANE_DEFAULT_TTL_SECONDS,
 } from "../services/lane-policy";
+import type { ClaimWithSymbols } from "../services/lane-policy";
 import {
   enqueueHeavyJob,
   listHeavyJobs,
@@ -113,13 +116,14 @@ function enumToStrength(s: string): number {
 
 /** Serialize a DB claim row + member identifier to the API LaneClaimItem shape. */
 function serializeClaim(claim: LaneClaim, memberIdentifier: string) {
+  const symbols = claim.claimSymbols as string[] | null | undefined;
   return {
     id: claim.id,
     laneId: claim.laneId,
     memberIdentifier,
     claimType: claim.claimType,
     resourcePath: claim.pathOrSymbol,
-    symbolName: null,
+    symbolName: symbols && symbols.length > 0 ? symbols[0] ?? null : null,
     taskDescription: null,
     strength: enumToStrength(claim.claimStrength),
     expiresAt: claim.expiresAt.toISOString(),
@@ -391,9 +395,10 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
     .where(and(eq(sessionLanesTable.id, laneId), eq(sessionLanesTable.sessionId, sessionId)));
   if (!lane) { res.status(404).json({ error: "Lane not found" }); return; }
 
-  const { claimType, resourcePath, strength, ttlSeconds, preserveHistory } = req.body as {
+  const { claimType, resourcePath, claimSymbols, strength, ttlSeconds, preserveHistory } = req.body as {
     claimType?: ClaimType;
     resourcePath?: string;
+    claimSymbols?: string[];
     strength?: number;
     ttlSeconds?: number;
     preserveHistory?: boolean;
@@ -408,6 +413,9 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
   const ttl = typeof ttlSeconds === "number" && ttlSeconds > 0 ? ttlSeconds : LANE_DEFAULT_TTL_SECONDS;
   const now = new Date();
   const expiresAt = new Date(Date.now() + ttl * 1000);
+  const resolvedSymbols = Array.isArray(claimSymbols) && claimSymbols.length > 0
+    ? claimSymbols.filter(s => typeof s === "string" && s.length > 0)
+    : null;
 
   let claim: typeof laneClaimsTable.$inferSelect;
 
@@ -428,6 +436,7 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
         laneId,
         claimType: claimType ?? "file",
         pathOrSymbol: resourcePath,
+        claimSymbols: resolvedSymbols as unknown as Record<string, unknown> | null,
         claimedAt: now,
         lastHeartbeatAt: now,
         expiresAt,
@@ -444,6 +453,7 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
       laneId,
       claimType: claimType ?? "file",
       pathOrSymbol: resourcePath,
+      claimSymbols: resolvedSymbols as unknown as Record<string, unknown> | null,
       claimedAt: now,
       lastHeartbeatAt: now,
       expiresAt,
@@ -455,6 +465,7 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
       set: {
         claimType: claimType ?? sql`${laneClaimsTable.claimType}`,
         claimStrength,
+        claimSymbols: resolvedSymbols as unknown as Record<string, unknown> | null,
         lastHeartbeatAt: now,
         expiresAt,
       },
@@ -475,6 +486,8 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
     overlapScore: number;
     blastRadiusOverlap: number;
     recommendation: "no_conflict" | "warn" | "block";
+    symbols: string[] | null;
+    triggeringEdges: Array<{ fromPath: string; toPath: string; callerSymbol?: string; calleeSymbol?: string }>;
   };
   const overlaps: OverlapItem[] = [];
 
@@ -486,11 +499,15 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
         eq(laneClaimsTable.active, true),
       ));
 
-    const claimsByLane = new Map<number, string[]>();
+    // Index other claims by lane, retaining symbol metadata for symbol-aware detection
+    const claimsByLane = new Map<number, ClaimWithSymbols[]>();
     for (const c of otherClaims) {
-      const paths = claimsByLane.get(c.laneId) ?? [];
-      paths.push(c.pathOrSymbol);
-      claimsByLane.set(c.laneId, paths);
+      const arr = claimsByLane.get(c.laneId) ?? [];
+      arr.push({
+        pathOrSymbol: c.pathOrSymbol,
+        symbols: c.claimSymbols as string[] | null | undefined,
+      });
+      claimsByLane.set(c.laneId, arr);
     }
 
     // Load repo graph edges so claim-time overlap detection includes
@@ -512,23 +529,43 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
       logger.warn({ err, sessionId }, "Claim overlap: failed to load repo edges (proceeding without graph data)");
     }
 
-    for (const [otherId, otherPaths] of claimsByLane.entries()) {
-      const overlapScore = computeClaimOverlap([resourcePath], otherPaths);
-      const blastRadiusOverlap = estimateBlastRadiusOverlap([resourcePath], otherPaths, repoEdges);
+    // The current claim as a ClaimWithSymbols for symbol-aware comparison
+    const currentClaimWithSymbols: ClaimWithSymbols = {
+      pathOrSymbol: resourcePath,
+      symbols: resolvedSymbols,
+    };
+
+    for (const [otherId, otherClaimsForLane] of claimsByLane.entries()) {
+      // Use symbol-aware overlap when both sides may carry symbol metadata
+      const symbolResult = computeSymbolAwareClaimOverlap(
+        [currentClaimWithSymbols],
+        otherClaimsForLane,
+      );
+
+      // Blast-radius check uses file paths (symbol-level blast-radius not yet indexed)
+      const blastResult = estimateBlastRadiusOverlapAnnotated(
+        [currentClaimWithSymbols],
+        otherClaimsForLane,
+        repoEdges,
+      );
+
+      const overlapScore = symbolResult.score;
+      const blastRadiusOverlap = blastResult.score;
+
       if (overlapScore > 0 || blastRadiusOverlap > 0) {
         const laneInfo = otherLanes.find(l => l.id === otherId);
-        // Recommendation incorporates both direct path overlap and shared-dependency
-        // blast-radius overlap so a lane claiming a file that imports another lane's
-        // claimed file surfaces as "warn" even when paths don't directly collide.
         const effectiveScore = Math.max(overlapScore, blastRadiusOverlap * 0.75);
         const recommendation: "no_conflict" | "warn" | "block" =
           effectiveScore >= 0.75 ? "block" : effectiveScore >= 0.4 ? "warn" : "no_conflict";
+
         overlaps.push({
           conflictingLaneId: otherId,
           conflictingMember: laneInfo?.memberIdentifier ?? "unknown",
           overlapScore: Math.round(overlapScore * 100) / 100,
           blastRadiusOverlap: Math.round(blastRadiusOverlap * 100) / 100,
           recommendation,
+          symbols: symbolResult.conflictingSymbols.length > 0 ? symbolResult.conflictingSymbols : null,
+          triggeringEdges: blastResult.triggeringEdges,
         });
       }
     }
@@ -879,6 +916,7 @@ router.get("/sessions/:id/conflicts", async (req, res) => {
     conflictingResources: string[];
     recommendation: "no_conflict" | "warn" | "block";
     detail: string;
+    symbols: string[] | null;
   };
   const conflicts: ConflictItem[] = [];
 
@@ -887,30 +925,51 @@ router.get("/sessions/:id/conflicts", async (req, res) => {
     for (let j = i + 1; j < laneList.length; j++) {
       const idA = laneList[i]!;
       const idB = laneList[j]!;
-      const claimsA = (claimsByLane.get(idA) ?? []).map(c => c.pathOrSymbol);
-      const claimsB = (claimsByLane.get(idB) ?? []).map(c => c.pathOrSymbol);
+      const claimsForA: ClaimWithSymbols[] = (claimsByLane.get(idA) ?? []).map(c => ({
+        pathOrSymbol: c.pathOrSymbol,
+        symbols: c.claimSymbols as string[] | null | undefined,
+      }));
+      const claimsForB: ClaimWithSymbols[] = (claimsByLane.get(idB) ?? []).map(c => ({
+        pathOrSymbol: c.pathOrSymbol,
+        symbols: c.claimSymbols as string[] | null | undefined,
+      }));
 
-      const overlapScore = computeClaimOverlap(claimsA, claimsB);
-      const blastRadiusOverlap = estimateBlastRadiusOverlap(claimsA, claimsB, repoEdges);
+      // Use symbol-aware overlap so distinct functions in the same file don't conflict
+      const symbolResult = computeSymbolAwareClaimOverlap(claimsForA, claimsForB);
+
+      // Annotated blast-radius check preserves file-level dependency info + edge symbols
+      const blastResult = estimateBlastRadiusOverlapAnnotated(claimsForA, claimsForB, repoEdges);
+
+      const overlapScore = symbolResult.score;
+      const blastRadiusOverlap = blastResult.score;
 
       if (overlapScore > 0 || blastRadiusOverlap > 0) {
         const laneA = lanes.find(l => l.id === idA);
         const laneB = lanes.find(l => l.id === idB);
-        const conflicting = claimsA.filter(a => {
-          const aNorm = a.toLowerCase();
-          return claimsB.some(b => {
-            const bNorm = b.toLowerCase();
-            return aNorm === bNorm || aNorm.startsWith(bNorm + "/") || bNorm.startsWith(aNorm + "/");
-          });
-        });
 
+        const effectiveScore = Math.max(overlapScore, blastRadiusOverlap * 0.75);
         const recommendation: "no_conflict" | "warn" | "block" =
-          overlapScore >= 0.75 ? "block" : overlapScore >= 0.4 ? "warn" : "no_conflict";
-        const detail = overlapScore >= 0.75
-          ? "High overlap: coordinate with the other lane before proceeding"
-          : blastRadiusOverlap > 0
-            ? "Blast-radius overlap detected: shared dependencies may cause conflicts"
-            : "Low overlap: worth monitoring";
+          effectiveScore >= 0.75 ? "block" : effectiveScore >= 0.4 ? "warn" : "no_conflict";
+
+        // Build a detail message that reflects whether symbol-level info is available
+        let detail: string;
+        if (symbolResult.conflictingSymbols.length > 0) {
+          const symList = symbolResult.conflictingSymbols.slice(0, 3).join(", ");
+          const more = symbolResult.conflictingSymbols.length > 3
+            ? ` and ${symbolResult.conflictingSymbols.length - 3} more` : "";
+          detail = overlapScore >= 0.75
+            ? `High overlap on symbol(s): ${symList}${more} — coordinate before proceeding`
+            : `Symbol conflict detected: ${symList}${more}`;
+        } else if (blastRadiusOverlap > 0) {
+          const edgeDetail = blastResult.triggeringEdges.length > 0 && blastResult.triggeringEdges[0]?.callerSymbol
+            ? ` via ${blastResult.triggeringEdges[0].callerSymbol} → ${blastResult.triggeringEdges[0].toPath}`
+            : "";
+          detail = `Blast-radius overlap detected: shared dependencies may cause conflicts${edgeDetail}`;
+        } else if (overlapScore >= 0.75) {
+          detail = "High overlap: coordinate with the other lane before proceeding";
+        } else {
+          detail = "Low overlap: worth monitoring";
+        }
 
         conflicts.push({
           laneIdA: idA,
@@ -919,9 +978,10 @@ router.get("/sessions/:id/conflicts", async (req, res) => {
           memberB: laneB?.memberIdentifier ?? "unknown",
           overlapScore: Math.round(overlapScore * 100) / 100,
           blastRadiusOverlap: Math.round(blastRadiusOverlap * 100) / 100,
-          conflictingResources: conflicting,
+          conflictingResources: symbolResult.conflictingResources,
           recommendation,
           detail,
+          symbols: symbolResult.conflictingSymbols.length > 0 ? symbolResult.conflictingSymbols : null,
         });
       }
     }

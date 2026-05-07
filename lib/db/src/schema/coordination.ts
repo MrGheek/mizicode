@@ -30,6 +30,7 @@ export const laneClaimsTable = pgTable("lane_claims", {
   laneId: integer("lane_id").notNull().references(() => sessionLanesTable.id),
   claimType: text("claim_type").notNull(),
   pathOrSymbol: text("path_or_symbol").notNull(),
+  claimSymbols: jsonb("claim_symbols"),
   claimedAt: timestamp("claimed_at").notNull().defaultNow(),
   lastHeartbeatAt: timestamp("last_heartbeat_at").notNull().defaultNow(),
   expiresAt: timestamp("expires_at").notNull(),

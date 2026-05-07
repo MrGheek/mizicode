@@ -261,3 +261,249 @@ export function estimateBlastRadiusOverlap(
   const maxPossible = Math.max(claimsA.length, claimsB.length);
   return Math.min(1.0, blastHits / maxPossible);
 }
+
+// ─── Symbol-level conflict detection ──────────────────────────────────────────
+
+/**
+ * A claim enriched with optional symbol metadata.
+ * When `symbols` is present and non-empty, the claim targets specific functions/classes
+ * within the file at `pathOrSymbol`. Claims without `symbols` fall back to file-level
+ * overlap detection.
+ */
+export interface ClaimWithSymbols {
+  pathOrSymbol: string;
+  symbols?: string[] | null;
+}
+
+/**
+ * Result from symbol-aware overlap computation.
+ */
+export interface SymbolOverlapResult {
+  /** Overlap confidence score [0, 1]. 0 means no conflict. */
+  score: number;
+  /** File paths that are in conflict at the path level. */
+  conflictingResources: string[];
+  /** Symbol names that directly collide between the two lanes. */
+  conflictingSymbols: string[];
+}
+
+/**
+ * Compute overlap between two enriched claim sets using symbol metadata where available.
+ *
+ * Resolution order for a pair of claims sharing the same file path:
+ *  1. If both claims carry `symbols`, only flag a conflict when their symbol sets intersect.
+ *  2. If either claim lacks `symbols`, fall back to the existing file-path overlap logic.
+ *
+ * This eliminates false positives when two lanes edit distinct, non-overlapping functions
+ * in the same file.
+ */
+export function computeSymbolAwareClaimOverlap(
+  claimsA: ClaimWithSymbols[],
+  claimsB: ClaimWithSymbols[],
+): SymbolOverlapResult {
+  if (claimsA.length === 0 || claimsB.length === 0) {
+    return { score: 0, conflictingResources: [], conflictingSymbols: [] };
+  }
+
+  const conflictingResources: string[] = [];
+  const conflictingSymbols: string[] = [];
+
+  // Deduplicate into sets keyed by normalised path — mirrors computeClaimOverlap's setA/setB.
+  // When the same path appears multiple times we keep the claim with the richest symbol set
+  // (most symbols), which is the safest choice for conflict detection.
+  const mapA = new Map<string, ClaimWithSymbols>();
+  for (const c of claimsA) {
+    const key = c.pathOrSymbol.toLowerCase();
+    const existing = mapA.get(key);
+    if (!existing || (c.symbols?.length ?? 0) > (existing.symbols?.length ?? 0)) {
+      mapA.set(key, c);
+    }
+  }
+  const mapB = new Map<string, ClaimWithSymbols>();
+  for (const c of claimsB) {
+    const key = c.pathOrSymbol.toLowerCase();
+    const existing = mapB.get(key);
+    if (!existing || (c.symbols?.length ?? 0) > (existing.symbols?.length ?? 0)) {
+      mapB.set(key, c);
+    }
+  }
+
+  // Score accumulators mirror computeClaimOverlap exactly:
+  //   score = (directOverlap + prefixOverlap * 0.5) / setA.size, capped at 1.0
+  let directOverlap = 0;
+  let prefixOverlap = 0;
+
+  for (const [keyA, claimA] of mapA) {
+    if (mapB.has(keyA)) {
+      // Direct path match — apply symbol-level refinement when both sides have symbols.
+      const claimB = mapB.get(keyA)!;
+      const symbolsA = claimA.symbols?.filter(Boolean) ?? [];
+      const symbolsB = claimB.symbols?.filter(Boolean) ?? [];
+
+      if (symbolsA.length > 0 && symbolsB.length > 0) {
+        // Both symbol-scoped: only conflict when symbol sets intersect
+        const symSetA = new Set(symbolsA.map(s => s.toLowerCase()));
+        const collisions = symbolsB.filter(s => symSetA.has(s.toLowerCase()));
+
+        if (collisions.length > 0) {
+          for (const sym of collisions) {
+            if (!conflictingSymbols.includes(sym)) conflictingSymbols.push(sym);
+          }
+          if (!conflictingResources.includes(claimA.pathOrSymbol)) {
+            conflictingResources.push(claimA.pathOrSymbol);
+          }
+          directOverlap++;
+        }
+        // No collision → different symbols in the same file → NOT a conflict; contribute 0
+      } else {
+        // At least one side lacks symbol metadata — file-level fallback (full weight)
+        if (!conflictingResources.includes(claimA.pathOrSymbol)) {
+          conflictingResources.push(claimA.pathOrSymbol);
+        }
+        directOverlap++;
+      }
+    } else {
+      // No direct match — check for prefix/directory overlap with 0.5 weight,
+      // exactly as computeClaimOverlap does.
+      for (const keyB of mapB.keys()) {
+        if (keyB !== keyA && (keyB.startsWith(keyA + "/") || keyA.startsWith(keyB + "/"))) {
+          if (!conflictingResources.includes(claimA.pathOrSymbol)) {
+            conflictingResources.push(claimA.pathOrSymbol);
+          }
+          prefixOverlap++;
+          break; // count once per distinct path from A
+        }
+      }
+    }
+  }
+
+  const totalA = mapA.size;
+  const score = Math.min(1.0, (directOverlap + prefixOverlap * 0.5) / totalA);
+  return { score, conflictingResources, conflictingSymbols };
+}
+
+/**
+ * A blast-radius triggering edge annotated with optional symbol-level caller/callee info.
+ */
+export interface AnnotatedBlastEdge {
+  /** File path of the caller. */
+  fromPath: string;
+  /** File path of the callee. */
+  toPath: string;
+  /** Symbol in `fromPath` that calls into `toPath`, if known. */
+  callerSymbol?: string;
+  /** Symbol in `toPath` that is called, if known. */
+  calleeSymbol?: string;
+}
+
+/**
+ * Result from annotated blast-radius overlap computation.
+ */
+export interface BlastRadiusAnnotatedResult {
+  /** Score [0, 1] — same semantics as estimateBlastRadiusOverlap. */
+  score: number;
+  /** Edges in the dependency graph that triggered the blast-radius warning. */
+  triggeringEdges: AnnotatedBlastEdge[];
+}
+
+/**
+ * Estimate blast-radius overlap with edge-level annotations for UI display.
+ * Returns a score AND the specific dependency edges (caller → callee) that
+ * triggered the warning, so the dashboard can show "funcA in file.ts imports
+ * into other.ts" rather than a generic file-level warning.
+ *
+ * `repoEdges` may optionally carry `fromSymbol`/`toSymbol` fields to enable
+ * symbol-level edge gating. When an edge carries `fromSymbol`/`toSymbol` AND
+ * the corresponding claim side provides a symbols list, the edge is only
+ * counted when the edge symbol appears in the claimed symbols for that file.
+ * This prevents blast-radius warnings from firing when two lanes work on
+ * different symbols in the same file and a call-graph edge exists between them
+ * for unrelated functions.
+ */
+export function estimateBlastRadiusOverlapAnnotated(
+  claimsA: ClaimWithSymbols[],
+  claimsB: ClaimWithSymbols[],
+  repoEdges: Array<{ from: string; to: string; fromSymbol?: string; toSymbol?: string }>,
+): BlastRadiusAnnotatedResult {
+  if (repoEdges.length === 0 || claimsA.length === 0 || claimsB.length === 0) {
+    return { score: 0, triggeringEdges: [] };
+  }
+
+  // Build path → claimed symbol set lookups for fine-grained symbol gating.
+  // Only paths whose claims carry at least one symbol are entered; paths without
+  // symbol metadata skip symbol gating and rely on file-path matching alone.
+  const symbolsForPathA = new Map<string, Set<string>>();
+  for (const c of claimsA) {
+    if (c.symbols && c.symbols.length > 0) {
+      symbolsForPathA.set(c.pathOrSymbol.toLowerCase(), new Set(c.symbols.map(s => s.toLowerCase())));
+    }
+  }
+  const symbolsForPathB = new Map<string, Set<string>>();
+  for (const c of claimsB) {
+    if (c.symbols && c.symbols.length > 0) {
+      symbolsForPathB.set(c.pathOrSymbol.toLowerCase(), new Set(c.symbols.map(s => s.toLowerCase())));
+    }
+  }
+
+  const setA = new Set(claimsA.map(c => c.pathOrSymbol.toLowerCase()));
+  const setB = new Set(claimsB.map(c => c.pathOrSymbol.toLowerCase()));
+
+  let blastHits = 0;
+  const triggeringEdges: AnnotatedBlastEdge[] = [];
+
+  /**
+   * Check whether a directional interpretation of the edge passes symbol gating.
+   * Returns true when the edge should be counted for this direction.
+   */
+  const passesSymbolGating = (
+    e: { fromSymbol?: string; toSymbol?: string },
+    fromNorm: string,
+    toNorm: string,
+    callerSide: "A" | "B",
+  ): boolean => {
+    if (e.fromSymbol) {
+      const callerSyms = callerSide === "A"
+        ? symbolsForPathA.get(fromNorm)
+        : symbolsForPathB.get(fromNorm);
+      if (callerSyms && !callerSyms.has(e.fromSymbol.toLowerCase())) {
+        return false;
+      }
+    }
+    if (e.toSymbol) {
+      const calleeSyms = callerSide === "A"
+        ? symbolsForPathB.get(toNorm)
+        : symbolsForPathA.get(toNorm);
+      if (calleeSyms && !calleeSyms.has(e.toSymbol.toLowerCase())) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  for (const edge of repoEdges) {
+    const fromNorm = edge.from.toLowerCase();
+    const toNorm = edge.to.toLowerCase();
+
+    // Evaluate both possible directional interpretations independently.
+    // This is critical for same-file edges (from === to) or when a file is
+    // claimed by both lanes: the first branch should not shadow the second.
+    // An edge is counted when AT LEAST ONE valid interpretation passes
+    // symbol gating (but counted only once per edge regardless).
+    const aCallerValid = setA.has(fromNorm) && setB.has(toNorm) && passesSymbolGating(edge, fromNorm, toNorm, "A");
+    const bCallerValid = setB.has(fromNorm) && setA.has(toNorm) && passesSymbolGating(edge, fromNorm, toNorm, "B");
+
+    if (!aCallerValid && !bCallerValid) continue;
+
+    blastHits++;
+    triggeringEdges.push({
+      fromPath: edge.from,
+      toPath: edge.to,
+      callerSymbol: edge.fromSymbol,
+      calleeSymbol: edge.toSymbol,
+    });
+  }
+
+  const maxPossible = Math.max(claimsA.length, claimsB.length);
+  const score = Math.min(1.0, blastHits / maxPossible);
+  return { score, triggeringEdges };
+}

@@ -1423,12 +1423,27 @@ export const ClaimOverlapItemRecommendation = {
   block: "block",
 } as const;
 
+export interface BlastEdge {
+  /** File path of the caller. */
+  fromPath: string;
+  /** File path of the callee. */
+  toPath: string;
+  /** Symbol in fromPath that calls into toPath, if known. */
+  callerSymbol?: string | null;
+  /** Symbol in toPath that is called, if known. */
+  calleeSymbol?: string | null;
+}
+
 export interface ClaimOverlapItem {
   conflictingLaneId: number;
   conflictingMember: string;
   overlapScore: number;
   blastRadiusOverlap: number;
   recommendation: ClaimOverlapItemRecommendation;
+  /** Symbol names in conflict, when symbol-level detection was applied. Null when only file-level detection ran. */
+  symbols?: string[] | null;
+  /** Dependency edges that triggered the blast-radius warning. Empty when conflict is direct file/symbol overlap. */
+  triggeringEdges: BlastEdge[];
 }
 
 export type ClaimResponseOverallRecommendation =
@@ -1474,6 +1489,13 @@ export interface CreateClaimRequest {
   claimType: CreateClaimRequestClaimType;
   resourcePath: string;
   symbolName?: string | null;
+  /**
+   * Optional list of specific function/class/variable names being edited within resourcePath.
+   * When both the caller and the other lane supply claimSymbols, conflict detection is refined
+   * to the symbol level — two lanes editing distinct symbols in the same file will NOT raise a
+   * conflict warning.
+   */
+  claimSymbols?: string[] | null;
   taskDescription?: string | null;
   /**
    * @minimum 0
@@ -1583,6 +1605,8 @@ export interface ConflictItem {
   conflictingResources: string[];
   recommendation: ConflictItemRecommendation;
   detail?: string | null;
+  /** Symbol names that are directly in conflict, when symbol-level detection was applied. Null when only file-level detection ran. */
+  symbols?: string[] | null;
 }
 
 export interface ConflictListResponse {

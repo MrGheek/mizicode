@@ -737,6 +737,20 @@ function ConflictsPanel({
                   ))}
                 </div>
               )}
+              {conflict.symbols && conflict.symbols.length > 0 && (
+                <div className="flex items-center flex-wrap gap-1">
+                  <span className="text-[10px] text-muted-foreground/60 shrink-0">Symbols:</span>
+                  {conflict.symbols.map((sym) => (
+                    <span
+                      key={sym}
+                      className="text-[10px] font-mono bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded px-1.5 py-0.5 max-w-full truncate"
+                      title={sym}
+                    >
+                      {sym}
+                    </span>
+                  ))}
+                </div>
+              )}
               {conflict.detail && (
                 <p className="text-[11px] text-muted-foreground">{conflict.detail}</p>
               )}

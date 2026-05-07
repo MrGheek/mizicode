@@ -3708,6 +3708,13 @@ export const CreateLaneClaimBody = zod.object({
   claimType: zod.enum(["file", "module", "symbol", "task"]),
   resourcePath: zod.string(),
   symbolName: zod.string().nullish(),
+  claimSymbols: zod
+    .array(zod.string())
+    .nullish()
+    .describe(
+      "Optional list of specific function/class/variable names being edited within resourcePath. " +
+      "When both sides supply claimSymbols, conflict detection is refined to the symbol level.",
+    ),
   taskDescription: zod.string().nullish(),
   strength: zod
     .number()
@@ -3715,6 +3722,42 @@ export const CreateLaneClaimBody = zod.object({
     .max(createLaneClaimBodyStrengthMax)
     .default(createLaneClaimBodyStrengthDefault),
   ttlSeconds: zod.number().default(createLaneClaimBodyTtlSecondsDefault),
+});
+
+const BlastEdgeSchema = zod.object({
+  fromPath: zod.string(),
+  toPath: zod.string(),
+  callerSymbol: zod.string().nullish(),
+  calleeSymbol: zod.string().nullish(),
+});
+
+export const CreateLaneClaimResponse = zod.object({
+  claim: zod.object({
+    id: zod.number(),
+    laneId: zod.number(),
+    claimType: zod.enum(["file", "module", "symbol", "task"]),
+    pathOrSymbol: zod.string(),
+    symbolName: zod.string().nullish(),
+    claimedAt: zod.string(),
+    expiresAt: zod.string().nullish(),
+    active: zod.boolean(),
+  }),
+  overlaps: zod.array(
+    zod.object({
+      conflictingLaneId: zod.number(),
+      conflictingMember: zod.string(),
+      overlapScore: zod.number(),
+      blastRadiusOverlap: zod.number(),
+      recommendation: zod.enum(["no_conflict", "warn", "block"]),
+      symbols: zod.array(zod.string()).nullish().describe(
+        "Specific symbol name(s) that collide between the two lanes. Null at file level.",
+      ),
+      triggeringEdges: zod.array(BlastEdgeSchema).describe(
+        "Dependency edges that triggered the blast-radius warning.",
+      ),
+    }),
+  ),
+  overallRecommendation: zod.enum(["no_conflict", "warn", "block"]),
 });
 
 /**
@@ -3884,6 +3927,10 @@ export const GetSessionConflictsResponse = zod.object({
       blastRadiusOverlap: zod.number(),
       conflictingResources: zod.array(zod.string()),
       recommendation: zod.enum(["no_conflict", "warn", "block"]),
+      symbols: zod.array(zod.string()).nullish().describe(
+        "Specific symbol name(s) that collide between the two lanes. " +
+        "Null when the conflict is at file level.",
+      ),
       detail: zod.string().nullish(),
     }),
   ),
