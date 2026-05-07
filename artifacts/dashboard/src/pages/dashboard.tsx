@@ -223,13 +223,14 @@ const TOKEN_MODES = [
   { value: "ultra", label: "Ultra", hint: "minimal" },
 ] as const;
 
-function IntentBar({ onGpuLaunch, onNimLaunch }: {
+function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog }: {
   onGpuLaunch: (profileId: number, opts?: Omit<LaunchOptions, "profileId">) => void;
   onNimLaunch: (opts: {
     nimModelId: string; nimProvider: string;
     intentText?: string; repoUrl?: string | null; githubToken?: string | null;
     taskMode?: string | null; tokenMode?: string | null; skillBundle?: string | null;
   }) => void;
+  nimCatalog: NimCatalogModel[];
 }) {
   const [intent, setIntent] = useState("");
   const [classifying, setClassifying] = useState(false);
@@ -243,7 +244,6 @@ function IntentBar({ onGpuLaunch, onNimLaunch }: {
   const [preClassifying, setPreClassifying] = useState(false);
   const [selectedNimSuggestion, setSelectedNimSuggestion] = useState<NimSuggestion | null>(null);
   const [showMoreModels, setShowMoreModels] = useState(false);
-  const [nimCatalog, setNimCatalog] = useState<NimCatalogModel[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [taskMode, setTaskMode] = useState<string>("build");
   const [tokenMode, setTokenMode] = useState<string>("core");
@@ -310,15 +310,6 @@ function IntentBar({ onGpuLaunch, onNimLaunch }: {
       else setPreClassifying(false);
     }
   };
-
-  // Lazy-fetch the NIM catalog when a NIM suggestion appears — used for "More models…" picker.
-  useEffect(() => {
-    if (!result?.nimSuggestion || nimCatalog.length > 0) return;
-    fetch(`${BASE_URL}api/nim/catalog`)
-      .then((r) => r.ok ? r.json() as Promise<{ models: NimCatalogModel[] }> : null)
-      .then((data) => { if (data?.models) setNimCatalog(data.models); })
-      .catch(() => {});
-  }, [result?.nimSuggestion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleNimLaunch = () => {
     if (!selectedNimSuggestion || launchingNim) return;
@@ -846,6 +837,15 @@ export default function Dashboard() {
   const { data: schedulerConfig } = useGetSchedulerConfig();
   const createSession = useCreateSession();
 
+  // NIM catalog — fetched once at page level, passed down to IntentBar for the "More models…" picker
+  const [nimCatalog, setNimCatalog] = useState<NimCatalogModel[]>([]);
+  useEffect(() => {
+    fetch(`${BASE_URL}api/nim/catalog`)
+      .then((r) => r.ok ? r.json() as Promise<{ models: NimCatalogModel[] }> : null)
+      .then((data) => { if (data?.models) setNimCatalog(data.models); })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Skill bundles — fetched once to resolve user's chosen bundle slug → numeric bundleId
   const [skillBundleMap, setSkillBundleMap] = useState<Record<string, number>>({});
   useEffect(() => {
@@ -976,7 +976,7 @@ export default function Dashboard() {
 
         {/* Intent field — hero */}
         <div className="glass-emerge" style={{ animationDelay: "20ms" }}>
-          <IntentBar onGpuLaunch={handleGpuLaunch} onNimLaunch={handleNimLaunch} />
+          <IntentBar onGpuLaunch={handleGpuLaunch} onNimLaunch={handleNimLaunch} nimCatalog={nimCatalog} />
         </div>
 
         {/* Recent sessions — compact list */}
