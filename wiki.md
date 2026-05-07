@@ -19,11 +19,12 @@ MIZI Code is a GPU cloud coding platform that provisions AI-powered development 
 11. [Repo intelligence](#11-repo-intelligence)
 12. [Design intelligence](#12-design-intelligence)
 13. [NIM catalog & hosted inference](#13-nim-catalog--hosted-inference)
-14. [API key authentication](#14-api-key-authentication)
-15. [Dashboard pages](#15-dashboard-pages)
-16. [Environment variables & secrets](#16-environment-variables--secrets)
-17. [Database schema reference](#17-database-schema-reference)
-18. [API reference](#18-api-reference)
+14. [Test environment provisioning](#14-test-environment-provisioning)
+15. [API key authentication](#15-api-key-authentication)
+16. [Dashboard pages](#16-dashboard-pages)
+17. [Environment variables & secrets](#17-environment-variables--secrets)
+18. [Database schema reference](#18-database-schema-reference)
+19. [API reference](#19-api-reference)
 
 ---
 
@@ -216,10 +217,14 @@ Team sessions allow multiple agents (or humans) to collaborate in the same sessi
 
 A lane is a per-member workspace slot. Each lane has:
 
-- **Type**: `ux`, `debug`, `backend`, `review`, `general`
+- **Type**: `ux`, `debug`, `backend`, `review`, `general` — or any custom type registered in `custom_lane_types`
 - **Policy**: controls max concurrent file claims, heavy-job slots, blast-radius file limit, claim TTL, allowed claim types, and memory scopes
 - **Overlay bundle**: a skill bundle compiled specifically for this lane's role
 - **Bridge connection**: the claw-bridge process connects per-lane
+
+### Custom lane types
+
+Operators can register custom lane types beyond the five built-ins via `POST /api/sessions/:id/lanes/types`. Each custom type defines its own policy overrides (claim TTL, blast-radius limit, allowed claim types) and is stored in `custom_lane_types`. The system resolves the effective policy for any lane — built-in or custom — via `getLanePolicyAsync()`.
 
 ### File claims (soft ownership)
 
@@ -234,6 +239,8 @@ Agents claim files, modules, symbols, or task IDs before editing them. Claims ar
 
 Claims refresh via heartbeat (`DELETE /claim/:id?heartbeat=true`) and expire automatically after the lane's configured TTL.
 
+**Conflict detection** — upgraded to symbol-level precision. When both competing claims carry a `symbols` list, the system only reports a conflict when the symbol sets actually intersect. Same-file edits to different functions or classes no longer produce false-positive conflicts.
+
 ### Handoffs
 
 Lanes signal state transitions to each other:
@@ -244,7 +251,34 @@ Lanes signal state transitions to each other:
 | `blocking` | Lane is blocked, needs input from another lane |
 | `file_ready` | Lane finished editing a file another lane depends on |
 | `review_ready` | Lane requests a review pass |
+| `safe_to_merge` | Lane's work is ready; triggers automatic draft PR creation |
 | `info` | General notification |
+
+#### Auto-draft PR on `safe_to_merge`
+
+When a lane sends a `safe_to_merge` handoff and the session has a `repoUrl` plus a GitHub OAuth token, the API server automatically calls the GitHub REST API to open a draft pull request. The PR's head branch is `mizi/session-{id}/{lane-slug}` (the per-member sub-branch that claw-bridge pushes to), and the base is the session's repo default branch. The resulting PR URL is stored on the `lane_handoffs` row as `pr_url` and surfaced in the Team tab as a "View draft PR" link.
+
+#### Per-member git sub-branches
+
+When a session has a GitHub token, `enableLaneBranches` defaults to `true`. Each lane's claw-bridge is configured to push to `mizi/session-{id}/{member-slug}` rather than the shared `mizi/session-{id}` branch. The env var `GITHUB_LANE_BRANCHES_ENABLED=1` is injected into the container so in-session tools can detect this mode.
+
+### Lane event timeline
+
+Every significant lane lifecycle event is recorded to the `lane_events` table and broadcast over SSE:
+
+| Event type | Emitted when |
+|---|---|
+| `lane_created` | Lane registered |
+| `lane_destroyed` | Lane deleted |
+| `claim_created` | File/symbol claim opened |
+| `claim_released` | Claim explicitly released |
+| `claim_expired` | Claim expired via TTL sweep |
+| `handoff_sent` | Handoff signal dispatched |
+| `handoff_acknowledged` | Target lane acknowledged a handoff |
+| `heavy_job_started` | GPU-expensive job began |
+| `heavy_job_completed` | GPU-expensive job finished |
+
+The dashboard Team tab has a **Timeline** sub-tab (`GET /sessions/:id/lanes/:laneId/timeline`) showing a cursor-paginated, newest-first list of events. Events stream in real time via SSE while the panel is open. Deleted lanes' history remains queryable.
 
 ### Heavy-job scheduler
 
@@ -369,7 +403,9 @@ The NIM catalog lists available hosted inference models across configured provid
 | Provider | Display name | Env key |
 |---|---|---|
 | `nvidia` | NVIDIA NIM | `NVIDIA_NIM_API_KEY` |
-| *(others)* | Configurable | Per-provider env key |
+| `vultr` | Vultr Inference | `VULTR_INFERENCE_API_KEY` |
+| `together` | Together AI | `TOGETHER_API_KEY` |
+| `deepinfra` | DeepInfra | `DEEPINFRA_API_KEY` |
 
 ### Catalog API
 
@@ -382,9 +418,45 @@ The NIM catalog lists available hosted inference models across configured provid
 
 The catalog is auto-synced at server startup and upserts model records into the `nim_catalog` table.
 
+### Intent-driven model selection ("More models…")
+
+The Home screen's intent classification card suggests a single best NIM model for the user's input. A **"More models…"** plaintext link expands an inline scrollable list of all catalog models directly inside the card. Clicking any row switches the active suggestion in place (name, provider label, `nimModelId`, estimated start time all update) and collapses the list without opening a dialog. The NIM catalog is fetched once at page load and passed down as a prop — no extra API call per classification.
+
 ---
 
-## 14. API key authentication
+## 14. Test environment provisioning
+
+Agents running inside a session can request ephemeral Postgres databases (and Redis instances) on demand — no manual setup required. The API server provisions, tracks, and tears down these resources automatically when the session stops.
+
+### How it works
+
+1. The claw-runner calls `provision_test_db` (a registered claw tool) or `POST /api/sessions/:id/provision` directly.
+2. The server selects a provisioning strategy:
+   - **Ephemeral local Postgres** — runs `initdb` + `pg_ctl` via the claw-bridge to create a temporary cluster on the instance at `25432 + (sessionId % 10000)`. Connection string uses a Unix socket (`?host=/tmp`). `resourceId` stored as `local:<pgDir>:<pgPort>`.
+   - **Neon branch** — creates a branch off a shared Neon project (when `NEON_API_KEY` is set). `resourceId` is the branch ID.
+3. The resource is recorded in `provisioned_resources` with its encrypted connection string.
+4. A `schema_templates` DDL can be applied at creation time by passing `templateId` in the request body.
+5. When the session is destroyed, all resources are cleaned up: ephemeral Postgres clusters are stopped with `pg_ctl stop -m fast` and the data directory removed; Neon branches are deleted via the Neon API.
+
+### Schema templates
+
+Built-in SQL templates (`GET /api/schema-templates`) give the agent a starting schema without hand-writing DDL:
+
+| Slug | Description |
+|---|---|
+| `standard-web-app` | `users`, `sessions`, `events` tables with indexes |
+| *(more seeded at startup)* | |
+
+### Security model
+
+- `GET /sessions/:id/resources` — optional bearer; ownership enforced when a raw bearer is present
+- `POST /sessions/:id/provision` — optional bearer; ownership enforced when a raw bearer is present
+- `GET /sessions/:id/resources/:resourceId/connection-string` — **strict bearer required** (connection strings contain credentials)
+- `GET /schema-templates` and `GET /schema-templates/:id` — open (DDL templates are non-sensitive)
+
+---
+
+## 15. API key authentication
 
 Remote orchestration agents (claw-runner, external tools) authenticate via scoped API keys rather than the shared `MIZI_MEM_TOKEN` secret.
 
@@ -416,7 +488,7 @@ When `MIZI_MEM_TOKEN` is not set (local development), agent auth is open. In pro
 
 ---
 
-## 15. Dashboard pages
+## 16. Dashboard pages
 
 | Route | Page |
 |---|---|
@@ -436,13 +508,13 @@ When `MIZI_MEM_TOKEN` is not set (local development), agent auth is open. In pro
 - **Cockpit**: live terminal output, soft-interrupt chat panel, boot timeline, GPU hardware info, relaunch button
 - **Memory**: per-session observation log and summary, FTS search
 - **Repo**: indexing status, blast-radius explorer, symbol search, FTS
-- **Team**: lane status, claims, handoff signals, conflict report
+- **Team**: lane status, claims, handoff signals, conflict report; **Overview** sub-tab shows current state, **Timeline** sub-tab shows paginated event history with live SSE append; draft PR links on `safe_to_merge` handoffs
 - **Swarm**: live swarm activity, worker status, task breakdown
 - **Coordination**: full coordination state — lanes, claims, heavy-job queue
 
 ---
 
-## 16. Environment variables & secrets
+## 17. Environment variables & secrets
 
 | Variable | Required | Description |
 |---|---|---|
@@ -454,11 +526,17 @@ When `MIZI_MEM_TOKEN` is not set (local development), agent auth is open. In pro
 | `MIZI_MEM_TOKEN` | Production | Bearer token for memory + ambient endpoints |
 | `MIZI_MEM_USER_ID` | Optional | Override default memory user ID (default: `operator`) |
 | `MEM_DATA_DIR` | Optional | SQLite storage path (default: `~/mizi-memory`) |
+| `VULTR_INFERENCE_API_KEY` | Optional | Vultr Inference provider key for NIM sessions |
+| `TOGETHER_API_KEY` | Optional | Together AI provider key for NIM sessions |
+| `DEEPINFRA_API_KEY` | Optional | DeepInfra provider key for NIM sessions |
+| `NEON_API_KEY` | Optional | Neon API key for cloud Postgres branch provisioning (test env) |
+| `NEON_PROJECT_ID` | Optional | Neon project to branch from for test DB provisioning |
+| `ADMIN_SWEEP_TOKEN` | Optional | Secret for `X-Admin-Token` header on admin endpoints |
 | `PORT` | Auto | HTTP port (assigned by Replit) |
 
 ---
 
-## 17. Database schema reference
+## 18. Database schema reference
 
 | Table | Purpose |
 |---|---|
@@ -475,8 +553,12 @@ When `MIZI_MEM_TOKEN` is not set (local development), agent auth is open. In pro
 | `skill_feedback` | Helpful/unhelpful ratings per skill per session |
 | `session_lanes` | Per-member lane overlays |
 | `lane_claims` | Soft file/symbol ownership claims with TTL |
-| `lane_handoffs` | Cross-lane handoff signals |
+| `lane_handoffs` | Cross-lane handoff signals (includes `pr_url` for auto-opened draft PRs) |
 | `lane_heavy_jobs` | GPU-expensive job queue |
+| `custom_lane_types` | Operator-defined lane types extending the five built-ins |
+| `lane_events` | Timestamped audit log of lane lifecycle events; backs the Timeline tab |
+| `provisioned_resources` | Test Postgres/Redis resources created on demand per session |
+| `schema_templates` | SQL DDL templates applied when provisioning a test database |
 | `eval_runs` | Async skill eval run queue |
 | `eval_run_variants` | Per-variant metrics within an eval run |
 | `skill_evals` | Aggregated per-skill performance |
@@ -489,7 +571,7 @@ Migrations live in `lib/db/migrations/`. Use `pnpm --filter @workspace/db run pu
 
 ---
 
-## 18. API reference
+## 19. API reference
 
 ### Sessions
 
@@ -532,11 +614,16 @@ Migrations live in `lib/db/migrations/`. Use `pnpm --filter @workspace/db run pu
 |---|---|---|
 | `GET` | `/api/sessions/:id/lanes` | List lanes |
 | `POST` | `/api/sessions/:id/lanes` | Create a lane |
+| `DELETE` | `/api/sessions/:id/lanes/:laneId` | Destroy a lane (events retained) |
 | `POST` | `/api/sessions/:id/lanes/:laneId/claim` | Claim a file/symbol |
 | `POST` | `/api/sessions/:id/lanes/:laneId/handoff` | Send a handoff signal |
+| `GET` | `/api/sessions/:id/lanes/:laneId/timeline` | Paginated lane event history (newest first) |
 | `GET` | `/api/sessions/:id/coordination` | Full coordination state |
+| `GET` | `/api/sessions/:id/coordination/stream` | SSE stream of coordination updates |
 | `GET` | `/api/sessions/:id/conflicts` | Conflict detection report |
 | `POST` | `/api/sessions/:id/heavy-jobs` | Enqueue a GPU-expensive job |
+| `GET` | `/api/sessions/:id/lanes/types` | List custom lane types for the session |
+| `POST` | `/api/sessions/:id/lanes/types` | Register a custom lane type |
 
 ### Memory
 
@@ -565,6 +652,16 @@ Migrations live in `lib/db/migrations/`. Use `pnpm --filter @workspace/db run pu
 | `GET` | `/api/safety/pending` | List pending approval requests |
 | `POST` | `/api/safety/actions/:id/approve` | Approve a safety action |
 | `POST` | `/api/safety/actions/:id/deny` | Deny a safety action |
+
+### Test environment provisioning
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/sessions/:id/provision` | Provision an ephemeral Postgres or Redis resource |
+| `GET` | `/api/sessions/:id/resources` | List provisioned resources (connection strings masked) |
+| `GET` | `/api/sessions/:id/resources/:resourceId/connection-string` | Reveal full connection string (strict auth required) |
+| `GET` | `/api/schema-templates` | List SQL schema templates |
+| `GET` | `/api/schema-templates/:id` | Get a schema template's DDL |
 
 ### NIM
 

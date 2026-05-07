@@ -363,8 +363,39 @@ One row per indexing job enqueued for a session. Deduplicated by active status p
 | `durationMs` | integer | Total job duration |
 | `errorDetails` | text | Error message if failed |
 
-### `session_lanes`, `lane_claims`, `lane_handoffs`, `lane_heavy_jobs`
+### `session_lanes`, `lane_claims`, `lane_handoffs`, `lane_heavy_jobs`, `custom_lane_types`, `lane_events`
 See [Section 20 — Lane Coordination](#20-lane-coordination).
+
+`lane_handoffs` includes a `pr_url` column populated automatically when a `safe_to_merge` handoff triggers a GitHub draft PR.
+
+`custom_lane_types` stores operator-defined lane types that extend the five built-ins (`ux`, `debug`, `backend`, `review`, `general`). Each row carries policy overrides (claim TTL, blast-radius limit, allowed claim types).
+
+`lane_events` is an append-only audit log. Rows reference `session_id` (FK) and `lane_id` (no FK so history outlives deleted lanes). Contains: `eventType`, `laneId`, `actorId`, `metadata` (jsonb), `createdAt`.
+
+### `provisioned_resources`
+One row per test Postgres/Redis resource created on demand for a session.
+
+| Column | Description |
+|--------|-------------|
+| `id` | serial PK |
+| `sessionId` | FK → sessions |
+| `resourceType` | `postgres` or `redis` |
+| `resourceId` | Strategy-specific identifier (`local:<dir>:<port>`, Neon branch ID, etc.) |
+| `connectionStringEnc` | AES-encrypted connection string |
+| `createdAt` | Timestamp |
+| `deletedAt` | Set when cleaned up |
+
+### `schema_templates`
+SQL DDL templates available for test database provisioning.
+
+| Column | Description |
+|--------|-------------|
+| `id` | serial PK |
+| `slug` | Unique short name (e.g. `standard-web-app`) |
+| `displayName` | Human label |
+| `ddl` | Full SQL DDL string |
+| `isBuiltin` | Whether seeded at startup |
+| `createdAt` | Timestamp |
 
 ### Skills-related tables (`skills`, `skill_versions`, `skill_bundles`, `session_skills`, `skill_feedback`, `eval_runs`, `eval_run_variants`, `skill_evals`, `bundle_evals`)
 Managed by the Smart Skills system. Seeded via skill import; bundles are compiled per session at launch time and per lane at lane creation time. Eval system tracks per-skill and per-bundle performance via A/B lift scoring.
@@ -889,6 +920,25 @@ Base path: `/api`
 
 See [Section 20](#20-lane-coordination) for full endpoint reference.
 
+Key additions from recent tasks:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| DELETE | `/sessions/:id/lanes/:laneId` | Destroy a lane; emits `lane_destroyed` event; history preserved |
+| GET | `/sessions/:id/lanes/:laneId/timeline` | Cursor-paginated lane event history (newest first) |
+| GET | `/sessions/:id/lanes/types` | List custom lane types |
+| POST | `/sessions/:id/lanes/types` | Register a custom lane type |
+
+### Test Environment Provisioning
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/sessions/:id/provision` | Provision an ephemeral Postgres (or Redis) resource for the session |
+| GET | `/sessions/:id/resources` | List provisioned resources (connection strings masked) |
+| GET | `/sessions/:id/resources/:resourceId/connection-string` | Reveal full connection string (strict bearer auth required) |
+| GET | `/schema-templates` | List SQL DDL templates |
+| GET | `/schema-templates/:id` | Get a specific template's DDL |
+
 ### Memory
 
 | Method | Path | Description |
@@ -961,7 +1011,9 @@ These are **not** proxied through the API server. The dashboard reaches them via
 
 **Team tab** (team sessions only):
 - Credential table per member with copy-invite button
-- Lane coordination panel: per-lane status, active claims, conflict warnings, handoffs
+- Lane coordination panel: per-lane status, active claims, conflict warnings, handoffs; "View draft PR" link on `safe_to_merge` handoffs
+- **Overview sub-tab** — current lane state snapshot
+- **Timeline sub-tab** — cursor-paginated event history with live SSE append; "Load More" for older events
 - Heavy job queue viewer
 
 **Memory tab:**
@@ -1010,6 +1062,11 @@ These are **not** proxied through the API server. The dashboard reaches them via
 | `DESIGN_SYNC_INTERVAL_MS` | No | **New** — Design Intelligence full-sync interval (default: 6 hours = 21 600 000 ms) |
 | `ADMIN_SWEEP_TOKEN` | No | **New** — Secret value checked via `X-Admin-Token` request header (header equality, not Bearer) to protect the `/admin/sweep-claims` endpoint |
 | `GITHUB_TOKEN` | No | Optional GitHub PAT to increase API rate limits during design intelligence ingest |
+| `VULTR_INFERENCE_API_KEY` | No | Vultr Inference provider key; enables the `vultr` NIM provider |
+| `TOGETHER_API_KEY` | No | Together AI provider key; enables the `together` NIM provider |
+| `DEEPINFRA_API_KEY` | No | DeepInfra provider key; enables the `deepinfra` NIM provider |
+| `NEON_API_KEY` | No | Neon API key; enables cloud Postgres branch provisioning for test environments |
+| `NEON_PROJECT_ID` | No | Neon project ID to branch from when creating test databases |
 
 ### Injected into each Vast.ai instance via onstart script
 
@@ -1030,6 +1087,7 @@ These are **not** proxied through the API server. The dashboard reaches them via
 | `MIZI_SESSION_ID` | Session ID for status callbacks |
 | `MIZI_CALLBACK_URL` | Full URL for status callbacks |
 | `TEAM_MEMBERS_JSON` | JSON array of team members (team sessions only) |
+| `GITHUB_LANE_BRANCHES_ENABLED` | `1` when `enableLaneBranches` is true; signals to in-session tooling that per-member branches are active |
 
 ---
 
@@ -1444,7 +1502,7 @@ When `repoUrl` is passed to `POST /sessions`, the API fetches the repo's languag
 
 ## 20. Lane Coordination
 
-Lane Coordination gives team sessions per-member work lanes with claim-based file ownership, conflict detection, handoffs between lanes, and a weighted heavy-job scheduler for compute-intensive tasks.
+Lane Coordination gives team sessions per-member work lanes with claim-based file ownership, conflict detection, handoffs between lanes, a weighted heavy-job scheduler for compute-intensive tasks, per-member git sub-branches, automatic draft PR creation, and a full event timeline.
 
 ### Database tables
 
@@ -1454,12 +1512,23 @@ Lane Coordination gives team sessions per-member work lanes with claim-based fil
 |--------|-------------|
 | `sessionId` | Parent session |
 | `memberIdentifier` | Team member name |
-| `laneType` | `ux` / `debug` / `backend` / `review` / `general` |
+| `laneType` | `ux` / `debug` / `backend` / `review` / `general` — or any slug from `custom_lane_types` |
 | `taskMode` | `build`, `review`, etc. |
 | `status` | `active` / `blocked` / `review-needed` / `ready-to-merge` |
 | `overlayBundleId` | Per-lane Smart Skills overlay bundle (compiled asynchronously on lane create) |
 | `tokenMode` | `core` / `full` / `extended` |
 | `currentTask` | Free-text description of current task |
+
+**`custom_lane_types`** — operator-defined extensions to the five built-in lane types.
+
+| Column | Description |
+|--------|-------------|
+| `slug` | Unique identifier for the custom type |
+| `displayName` | Human label |
+| `policyOverrides` | jsonb: subset of `LanePolicy` fields (claimTtlSec, blastRadiusLimit, allowedClaimTypes) |
+| `sessionId` | Optional: scoped to a session (null = global) |
+
+The effective policy for any lane — built-in or custom — is resolved via `getLanePolicyAsync()`, which looks up `custom_lane_types` for unknown slugs and falls back to the nearest built-in policy.
 
 **`lane_claims`** — file/symbol ownership assertions per lane.
 
@@ -1468,6 +1537,7 @@ Lane Coordination gives team sessions per-member work lanes with claim-based fil
 | `laneId` | Parent lane |
 | `claimType` | `file` / `module` / `symbol` / `task` |
 | `pathOrSymbol` | File path or symbol name |
+| `symbols` | jsonb: optional list of specific symbol names within the file |
 | `claimStrength` | `watching` / `editing` / `owner` |
 | `expiresAt` | Claim TTL (default 5 minutes; refreshed via heartbeat) |
 | `lastHeartbeatAt` | Last keepalive time |
@@ -1483,6 +1553,18 @@ Lane Coordination gives team sessions per-member work lanes with claim-based fil
 | `watchFiles` | JSON: `{toLaneIds, resourcePaths}` |
 | `status` | `pending` / `acknowledged` / `dismissed` / `expired` |
 | `acknowledgedAt` | When recipient acknowledged |
+| `prUrl` | Auto-populated when a `safe_to_merge` handoff triggers a GitHub draft PR |
+
+**`lane_events`** — append-only audit log for the Timeline tab.
+
+| Column | Description |
+|--------|-------------|
+| `sessionId` | FK → sessions (lane history accessible even after lane deletion) |
+| `laneId` | Lane ID (no FK constraint — history outlives deleted lanes) |
+| `eventType` | `lane_created` / `lane_destroyed` / `claim_created` / `claim_released` / `claim_expired` / `handoff_sent` / `handoff_acknowledged` / `heavy_job_started` / `heavy_job_completed` |
+| `actorId` | Member or system identifier |
+| `metadata` | jsonb: event-specific payload |
+| `createdAt` | Timestamp |
 
 **`lane_heavy_jobs`** — compute-intensive tasks queued from lanes.
 
@@ -1513,6 +1595,8 @@ On `POST .../claim`, the API:
 4. Returns `overlaps[]` with `conflictingLaneId`, `conflictingMember`, `overlapScore`, and `recommendation` (`no_conflict` / `warn` / `block`)
 5. Returns `overallRecommendation` (most severe overlap across all other lanes)
 
+**Symbol-level precision:** When both the incoming claim and a competing claim carry a non-empty `symbols` list, the overlap check compares the symbol sets instead of the file path. If the symbol sets do not intersect, the score contribution is 0 (no conflict). This eliminates false positives when two lanes edit different functions within the same file.
+
 Overlap scoring: path-prefix and exact-match heuristics. Score ≥ 0.75 → `block`, ≥ 0.4 → `warn`.
 
 ### Claim heartbeat and expiry
@@ -1528,6 +1612,28 @@ Admin manual trigger: `POST /api/admin/sweep-claims` — calls `sweepExpiredClai
 ### Lane overlay bundles
 When a lane is created, `compileLaneBundles()` is called asynchronously (fire-and-forget) to compile per-lane Smart Skills overlays. Each overlay adapts the base session bundle for the lane's `laneType`, `taskMode`, and `tokenMode`. The resulting `overlayBundleId` is stored on `session_lanes`.
 
+### Per-member git sub-branches
+
+When a session is created with a GitHub token and `enableLaneBranches` is not explicitly set to `false`, each lane's claw-bridge is configured to push to `mizi/session-{id}/{member-slug}` instead of the shared `mizi/session-{id}` branch. Branch names are derived via `getLaneBranchName(sessionId, memberIdentifier)` in `services/lane-branch.ts`. The env var `GITHUB_LANE_BRANCHES_ENABLED=1` is injected into the container so in-session tooling can detect this mode.
+
+### Auto-draft PR on `safe_to_merge`
+
+When a lane sends a `safe_to_merge` handoff signal, the coordination route fires `createDraftPullRequest()` (from `services/github-pr.ts`) as a non-blocking async operation. The PR is opened on GitHub with:
+- **Head branch**: `mizi/session-{id}/{lane-slug}`
+- **Base branch**: the session's repo default branch
+- **Title**: auto-generated from lane metadata
+- **Body**: identifies the lane and session, links back to MIZI
+
+The resulting `prUrl` is stored on the `lane_handoffs` row and broadcast via `coordination_update` so the Team tab picks it up on the next poll. The operation is non-fatal — PR creation failure is logged as a warning but does not block the handoff.
+
+### Lane event timeline
+
+`lane-event-emitter.ts` is the unified write path: every coordinator action that should be auditable calls `emitLaneEvent({ sessionId, laneId, eventType, metadata })`, which:
+1. Inserts a row into `lane_events`
+2. Broadcasts the event via `lane-sse-broadcaster.ts` to any open SSE connections on that lane
+
+`GET /sessions/:id/lanes/:laneId/timeline` returns cursor-paginated events (newest first). Deleted lanes' history remains queryable via `sessionId` scoping. The dashboard Timeline sub-tab auto-appends new events via SSE while open and shows a "Load More" button for pagination.
+
 ### SSE broadcaster
 `GET /api/sessions/:id/coordination/stream` streams real-time coordination updates via SSE. Triggered on lane create/update, claim create/release, and handoff create.
 
@@ -1538,10 +1644,14 @@ When a lane is created, `compileLaneBundles()` is called asynchronously (fire-an
 | GET | `/sessions/:id/lanes` | List lanes with active claims + policies. Expires stale claims first. |
 | POST | `/sessions/:id/lanes` | Create lane. Async overlay bundle compilation. |
 | PUT | `/sessions/:id/lanes/:laneId` | Update lane (laneType, status, tokenMode, currentTask) |
+| DELETE | `/sessions/:id/lanes/:laneId` | Destroy a lane. Emits `lane_destroyed` event. |
 | POST | `/sessions/:id/lanes/:laneId/claim` | Create/refresh claim. Returns overlaps + recommendation. |
 | DELETE | `/sessions/:id/lanes/:laneId/claim/:claimId` | Release claim. `?heartbeat=true` refreshes instead. |
-| POST | `/sessions/:id/lanes/:laneId/handoff` | Create handoff signal |
+| POST | `/sessions/:id/lanes/:laneId/handoff` | Create handoff signal. `safe_to_merge` triggers async PR creation. |
+| GET | `/sessions/:id/lanes/:laneId/timeline` | Paginated lane event history (newest first; `?cursor=` for pagination) |
 | GET | `/sessions/:id/lanes/:laneId/conflicts` | Active conflicts for a lane |
+| GET | `/sessions/:id/lanes/types` | List custom lane types |
+| POST | `/sessions/:id/lanes/types` | Register a custom lane type |
 | POST | `/sessions/:id/heavy-jobs` | Enqueue a heavy job |
 | GET | `/sessions/:id/heavy-jobs` | List heavy jobs (filterable by status/class) |
 | POST | `/sessions/:id/heavy-jobs/:jobId/running` | Mark job running |
