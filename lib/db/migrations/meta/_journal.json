@@ -120,6 +120,13 @@
                         "when": 1746922100000,
                         "tag": "0024_model_switches_token_metrics",
                         "breakpoints": true
+                },
+                {
+                        "idx": 27,
+                        "version": "7",
+                        "when": 1746922300000,
+                        "tag": "0023_lane_events",
+                        "breakpoints": true
                 }
         ]
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   useListSessionLanes,
@@ -24,6 +24,7 @@ import type {
   CreateHandoffRequest,
 } from "@workspace/api-client-react";
 import { API_BASE_URL } from "@/lib/api-url";
+import { LaneTimeline, type LaneEventItem } from "@/components/lane-timeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,6 +61,7 @@ import {
   Plus,
   GitPullRequest,
   ExternalLink,
+  History,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -913,8 +915,19 @@ function StreamStatusBadge({ status }: { status: import("@/hooks/use-coordinatio
   );
 }
 
+type TeamSubTab = "overview" | "timeline";
+
 export function TeamTab({ sessionId }: { sessionId: number }) {
-  const streamStatus = useCoordinationStream(sessionId);
+  const [subTab, setSubTab] = useState<TeamSubTab>("overview");
+  const [latestLaneEvent, setLatestLaneEvent] = useState<LaneEventItem | null>(null);
+  const latestLaneEventRef = useRef<LaneEventItem | null>(null);
+
+  const streamStatus = useCoordinationStream(sessionId, {
+    onLaneEvent: (event) => {
+      latestLaneEventRef.current = event;
+      setLatestLaneEvent(event);
+    },
+  });
   const queryClient = useQueryClient();
 
   const { data: lanesData, isLoading: lanesLoading, isError: lanesError } = useListSessionLanes(sessionId, {
@@ -1047,13 +1060,59 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
   return (
     <div className="mt-4 space-y-5">
 
-      {/* Stream status header */}
+      {/* Stream status header + sub-tab switcher */}
       <div className="flex items-center justify-between">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
-          <Users className="w-3.5 h-3.5" /> Team Coordination
-        </p>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setSubTab("overview")}
+            className={`flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide px-2 py-1 rounded transition-colors ${
+              subTab === "overview"
+                ? "bg-secondary/60 text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" /> Overview
+          </button>
+          <button
+            onClick={() => setSubTab("timeline")}
+            className={`flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide px-2 py-1 rounded transition-colors ${
+              subTab === "timeline"
+                ? "bg-secondary/60 text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <History className="w-3.5 h-3.5" /> Timeline
+          </button>
+        </div>
         <StreamStatusBadge status={streamStatus} />
       </div>
+
+      {/* Timeline sub-tab */}
+      {subTab === "timeline" && (
+        <Card className="bg-card/50 border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
+              <History className="w-4 h-4" /> Lane Activity Timeline
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {lanes.length === 0 ? (
+              <div className="py-8 text-center text-muted-foreground/50 text-xs">
+                No lanes in this session yet. Timeline will appear once lanes are created.
+              </div>
+            ) : (
+              <LaneTimeline
+                sessionId={sessionId}
+                lanes={lanes}
+                incomingEvent={latestLaneEvent}
+              />
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Overview sub-tab */}
+      {subTab === "overview" && (<>
 
       {/* Error banner */}
       {hasError && (
@@ -1161,6 +1220,8 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
           </CardContent>
         </Card>
       )}
+
+      </>)}
 
     </div>
   );

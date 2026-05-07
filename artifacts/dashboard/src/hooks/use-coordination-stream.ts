@@ -29,9 +29,18 @@ export type CoordinationStreamStatus = "connected" | "reconnecting" | "polling";
  *
  * Returns the current connection status so callers can render a live indicator.
  */
+import type { LaneEventItem } from "@/components/lane-timeline";
+
+export interface CoordinationStreamOptions {
+  onLaneEvent?: (event: LaneEventItem) => void;
+}
+
 export function useCoordinationStream(
-  sessionId: number | null | undefined
+  sessionId: number | null | undefined,
+  options?: CoordinationStreamOptions,
 ): CoordinationStreamStatus {
+  const onLaneEventRef = useRef<((event: LaneEventItem) => void) | undefined>(options?.onLaneEvent);
+  onLaneEventRef.current = options?.onLaneEvent;
   const queryClient = useQueryClient();
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -101,9 +110,11 @@ export function useCoordinationStream(
         if (cancelled) return;
         resetHeartbeat();
         try {
-          const msg = JSON.parse(event.data) as { type?: string };
+          const msg = JSON.parse(event.data) as { type?: string; event?: LaneEventItem };
           if (msg.type === "coordination_update") {
             invalidateAll();
+          } else if (msg.type === "lane_event" && msg.event) {
+            onLaneEventRef.current?.(msg.event);
           }
         } catch {
         }

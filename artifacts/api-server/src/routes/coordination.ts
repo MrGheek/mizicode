@@ -16,12 +16,13 @@ import {
   laneClaimsTable,
   laneHandoffsTable,
   laneHeavyJobsTable,
+  laneEventsTable,
   sessionsTable,
   sessionRepoContextTable,
   claimPurgeLogsTable,
   customLaneTypesTable,
 } from "@workspace/db";
-import { eq, and, desc, inArray, asc, sql } from "drizzle-orm";
+import { eq, and, desc, inArray, asc, sql, lt } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import {
   getLanePolicy,
@@ -46,6 +47,13 @@ import {
 } from "../services/heavy-job-scheduler";
 import { compileLaneBundles } from "../services/skills-bundler";
 import { sweepExpiredClaims, expireStaleClaimsForSession } from "../services/claim-sweeper";
+import { emitLaneEvent } from "../services/lane-event-emitter";
+import {
+  addCoordinationClient,
+  removeCoordinationClient,
+  broadcastCoordinationUpdate,
+  broadcastLaneEvent,
+} from "../services/lane-sse-broadcaster";
 import type { HeavyJobClass, HeavyJobStatus, HandoffType, ClaimType, SessionLane, LaneClaim, LaneHandoff, LaneHeavyJob } from "@workspace/db";
 import { createDraftPullRequest } from "../services/github-pr";
 import { getLaneBranchName, getSessionBranchName } from "../services/lane-branch";
@@ -63,6 +71,7 @@ router.get("/sessions/:id/lanes/:laneId", requireAgentAuth(["coordination:read"]
 router.post("/sessions/:id/lanes", requireAgentAuth(["coordination:write"]));
 router.put("/sessions/:id/lanes/:laneId", requireAgentAuth(["coordination:write"]));
 router.post("/sessions/:id/lanes/:laneId/claim", requireAgentAuth(["coordination:write"]));
+router.delete("/sessions/:id/lanes/:laneId", requireAgentAuth(["coordination:write"]));
 router.delete("/sessions/:id/lanes/:laneId/claim/:claimId", requireAgentAuth(["coordination:write"]));
 router.post("/sessions/:id/lanes/:laneId/handoff", requireAgentAuth(["coordination:write"]));
 router.get("/sessions/:id/coordination", requireAgentAuth(["coordination:read"]));
@@ -73,42 +82,9 @@ router.get("/sessions/:id/heavy-jobs/next", requireAgentAuth(["coordination:read
 router.patch("/sessions/:id/heavy-jobs/:jobId", requireAgentAuth(["coordination:write"]));
 router.patch("/sessions/:id/lanes/:laneId/handoff/:handoffId", requireAgentAuth(["coordination:write"]));
 router.get("/sessions/:id/coordination/stream", requireAgentAuth(["coordination:read"]));
+router.get("/sessions/:id/lanes/:laneId/timeline", requireAgentAuth(["coordination:read"]));
 router.get("/admin/claim-cleanup-stats", requireAgentAuth(["coordination:read"]));
 router.post("/admin/sweep-claims", requireAgentAuth(["coordination:write"]));
-
-// ─── SSE broadcaster for real-time Team tab updates ───────────────────────────
-
-type SseClient = import("express").Response;
-const coordinationClients = new Map<number, Set<SseClient>>();
-
-function addCoordinationClient(sessionId: number, res: SseClient): void {
-  let clients = coordinationClients.get(sessionId);
-  if (!clients) {
-    clients = new Set();
-    coordinationClients.set(sessionId, clients);
-  }
-  clients.add(res);
-}
-
-function removeCoordinationClient(sessionId: number, res: SseClient): void {
-  const clients = coordinationClients.get(sessionId);
-  if (clients) {
-    clients.delete(res);
-    if (clients.size === 0) coordinationClients.delete(sessionId);
-  }
-}
-
-function broadcastCoordinationUpdate(sessionId: number): void {
-  const clients = coordinationClients.get(sessionId);
-  if (!clients || clients.size === 0) return;
-  const payload = `data: ${JSON.stringify({ type: "coordination_update", sessionId })}\n\n`;
-  const dead: SseClient[] = [];
-  for (const res of clients) {
-    try { res.write(payload); } catch { dead.push(res); }
-  }
-  for (const res of dead) clients.delete(res);
-  if (clients.size === 0) coordinationClients.delete(sessionId);
-}
 
 // ─── Enums matching OpenAPI contract ──────────────────────────────────────────
 
@@ -284,6 +260,7 @@ router.post("/sessions/:id/lanes", async (req, res) => {
 
   logger.info({ laneId: lane.id, sessionId, memberIdentifier, laneType: resolvedLaneType }, "Lane created");
   broadcastCoordinationUpdate(sessionId);
+  emitLaneEvent(sessionId, lane.id, "lane_created", { memberIdentifier, laneType: resolvedLaneType });
 
   // Fire-and-forget: compile per-lane overlay bundles and persist overlayBundleId.
   // Does not block the response — overlay delivery is eventually consistent.
@@ -359,6 +336,46 @@ router.put("/sessions/:id/lanes/:laneId", async (req, res) => {
 
   broadcastCoordinationUpdate(sessionId);
   res.json(serializeLane(updated));
+});
+
+// ─── DELETE /api/sessions/:id/lanes/:laneId ────────────────────────────────────
+// Permanently removes a lane and all its child claims. Emits a lane_destroyed
+// event so the timeline captures the full lifecycle.
+
+router.delete("/sessions/:id/lanes/:laneId", async (req, res) => {
+  const sessionId = getSessionId(req);
+  const laneId = parseInt(req.params["laneId"] ?? "");
+  if (!sessionId || !Number.isFinite(laneId)) {
+    res.status(400).json({ error: "Invalid session or lane ID" }); return;
+  }
+
+  const [lane] = await db.select().from(sessionLanesTable)
+    .where(and(eq(sessionLanesTable.id, laneId), eq(sessionLanesTable.sessionId, sessionId)));
+  if (!lane) { res.status(404).json({ error: "Lane not found" }); return; }
+
+  const [destroyedEvent] = await db.insert(laneEventsTable)
+    .values({
+      sessionId,
+      laneId,
+      eventType: "lane_destroyed" as const,
+      payload: { memberIdentifier: lane.memberIdentifier, laneType: lane.laneType },
+    })
+    .returning()
+    .catch((err: unknown) => {
+      logger.warn({ err, laneId, sessionId }, "lane_destroyed event insert failed (non-fatal)");
+      return [];
+    });
+
+  await db.delete(laneClaimsTable).where(eq(laneClaimsTable.laneId, laneId));
+  await db.delete(laneHandoffsTable).where(eq(laneHandoffsTable.laneId, laneId));
+  await db.delete(laneHeavyJobsTable).where(eq(laneHeavyJobsTable.laneId, laneId));
+  await db.delete(sessionLanesTable).where(eq(sessionLanesTable.id, laneId));
+
+  if (destroyedEvent) broadcastLaneEvent(sessionId, destroyedEvent);
+  broadcastCoordinationUpdate(sessionId);
+
+  logger.info({ laneId, sessionId, memberIdentifier: lane.memberIdentifier }, "Lane destroyed");
+  res.status(204).end();
 });
 
 // ─── POST /api/sessions/:id/lanes/:laneId/claim ───────────────────────────────
@@ -523,6 +540,12 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
     : "no_conflict";
 
   broadcastCoordinationUpdate(sessionId);
+  emitLaneEvent(sessionId, laneId, "claim_created", {
+    claimId: claim.id,
+    resourcePath,
+    claimType: claimType ?? "file",
+    strength: claimStrength,
+  });
   logger.info({ claimId: claim.id, laneId, resourcePath, overlaps: overlaps.length }, "Lane claim created");
   res.status(201).json({
     claim: serializeClaim(claim, lane.memberIdentifier),
@@ -568,6 +591,11 @@ router.delete("/sessions/:id/lanes/:laneId/claim/:claimId", async (req, res) => 
     .where(eq(laneClaimsTable.id, claimId));
 
   broadcastCoordinationUpdate(sessionId);
+  emitLaneEvent(sessionId, laneId, "claim_released", {
+    claimId,
+    resourcePath: claim.pathOrSymbol,
+    claimType: claim.claimType,
+  });
   logger.info({ claimId, laneId }, "Lane claim released");
   res.json({ claimId, action: "released", expiresAt: null });
 });
@@ -672,6 +700,12 @@ router.post("/sessions/:id/lanes/:laneId/handoff", async (req, res) => {
   }
 
   broadcastCoordinationUpdate(sessionId);
+  emitLaneEvent(sessionId, laneId, "handoff_sent", {
+    handoffId: handoff.id,
+    handoffType,
+    toLaneIds: toLaneIds ?? [],
+    resourcePaths: resourcePaths ?? [],
+  });
   logger.info({ handoffId: handoff.id, laneId, handoffType }, "Lane handoff signal created");
   res.status(201).json(serializeHandoff(finalHandoff));
 });
@@ -715,6 +749,12 @@ router.patch("/sessions/:id/lanes/:laneId/handoff/:handoffId", async (req, res) 
   logger.info({ handoffId, laneId, status }, "Handoff signal updated");
   res.json(serializeHandoff(updated));
   broadcastCoordinationUpdate(sessionId);
+  if (status === "acknowledged") {
+    emitLaneEvent(sessionId, laneId, "handoff_acknowledged", {
+      handoffId,
+      handoffType: existing.handoffType,
+    });
+  }
 });
 
 // ─── GET /api/sessions/:id/coordination ───────────────────────────────────────
@@ -1005,8 +1045,85 @@ router.patch("/sessions/:id/heavy-jobs/:jobId", async (req, res) => {
     .where(eq(laneHeavyJobsTable.id, jobId));
   if (!updated) { res.status(404).json({ error: "Job not found after update" }); return; }
 
+  if (updated.laneId) {
+    if (status === "running") {
+      emitLaneEvent(sessionId, updated.laneId, "heavy_job_started", {
+        jobId,
+        jobClass: updated.jobClass,
+      });
+    } else if (status === "completed") {
+      emitLaneEvent(sessionId, updated.laneId, "heavy_job_completed", {
+        jobId,
+        jobClass: updated.jobClass,
+      });
+    }
+  }
+
   broadcastCoordinationUpdate(sessionId);
   res.json(serializeJob(updated));
+});
+
+// ─── GET /api/sessions/:id/lanes/:laneId/timeline ─────────────────────────────
+// Returns paginated lane_events for a specific lane, newest first.
+// ?cursor=<id>&limit=<n> — cursor is the lowest event id from the previous page.
+
+router.get("/sessions/:id/lanes/:laneId/timeline", async (req, res) => {
+  const sessionId = getSessionId(req);
+  const laneId = parseInt(req.params["laneId"] ?? "");
+  if (!sessionId || !Number.isFinite(laneId)) {
+    res.status(400).json({ error: "Invalid session or lane ID" }); return;
+  }
+
+  const [lane] = await db.select({ id: sessionLanesTable.id })
+    .from(sessionLanesTable)
+    .where(and(eq(sessionLanesTable.id, laneId), eq(sessionLanesTable.sessionId, sessionId)));
+
+  if (!lane) {
+    const [historyEvent] = await db.select({ id: laneEventsTable.id })
+      .from(laneEventsTable)
+      .where(and(eq(laneEventsTable.laneId, laneId), eq(laneEventsTable.sessionId, sessionId)))
+      .limit(1);
+    if (!historyEvent) { res.status(404).json({ error: "Lane not found" }); return; }
+  }
+
+  const rawLimit = parseInt(String(req.query["limit"] ?? ""));
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 25;
+
+  const rawCursor = parseInt(String(req.query["cursor"] ?? ""));
+  const cursor = Number.isFinite(rawCursor) ? rawCursor : null;
+
+  const conditions = [
+    eq(laneEventsTable.laneId, laneId),
+    eq(laneEventsTable.sessionId, sessionId),
+  ];
+  if (cursor != null) {
+    conditions.push(lt(laneEventsTable.id, cursor));
+  }
+
+  const events = await db
+    .select()
+    .from(laneEventsTable)
+    .where(and(...conditions))
+    .orderBy(desc(laneEventsTable.id))
+    .limit(limit + 1);
+
+  const hasMore = events.length > limit;
+  const page = hasMore ? events.slice(0, limit) : events;
+  const nextCursor = hasMore ? (page[page.length - 1]?.id ?? null) : null;
+
+  res.json({
+    laneId,
+    events: page.map((e) => ({
+      id: e.id,
+      sessionId: e.sessionId,
+      laneId: e.laneId,
+      eventType: e.eventType,
+      payload: e.payload ?? null,
+      createdAt: e.createdAt.toISOString(),
+    })),
+    nextCursor,
+    total: page.length,
+  });
 });
 
 // ─── Lane Types: auth middleware ───────────────────────────────────────────────

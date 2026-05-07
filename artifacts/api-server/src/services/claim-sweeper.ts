@@ -14,6 +14,7 @@ import { db, laneClaimsTable, sessionLanesTable } from "@workspace/db";
 import { and, eq, inArray, lt, or } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { LANE_HEARTBEAT_WINDOW_SECONDS } from "./lane-policy";
+import { emitLaneEvent } from "./lane-event-emitter";
 
 export interface SweepResult {
   deleted: number;
@@ -58,7 +59,15 @@ export async function expireStaleClaimsForSession(sessionId: number): Promise<Ex
         ),
       ),
     )
-    .returning({ id: laneClaimsTable.id });
+    .returning({ id: laneClaimsTable.id, laneId: laneClaimsTable.laneId, pathOrSymbol: laneClaimsTable.pathOrSymbol, claimType: laneClaimsTable.claimType });
+
+  for (const row of deactivated) {
+    emitLaneEvent(sessionId, row.laneId, "claim_expired", {
+      claimId: row.id,
+      resourcePath: row.pathOrSymbol,
+      claimType: row.claimType,
+    });
+  }
 
   return { deactivated: deactivated.length, sweptAt: now.toISOString() };
 }
@@ -71,6 +80,8 @@ export async function sweepExpiredClaims(): Promise<SweepResult> {
   const now = new Date();
   const heartbeatCutoff = new Date(Date.now() - LANE_HEARTBEAT_WINDOW_SECONDS * 1000);
 
+  // Single atomic DELETE with RETURNING — no race window between select and delete.
+  // Claims are only removed when the stale conditions still hold at delete time.
   const deleted = await db
     .delete(laneClaimsTable)
     .where(
@@ -82,7 +93,33 @@ export async function sweepExpiredClaims(): Promise<SweepResult> {
         ),
       ),
     )
-    .returning({ id: laneClaimsTable.id });
+    .returning({
+      id: laneClaimsTable.id,
+      laneId: laneClaimsTable.laneId,
+      pathOrSymbol: laneClaimsTable.pathOrSymbol,
+      claimType: laneClaimsTable.claimType,
+    });
+
+  if (deleted.length === 0) return { deleted: 0, sweptAt: now.toISOString() };
+
+  // Fetch session IDs for the affected lanes so we can emit + broadcast events.
+  const uniqueLaneIds = [...new Set(deleted.map((c) => c.laneId))];
+  const lanes = await db
+    .select({ id: sessionLanesTable.id, sessionId: sessionLanesTable.sessionId })
+    .from(sessionLanesTable)
+    .where(inArray(sessionLanesTable.id, uniqueLaneIds));
+
+  const laneSessionMap = new Map(lanes.map((l) => [l.id, l.sessionId]));
+
+  for (const claim of deleted) {
+    const sessionId = laneSessionMap.get(claim.laneId);
+    if (sessionId == null) continue;
+    emitLaneEvent(sessionId, claim.laneId, "claim_expired", {
+      claimId: claim.id,
+      resourcePath: claim.pathOrSymbol,
+      claimType: claim.claimType,
+    });
+  }
 
   return { deleted: deleted.length, sweptAt: now.toISOString() };
 }

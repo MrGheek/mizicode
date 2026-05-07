@@ -90,9 +90,30 @@ export const customLaneTypesTable = pgTable("custom_lane_types", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+export type LaneEventType =
+  | "claim_created"
+  | "claim_released"
+  | "claim_expired"
+  | "handoff_sent"
+  | "handoff_acknowledged"
+  | "heavy_job_started"
+  | "heavy_job_completed"
+  | "lane_created"
+  | "lane_destroyed";
+
+export const laneEventsTable = pgTable("lane_events", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").notNull().references(() => sessionsTable.id),
+  laneId: integer("lane_id").notNull(),
+  eventType: text("event_type").notNull(),
+  payload: jsonb("payload"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export type SessionLane = typeof sessionLanesTable.$inferSelect;
 export type LaneClaim = typeof laneClaimsTable.$inferSelect;
 export type LaneHandoff = typeof laneHandoffsTable.$inferSelect;
 export type LaneHeavyJob = typeof laneHeavyJobsTable.$inferSelect;
 export type ClaimPurgeLog = typeof claimPurgeLogsTable.$inferSelect;
 export type CustomLaneType = typeof customLaneTypesTable.$inferSelect;
+export type LaneEvent = typeof laneEventsTable.$inferSelect;
