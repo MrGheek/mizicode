@@ -22,10 +22,12 @@ import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 import type { LaunchOptions } from "@/components/launch-session-dialog";
 import {
   Sparkles, Loader2, Terminal, ArrowRight,
-  GitBranch, Eye, EyeOff, Zap, Cpu,
+  GitBranch, Eye, EyeOff, Zap, Cpu, Github,
   ChevronDown, ChevronRight, RotateCcw, X, Globe,
 } from "lucide-react";
 import { SwarmPill } from "@/components/swarm-activity-panel";
+import { useGitHubConnection } from "@/hooks/use-github-connection";
+import { GitHubConnectionWidget } from "@/components/github-connection-widget";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -93,6 +95,7 @@ function RepoPanel({
   githubToken: string; setGithubToken: (v: string) => void;
 }) {
   const [showToken, setShowToken] = useState(false);
+  const { status: ghStatus } = useGitHubConnection();
 
   // Load session-scoped PAT when repo URL changes (sessionStorage — ephemeral, not persisted)
   useEffect(() => {
@@ -136,40 +139,58 @@ function RepoPanel({
         />
       </div>
 
-      <div>
-        <label className="text-[10px] uppercase tracking-wider font-semibold block mb-1.5" style={{ color: "var(--text-muted)" }}>
-          GitHub PAT{" "}
-          <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>
-            (optional — private repos only)
-          </span>
-        </label>
-        <div className="relative">
-          <input
-            type={showToken ? "text" : "password"}
-            value={githubToken}
-            onChange={e => setGithubToken(e.target.value)}
-            placeholder="ghp_••••••••••••"
-            className="w-full text-xs px-3 py-2 pr-9 rounded-lg outline-none font-mono"
-            style={{
-              background: "var(--bg-glass)", border: "1px solid var(--border-glass)",
-              color: "var(--text-primary)",
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => setShowToken(v => !v)}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors"
-            style={{ color: "var(--text-muted)" }}
-          >
-            {showToken ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-          </button>
+      {ghStatus.connected ? (
+        <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs" style={{ background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.18)" }}>
+          {ghStatus.avatarUrl && (
+            <img src={ghStatus.avatarUrl} alt={ghStatus.login ?? ""} className="w-4 h-4 rounded-full" />
+          )}
+          <Github className="w-3 h-3 shrink-0" style={{ color: "#10b981" }} />
+          <span style={{ color: "#10b981" }}>Connected as <strong>{ghStatus.login}</strong> — token injected at launch</span>
         </div>
-        {githubToken && repoUrl.trim() && (
-          <p className="text-[10px] mt-1" style={{ color: "var(--accent-violet)" }}>
-            ✓ Token saved for this repo
+      ) : (
+        <div>
+          <label className="text-[10px] uppercase tracking-wider font-semibold block mb-1.5" style={{ color: "var(--text-muted)" }}>
+            GitHub PAT{" "}
+            <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>
+              (optional — private repos only)
+            </span>
+          </label>
+          <div className="relative">
+            <input
+              type={showToken ? "text" : "password"}
+              value={githubToken}
+              onChange={e => setGithubToken(e.target.value)}
+              placeholder="ghp_••••••••••••"
+              className="w-full text-xs px-3 py-2 pr-9 rounded-lg outline-none font-mono"
+              style={{
+                background: "var(--bg-glass)", border: "1px solid var(--border-glass)",
+                color: "var(--text-primary)",
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowToken(v => !v)}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors"
+              style={{ color: "var(--text-muted)" }}
+            >
+              {showToken ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+            </button>
+          </div>
+          {githubToken && repoUrl.trim() && (
+            <p className="text-[10px] mt-1" style={{ color: "var(--accent-violet)" }}>
+              ✓ Token saved for this repo
+            </p>
+          )}
+          <p className="text-[10px] mt-1.5 flex items-center gap-1" style={{ color: "var(--text-muted)" }}>
+            <Github className="w-3 h-3 shrink-0" />
+            Or{" "}
+            <a href={`${BASE_URL}api/auth/github`} className="underline hover:opacity-80 transition-opacity">
+              Connect GitHub once
+            </a>{" "}
+            to skip this every launch.
           </p>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -206,6 +227,7 @@ function IntentBar({ onGpuLaunch, onNimLaunch }: {
   const [showRepo, setShowRepo] = useState(false);
   const [repoUrl, setRepoUrl] = useState(() => loadSavedRepoUrl());
   const [githubToken, setGithubToken] = useState(() => repoUrl ? loadSessionPat(repoUrl) : "");
+  const { status: ghStatus } = useGitHubConnection();
   const [gpuOpen, setGpuOpen] = useState(false);
   const [launchingNim, setLaunchingNim] = useState(false);
   const [preClassifying, setPreClassifying] = useState(false);
@@ -282,7 +304,7 @@ function IntentBar({ onGpuLaunch, onNimLaunch }: {
       nimProvider: result.nimSuggestion.nimProvider ?? "nvidia",
       intentText: intent || undefined,
       repoUrl: repoUrl || null,
-      githubToken: githubToken || null,
+      githubToken: ghStatus.connected ? null : (githubToken || null),
       taskMode: taskMode || null,
       tokenMode: tokenMode || null,
       skillBundle: skillBundle !== "auto" ? skillBundle : null,
@@ -293,7 +315,7 @@ function IntentBar({ onGpuLaunch, onNimLaunch }: {
     onGpuLaunch(profileId, {
       intentText: intent || undefined,
       repoUrl: repoUrl || null,
-      githubToken: githubToken || null,
+      githubToken: ghStatus.connected ? null : (githubToken || null),
       taskMode: taskMode || null,
       tokenMode: tokenMode || null,
       skillBundle: skillBundle !== "auto" ? skillBundle : undefined,

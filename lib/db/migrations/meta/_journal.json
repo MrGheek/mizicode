@@ -85,6 +85,20 @@
                         "when": 1746922000000,
                         "tag": "0023_custom_lane_types",
                         "breakpoints": true
+                },
+                {
+                        "idx": 24,
+                        "version": "7",
+                        "when": 1746922100000,
+                        "tag": "0023_operator_credentials",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 24,
+                        "version": "7",
+                        "when": 1746922100000,
+                        "tag": "0024_operator_credentials_provider_unique",
+                        "breakpoints": true
                 }
         ]
 }

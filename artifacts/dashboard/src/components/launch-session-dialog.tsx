@@ -14,9 +14,11 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import {
   Loader2, ChevronDown, ChevronRight, Wand2, Info,
-  Users, Plus, X, Play, Eye, EyeOff, KeyRound,
+  Users, Plus, X, Play, Eye, EyeOff, KeyRound, Github,
 } from "lucide-react";
 import { SkillClassBadge } from "@/components/skill-badges";
+import { useGitHubConnection } from "@/hooks/use-github-connection";
+import { API_BASE_URL } from "@/lib/api-url";
 
 const LS_PAT_PREFIX = "mizi:github_pat:";
 
@@ -111,6 +113,7 @@ export function LaunchSessionDialog({
   prefill,
 }: LaunchSessionDialogProps) {
   const hasPrefill = !!prefill;
+  const { status: ghStatus } = useGitHubConnection();
   const [taskMode, setTaskMode] = useState(() => prefill?.taskMode || "build");
   const [tokenMode, setTokenMode] = useState(() => prefill?.tokenMode || "core");
   const [repoUrl, setRepoUrl] = useState(() => prefill?.repoUrl ?? "");
@@ -209,7 +212,7 @@ export function LaunchSessionDialog({
       repoUrl: repoUrl.trim() || null,
       intentText: intentText.trim() || null,
       teamMembers: validTeam.length > 0 ? validTeam : undefined,
-      githubToken: githubToken.trim() || null,
+      githubToken: ghStatus.connected ? null : (githubToken.trim() || null),
     });
   };
 
@@ -268,40 +271,58 @@ export function LaunchSessionDialog({
             </p>
           </div>
 
-          {/* GitHub PAT — always visible, right below Repo URL */}
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <KeyRound className="w-3 h-3" />
-              GitHub Token
-              <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground/60">(optional)</span>
-            </Label>
-            <div className="relative">
-              <Input
-                type={showToken ? "text" : "password"}
-                placeholder="ghp_••••••••••••••••••••••••••••••••••••••"
-                value={githubToken}
-                onChange={e => setGithubToken(e.target.value)}
-                className="text-sm font-mono pr-9"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <button
-                type="button"
-                onClick={() => setShowToken(v => !v)}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                tabIndex={-1}
-                aria-label={showToken ? "Hide token" : "Show token"}
-              >
-                {showToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              </button>
+          {/* GitHub Token — show PAT field only when no OAuth token is stored */}
+          {ghStatus.connected ? (
+            <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-300">
+              {ghStatus.avatarUrl && (
+                <img src={ghStatus.avatarUrl} alt={ghStatus.login ?? ""} className="w-4 h-4 rounded-full" />
+              )}
+              <Github className="w-3.5 h-3.5 shrink-0" />
+              <span>GitHub connected as <strong>{ghStatus.login}</strong> — token injected automatically</span>
             </div>
-            <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-              <Info className="w-3 h-3 shrink-0" />
-              {githubToken && repoUrl.trim()
-                ? "Token saved for this repo — pre-fills next time. Pushes go to mizi/session branch."
-                : "Stored locally per repo — never sent to our servers. Pushes always go to a new branch."}
-            </p>
-          </div>
+          ) : (
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <KeyRound className="w-3 h-3" />
+                GitHub Token
+                <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground/60">(optional)</span>
+              </Label>
+              <div className="relative">
+                <Input
+                  type={showToken ? "text" : "password"}
+                  placeholder="ghp_••••••••••••••••••••••••••••••••••••••"
+                  value={githubToken}
+                  onChange={e => setGithubToken(e.target.value)}
+                  className="text-sm font-mono pr-9"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowToken(v => !v)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  tabIndex={-1}
+                  aria-label={showToken ? "Hide token" : "Show token"}
+                >
+                  {showToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                <Info className="w-3 h-3 shrink-0" />
+                {githubToken && repoUrl.trim()
+                  ? "Token saved for this repo — pre-fills next time. Pushes go to mizi/session branch."
+                  : "Stored locally per repo — never sent to our servers. Pushes always go to a new branch."}
+              </p>
+              <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                <Github className="w-3 h-3 shrink-0" />
+                Or{" "}
+                <a href={`${API_BASE_URL}api/auth/github`} className="underline hover:text-foreground transition-colors">
+                  Connect GitHub once
+                </a>{" "}
+                to skip entering tokens every launch.
+              </p>
+            </div>
+          )}
 
           {/* Session intent — what are you working on? */}
           <div className="space-y-1.5">

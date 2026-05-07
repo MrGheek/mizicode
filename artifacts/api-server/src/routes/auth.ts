@@ -1,19 +1,25 @@
 /**
- * Machine-to-Machine API Key Management
+ * Auth Routes
  *
+ * Machine-to-Machine API Key Management:
  * POST   /auth/keys          — create a new API key (plaintext returned once)
  * GET    /auth/keys          — list active (non-revoked) keys; values never returned
  * DELETE /auth/keys/:id      — revoke a key by id
  *
- * All three routes are operator-only: they require the same MIZI_MEM_TOKEN
- * bearer used by the ambient/safety and memory control-plane surfaces.
- * In dev mode (no MIZI_MEM_TOKEN set) they are open, exactly matching the
- * posture of those existing surfaces.
+ * GitHub OAuth (single-operator model):
+ * GET    /auth/github         — initiate OAuth flow (redirects to GitHub)
+ * GET    /auth/github/callback — OAuth callback (exchanges code for token)
+ * GET    /auth/github/status  — returns { connected, login, avatarUrl } — never the raw token
+ * DELETE /auth/github         — disconnect (deletes stored token)
+ *
+ * All key management routes require MIZI_MEM_TOKEN bearer auth.
+ * GitHub status and disconnect also require MIZI_MEM_TOKEN.
+ * GitHub OAuth initiation and callback are browser-facing (no bearer required).
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { randomBytes } from "crypto";
-import { db, apiKeysTable } from "@workspace/db";
+import { randomBytes, createCipheriv, createDecipheriv, createHash } from "crypto";
+import { db, apiKeysTable, operatorCredentialsTable } from "@workspace/db";
 import { and, eq, isNull, or, gt } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { hashApiKey } from "../middlewares/agent-auth";
@@ -28,13 +34,11 @@ function requireOperator(req: Request, res: Response, next: NextFunction): void 
 
   if (!token) {
     if (isProd) {
-      // Fail closed: key management in production requires MIZI_MEM_TOKEN.
       res.status(503).json({
         error: "Key management is not configured — MIZI_MEM_TOKEN must be set in production",
       });
       return;
     }
-    // Dev mode: open access, mirrors memory/ambient posture.
     next();
     return;
   }
@@ -131,7 +135,6 @@ router.get("/auth/keys", async (_req, res) => {
       })
       .from(apiKeysTable)
       .where(
-        // Exclude revoked and already-expired keys from the "active" list.
         and(
           isNull(apiKeysTable.revokedAt),
           or(isNull(apiKeysTable.expiresAt), gt(apiKeysTable.expiresAt, new Date()))
@@ -193,5 +196,280 @@ router.delete("/auth/keys/:id", async (req, res) => {
     res.status(500).json({ error: "Failed to revoke API key" });
   }
 });
+
+// ─── GitHub OAuth helpers ─────────────────────────────────────────────────────
+
+/**
+ * Derive a 32-byte AES key from MIZI_MEM_TOKEN (or a fallback) using SHA-256.
+ * This ensures the key is always exactly the right length for AES-256-GCM.
+ */
+function deriveEncryptionKey(): Buffer {
+  const secret = process.env["MIZI_MEM_TOKEN"];
+  const isProd = process.env["NODE_ENV"] === "production";
+  if (!secret) {
+    if (isProd) {
+      throw new Error("MIZI_MEM_TOKEN must be set in production to encrypt stored OAuth tokens");
+    }
+    // Dev-only non-deterministic stand-in — not suitable for production
+    return createHash("sha256").update("mizi-dev-only-key").digest();
+  }
+  return createHash("sha256").update(secret).digest();
+}
+
+function encryptToken(plaintext: string): string {
+  const key = deriveEncryptionKey();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  // Format: iv(12B) + tag(16B) + ciphertext — all hex-encoded
+  return iv.toString("hex") + tag.toString("hex") + encrypted.toString("hex");
+}
+
+function decryptToken(encoded: string): string {
+  const key = deriveEncryptionKey();
+  const ivHex = encoded.slice(0, 24);
+  const tagHex = encoded.slice(24, 56);
+  const ctHex = encoded.slice(56);
+  const iv = Buffer.from(ivHex, "hex");
+  const tag = Buffer.from(tagHex, "hex");
+  const ct = Buffer.from(ctHex, "hex");
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  return decipher.update(ct).toString("utf8") + decipher.final("utf8");
+}
+
+// Short-lived in-memory state map (oauth state parameter → { expiry, returnOrigin })
+// Single-operator model: a simple Map is sufficient.
+interface OAuthStateEntry { expiry: number; returnOrigin: string }
+const oauthStateMap = new Map<string, OAuthStateEntry>();
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+function cleanExpiredStates() {
+  const now = Date.now();
+  for (const [state, entry] of oauthStateMap.entries()) {
+    if (now > entry.expiry) oauthStateMap.delete(state);
+  }
+}
+
+// ─── GET /auth/github — initiate OAuth flow ───────────────────────────────────
+
+router.get("/auth/github", (req, res) => {
+  const clientId = process.env["GITHUB_OAUTH_CLIENT_ID"];
+  if (!clientId) {
+    res.status(503).json({ error: "GitHub OAuth is not configured — set GITHUB_OAUTH_CLIENT_ID" });
+    return;
+  }
+
+  cleanExpiredStates();
+  const state = randomBytes(16).toString("hex");
+
+  // Capture the frontend origin so we can redirect back there after OAuth.
+  // Security: only redirect to DASHBOARD_URL (explicit config), same API origin, or a
+  // Referer/Origin that is HTTPS — preventing open-redirect to arbitrary HTTP URLs.
+  const configuredDashboardUrl = (process.env["DASHBOARD_URL"] ?? "").replace(/\/$/, "");
+  const apiProto = (req.headers["x-forwarded-proto"] as string | undefined) || req.protocol || "http";
+  const apiHost = (req.headers["x-forwarded-host"] as string | undefined) || req.headers["host"] || "";
+  const sameOrigin = apiHost ? `${apiProto}://${apiHost}` : "";
+
+  // Derive candidate origin from browser-set Referer or Origin headers
+  const referer = (req.headers["referer"] as string | undefined) ?? "";
+  const originHeader = (req.headers["origin"] as string | undefined) ?? "";
+  let candidateOrigin = "";
+  if (referer) {
+    try { candidateOrigin = new URL(referer).origin; } catch { /* ignore */ }
+  }
+  if (!candidateOrigin && originHeader) {
+    candidateOrigin = originHeader.replace(/\/$/, "");
+  }
+
+  // Resolve return origin: prefer explicit DASHBOARD_URL, then validate candidate.
+  // A candidate is accepted when it matches a known trusted origin (same-origin or
+  // configured dashboard URL), OR when it is HTTPS (browser-set Referer is trustworthy
+  // for cross-origin dashboard + API deployments as long as we stay on HTTPS).
+  let returnOrigin = configuredDashboardUrl; // explicit config always wins
+  if (!returnOrigin && candidateOrigin) {
+    const isTrusted = candidateOrigin === sameOrigin
+      || candidateOrigin.startsWith("https://");
+    if (isTrusted) returnOrigin = candidateOrigin;
+  }
+  // Final fallback to same API origin (never an external domain)
+  if (!returnOrigin) returnOrigin = sameOrigin;
+
+  oauthStateMap.set(state, { expiry: Date.now() + OAUTH_STATE_TTL_MS, returnOrigin });
+
+  // Build callback URL from request host so it works in both dev and prod
+  const proto = req.headers["x-forwarded-proto"] || req.protocol || "http";
+  const host = req.headers["x-forwarded-host"] || req.headers["host"] || "localhost";
+  const callbackUrl = `${proto}://${host}/api/auth/github/callback`;
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: callbackUrl,
+    scope: "repo",
+    state,
+  });
+
+  res.redirect(`https://github.com/login/oauth/authorize?${params.toString()}`);
+});
+
+// ─── GET /auth/github/callback — OAuth callback ───────────────────────────────
+
+router.get("/auth/github/callback", async (req, res) => {
+  const { code, state, error: oauthError } = req.query as Record<string, string>;
+
+  // Resolve the returnOrigin from state (even for error cases)
+  const stateEntry = state ? oauthStateMap.get(state) : undefined;
+  const returnOrigin = stateEntry?.returnOrigin ?? "";
+
+  if (oauthError) {
+    logger.warn({ oauthError }, "GitHub OAuth: user denied authorization");
+    res.redirect(`${returnOrigin}/?github_oauth=denied`);
+    return;
+  }
+
+  if (!code || !state) {
+    res.status(400).json({ error: "Missing code or state parameter" });
+    return;
+  }
+
+  cleanExpiredStates();
+  if (!stateEntry || Date.now() > stateEntry.expiry) {
+    res.status(400).json({ error: "Invalid or expired OAuth state — please try connecting again" });
+    return;
+  }
+  oauthStateMap.delete(state);
+
+  const clientId = process.env["GITHUB_OAUTH_CLIENT_ID"];
+  const clientSecret = process.env["GITHUB_OAUTH_CLIENT_SECRET"];
+  if (!clientId || !clientSecret) {
+    res.status(503).json({ error: "GitHub OAuth is not configured on the server" });
+    return;
+  }
+
+  try {
+    // Exchange code for access token
+    const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+    });
+
+    if (!tokenRes.ok) {
+      throw new Error(`GitHub token endpoint returned ${tokenRes.status}`);
+    }
+
+    const tokenData = await tokenRes.json() as { access_token?: string; error?: string };
+    if (tokenData.error || !tokenData.access_token) {
+      throw new Error(tokenData.error || "No access_token in response");
+    }
+
+    const accessToken = tokenData.access_token;
+
+    // Fetch authenticated user info
+    const userRes = await fetch("https://api.github.com/user", {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+
+    if (!userRes.ok) {
+      throw new Error(`GitHub user API returned ${userRes.status}`);
+    }
+
+    const userData = await userRes.json() as { login?: string; avatar_url?: string };
+    const githubLogin = userData.login || null;
+    const githubAvatarUrl = userData.avatar_url || null;
+
+    // Encrypt and upsert into operator_credentials
+    const encryptedToken = encryptToken(accessToken);
+
+    // Delete any existing github credential and insert fresh (upsert pattern)
+    await db
+      .delete(operatorCredentialsTable)
+      .where(eq(operatorCredentialsTable.provider, "github"));
+
+    await db.insert(operatorCredentialsTable).values({
+      provider: "github",
+      accessTokenEncrypted: encryptedToken,
+      githubLogin,
+      githubAvatarUrl,
+    });
+
+    logger.info({ githubLogin }, "GitHub OAuth: token stored successfully");
+
+    // Redirect back to the dashboard (returnOrigin captured at flow initiation)
+    res.redirect(`${returnOrigin}/?github_oauth=connected`);
+  } catch (err) {
+    logger.error(err, "GitHub OAuth callback failed");
+    res.redirect(`${returnOrigin}/?github_oauth=error`);
+  }
+});
+
+// ─── GET /auth/github/status — connection status (operator-only) ──────────────
+
+router.get("/auth/github/status", requireOperator, async (_req, res) => {
+  try {
+    const [row] = await db
+      .select({
+        githubLogin: operatorCredentialsTable.githubLogin,
+        githubAvatarUrl: operatorCredentialsTable.githubAvatarUrl,
+      })
+      .from(operatorCredentialsTable)
+      .where(eq(operatorCredentialsTable.provider, "github"))
+      .limit(1);
+
+    if (!row) {
+      res.json({ connected: false, login: null, avatarUrl: null });
+      return;
+    }
+
+    res.json({ connected: true, login: row.githubLogin, avatarUrl: row.githubAvatarUrl });
+  } catch (err) {
+    logger.error(err, "Failed to fetch GitHub OAuth status");
+    res.status(500).json({ error: "Failed to fetch GitHub OAuth status" });
+  }
+});
+
+// ─── DELETE /auth/github — disconnect (operator-only) ────────────────────────
+
+router.delete("/auth/github", requireOperator, async (_req, res) => {
+  try {
+    await db
+      .delete(operatorCredentialsTable)
+      .where(eq(operatorCredentialsTable.provider, "github"));
+
+    logger.info("GitHub OAuth: token disconnected");
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error(err, "Failed to disconnect GitHub OAuth token");
+    res.status(500).json({ error: "Failed to disconnect GitHub OAuth token" });
+  }
+});
+
+// ─── getStoredGitHubToken — internal helper for session launch ────────────────
+
+/**
+ * Load and decrypt the stored GitHub OAuth token from operator_credentials.
+ * Returns null if no token is stored. Used by the session creation handler
+ * to auto-inject the token without requiring the dashboard to pass it.
+ */
+export async function getStoredGitHubToken(): Promise<string | null> {
+  try {
+    const [row] = await db
+      .select({ accessTokenEncrypted: operatorCredentialsTable.accessTokenEncrypted })
+      .from(operatorCredentialsTable)
+      .where(eq(operatorCredentialsTable.provider, "github"))
+      .limit(1);
+
+    if (!row) return null;
+    return decryptToken(row.accessTokenEncrypted);
+  } catch (err) {
+    logger.warn(err, "Failed to load stored GitHub OAuth token");
+    return null;
+  }
+}
 
 export default router;

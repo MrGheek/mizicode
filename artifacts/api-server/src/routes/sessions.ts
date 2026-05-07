@@ -16,6 +16,7 @@ import { autoEnqueueRepoIndexIfNeeded } from "./repo";
 
 import { randomBytes } from "crypto";
 import { requireAgentAuth } from "../middlewares/agent-auth";
+import { getStoredGitHubToken } from "./auth";
 
 function generatePassword(length = 12): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -633,9 +634,20 @@ router.patch("/sessions/:sessionId", async (req, res) => {
 router.post("/sessions", requireAgentAuth(["sessions:write"]), async (req, res) => {
   const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider, githubToken: rawGithubToken } = req.body;
 
-  const githubToken: string | undefined = (typeof rawGithubToken === "string" && rawGithubToken.trim())
+  // If no PAT was passed from the dashboard, attempt to load the stored OAuth token.
+  // The dashboard omits the field when it knows an OAuth token is connected,
+  // but we also fall back here in case the request came from an older client.
+  let githubToken: string | undefined = (typeof rawGithubToken === "string" && rawGithubToken.trim())
     ? rawGithubToken.trim()
     : undefined;
+
+  if (!githubToken) {
+    const oauthToken = await getStoredGitHubToken();
+    if (oauthToken) {
+      githubToken = oauthToken;
+      logger.info("Session launch: using stored GitHub OAuth token");
+    }
+  }
 
   // Sanitize and bound the natural-language session intent (optional).
   let intentText: string | null = null;

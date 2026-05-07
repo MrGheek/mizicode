@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   Globe, CheckCircle2, XCircle, Loader2, ExternalLink, WifiOff, Activity,
-  ChevronDown, ChevronRight, Layers,
+  ChevronDown, ChevronRight, Layers, Github,
 } from "lucide-react";
 import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 import { useGetSchedulerConfig, useUpdateSchedulerConfig, useListProfiles } from "@workspace/api-client-react";
@@ -11,6 +11,7 @@ import { LaneTypesPanel } from "@/components/lane-types-panel";
 import { useToast } from "@/hooks/use-toast";
 import type { SchedulerConfig, UpdateSchedulerRequest } from "@workspace/api-client-react";
 import { getGetSchedulerConfigQueryKey } from "@workspace/api-client-react";
+import { GitHubConnectionWidget } from "@/components/github-connection-widget";
 
 interface ProviderHealth {
   key: string;
@@ -216,6 +217,20 @@ export default function SettingsPage() {
           <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
             Monitor inference provider status and connectivity.
           </p>
+        </div>
+
+        {/* GitHub connection card */}
+        <div className="glass-card p-6 glass-emerge" style={{ animationDelay: "30ms" }}>
+          <div className="flex items-center gap-2 mb-1">
+            <Github className="w-4 h-4" style={{ color: "var(--accent-violet)" }} />
+            <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>GitHub Connection</h2>
+          </div>
+          <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
+            Connect your GitHub account once to automatically inject a token into every session launch — no more pasting PATs.
+            The operator must first create a GitHub OAuth App with callback URL <code className="font-mono">/api/auth/github/callback</code> and set{" "}
+            <code className="font-mono">GITHUB_OAUTH_CLIENT_ID</code> and <code className="font-mono">GITHUB_OAUTH_CLIENT_SECRET</code>.
+          </p>
+          <GitHubConnectionWidget />
         </div>
 
         {/* Provider health card */}

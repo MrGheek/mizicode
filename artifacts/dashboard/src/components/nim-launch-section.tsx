@@ -10,9 +10,10 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Zap, Play, Loader2, ChevronRight, Globe, Lock, Info, CheckCircle2, WifiOff, Eye, EyeOff } from "lucide-react";
+import { Zap, Play, Loader2, ChevronRight, Globe, Lock, Info, CheckCircle2, WifiOff, Eye, EyeOff, Github } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { API_BASE_URL } from "@/lib/api-url";
+import { useGitHubConnection } from "@/hooks/use-github-connection";
 
 interface ProviderHealth {
   key: string;
@@ -189,6 +190,7 @@ const NIM_GH_TOKEN_KEY = "mizi_nim_github_token";
 function NimLaunchDialog({ model, configured, onClose, onConfirm, isLaunching }: NimLaunchDialogProps) {
   const isFree = model.nimTypes.includes("nim_type_preview");
   const configuredPartners = model.partnerProviders.filter((p) => configured[p]);
+  const { status: ghStatus } = useGitHubConnection();
 
   const availableProviders: string[] = [
     ...(isFree && configured["nvidia"] ? ["nvidia"] : []),
@@ -263,35 +265,53 @@ function NimLaunchDialog({ model, configured, onClose, onConfirm, isLaunching }:
             />
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              GitHub Token
-              <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground/60">(optional — enables git push)</span>
-            </Label>
-            <div className="relative">
-              <Input
-                type={showToken ? "text" : "password"}
-                placeholder="ghp_…"
-                value={githubToken}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setGithubToken(val);
-                  try {
-                    if (val) localStorage.setItem(NIM_GH_TOKEN_KEY, val);
-                    else localStorage.removeItem(NIM_GH_TOKEN_KEY);
-                  } catch {}
-                }}
-                className="text-sm font-mono pr-8"
-              />
-              <button
-                type="button"
-                onClick={() => setShowToken((v) => !v)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {showToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              </button>
+          {ghStatus.connected ? (
+            <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-300">
+              {ghStatus.avatarUrl && (
+                <img src={ghStatus.avatarUrl} alt={ghStatus.login ?? ""} className="w-4 h-4 rounded-full" />
+              )}
+              <Github className="w-3.5 h-3.5 shrink-0" />
+              <span>GitHub connected as <strong>{ghStatus.login}</strong> — token injected automatically</span>
             </div>
-          </div>
+          ) : (
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                GitHub Token
+                <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground/60">(optional — enables git push)</span>
+              </Label>
+              <div className="relative">
+                <Input
+                  type={showToken ? "text" : "password"}
+                  placeholder="ghp_…"
+                  value={githubToken}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setGithubToken(val);
+                    try {
+                      if (val) localStorage.setItem(NIM_GH_TOKEN_KEY, val);
+                      else localStorage.removeItem(NIM_GH_TOKEN_KEY);
+                    } catch {}
+                  }}
+                  className="text-sm font-mono pr-8"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowToken((v) => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {showToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                <Github className="w-3 h-3 shrink-0" />
+                Or{" "}
+                <a href={`${API_BASE_URL}api/auth/github`} className="underline hover:text-foreground transition-colors">
+                  Connect GitHub once
+                </a>{" "}
+                to skip entering tokens every launch.
+              </p>
+            </div>
+          )}
 
           <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-muted-foreground flex items-start gap-2">
             <Info className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
@@ -309,7 +329,7 @@ function NimLaunchDialog({ model, configured, onClose, onConfirm, isLaunching }:
               nimProvider: selectedProvider,
               repoUrl: repoUrl.trim() || null,
               intentText: intentText.trim() || null,
-              githubToken: githubToken.trim() || null,
+              githubToken: ghStatus.connected ? null : (githubToken.trim() || null),
             })}
             disabled={isLaunching || availableProviders.length === 0}
             className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
