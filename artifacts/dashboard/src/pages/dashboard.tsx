@@ -86,6 +86,16 @@ interface IntentResult {
   repoSuggestion?: { message: string };
 }
 
+type NimSuggestion = NonNullable<IntentResult["nimSuggestion"]>;
+
+interface NimCatalogModel {
+  nimModelId: string;
+  displayName: string;
+  partnerProviders: string[];
+  nimTypes: string[];
+  shortDescription: string;
+}
+
 // ── RepoPanel ────────────────────────────────────────────────────────────────
 
 function RepoPanel({
@@ -231,6 +241,9 @@ function IntentBar({ onGpuLaunch, onNimLaunch }: {
   const [gpuOpen, setGpuOpen] = useState(false);
   const [launchingNim, setLaunchingNim] = useState(false);
   const [preClassifying, setPreClassifying] = useState(false);
+  const [selectedNimSuggestion, setSelectedNimSuggestion] = useState<NimSuggestion | null>(null);
+  const [showMoreModels, setShowMoreModels] = useState(false);
+  const [nimCatalog, setNimCatalog] = useState<NimCatalogModel[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [taskMode, setTaskMode] = useState<string>("build");
   const [tokenMode, setTokenMode] = useState<string>("core");
@@ -286,6 +299,8 @@ function IntentBar({ onGpuLaunch, onNimLaunch }: {
       });
       const data: IntentResult = r.ok ? await r.json() : { path: "choice", reasoning: "Could not classify." };
       setResult(data);
+      setSelectedNimSuggestion(data.nimSuggestion ?? null);
+      setShowMoreModels(false);
       // Show repo panel when classify detects repo context (signalled by repoSuggestion)
       if (data.repoSuggestion) setShowRepo(true);
     } catch {
@@ -296,12 +311,21 @@ function IntentBar({ onGpuLaunch, onNimLaunch }: {
     }
   };
 
+  // Lazy-fetch the NIM catalog when a NIM suggestion appears — used for "More models…" picker.
+  useEffect(() => {
+    if (!result?.nimSuggestion || nimCatalog.length > 0) return;
+    fetch(`${BASE_URL}api/nim/catalog`)
+      .then((r) => r.ok ? r.json() as Promise<{ models: NimCatalogModel[] }> : null)
+      .then((data) => { if (data?.models) setNimCatalog(data.models); })
+      .catch(() => {});
+  }, [result?.nimSuggestion]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleNimLaunch = () => {
-    if (!result?.nimSuggestion || launchingNim) return;
+    if (!selectedNimSuggestion || launchingNim) return;
     setLaunchingNim(true);
     onNimLaunch({
-      nimModelId: result.nimSuggestion.nimModelId,
-      nimProvider: result.nimSuggestion.nimProvider ?? "nvidia",
+      nimModelId: selectedNimSuggestion.nimModelId,
+      nimProvider: selectedNimSuggestion.nimProvider ?? "nvidia",
       intentText: intent || undefined,
       repoUrl: repoUrl || null,
       githubToken: ghStatus.connected ? null : (githubToken || null),
@@ -534,7 +558,7 @@ function IntentBar({ onGpuLaunch, onNimLaunch }: {
 
           <div className="flex flex-wrap gap-3">
             {/* NIM card */}
-            {result.nimSuggestion && (
+            {result.nimSuggestion && selectedNimSuggestion && (
               <div
                 className="flex-1 min-w-[200px] rounded-xl p-3.5 space-y-2"
                 style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.14)" }}
@@ -542,17 +566,82 @@ function IntentBar({ onGpuLaunch, onNimLaunch }: {
                 <div className="flex items-center gap-2">
                   <Zap className="w-3.5 h-3.5" style={{ color: "#10b981" }} />
                   <span className="text-xs font-semibold" style={{ color: "#10b981" }}>
-                    {result.nimSuggestion.displayName} · ~{result.nimSuggestion.estimatedStartMin}m
+                    {selectedNimSuggestion.displayName} · ~{selectedNimSuggestion.estimatedStartMin}m
                   </span>
                 </div>
                 <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                  via {result.nimSuggestion.providerLabel}
+                  via {selectedNimSuggestion.providerLabel}
                 </p>
-                {result.nimSuggestion.description && (
+                {selectedNimSuggestion.description && (
                   <p className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
-                    {result.nimSuggestion.description}
+                    {selectedNimSuggestion.description}
                   </p>
                 )}
+
+                {/* More models link */}
+                {nimCatalog.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowMoreModels(v => !v)}
+                    className="text-[11px] transition-colors"
+                    style={{ color: "var(--text-muted)" }}
+                    onMouseEnter={e => (e.currentTarget.style.color = "#10b981")}
+                    onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
+                  >
+                    {showMoreModels ? "Hide models" : "More models…"}
+                  </button>
+                )}
+
+                {/* Inline model picker */}
+                {showMoreModels && (
+                  <div
+                    className="mt-1 rounded-lg overflow-y-auto"
+                    style={{
+                      maxHeight: "160px",
+                      background: "rgba(0,0,0,0.18)",
+                      border: "1px solid rgba(16,185,129,0.12)",
+                    }}
+                  >
+                    {nimCatalog
+                      .filter(m => m.nimModelId !== selectedNimSuggestion.nimModelId)
+                      .map(m => {
+                        const provider = m.nimTypes.includes("nim_type_preview")
+                          ? "NVIDIA NIM"
+                          : m.partnerProviders[0]
+                            ? (m.partnerProviders[0].charAt(0).toUpperCase() + m.partnerProviders[0].slice(1))
+                            : "NIM";
+                        return (
+                          <button
+                            key={m.nimModelId}
+                            type="button"
+                            className="w-full text-left px-3 py-2 transition-colors"
+                            style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
+                            onMouseEnter={e => (e.currentTarget.style.background = "rgba(16,185,129,0.08)")}
+                            onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                            onClick={() => {
+                              setSelectedNimSuggestion({
+                                nimModelId: m.nimModelId,
+                                nimProvider: m.nimTypes.includes("nim_type_preview") ? "nvidia" : (m.partnerProviders[0] ?? "nvidia"),
+                                displayName: m.displayName,
+                                providerLabel: provider,
+                                estimatedStartMin: 2,
+                                description: m.shortDescription,
+                              });
+                              setShowMoreModels(false);
+                            }}
+                          >
+                            <span className="text-[11px] font-medium block" style={{ color: "var(--text-primary)" }}>
+                              {m.displayName}
+                            </span>
+                            <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                              via {provider} · ~2m
+                            </span>
+                          </button>
+                        );
+                      })}
+                  </div>
+                )}
+
                 <button
                   onClick={handleNimLaunch}
                   disabled={launchingNim}
