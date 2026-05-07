@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   useListSessionLanes,
   useGetSessionConflicts,
@@ -8,6 +8,7 @@ import {
   useReleaseLaneClaim,
   useCreateLaneHandoff,
   useAcknowledgeLaneHandoff,
+  useCreateSessionLane,
   getListSessionLanesQueryKey,
   getGetSessionConflictsQueryKey,
   getListHeavyJobsQueryKey,
@@ -22,9 +23,11 @@ import type {
   HandoffResponse,
   CreateHandoffRequest,
 } from "@workspace/api-client-react";
+import { API_BASE_URL } from "@/lib/api-url";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -54,8 +57,181 @@ import {
   X,
   Send,
   CheckCircle2,
+  Plus,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+
+interface LaneTypeOption {
+  name: string;
+  description: string;
+  isBuiltin: boolean;
+}
+
+async function fetchLaneTypeOptions(): Promise<LaneTypeOption[]> {
+  const res = await fetch(`${API_BASE_URL}api/coordination/lane-types`);
+  if (!res.ok) return [];
+  const data = await res.json() as { all: LaneTypeOption[] };
+  return data.all ?? [];
+}
+
+function AddLaneDialog({
+  sessionId,
+  onSuccess,
+}: {
+  sessionId: number;
+  onSuccess: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [memberIdentifier, setMemberIdentifier] = useState("");
+  const [laneType, setLaneType] = useState("general");
+  const [currentTask, setCurrentTask] = useState("");
+  const { toast } = useToast();
+
+  const { data: laneTypeOptions = [] } = useQuery({
+    queryKey: ["lane-types-options"],
+    queryFn: fetchLaneTypeOptions,
+    staleTime: 60_000,
+  });
+
+  const mutation = useCreateSessionLane();
+
+  function handleSubmit() {
+    const member = memberIdentifier.trim();
+    if (!member) return;
+
+    mutation.mutate(
+      {
+        id: sessionId,
+        data: {
+          memberIdentifier: member,
+          laneType: laneType as import("@workspace/api-client-react").CreateLaneRequestLaneType,
+          currentTask: currentTask.trim() || undefined,
+        },
+      },
+      {
+        onSuccess: () => {
+          setOpen(false);
+          setMemberIdentifier("");
+          setLaneType("general");
+          setCurrentTask("");
+          toast({ title: `Lane added for ${member}` });
+          onSuccess();
+        },
+        onError: (err: Error) => {
+          toast({ variant: "destructive", title: "Failed to add lane", description: err?.message ?? "Please try again." });
+        },
+      },
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-6 px-2 text-[10px] gap-1 border-border/50 text-muted-foreground hover:text-foreground"
+        >
+          <Plus className="w-2.5 h-2.5" />
+          Add lane
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="text-sm flex items-center gap-2">
+            <Plus className="w-4 h-4" />
+            Add Member Lane
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-1">
+          <div className="space-y-1.5">
+            <Label htmlFor="add-lane-member" className="text-xs text-muted-foreground">
+              Member identifier
+            </Label>
+            <Input
+              id="add-lane-member"
+              value={memberIdentifier}
+              onChange={(e) => setMemberIdentifier(e.target.value)}
+              placeholder="e.g. alice, ml-agent, bob"
+              className="h-8 text-xs"
+              autoFocus
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="add-lane-type" className="text-xs text-muted-foreground">
+              Lane type
+            </Label>
+            <Select value={laneType} onValueChange={setLaneType}>
+              <SelectTrigger id="add-lane-type" className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {laneTypeOptions.length > 0 ? (
+                  laneTypeOptions.map((lt) => (
+                    <SelectItem key={lt.name} value={lt.name} className="text-xs">
+                      <span className="capitalize">{lt.name}</span>
+                      {!lt.isBuiltin && (
+                        <span className="ml-1.5 text-[10px] text-primary/70">(custom)</span>
+                      )}
+                    </SelectItem>
+                  ))
+                ) : (
+                  ["general", "ux", "backend", "debug", "review"].map((t) => (
+                    <SelectItem key={t} value={t} className="text-xs capitalize">{t}</SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+            {laneTypeOptions.find((lt) => lt.name === laneType)?.description && (
+              <p className="text-[10px] text-muted-foreground/70">
+                {laneTypeOptions.find((lt) => lt.name === laneType)?.description}
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="add-lane-task" className="text-xs text-muted-foreground">
+              Current task <span className="opacity-50">(optional)</span>
+            </Label>
+            <Input
+              id="add-lane-task"
+              value={currentTask}
+              onChange={(e) => setCurrentTask(e.target.value)}
+              placeholder="What is this member working on?"
+              className="h-8 text-xs"
+            />
+          </div>
+
+          {mutation.isError && (
+            <p className="text-xs text-red-400">Failed to add lane. Please try again.</p>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setOpen(false)}
+              disabled={mutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="h-7 text-xs gap-1"
+              onClick={handleSubmit}
+              disabled={mutation.isPending || !memberIdentifier.trim()}
+            >
+              {mutation.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+              Add lane
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function LaneStatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; className: string }> = {
@@ -826,6 +1002,9 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
             <p className="text-xs mt-1 opacity-70">
               Team lanes appear here once members join and start claiming files or tasks.
             </p>
+            <div className="mt-4 flex justify-center">
+              <AddLaneDialog sessionId={sessionId} onSuccess={invalidateAll} />
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -869,12 +1048,12 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
       )}
 
       {/* Lane Activity */}
-      {lanes.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5" /> Member Lanes ({lanes.length})
-            </p>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+            <Users className="w-3.5 h-3.5" /> Member Lanes ({lanes.length})
+          </p>
+          <div className="flex items-center gap-2">
             {conflicts.length > 0 && (
               <p className="text-[10px] text-muted-foreground">
                 {conflicts.filter((c) => c.recommendation === "block").length > 0
@@ -882,7 +1061,10 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
                   : `${conflicts.length} warning${conflicts.length !== 1 ? "s" : ""}`}
               </p>
             )}
+            <AddLaneDialog sessionId={sessionId} onSuccess={invalidateAll} />
           </div>
+        </div>
+        {lanes.length > 0 && (
           <div className="space-y-2">
             {lanes.map((lane) => (
               <LaneCard
@@ -895,8 +1077,8 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
               />
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Conflicts Panel */}
       {conflicts.length > 0 && (

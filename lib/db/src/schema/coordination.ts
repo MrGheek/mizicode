@@ -79,8 +79,19 @@ export const claimPurgeLogsTable = pgTable("claim_purge_logs", {
   retentionDays: integer("retention_days").notNull(),
 });
 
+export const customLaneTypesTable = pgTable("custom_lane_types", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  description: text("description").notNull().default(""),
+  maxConcurrentClaims: integer("max_concurrent_claims").notNull().default(20),
+  heavyJobSlots: integer("heavy_job_slots").notNull().default(2),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export type SessionLane = typeof sessionLanesTable.$inferSelect;
 export type LaneClaim = typeof laneClaimsTable.$inferSelect;
 export type LaneHandoff = typeof laneHandoffsTable.$inferSelect;
 export type LaneHeavyJob = typeof laneHeavyJobsTable.$inferSelect;
 export type ClaimPurgeLog = typeof claimPurgeLogsTable.$inferSelect;
+export type CustomLaneType = typeof customLaneTypesTable.$inferSelect;

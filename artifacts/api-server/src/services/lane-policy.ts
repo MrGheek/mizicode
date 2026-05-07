@@ -7,6 +7,8 @@
  */
 
 import type { LaneType, ClaimType } from "@workspace/db";
+import { db, customLaneTypesTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 export const LANE_DEFAULT_TTL_SECONDS = 3600; // 1 hour claim expiry by default
 export const LANE_HEARTBEAT_WINDOW_SECONDS = 300; // claims expire if no heartbeat in 5 min
@@ -138,9 +140,67 @@ export const LANE_POLICIES: Record<LaneType, LaneOverlayPolicy> = {
 };
 
 export const VALID_LANE_TYPES: LaneType[] = ["ux", "debug", "backend", "review", "general"];
+export const BUILTIN_LANE_TYPE_NAMES: string[] = ["ux", "debug", "backend", "review", "general"];
 
 export function getLanePolicy(laneType: string): LaneOverlayPolicy {
   return LANE_POLICIES[laneType as LaneType] ?? LANE_POLICIES.general;
+}
+
+/**
+ * Async version of getLanePolicy that also checks the custom_lane_types table.
+ * Custom lane types inherit the "general" overlay bundle but use their own limits.
+ */
+export async function getLanePolicyAsync(laneType: string): Promise<LaneOverlayPolicy> {
+  const builtin = LANE_POLICIES[laneType as LaneType];
+  if (builtin) return builtin;
+
+  try {
+    const [custom] = await db
+      .select()
+      .from(customLaneTypesTable)
+      .where(eq(customLaneTypesTable.name, laneType))
+      .limit(1);
+
+    if (custom) {
+      const base = { ...LANE_POLICIES.general };
+      return {
+        ...base,
+        laneType: laneType as LaneType,
+        description: custom.description || `Custom lane type: ${custom.name}`,
+        limits: {
+          ...base.limits,
+          maxConcurrentClaims: custom.maxConcurrentClaims,
+          heavyJobSlots: custom.heavyJobSlots,
+        },
+      };
+    }
+  } catch {
+    // Fall through to general if DB query fails
+  }
+
+  return LANE_POLICIES.general;
+}
+
+/**
+ * Validate whether a given lane type string is a valid built-in or custom type.
+ * Returns the resolved lane type name (may be the same string if custom, or "general" fallback).
+ */
+export async function resolveValidLaneType(laneType: string | undefined): Promise<string> {
+  if (!laneType) return "general";
+  if (BUILTIN_LANE_TYPE_NAMES.includes(laneType)) return laneType;
+
+  try {
+    const [custom] = await db
+      .select({ name: customLaneTypesTable.name })
+      .from(customLaneTypesTable)
+      .where(eq(customLaneTypesTable.name, laneType))
+      .limit(1);
+    if (custom) return custom.name;
+  } catch {
+    // Fall through
+  }
+
+  return "general";
 }
 
 /**

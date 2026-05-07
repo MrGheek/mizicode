@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
 import {
   Globe, CheckCircle2, XCircle, Loader2, ExternalLink, WifiOff, Activity,
-  ChevronDown, ChevronRight,
+  ChevronDown, ChevronRight, Layers,
 } from "lucide-react";
 import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 import { useGetSchedulerConfig, useUpdateSchedulerConfig, useListProfiles } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { SchedulerConfigCard } from "@/components/scheduler-config-card";
+import { LaneTypesPanel } from "@/components/lane-types-panel";
 import { useToast } from "@/hooks/use-toast";
 import type { SchedulerConfig, UpdateSchedulerRequest } from "@workspace/api-client-react";
 import { getGetSchedulerConfigQueryKey } from "@workspace/api-client-react";
@@ -246,8 +247,20 @@ export default function SettingsPage() {
           )}
         </div>
 
+        {/* Lane Types */}
+        <div className="glass-card p-6 glass-emerge" style={{ animationDelay: "100ms" }}>
+          <div className="flex items-center gap-2 mb-1">
+            <Layers className="w-4 h-4 shrink-0" style={{ color: "var(--accent-cyan)" }} />
+            <h2 className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>Lane Types</h2>
+          </div>
+          <p className="text-xs mb-5" style={{ color: "var(--text-muted)" }}>
+            Built-in lane types cover common roles. Create custom types for specialized domains like ML, Infra, Data, or Security.
+          </p>
+          <LaneTypesPanel />
+        </div>
+
         {/* Scheduled sessions collapsible */}
-        <div className="glass-card overflow-hidden glass-emerge" style={{ animationDelay: "100ms" }}>
+        <div className="glass-card overflow-hidden glass-emerge" style={{ animationDelay: "150ms" }}>
           <button
             type="button"
             onClick={() => setSchedulerOpen((v) => !v)}

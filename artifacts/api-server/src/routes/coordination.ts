@@ -19,12 +19,17 @@ import {
   sessionsTable,
   sessionRepoContextTable,
   claimPurgeLogsTable,
+  customLaneTypesTable,
 } from "@workspace/db";
 import { eq, and, desc, inArray, asc, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import {
   getLanePolicy,
+  getLanePolicyAsync,
+  resolveValidLaneType,
   VALID_LANE_TYPES,
+  BUILTIN_LANE_TYPE_NAMES,
+  LANE_POLICIES,
   computeClaimOverlap,
   estimateBlastRadiusOverlap,
   LANE_DEFAULT_TTL_SECONDS,
@@ -228,7 +233,7 @@ router.get("/sessions/:id/lanes", async (req, res) => {
   const lanesWithClaims = await Promise.all(lanes.map(async (lane) => {
     const claims = await db.select().from(laneClaimsTable)
       .where(and(eq(laneClaimsTable.laneId, lane.id), eq(laneClaimsTable.active, true)));
-    const policy = getLanePolicy(lane.laneType);
+    const policy = await getLanePolicyAsync(lane.laneType);
     return {
       ...serializeLane(lane),
       policy,
@@ -261,10 +266,8 @@ router.post("/sessions/:id/lanes", async (req, res) => {
     return;
   }
 
-  const resolvedLaneType = laneType && VALID_LANE_TYPES.includes(laneType as typeof VALID_LANE_TYPES[number])
-    ? laneType : "general";
-
-  const policy = getLanePolicy(resolvedLaneType);
+  const resolvedLaneType = await resolveValidLaneType(laneType);
+  const policy = await getLanePolicyAsync(resolvedLaneType);
 
   const [lane] = await db.insert(sessionLanesTable).values({
     sessionId,
@@ -340,7 +343,10 @@ router.put("/sessions/:id/lanes/:laneId", async (req, res) => {
   };
 
   const updates: Partial<typeof sessionLanesTable.$inferInsert> = { updatedAt: new Date() };
-  if (laneType && VALID_LANE_TYPES.includes(laneType as typeof VALID_LANE_TYPES[number])) updates.laneType = laneType;
+  if (laneType) {
+    const resolved = await resolveValidLaneType(laneType);
+    updates.laneType = resolved;
+  }
   if (status && VALID_LANE_STATUSES.includes(status as typeof VALID_LANE_STATUSES[number])) updates.status = status;
   if (tokenMode) updates.tokenMode = tokenMode;
   if (currentTask !== undefined) updates.currentTask = currentTask;
@@ -948,6 +954,158 @@ router.patch("/sessions/:id/heavy-jobs/:jobId", async (req, res) => {
 
   broadcastCoordinationUpdate(sessionId);
   res.json(serializeJob(updated));
+});
+
+// ─── Lane Types: auth middleware ───────────────────────────────────────────────
+// GET is public (sessions need to list available lane types).
+// Mutations require MIZI_MEM_TOKEN bearer auth (operator-only).
+
+router.post("/coordination/lane-types", requireAgentAuth(["coordination:write"]));
+router.patch("/coordination/lane-types/:id", requireAgentAuth(["coordination:write"]));
+router.delete("/coordination/lane-types/:id", requireAgentAuth(["coordination:write"]));
+
+// ─── GET /api/coordination/lane-types ─────────────────────────────────────────
+// Returns built-in types (read-only) merged with operator-defined custom types.
+
+function serializeLaneType(row: typeof customLaneTypesTable.$inferSelect) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    maxConcurrentClaims: row.maxConcurrentClaims,
+    heavyJobSlots: row.heavyJobSlots,
+    isBuiltin: false,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function builtinLaneTypeSummary(name: string) {
+  const policy = LANE_POLICIES[name as keyof typeof LANE_POLICIES];
+  return {
+    id: null,
+    name,
+    description: policy?.description ?? "",
+    maxConcurrentClaims: policy?.limits.maxConcurrentClaims ?? 20,
+    heavyJobSlots: policy?.limits.heavyJobSlots ?? 2,
+    isBuiltin: true,
+    createdAt: null,
+    updatedAt: null,
+  };
+}
+
+router.get("/coordination/lane-types", async (_req, res) => {
+  const customs = await db.select().from(customLaneTypesTable).orderBy(asc(customLaneTypesTable.createdAt));
+  const builtins = BUILTIN_LANE_TYPE_NAMES.map(builtinLaneTypeSummary);
+  res.json({
+    builtins,
+    custom: customs.map(serializeLaneType),
+    all: [...builtins, ...customs.map(serializeLaneType)],
+  });
+});
+
+// ─── POST /api/coordination/lane-types ────────────────────────────────────────
+
+const RESERVED_LANE_NAMES = new Set(BUILTIN_LANE_TYPE_NAMES);
+const LANE_NAME_RE = /^[a-z][a-z0-9_-]{0,49}$/;
+
+router.post("/coordination/lane-types", async (req, res) => {
+  const { name, description, maxConcurrentClaims, heavyJobSlots } = req.body as {
+    name?: string;
+    description?: string;
+    maxConcurrentClaims?: number;
+    heavyJobSlots?: number;
+  };
+
+  if (!name || typeof name !== "string" || !LANE_NAME_RE.test(name)) {
+    res.status(400).json({ error: "name must be lowercase letters/numbers/hyphens/underscores, 1-50 chars, starting with a letter" });
+    return;
+  }
+  if (RESERVED_LANE_NAMES.has(name)) {
+    res.status(409).json({ error: `'${name}' is a built-in lane type and cannot be used as a custom type name` });
+    return;
+  }
+
+  const maxClaims = typeof maxConcurrentClaims === "number" && maxConcurrentClaims > 0 ? Math.floor(maxConcurrentClaims) : 20;
+  const heavySlots = typeof heavyJobSlots === "number" && heavyJobSlots > 0 ? Math.floor(heavyJobSlots) : 2;
+
+  try {
+    const [created] = await db.insert(customLaneTypesTable).values({
+      name,
+      description: description ?? "",
+      maxConcurrentClaims: maxClaims,
+      heavyJobSlots: heavySlots,
+    }).returning();
+    logger.info({ name }, "Custom lane type created");
+    res.status(201).json(serializeLaneType(created));
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("unique") || msg.includes("duplicate")) {
+      res.status(409).json({ error: `A custom lane type named '${name}' already exists` });
+    } else {
+      logger.error({ err }, "Failed to create custom lane type");
+      res.status(500).json({ error: "Failed to create lane type" });
+    }
+  }
+});
+
+// ─── PATCH /api/coordination/lane-types/:id ───────────────────────────────────
+
+router.patch("/coordination/lane-types/:id", async (req, res) => {
+  const id = parseInt(req.params["id"] ?? "");
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid lane type ID" }); return; }
+
+  const [existing] = await db.select().from(customLaneTypesTable).where(eq(customLaneTypesTable.id, id));
+  if (!existing) { res.status(404).json({ error: "Custom lane type not found" }); return; }
+
+  const { description, maxConcurrentClaims, heavyJobSlots } = req.body as {
+    description?: string;
+    maxConcurrentClaims?: number;
+    heavyJobSlots?: number;
+  };
+
+  const updates: Partial<typeof customLaneTypesTable.$inferInsert> = { updatedAt: new Date() };
+  if (typeof description === "string") updates.description = description;
+  if (typeof maxConcurrentClaims === "number" && maxConcurrentClaims > 0) updates.maxConcurrentClaims = Math.floor(maxConcurrentClaims);
+  if (typeof heavyJobSlots === "number" && heavyJobSlots > 0) updates.heavyJobSlots = Math.floor(heavyJobSlots);
+
+  const [updated] = await db.update(customLaneTypesTable).set(updates)
+    .where(eq(customLaneTypesTable.id, id)).returning();
+  logger.info({ id, name: existing.name }, "Custom lane type updated");
+  res.json(serializeLaneType(updated));
+});
+
+// ─── DELETE /api/coordination/lane-types/:id ──────────────────────────────────
+// Blocked if any active lane uses this type.
+
+router.delete("/coordination/lane-types/:id", async (req, res) => {
+  const id = parseInt(req.params["id"] ?? "");
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid lane type ID" }); return; }
+
+  const [existing] = await db.select().from(customLaneTypesTable).where(eq(customLaneTypesTable.id, id));
+  if (!existing) { res.status(404).json({ error: "Custom lane type not found" }); return; }
+
+  // Check if any non-terminal lane is currently using this type.
+  // "Active" means status is not a done/merged/cancelled terminal state.
+  const ACTIVE_LANE_STATUSES = ["active", "blocked", "review-needed", "ready-to-merge"] as const;
+  const [activeUsage] = await db.select({ id: sessionLanesTable.id })
+    .from(sessionLanesTable)
+    .where(and(
+      eq(sessionLanesTable.laneType, existing.name),
+      inArray(sessionLanesTable.status, [...ACTIVE_LANE_STATUSES]),
+    ))
+    .limit(1);
+
+  if (activeUsage) {
+    res.status(409).json({
+      error: `Cannot delete lane type '${existing.name}': it is currently in use by one or more active lanes. Change those lanes first.`,
+    });
+    return;
+  }
+
+  await db.delete(customLaneTypesTable).where(eq(customLaneTypesTable.id, id));
+  logger.info({ id, name: existing.name }, "Custom lane type deleted");
+  res.json({ deleted: true, id, name: existing.name });
 });
 
 // ─── GET /api/admin/claim-cleanup-stats ───────────────────────────────────────
