@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import {
   Home, Terminal, Brain, Settings, Bot, Layers, KeyRound,
   CheckCircle2, Bell, ChevronDown, ChevronRight, X,
-  CheckCircle, XCircle, AlertTriangle,
+  CheckCircle, XCircle, AlertTriangle, DatabaseZap,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -286,6 +286,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const platformPages = [
     { name: "Ambient", href: "/ambient", icon: Bot, badge: ambientBadge },
     { name: "Templates", href: "/templates", icon: Layers },
+    { name: "Schema Templates", href: "/schema-templates", icon: DatabaseZap },
     { name: "API Keys", href: "/api-keys", icon: KeyRound },
     { name: "Settings", href: "/settings", icon: Settings },
   ];

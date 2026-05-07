@@ -746,6 +746,33 @@ export const DEFAULT_SKILLS: MiziSkillManifest[] = [
     rankingHints: { taskFitWeight: 0.9, repoFitWeight: 0.6, measuredLiftWeight: 0.85 },
     safety: { shellExecution: "none", networkAccess: "none" },
   },
+  {
+    schemaVersion: 1,
+    id: "test-environment-provisioning",
+    name: "Test Environment Provisioning",
+    class: "workflow",
+    summary: "Provision isolated Postgres branches (Neon) and Redis instances for agent test sessions via the provision_test_db claw tool.",
+    triggers: {
+      tasks: ["build", "debug"],
+      repoKinds: ["any"],
+      sessionModes: ["solo", "team"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw"] },
+    instructions: {
+      system: [
+        "To provision an isolated Postgres database branch for a test session, call: POST /mizi/provision_test_db with body { \"type\": \"postgres\" } (or \"postgres-branch\" for a Neon branch). The response includes { resourceId, connectionString }; the connection string is automatically injected into the session environment as DATABASE_URL.",
+        "To provision an isolated Redis instance, call: POST /mizi/provision_test_db with body { \"type\": \"redis\" }. The response includes { resourceId, connectionString }; the connection string is automatically injected into the session environment as REDIS_URL.",
+        "To apply a schema template during provisioning, include \"schemaTemplate\": <id> in the request body. Templates define the DDL to seed the database branch.",
+        "Provisioned resources are scoped to the session and are automatically cleaned up when the session transitions to stopped or error status.",
+        "List existing provisioned resources by calling GET /api/sessions/:sessionId/resources. Connection strings are masked by default; use GET /api/sessions/:sessionId/resources/:resourceId/connection-string to retrieve the full value.",
+        "Only provision test resources when a task explicitly requires database isolation — do not provision speculatively.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment"] },
+    cost: { tokenOverheadEstimate: 220 },
+    rankingHints: { taskFitWeight: 0.95, repoFitWeight: 0.5, measuredLiftWeight: 0.9 },
+    safety: { shellExecution: "none", networkAccess: "restricted" },
+  },
 ];
 
 export interface DefaultBundleSpec {

@@ -190,6 +190,50 @@ export async function execMachine(
 }
 
 /**
+ * Execute a shell command inside a running Fly Machine.
+ * Returns stdout text. Throws on non-zero exit or API error.
+ */
+export async function execMachineCommand(machineId: string, cmd: string[]): Promise<string> {
+  const result = await execMachine(machineId, cmd);
+  if (result.exit_code !== 0) {
+    throw new Error(`exec exit ${result.exit_code}: ${result.stdout}${result.stderr ? ` | stderr: ${result.stderr}` : ""}`);
+  }
+  return result.stdout;
+}
+
+/**
+ * Persistently update environment variables on a running Fly Machine.
+ * The Fly Machines API merges the provided env map with the machine's existing
+ * env config, so only the specified keys are added/overwritten — no existing
+ * vars are removed. A no-wait update is issued (leaseTtl=0) so the machine
+ * is not restarted; the new env is reflected on the next machine start and is
+ * also immediately visible to new processes launched via exec.
+ */
+export async function patchMachineEnv(
+  machineId: string,
+  env: Record<string, string>
+): Promise<void> {
+  const { token, app } = getConfig();
+
+  const machine = await flyFetch<FlyMachineResponse>(`/apps/${app}/machines/${machineId}`, { token });
+  const existingEnv = ((machine.config as { env?: Record<string, string> })?.env) ?? {};
+
+  await flyFetch(`/apps/${app}/machines/${machineId}`, {
+    token,
+    method: "PATCH",
+    body: JSON.stringify({
+      config: {
+        ...machine.config,
+        env: { ...existingEnv, ...env },
+      },
+      skip_launch: true,
+    }),
+  });
+
+  logger.info({ machineId, keys: Object.keys(env) }, "Fly Machine env vars patched");
+}
+
+/**
  * Get the current lifecycle state of a Fly Machine.
  * Returns "unknown" if the machine cannot be found or the state is unrecognised.
  */

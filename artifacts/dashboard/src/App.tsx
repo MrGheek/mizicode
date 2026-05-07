@@ -15,6 +15,7 @@ import AmbientPage from "@/pages/ambient";
 import SettingsPage from "@/pages/settings";
 import ApiKeysPage from "@/pages/api-keys";
 import IntelligencePage from "@/pages/intelligence";
+import SchemaTemplatesPage from "@/pages/schema-templates";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -42,6 +43,7 @@ function Router() {
         <Route path="/ambient" component={AmbientPage} />
         <Route path="/settings" component={SettingsPage} />
         <Route path="/api-keys" component={ApiKeysPage} />
+        <Route path="/schema-templates" component={SchemaTemplatesPage} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

@@ -86,6 +86,13 @@ try {
   process.exit(1);
 }
 
+// Production guard: MIZI_ENCRYPTION_KEY must be set when NODE_ENV=production
+// to ensure provisioned connection strings are encrypted at rest.
+if (process.env["NODE_ENV"] === "production" && !process.env["MIZI_ENCRYPTION_KEY"]) {
+  logger.error("MIZI_ENCRYPTION_KEY is required in production — provisioned connection strings would be stored in plaintext. Set a 64-hex-char key and restart.");
+  process.exit(1);
+}
+
 // ─── HTTP server + WebSocket bridge ──────────────────────────────────────────
 // Wrap the Express app in a raw http.Server so we can intercept WebSocket
 // upgrade events for the claw bridge at /api/bridge/:sessionId/:laneId.

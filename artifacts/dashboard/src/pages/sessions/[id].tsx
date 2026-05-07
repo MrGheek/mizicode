@@ -29,12 +29,12 @@ import {
   useAcknowledgeLaneHandoff,
   Session,
 } from "@workspace/api-client-react";
-import { useQueryClient, useQuery } from "@tanstack/react-query";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
   Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw, Users, Copy, Check, Eye, EyeOff, FolderOpen,
   Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap, Network, Target, Pencil, Palette, Zap,
-  Bell, BellOff, BellRing, MonitorSmartphone,
+  Bell, BellOff, BellRing, MonitorSmartphone, Plus,
   // RotateCcw was used by the legacy disk-full retry button; the new BootTimeline owns that CTA.
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -2325,6 +2325,273 @@ function GlassBootBar({
   );
 }
 
+// ─── Environment Tab ────────────────────────────────────────────────────────
+
+interface ProvisionedResource {
+  id: number;
+  sessionId: number;
+  type: string;
+  resourceId: string | null;
+  connectionString: string | null;
+  schemaTemplateId: number | null;
+  createdAt: string;
+  expiresAt: string | null;
+  deletedAt: string | null;
+}
+
+interface SchemaTemplateSummary {
+  id: number;
+  name: string;
+}
+
+function EnvironmentTab({ sessionId }: { sessionId: number }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [revealedStrings, setRevealedStrings] = useState<Record<number, string | null>>({});
+  const [provisionOpen, setProvisionOpen] = useState(false);
+  const [provType, setProvType] = useState<"postgres" | "redis">("postgres");
+  const [provTmpl, setProvTmpl] = useState<string>("");
+
+  const { data: resources, isLoading } = useQuery<ProvisionedResource[]>({
+    queryKey: ["session-resources", sessionId],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/sessions/${sessionId}/resources`);
+      if (!res.ok) throw new Error("Failed to load resources");
+      return res.json();
+    },
+    refetchInterval: 20_000,
+  });
+
+  const { data: templates } = useQuery<SchemaTemplateSummary[]>({
+    queryKey: ["schema-templates"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/schema-templates`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const provisionMut = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = { type: provType };
+      if (provTmpl) body.schemaTemplate = Number(provTmpl);
+      const res = await fetch(`${BASE_URL}api/sessions/${sessionId}/provision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({})) as { error?: string; fallback?: string };
+      if (!res.ok) throw new Error(data.error || "Provision failed");
+      return data;
+    },
+    onSuccess: () => {
+      toast({ title: "Resource provisioned" });
+      setProvisionOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["session-resources", sessionId] });
+    },
+    onError: (err: Error) => {
+      toast({ title: err.message, variant: "destructive" });
+    },
+  });
+
+  const typeIcon = (type: string) => {
+    if (type === "redis") return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(239,68,68,0.15)", color: "#f87171" }}>Redis</span>;
+    return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(6,182,212,0.15)", color: "var(--accent-cyan)" }}>PG</span>;
+  };
+
+  const active = resources?.filter((r) => !r.deletedAt) ?? [];
+  const past   = resources?.filter((r) =>  r.deletedAt) ?? [];
+
+  async function revealConnectionString(resource: ProvisionedResource) {
+    if (revealedStrings[resource.id] !== undefined) {
+      setRevealedStrings((prev) => { const n = { ...prev }; delete n[resource.id]; return n; });
+      return;
+    }
+    try {
+      const res = await fetch(
+        `${BASE_URL}api/sessions/${resource.sessionId}/resources/${resource.id}/connection-string`
+      );
+      if (!res.ok) {
+        toast({ title: "Connection string requires agent credentials", variant: "destructive" });
+        return;
+      }
+      const data = await res.json() as { connectionString?: string };
+      setRevealedStrings((prev) => ({ ...prev, [resource.id]: data.connectionString ?? null }));
+    } catch {
+      toast({ title: "Failed to load connection string", variant: "destructive" });
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+          Provisioned Resources
+        </p>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 text-[11px] px-2"
+          onClick={() => setProvisionOpen(true)}
+        >
+          <Plus className="w-3 h-3 mr-1" /> Provision
+        </Button>
+      </div>
+
+      {isLoading && (
+        <div className="flex justify-center py-8">
+          <Loader2 className="w-4 h-4 animate-spin" style={{ color: "var(--text-muted)" }} />
+        </div>
+      )}
+
+      {!isLoading && active.length === 0 && (
+        <div
+          className="py-10 text-center rounded-xl"
+          style={{ background: "var(--bg-glass)", border: "1px solid var(--border-glass)" }}
+        >
+          <DatabaseZap className="w-6 h-6 mx-auto mb-2 opacity-20" style={{ color: "var(--text-secondary)" }} />
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            No active resources.
+          </p>
+          <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+            Click <strong>Provision</strong> to create a test database or Redis.
+          </p>
+        </div>
+      )}
+
+      {active.map((r) => {
+        const isRevealed = r.id in revealedStrings;
+        const displayStr = isRevealed ? revealedStrings[r.id] : r.connectionString;
+        return (
+          <div
+            key={r.id}
+            className="glass-card p-3 space-y-2"
+            style={{ borderRadius: 8 }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                {typeIcon(r.type)}
+                <span className="text-[11px] font-mono" style={{ color: "var(--text-secondary)" }}>
+                  ID: {r.id}
+                </span>
+              </div>
+              {r.expiresAt && (
+                <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                  Expires {new Date(r.expiresAt).toLocaleDateString()}
+                </span>
+              )}
+            </div>
+            {displayStr && (
+              <div className="flex items-center gap-1.5">
+                <code
+                  className="flex-1 text-[10px] font-mono truncate px-2 py-1 rounded"
+                  style={{ background: "rgba(0,0,0,0.3)", color: "var(--text-secondary)" }}
+                >
+                  {displayStr}
+                </code>
+                <button
+                  title={isRevealed ? "Hide credentials" : "Reveal full connection string"}
+                  onClick={() => revealConnectionString(r)}
+                  className="p-1 rounded transition-colors hover:opacity-80"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  {isRevealed ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                </button>
+                <button
+                  title="Copy connection string"
+                  onClick={async () => {
+                    let str = displayStr;
+                    if (!isRevealed) {
+                      const res = await fetch(
+                        `${BASE_URL}api/sessions/${r.sessionId}/resources/${r.id}/connection-string`
+                      );
+                      if (res.ok) {
+                        const data = await res.json() as { connectionString?: string };
+                        str = data.connectionString ?? str;
+                      }
+                    }
+                    navigator.clipboard.writeText(str ?? "");
+                    toast({ title: "Copied!" });
+                  }}
+                  className="p-1 rounded transition-colors hover:opacity-80"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  <Copy className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {past.length > 0 && (
+        <p className="text-[10px] mt-4" style={{ color: "var(--text-muted)" }}>
+          {past.length} expired/cleaned-up resource{past.length !== 1 ? "s" : ""} not shown.
+        </p>
+      )}
+
+      {/* Provision dialog */}
+      <Dialog open={provisionOpen} onOpenChange={(o) => { if (!o) setProvisionOpen(false); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <DatabaseZap className="w-4 h-4" style={{ color: "var(--accent-cyan)" }} />
+              Provision resource
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+                Type
+              </label>
+              <div className="flex gap-2">
+                {(["postgres", "redis"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setProvType(t)}
+                    className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${provType === t ? "ring-1 ring-primary bg-primary/10 text-foreground" : "bg-secondary/30 text-muted-foreground hover:text-foreground"}`}
+                  >
+                    {t === "postgres" ? "Postgres" : "Redis"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {provType === "postgres" && templates && templates.length > 0 && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+                  Schema template <span style={{ color: "var(--text-muted)" }}>(optional)</span>
+                </label>
+                <select
+                  value={provTmpl}
+                  onChange={(e) => setProvTmpl(e.target.value)}
+                  className="w-full bg-secondary/30 border border-border/50 rounded-md text-xs py-1.5 px-2 outline-none"
+                  style={{ color: "var(--text-primary)" }}
+                >
+                  <option value="">Empty database</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={String(t.id)}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setProvisionOpen(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              onClick={() => provisionMut.mutate()}
+              disabled={provisionMut.isPending}
+            >
+              {provisionMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
+              Provision
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 export default function SessionDetail() {
   const { id } = useParams();
   const sessionId = id ? parseInt(id, 10) : 0;
@@ -2334,13 +2601,13 @@ export default function SessionDetail() {
   const [notifPopoverOpen, setNotifPopoverOpen] = useState(false);
   const lastDetailTabRef = useRef<"memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference">("memory");
   const queryClient = useQueryClient();
-  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm", "inference"] as const;
-  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" => {
+  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm", "inference", "environment"] as const;
+  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" => {
     const settled = validTabs.includes(raw as typeof validTabs[number]) ? raw : "overview";
-    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference";
+    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment";
   };
 
-  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference">(() => {
+  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment">(() => {
     const stored = sessionStorage.getItem(`session-tab-${id}`);
     const urlTab = new URLSearchParams(window.location.search).get("tab");
     const validStored = stored && (validTabs as readonly string[]).includes(stored) ? stored : null;
@@ -3971,6 +4238,12 @@ export default function SessionDetail() {
                   <Zap className="w-3 h-3 text-emerald-400" /> Inference
                 </button>
               )}
+              <button
+                onClick={() => setActiveTab("environment")}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "environment" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
+              >
+                <DatabaseZap className="w-3 h-3" /> Environment
+              </button>
             </div>
           </SheetHeader>
 
@@ -4017,6 +4290,9 @@ export default function SessionDetail() {
                     : undefined
                 }
               />
+            )}
+            {activeTab === "environment" && (
+              <EnvironmentTab sessionId={sessionId} />
             )}
           </div>
         </SheetContent>

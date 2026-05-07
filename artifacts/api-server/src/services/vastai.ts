@@ -472,6 +472,27 @@ ${githubLines}
 
 // ─── URL builder ─────────────────────────────────────────────────────────────
 
+/**
+ * Generate the shell command that injects env vars into a Vast.ai workspace
+ * session. Writes to both /workspace/.env.test (workspace convention) and
+ * /etc/environment (system-wide, survives new shell spawns).
+ *
+ * The command is intended to be sent over the Claw Bridge as a "shell" message.
+ * Vast.ai sessions communicate exclusively via the Claw Bridge; there is no
+ * server-side SSH client in this service.
+ */
+export function buildEnvInjectionCmd(vars: Record<string, string>): string {
+  const lines = Object.entries(vars)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+  const escaped = lines.replace(/'/g, "'\\''");
+  return (
+    `mkdir -p /workspace/.mizi && ` +
+    `printf '${escaped}\\n' >> /workspace/.env.test && ` +
+    `printf '${escaped}\\n' >> /etc/environment`
+  );
+}
+
 export function buildInstanceUrls(instance: { public_ipaddr?: string; ports?: Record<string, { HostPort?: string }[]> }) {
   const ip = instance.public_ipaddr;
   if (!ip) return {};

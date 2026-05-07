@@ -1797,6 +1797,90 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true });
   }
 
+  // ─── tools manifest ────────────────────────────────────────────────────────
+  if (url === '/mizi/tools' && req.method === 'GET') {
+    return sendJson(res, 200, {
+      ok: true,
+      tools: [
+        {
+          name: 'provision_test_db',
+          description: 'Provision an isolated Postgres branch (Neon) or Redis instance for the current agent session.',
+          method: 'POST',
+          path: '/mizi/provision_test_db',
+          input: {
+            type: { type: 'string', enum: ['postgres', 'postgres-branch', 'redis'], required: true },
+            schemaTemplate: { type: 'number', description: 'Schema template ID to apply DDL after branching', required: false },
+          },
+          output: {
+            ok: 'boolean',
+            resourceId: 'string — Neon branch ID (postgres) or pid:port (redis)',
+            connectionString: 'string — full connection URI',
+            expiresAt: 'string | null — ISO timestamp when the resource expires',
+          },
+          envInjected: {
+            postgres: 'DATABASE_URL',
+            'postgres-branch': 'DATABASE_URL',
+            redis: 'REDIS_URL',
+          },
+          notes: [
+            'Only provision when the task explicitly requires database isolation.',
+            'Resources are scoped to the session and cleaned up on session stop/error.',
+            'List existing resources via GET /api/sessions/:sessionId/resources.',
+          ],
+        },
+      ],
+    });
+  }
+
+  // ─── provision_test_db ─────────────────────────────────────────────────────
+  if (url === '/mizi/provision_test_db' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const type         = body.type         || 'postgres';
+    const schemaTemplate = body.schemaTemplate || null;
+    const sessionId   = process.env.MIZI_SESSION_ID || '';
+    const apiKey      = process.env.MIZI_API_KEY     || '';
+
+    if (!sessionId) {
+      return sendJson(res, 400, { ok: false, error: 'MIZI_SESSION_ID env var not set' });
+    }
+
+    const apiBase = process.env.MIZI_API_BASE || 'http://localhost:3001';
+    const apiUrl  = `${apiBase}/api/sessions/${sessionId}/provision`;
+
+    const provHeaders = { 'Content-Type': 'application/json' };
+    if (apiKey) provHeaders['Authorization'] = `Bearer ${apiKey}`;
+
+    try {
+      const fetchRes = await fetch(apiUrl, {
+        method:  'POST',
+        headers: provHeaders,
+        body:    JSON.stringify({ type, schemaTemplate }),
+      });
+      const data = await fetchRes.json().catch(() => ({}));
+
+      if (!fetchRes.ok) {
+        return sendJson(res, fetchRes.status, {
+          ok: false,
+          error: data.error || `Provision failed (HTTP ${fetchRes.status})`,
+          fallback: data.fallback,
+          retryAfter: data.retryAfter,
+        });
+      }
+
+      return sendJson(res, 201, {
+        ok: true,
+        type:              data.type,
+        resourceId:        data.resourceId,
+        connectionString:  data.connectionString,
+        connectionStringFull: data.connectionStringFull ?? data.connectionString,
+        expiresAt:         data.expiresAt,
+        schemaTemplateId:  data.schemaTemplateId,
+      });
+    } catch (err) {
+      return sendJson(res, 500, { ok: false, error: String(err?.message || err) });
+    }
+  }
+
   res.writeHead(404);
   res.end('Not found');
 });

@@ -10,3 +10,4 @@ export * from "./api-keys";
 export * from "./orchestration-idempotency";
 export * from "./operator-credentials";
 export * from "./session-model-switches";
+export * from "./provisioning";

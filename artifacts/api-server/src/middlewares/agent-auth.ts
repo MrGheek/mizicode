@@ -9,6 +9,8 @@ export type ApiKeyRecord = typeof apiKeysTable.$inferSelect;
 declare module "express" {
   interface Request {
     apiKey?: ApiKeyRecord;
+    /** Raw bearer token that was not a valid API key — checked against session.ownerToken in handlers. */
+    rawBearer?: string;
   }
 }
 
@@ -124,6 +126,94 @@ export function requireAgentAuth(requiredScopes: string[] = []) {
     if (!keyRecord) return;
 
     req.apiKey = keyRecord;
+    next();
+  };
+}
+
+// ─── permitBearer ─────────────────────────────────────────────────────────────
+
+/**
+ * Session-ownership–aware middleware for session-scoped provisioning endpoints.
+ *
+ * Auth tiers (first match wins):
+ *  1. Dev bypass: no MIZI_MEM_TOKEN configured, no bearer header → next()
+ *  2. No bearer header:
+ *     - optional=true  → next()  (dashboard/management UI — no token needed)
+ *     - optional=false → 401     (agent-only endpoints that must authenticate)
+ *  3. MIZI_MEM_TOKEN bearer → operator pass-through, next()
+ *  4. Valid API key with required scopes → next(), req.apiKey populated
+ *  5. Unknown bearer: stored in req.rawBearer → next()
+ *     Handler must validate req.rawBearer === session.ownerToken before proceeding.
+ *
+ * Use optional=true for routes the dashboard also calls (resource list/reveal/provision).
+ * Handlers already guard ownership via `if (req.rawBearer)` checks, so unauthenticated
+ * dashboard requests pass through naturally while agent calls are still ownership-checked.
+ */
+export function permitBearer(requiredScopesForApiKey: string[] = [], { optional = false } = {}) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const memToken = process.env["MIZI_MEM_TOKEN"] || "";
+    const isProd = process.env["NODE_ENV"] === "production";
+
+    const auth = (req.headers["authorization"] as string | undefined) ?? "";
+    const raw = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+
+    // 1. Dev bypass (no token configured, no bearer presented, not production)
+    if (!memToken && !raw && !isProd) {
+      next();
+      return;
+    }
+
+    // 2. No bearer: optional routes let dashboard through; strict routes reject.
+    if (!raw) {
+      if (optional) {
+        next();
+        return;
+      }
+      res.status(401).json({ error: "Missing Bearer token" });
+      return;
+    }
+
+    // 3. MIZI_MEM_TOKEN operator pass-through
+    if (memToken && raw === memToken) {
+      next();
+      return;
+    }
+
+    // 4. Try API key validation
+    const hash = hashApiKey(raw);
+    let keyRecord: ApiKeyRecord | undefined;
+    try {
+      const [row] = await db.select().from(apiKeysTable).where(eq(apiKeysTable.keyHash, hash));
+      keyRecord = row;
+    } catch (err) {
+      logger.error(err, "permitBearer: DB lookup failed");
+      res.status(500).json({ error: "Internal server error" });
+      return;
+    }
+
+    if (keyRecord && !keyRecord.revokedAt && !(keyRecord.expiresAt && keyRecord.expiresAt < new Date())) {
+      // Valid API key — check scopes
+      if (requiredScopesForApiKey.length > 0) {
+        const keyScopes = (keyRecord.scopes as string[]) ?? [];
+        const missing = requiredScopesForApiKey.filter((s) => !keyScopes.includes(s));
+        if (missing.length > 0) {
+          res.status(403).json({ error: `Missing required scopes: ${missing.join(", ")}` });
+          return;
+        }
+      }
+      // Update last-used asynchronously
+      db.update(apiKeysTable)
+        .set({ lastUsedAt: new Date() })
+        .where(eq(apiKeysTable.id, keyRecord.id))
+        .catch((err) => logger.warn(err, "permitBearer: failed to update last_used_at"));
+
+      req.apiKey = keyRecord;
+      next();
+      return;
+    }
+
+    // 5. Unknown bearer: store for ownerToken check in handler
+    req.rawBearer = raw;
     next();
   };
 }

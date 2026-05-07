@@ -10,12 +10,15 @@
  * - Scope mismatch returns 403 (read scope vs write endpoint and vice-versa)
  * - Valid key passes through protected coordination routes
  * - MIZI_MEM_TOKEN bearer accepted as pass-through
+ * - permitBearer: dev bypass, missing bearer (production), MIZI_MEM_TOKEN,
+ *   valid API key (pass + scope miss), revoked key as rawBearer,
+ *   unknown bearer matched/rejected as ownerToken
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import app from "../app";
-import { db, apiKeysTable } from "@workspace/db";
+import { db, apiKeysTable, gpuProfilesTable, sessionsTable, provisionedResourcesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { hashApiKey } from "../middlewares/agent-auth";
 
@@ -445,5 +448,226 @@ describe("requireAgentAuth on POST /api/sessions", () => {
       .set("Authorization", "Bearer mizi_unknown_key_for_sessions_test")
       .send({});
     expect(res.status).toBe(401);
+  });
+});
+
+// ─── permitBearer middleware ──────────────────────────────────────────────────
+// Exercises the 5-tier auth ladder used by session-scoped provisioning routes:
+//  1. Dev bypass: no MIZI_MEM_TOKEN, no bearer → next()
+//  2. No bearer (prod mode) → 401
+//  3. MIZI_MEM_TOKEN bearer → operator pass-through
+//  4. Valid API key → next(), req.apiKey populated; scope miss → 403
+//  5. Unknown bearer → stored as req.rawBearer; handler enforces ownerToken check
+
+describe("permitBearer middleware", () => {
+  const TEST_OWNER_TOKEN = `owner-tok-${Date.now()}`;
+  let pbProfileId: number;
+  let pbSessionId: number;
+  let readScopedKey: string;
+  let readScopedKeyId: number;
+  let noScopeKey3: string;
+  let noScopeKey3Id: number;
+
+  beforeAll(async () => {
+    // GPU profile required by sessionsTable FK
+    const [profile] = await db
+      .insert(gpuProfilesTable)
+      .values({
+        name: `permit-bearer-test-profile-${Date.now()}`,
+        displayName: "permitBearer test GPU",
+        gpuName: "A100",
+        numGpus: 1,
+        totalVram: 80,
+        dockerImageTag: "test:latest",
+        defaultQuant: "Q4_K_M",
+        quantSizeGb: 10,
+        diskSizeGb: 50,
+        estimatedSpeedMin: 10,
+        estimatedSpeedMax: 30,
+        estimatedCostMin: 0.1,
+        estimatedCostMax: 0.5,
+        searchParams: { gpu_name: "A100", num_gpus: 1 },
+      })
+      .returning();
+    pbProfileId = profile.id;
+
+    // Session in "pending" state: ownership check fires and passes, then the
+    // status gate returns 409 — no external bridge/Redis/Neon calls are made.
+    const [session] = await db
+      .insert(sessionsTable)
+      .values({
+        profileId: pbProfileId,
+        status: "pending",
+        ownerToken: TEST_OWNER_TOKEN,
+      })
+      .returning();
+    pbSessionId = session.id;
+
+    // API keys for scope tests
+    const rk = await createKey("pb-read-scope-key", ["sessions:read"]);
+    readScopedKey = rk.body.key;
+    readScopedKeyId = rk.body.id;
+    createdKeyIds.push(readScopedKeyId);
+
+    const nk = await createKey("pb-noscope-key3", []);
+    noScopeKey3 = nk.body.key;
+    noScopeKey3Id = nk.body.id;
+    createdKeyIds.push(noScopeKey3Id);
+  });
+
+  afterAll(async () => {
+    // No provisioned resources are created (session status is "pending", provision returns 409)
+    if (pbSessionId) {
+      await db.delete(sessionsTable).where(eq(sessionsTable.id, pbSessionId)).catch(() => {});
+    }
+    if (pbProfileId) {
+      await db.delete(gpuProfilesTable).where(eq(gpuProfilesTable.id, pbProfileId)).catch(() => {});
+    }
+  });
+
+  it("dev bypass: no bearer and no MIZI_MEM_TOKEN → route logic runs (200/404/409)", async () => {
+    // MIZI_MEM_TOKEN is set for this test file; temporarily clear it
+    const saved = process.env["MIZI_MEM_TOKEN"];
+    delete process.env["MIZI_MEM_TOKEN"];
+    try {
+      const res = await request(app).get(`/api/sessions/${pbSessionId}/resources`);
+      expect([200, 404, 409]).toContain(res.status);
+      expect(res.status).not.toBe(401);
+      expect(res.status).not.toBe(403);
+    } finally {
+      process.env["MIZI_MEM_TOKEN"] = saved;
+    }
+  });
+
+  it("returns 200 when no bearer is supplied (optional route — dashboard access allowed)", async () => {
+    // GET /resources uses permitBearer({ optional: true }) so the dashboard can
+    // fetch masked resource data without a token. No ownership check runs when rawBearer is absent.
+    const res = await request(app).get(`/api/sessions/${pbSessionId}/resources`);
+    expect(res.status).toBe(200);
+  });
+
+  it("MIZI_MEM_TOKEN bearer → operator pass-through (route logic runs)", async () => {
+    const res = await request(app)
+      .get(`/api/sessions/${pbSessionId}/resources`)
+      .set("Authorization", `Bearer ${TEST_MEM_TOKEN}`);
+    expect([200, 404]).toContain(res.status);
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(403);
+  });
+
+  it("valid API key with sessions:read → passes (route logic runs)", async () => {
+    const res = await request(app)
+      .get(`/api/sessions/${pbSessionId}/resources`)
+      .set("Authorization", `Bearer ${readScopedKey}`);
+    expect([200]).toContain(res.status);
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(403);
+  });
+
+  it("valid API key missing sessions:read scope → 403", async () => {
+    const res = await request(app)
+      .get(`/api/sessions/${pbSessionId}/resources`)
+      .set("Authorization", `Bearer ${noScopeKey3}`);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/scope/i);
+  });
+
+  it("valid API key with sessions:write → passes POST /provision (route logic runs)", async () => {
+    const writeRes = await createKey("pb-write-key", ["sessions:write"]);
+    const writeKey: string = writeRes.body.key;
+    createdKeyIds.push(writeRes.body.id);
+
+    const res = await request(app)
+      .post(`/api/sessions/${pbSessionId}/provision`)
+      .set("Authorization", `Bearer ${writeKey}`)
+      .send({ type: "redis" });
+    // Auth passed — 409 because session is in "pending" state (no external service calls)
+    expect(res.status).toBe(409);
+  });
+
+  it("unknown bearer matching ownerToken → passes GET /resources (route logic runs)", async () => {
+    const res = await request(app)
+      .get(`/api/sessions/${pbSessionId}/resources`)
+      .set("Authorization", `Bearer ${TEST_OWNER_TOKEN}`);
+    expect([200]).toContain(res.status);
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(403);
+  });
+
+  it("unknown bearer NOT matching ownerToken → 403 from handler ownership check", async () => {
+    const res = await request(app)
+      .get(`/api/sessions/${pbSessionId}/resources`)
+      .set("Authorization", "Bearer wrong-owner-token-value");
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/Not authorized/i);
+  });
+
+  it("revoked API key treated as unknown bearer; if not ownerToken → 403", async () => {
+    const created = await createKey("pb-revoke-test", ["sessions:read"]);
+    const key: string = created.body.key;
+    createdKeyIds.push(created.body.id);
+    await revokeKey(created.body.id);
+
+    const res = await request(app)
+      .get(`/api/sessions/${pbSessionId}/resources`)
+      .set("Authorization", `Bearer ${key}`);
+    // Revoked key is not in active DB rows → treated as unknown bearer → 403 ownership fail
+    expect(res.status).toBe(403);
+  });
+
+  it("expired API key treated as unknown bearer; if not ownerToken → 403", async () => {
+    const expiredRaw = "mizi_permit_bearer_expired_" + "x".repeat(40);
+    const hash = hashApiKey(expiredRaw);
+    const [inserted] = await db
+      .insert(apiKeysTable)
+      .values({
+        keyHash: hash,
+        label: "pb-expired-key",
+        scopes: ["sessions:read"],
+        expiresAt: new Date(Date.now() - 5000),
+      })
+      .returning();
+    createdKeyIds.push(inserted.id);
+
+    const res = await request(app)
+      .get(`/api/sessions/${pbSessionId}/resources`)
+      .set("Authorization", `Bearer ${expiredRaw}`);
+    // Expired key is in DB but expiry check fires → treated as unknown bearer → 403
+    expect(res.status).toBe(403);
+  });
+
+  it("connection-string endpoint: wrong bearer → 403 ownership check", async () => {
+    const res = await request(app)
+      .get(`/api/sessions/${pbSessionId}/resources/999999/connection-string`)
+      .set("Authorization", "Bearer wrong-bearer-for-conn-str");
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/Not authorized/i);
+  });
+
+  it("connection-string endpoint: ownerToken bearer → passes auth (404 for unknown resource)", async () => {
+    const res = await request(app)
+      .get(`/api/sessions/${pbSessionId}/resources/999999/connection-string`)
+      .set("Authorization", `Bearer ${TEST_OWNER_TOKEN}`);
+    // Auth passed — 404 because resource 999999 does not exist
+    expect(res.status).toBe(404);
+  });
+
+  it("provision endpoint: ownerToken bearer → passes auth (409 because session pending)", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${pbSessionId}/provision`)
+      .set("Authorization", `Bearer ${TEST_OWNER_TOKEN}`)
+      .send({ type: "redis" });
+    // Auth + ownership check passed — 409 because session is in "pending" state
+    // (no external bridge/Redis/Neon calls are made)
+    expect(res.status).toBe(409);
+  });
+
+  it("provision endpoint: wrong bearer → 403 ownership check", async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${pbSessionId}/provision`)
+      .set("Authorization", "Bearer wrong-bearer-for-provision")
+      .send({ type: "redis" });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/Not authorized/i);
   });
 });
