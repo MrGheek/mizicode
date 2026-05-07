@@ -1,3 +1,18 @@
+## v0.6.0 — 2026-05-07\n\n- fix: restore coverage thresholds broken by merged code in coordination.ts and lane-policy.ts (61a980e)
+- Add per-lane activity timeline (Task #315) (075697c)
+- feat: Push lane work to sub-branches and auto-open draft PRs on handoff (69414a6)
+- Fix code-review blocking findings for task #301 (on-demand test env provisioning) (fe1fd95)
+- Update button text to be more concise (3ba7035)
+- Task #326: Add "More models…" link to NIM suggestion card (a4eb004)
+- Task #326: Add "More models…" link to NIM suggestion card (b2b08c4)
+- Transitioned from Plan to Build mode (998773f)
+- feat(#300): phase-aware mid-session model switching for NIM sessions (0649509)
+- Add Sign in with GitHub OAuth for single-operator repo access (254ba50)
+- Task #314: Custom lane types manageable from dashboard (e62641f)
+- Task #299: Intent-first UX — address all code review comments (f96473b)
+- Git commit prior to merge (f770665)
+- fix: add "ensure app exists" step to deploy workflow to fix flyctl launch error (8b5aa1b)\n
+
 ## v0.5.0 — 2026-05-06\n\n- fix: resolve all CI TypeScript typecheck errors across api-server and dashboard (528dc9a)
 - Update dashboard Open Graph image (fc9b0e8)
 - feat: persist orchestration idempotency keys in DB (task #290) (f95b02c)\n
