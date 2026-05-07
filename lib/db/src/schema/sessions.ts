@@ -65,6 +65,17 @@ export const sessionsTable = pgTable("sessions", {
   // Fly.io Machine ID for NIM sessions provisioned on Fly.io instead of Vast.ai.
   // Null for all Vast.ai GPU sessions.
   flyMachineId: text("fly_machine_id"),
+  // Phase-aware inference routing (Task #300).
+  // currentPhase: the active reasoning phase used for model selection scoring.
+  // Valid values: explore | plan | implement | swarm | synthesise | review
+  currentPhase: text("current_phase"),
+  // The NIM model currently active for inference (may differ from nimModelId
+  // after an automatic phase-triggered switch).
+  activeNimModelId: text("active_nim_model_id"),
+  // The provider currently serving the active model.
+  activeNimProvider: text("active_nim_provider"),
+  // "auto" = phase-aware routing enabled; "pinned" = user-locked model, no auto-switching.
+  modelRoutingMode: text("model_routing_mode").default("auto"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

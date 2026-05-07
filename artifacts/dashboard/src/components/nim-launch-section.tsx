@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Zap, Play, Loader2, ChevronRight, Globe, Lock, Info, CheckCircle2, WifiOff, Eye, EyeOff, Github } from "lucide-react";
+import { Zap, Play, Loader2, ChevronRight, Globe, Lock, Info, CheckCircle2, WifiOff, Eye, EyeOff, Github, RouteOff, Route } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { API_BASE_URL } from "@/lib/api-url";
 import { useGitHubConnection } from "@/hooks/use-github-connection";
@@ -181,7 +181,7 @@ interface NimLaunchDialogProps {
   model: NimModel;
   configured: Record<string, boolean>;
   onClose: () => void;
-  onConfirm: (opts: { nimModelId: string; nimProvider: string; repoUrl: string | null; intentText: string | null; githubToken: string | null }) => void;
+  onConfirm: (opts: { nimModelId: string; nimProvider: string; repoUrl: string | null; intentText: string | null; githubToken: string | null; modelRoutingMode: "auto" | "pinned" }) => void;
   isLaunching: boolean;
 }
 
@@ -200,6 +200,7 @@ function NimLaunchDialog({ model, configured, onClose, onConfirm, isLaunching }:
   const [selectedProvider, setSelectedProvider] = useState(availableProviders[0] ?? "nvidia");
   const [repoUrl, setRepoUrl] = useState("");
   const [intentText, setIntentText] = useState("");
+  const [modelRoutingMode, setModelRoutingMode] = useState<"auto" | "pinned">("auto");
   const [githubToken, setGithubToken] = useState(() => {
     try { return localStorage.getItem(NIM_GH_TOKEN_KEY) ?? ""; } catch { return ""; }
   });
@@ -313,6 +314,40 @@ function NimLaunchDialog({ model, configured, onClose, onConfirm, isLaunching }:
             </div>
           )}
 
+          {/* Model routing mode toggle */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Model Routing</Label>
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                onClick={() => setModelRoutingMode("pinned")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded border text-xs font-medium transition-colors ${
+                  modelRoutingMode === "pinned"
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border/50 text-muted-foreground hover:border-border hover:text-foreground"
+                }`}
+              >
+                <RouteOff className="w-3 h-3" /> Pinned
+              </button>
+              <button
+                type="button"
+                onClick={() => setModelRoutingMode("auto")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded border text-xs font-medium transition-colors ${
+                  modelRoutingMode === "auto"
+                    ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-300"
+                    : "border-border/50 text-muted-foreground hover:border-border hover:text-foreground"
+                }`}
+              >
+                <Route className="w-3 h-3" /> Auto (phase-aware)
+              </button>
+            </div>
+            <p className="text-[10px] text-muted-foreground leading-snug">
+              {modelRoutingMode === "auto"
+                ? "The session will suggest model switches as it moves through reasoning phases (explore → plan → implement → review)."
+                : "The model stays fixed for the entire session."}
+            </p>
+          </div>
+
           <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-muted-foreground flex items-start gap-2">
             <Info className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
             <span>
@@ -330,6 +365,7 @@ function NimLaunchDialog({ model, configured, onClose, onConfirm, isLaunching }:
               repoUrl: repoUrl.trim() || null,
               intentText: intentText.trim() || null,
               githubToken: ghStatus.connected ? null : (githubToken.trim() || null),
+              modelRoutingMode,
             })}
             disabled={isLaunching || availableProviders.length === 0}
             className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
@@ -389,7 +425,7 @@ export function NimLaunchSection() {
     return () => clearInterval(id);
   }, []);
 
-  const handleLaunch = (opts: { nimModelId: string; nimProvider: string; repoUrl: string | null; intentText: string | null; githubToken: string | null }) => {
+  const handleLaunch = (opts: { nimModelId: string; nimProvider: string; repoUrl: string | null; intentText: string | null; githubToken: string | null; modelRoutingMode?: "auto" | "pinned" }) => {
     setLaunchingModelId(opts.nimModelId);
     createSession.mutate({
       data: {
@@ -402,10 +438,16 @@ export function NimLaunchSection() {
         tokenMode: null,
         bundleId: null,
         teamMembers: null,
+        modelRoutingMode: opts.modelRoutingMode ?? "auto",
       },
     }, {
       onSuccess: (session) => {
         setSelectedModel(null);
+        // Persist ownerToken in sessionStorage so the session cockpit can
+        // use it for mutation endpoints (PATCH /phase, /model, /routing-mode)
+        // without re-fetching it (GET /sessions/:id redacts the token).
+        const token = (session as typeof session & { ownerToken?: string | null }).ownerToken;
+        if (token) sessionStorage.setItem(`nim-owner-token:${session.id}`, token);
         toast({
           title: "NIM Session Launched",
           description: `${opts.nimModelId} via ${PROVIDER_LABELS[opts.nimProvider] ?? opts.nimProvider} — ready in ~2 minutes.`,

@@ -13,7 +13,7 @@ UPDATE "nim_catalog" SET "swe_bench_score" = 63.6, "benchmark_variant" = 'SWE-be
 UPDATE "nim_catalog" SET "swe_bench_score" = 63.6, "benchmark_variant" = 'SWE-bench Verified' WHERE "nim_model_id" = 'moonshotai/kimi-k2-thinking';
 UPDATE "nim_catalog" SET "swe_bench_score" = 62.0, "benchmark_variant" = 'SWE-bench Verified' WHERE "nim_model_id" = 'qwen/qwen3-coder-480b-a35b-instruct';
 UPDATE "nim_catalog" SET "swe_bench_score" = 60.0, "benchmark_variant" = 'SWE-bench Verified' WHERE "nim_model_id" = 'qwen/qwen3.5-397b-a17b';
-UPDATE "nim_catalog" SET "swe_bench_score" = 58.4, "benchmark_variant" = 'SWE-bench Verified' WHERE "nim_model_id" = 'z-ai/glm-5.1';
+UPDATE "nim_catalog" SET "swe_bench_score" = 58.4, "benchmark_variant" = 'SWE-bench Pro' WHERE "nim_model_id" = 'z-ai/glm-5.1';
 UPDATE "nim_catalog" SET "swe_bench_score" = 58.0, "benchmark_variant" = 'SWE-bench Verified' WHERE "nim_model_id" = 'mistralai/devstral-2-123b-instruct-2512';
 UPDATE "nim_catalog" SET "swe_bench_score" = 55.0, "benchmark_variant" = 'SWE-bench Verified' WHERE "nim_model_id" = 'deepseek-ai/deepseek-v4-flash';
 UPDATE "nim_catalog" SET "swe_bench_score" = 55.0, "benchmark_variant" = 'SWE-bench Verified' WHERE "nim_model_id" = 'qwen/qwen3.5-122b-a10b';

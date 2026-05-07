@@ -789,6 +789,8 @@ export default function Dashboard() {
       },
     }, {
       onSuccess: (session) => {
+        const token = (session as typeof session & { ownerToken?: string | null }).ownerToken;
+        if (token) sessionStorage.setItem(`nim-owner-token:${session.id}`, token);
         toast({ title: "Session launched", description: "Provisioning GPU…" });
         queryClient.invalidateQueries({ queryKey: getGetActiveSessionQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
@@ -820,6 +822,8 @@ export default function Dashboard() {
       } as Parameters<typeof createSession.mutate>[0]["data"],
     }, {
       onSuccess: (session) => {
+        const token = (session as typeof session & { ownerToken?: string | null }).ownerToken;
+        if (token) sessionStorage.setItem(`nim-owner-token:${session.id}`, token);
         toast({ title: "NIM session launching", description: "Ready in ~2 minutes." });
         queryClient.invalidateQueries({ queryKey: getGetActiveSessionQueryKey() });
         setLocation(`/sessions/${session.id}`);

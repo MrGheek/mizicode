@@ -111,6 +111,8 @@ export function RelaunchButton({
       },
       {
         onSuccess: (session) => {
+          const token = (session as typeof session & { ownerToken?: string | null }).ownerToken;
+          if (token) sessionStorage.setItem(`nim-owner-token:${session.id}`, token);
           toast({
             title: "Session re-launched",
             description: "Pre-filled from your previous session.",

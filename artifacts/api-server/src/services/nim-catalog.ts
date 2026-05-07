@@ -3,6 +3,8 @@ import { logger } from "../lib/logger";
 
 export type NimTier = "free" | "partner";
 
+export type ThroughputClass = "high" | "standard" | "economy";
+
 export interface NimModel {
   nimModelId: string;
   displayName: string;
@@ -13,6 +15,7 @@ export interface NimModel {
   contextLength: string | null;
   sweBenchScore?: number | null;
   benchmarkVariant?: string | null;
+  throughputClass?: ThroughputClass | null;
   syncedAt: string;
 }
 
@@ -25,7 +28,7 @@ export const CATALOG_SWE_BENCH_SCORES: Record<string, { score: number; variant: 
   "moonshotai/kimi-k2-instruct":                 { score: 63.6, variant: "SWE-bench Verified" },
   "moonshotai/kimi-k2-thinking":                 { score: 63.6, variant: "SWE-bench Verified" },
   "qwen/qwen3-coder-480b-a35b-instruct":         { score: 62.0, variant: "SWE-bench Verified" },
-  "z-ai/glm-5.1":                                { score: 58.4, variant: "SWE-bench Verified" },
+  "z-ai/glm-5.1":                                { score: 58.4, variant: "SWE-bench Pro" },
   "mistralai/devstral-2-123b-instruct-2512":     { score: 58.0, variant: "SWE-bench Verified" },
   "deepseek-ai/deepseek-v4-flash":               { score: 55.0, variant: "SWE-bench Verified" },
   "qwen/qwen3.5-397b-a17b":                      { score: 60.0, variant: "SWE-bench Verified" },
@@ -35,6 +38,28 @@ export const CATALOG_SWE_BENCH_SCORES: Record<string, { score: number; variant: 
   "mistralai/magistral-small-2506":              { score: 38.0, variant: "SWE-bench Verified" },
   "mistralai/mistral-large-3-675b-instruct-2512":{ score: 46.0, variant: "SWE-bench Verified" },
   "bytedance/seed-oss-36b-instruct":             { score: 42.0, variant: "SWE-bench Verified" },
+};
+
+// Throughput class hints: "high" for MoE models (large total / small active params)
+// which tend to be fast per-token; "standard" for mid-size dense; "economy" for small.
+export const CATALOG_THROUGHPUT_CLASS: Record<string, ThroughputClass> = {
+  "moonshotai/kimi-k2.6":                        "high",
+  "moonshotai/kimi-k2-instruct":                 "high",
+  "moonshotai/kimi-k2-instruct-0905":            "high",
+  "moonshotai/kimi-k2-thinking":                 "high",
+  "minimaxai/minimax-m2.7":                      "high",
+  "minimaxai/minimax-m2.5":                      "high",
+  "qwen/qwen3-coder-480b-a35b-instruct":         "high",
+  "qwen/qwen3.5-397b-a17b":                      "high",
+  "qwen/qwen3.5-122b-a10b":                      "high",
+  "deepseek-ai/deepseek-v4-pro":                 "high",
+  "deepseek-ai/deepseek-v4-flash":               "high",
+  "mistralai/mistral-large-3-675b-instruct-2512":"high",
+  "z-ai/glm-5.1":                                "standard",
+  "mistralai/devstral-2-123b-instruct-2512":     "standard",
+  "z-ai/glm-4.7":                                "economy",
+  "mistralai/magistral-small-2506":              "economy",
+  "bytedance/seed-oss-36b-instruct":             "economy",
 };
 
 const PARTNER_PROVIDERS: Record<string, string[]> = {
@@ -298,6 +323,7 @@ export async function syncNimCatalog(): Promise<void> {
       }
 
       const benchSeed = CATALOG_SWE_BENCH_SCORES[model.nimModelId];
+      const throughputClass = CATALOG_THROUGHPUT_CLASS[model.nimModelId] ?? null;
       await db
         .insert(nimCatalogTable)
         .values({
@@ -310,6 +336,7 @@ export async function syncNimCatalog(): Promise<void> {
           contextLength: model.contextLength ?? null,
           sweBenchScore: benchSeed?.score ?? null,
           benchmarkVariant: benchSeed?.variant ?? null,
+          throughputClass,
           syncedAt: now,
         })
         .onConflictDoUpdate({
@@ -323,6 +350,7 @@ export async function syncNimCatalog(): Promise<void> {
             contextLength: model.contextLength ?? null,
             // Only update benchmark fields if we have values (don't overwrite manual data)
             ...(benchSeed ? { sweBenchScore: benchSeed.score, benchmarkVariant: benchSeed.variant } : {}),
+            ...(throughputClass ? { throughputClass } : {}),
             syncedAt: now,
           },
         });
@@ -372,6 +400,7 @@ export async function listNimModels(nimType?: string): Promise<NimModel[]> {
   const models: NimModel[] = rows.map((r) => {
     // Prefer DB-stored score; fall back to seed map for models not yet synced
     const seed = CATALOG_SWE_BENCH_SCORES[r.nimModelId];
+    const throughputSeed = CATALOG_THROUGHPUT_CLASS[r.nimModelId];
     return {
       nimModelId: r.nimModelId,
       displayName: r.displayName,
@@ -382,6 +411,7 @@ export async function listNimModels(nimType?: string): Promise<NimModel[]> {
       contextLength: r.contextLength ?? null,
       sweBenchScore: r.sweBenchScore ?? seed?.score ?? null,
       benchmarkVariant: r.benchmarkVariant ?? seed?.variant ?? null,
+      throughputClass: (r.throughputClass as ThroughputClass | null) ?? throughputSeed ?? null,
       syncedAt: r.syncedAt.toISOString(),
     };
   });

@@ -625,12 +625,42 @@ log "Starting LLM backend in background..."
         log "=== NIM Mode: Using hosted inference (${NIM_MODEL_ID}) via ${NIM_API_BASE} ==="
         echo "starting_llm" > "$STATUS_FILE"
         report_status "starting_llm"
-        log "Starting LiteLLM NIM proxy on port $VLLM_PORT..."
 
+        # Write the initial LiteLLM config. The reload script (/opt/mizi/reload-model.sh)
+        # rewrites this file and sends SIGHUP when a mid-session model switch is requested.
+        # Starting from a config file (not CLI flags) is what makes hot-reloading work:
+        # SIGHUP causes litellm to re-read the config from disk, picking up the new model.
+        NIM_LITELLM_CONFIG="/opt/mizi/litellm_config.yaml"
+        mkdir -p /opt/mizi
+
+        # Build LiteLLM config with dual-model support:
+        # - "default"  → orchestrator model (NIM_MODEL_ID) — used by claw-code
+        # - "swarm"    → economy model (SWARM_MODEL_ID) — used by swarm workers
+        # Having both in the same proxy means workers can call the swarm endpoint
+        # independently, preventing contention with the orchestrator's quality model.
+        {
+          echo "model_list:"
+          echo "  - model_name: default"
+          echo "    litellm_params:"
+          echo "      model: \"openai/${NIM_MODEL_ID}\""
+          echo "      api_base: \"${NIM_API_BASE:-https://integrate.api.nvidia.com/v1}\""
+          echo "      api_key: \"${NIM_API_KEY:-not-needed}\""
+          if [ -n "${SWARM_MODEL_ID:-}" ]; then
+            echo "  - model_name: swarm"
+            echo "    litellm_params:"
+            echo "      model: \"openai/${SWARM_MODEL_ID}\""
+            echo "      api_base: \"${SWARM_API_BASE:-${NIM_API_BASE:-https://integrate.api.nvidia.com/v1}}\""
+            echo "      api_key: \"${SWARM_API_KEY:-${NIM_API_KEY:-not-needed}}\""
+            log "LiteLLM: dual-model config (orchestrator=${NIM_MODEL_ID}, swarm=${SWARM_MODEL_ID})"
+          fi
+          echo "general_settings:"
+          echo "  num_router_workers: 1"
+        } > "$NIM_LITELLM_CONFIG"
+        log "LiteLLM config written to $NIM_LITELLM_CONFIG"
+
+        log "Starting LiteLLM NIM proxy on port $VLLM_PORT (config-file mode)..."
         litellm \
-            --model "openai/${NIM_MODEL_ID}" \
-            --api_base "${NIM_API_BASE}" \
-            --api_key "${NIM_API_KEY:-not-needed}" \
+            --config "$NIM_LITELLM_CONFIG" \
             --host 0.0.0.0 \
             --port "$VLLM_PORT" \
             > /var/log/litellm.log 2>&1 &
@@ -663,19 +693,22 @@ log "Starting LLM backend in background..."
         log "=== NIM Mode: Proxy ready — NIM_MODEL_ID=${NIM_MODEL_ID} ==="
         log "  LLM Proxy:   http://localhost:$VLLM_PORT (OpenAI + Anthropic via litellm → NIM)"
         log "  Upstream:    ${NIM_API_BASE}"
+        log "  Config:      $NIM_LITELLM_CONFIG (hot-reload on SIGHUP)"
 
         # Keep LiteLLM alive with auto-restart.
+        # IMPORTANT: restart from the config file, not from original CLI flags —
+        # this ensures a post-switch restart picks up the new model/provider written
+        # by /opt/mizi/reload-model.sh rather than reverting to the launch-time model.
         while true; do
             if ! kill -0 "$NIM_LITELLM_PID" 2>/dev/null; then
-                log "LiteLLM NIM proxy died — restarting..."
+                log "LiteLLM NIM proxy died — restarting from config ($NIM_LITELLM_CONFIG)..."
                 litellm \
-                    --model "openai/${NIM_MODEL_ID}" \
-                    --api_base "${NIM_API_BASE}" \
-                    --api_key "${NIM_API_KEY:-not-needed}" \
+                    --config "$NIM_LITELLM_CONFIG" \
                     --host 0.0.0.0 \
                     --port "$VLLM_PORT" \
-                    > /var/log/litellm.log 2>&1 &
+                    >> /var/log/litellm.log 2>&1 &
                 NIM_LITELLM_PID=$!
+                log "LiteLLM NIM proxy restarted (PID: $NIM_LITELLM_PID)"
             fi
             sleep 30
         done

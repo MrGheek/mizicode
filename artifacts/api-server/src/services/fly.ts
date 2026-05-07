@@ -155,6 +155,41 @@ export async function destroyMachine(machineId: string): Promise<void> {
 }
 
 /**
+ * Execute a one-shot command inside a running Fly Machine via the Machines exec API.
+ * Used to hot-reload LiteLLM config after a model switch without restarting the machine.
+ *
+ * Returns { exit_code, stdout, stderr } — a non-zero exit_code is treated as an error
+ * by callers but does NOT throw, so a failed hot-reload is non-fatal.
+ */
+export interface ExecResult {
+  exit_code: number;
+  stdout: string;
+  stderr: string;
+}
+
+export async function execMachine(
+  machineId: string,
+  command: string[],
+  env?: Record<string, string>,
+): Promise<ExecResult> {
+  const { token, app } = getConfig();
+  try {
+    const body: { command: string[]; timeout: number; env?: Record<string, string> } = { command, timeout: 30 };
+    if (env && Object.keys(env).length > 0) body.env = env;
+    const result = await flyFetch<ExecResult>(`/apps/${app}/machines/${machineId}/exec`, {
+      token,
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    logger.info({ machineId, app, exit_code: result.exit_code }, "Fly Machine exec completed");
+    return result;
+  } catch (err) {
+    logger.warn({ err, machineId, command }, "Fly Machine exec failed");
+    return { exit_code: 1, stdout: "", stderr: err instanceof Error ? err.message : "unknown error" };
+  }
+}
+
+/**
  * Get the current lifecycle state of a Fly Machine.
  * Returns "unknown" if the machine cannot be found or the state is unrecognised.
  */

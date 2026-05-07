@@ -260,6 +260,8 @@ export interface CreateSessionRequest {
   nimProvider?: string | null;
   /** GitHub Personal Access Token — injected as GITHUB_TOKEN and used to force-push to mizi/session-{id} branch. */
   githubToken?: string | null;
+  /** Model routing mode for NIM sessions: "auto" (phase-aware switching) or "pinned" (fixed model). Defaults to "auto". */
+  modelRoutingMode?: "auto" | "pinned" | null;
 }
 
 export interface Template {

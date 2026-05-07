@@ -33,7 +33,7 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
   Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw, Users, Copy, Check, Eye, EyeOff, FolderOpen,
-  Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap, Network, Target, Pencil, Palette,
+  Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap, Network, Target, Pencil, Palette, Zap,
   Bell, BellOff, BellRing, MonitorSmartphone,
   // RotateCcw was used by the legacy disk-full retry button; the new BootTimeline owns that CTA.
 } from "lucide-react";
@@ -59,6 +59,7 @@ import { inferBootPhase, type BootPhase } from "@/lib/boot-phases";
 import { RelaunchButton } from "@/components/relaunch-button";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { TeamTab } from "@/components/team-tab";
+import { InferenceTab } from "@/components/inference-tab";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 import { GitHubBranchChip } from "@/components/github-branch-chip";
 import { useOrchestrationStatus } from "@/hooks/use-orchestration-status";
@@ -2331,15 +2332,15 @@ export default function SessionDetail() {
   const { toast } = useToast();
   const { pref: handoffNotifPref, setPref: setHandoffNotifPref, browserPermission } = useHandoffNotificationPref();
   const [notifPopoverOpen, setNotifPopoverOpen] = useState(false);
-  const lastDetailTabRef = useRef<"memory" | "smart-skills" | "repo" | "coordination" | "swarm">("memory");
+  const lastDetailTabRef = useRef<"memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference">("memory");
   const queryClient = useQueryClient();
-  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm"] as const;
-  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" => {
+  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm", "inference"] as const;
+  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" => {
     const settled = validTabs.includes(raw as typeof validTabs[number]) ? raw : "overview";
-    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm";
+    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference";
   };
 
-  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm">(() => {
+  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference">(() => {
     const stored = sessionStorage.getItem(`session-tab-${id}`);
     const urlTab = new URLSearchParams(window.location.search).get("tab");
     const validStored = stored && (validTabs as readonly string[]).includes(stored) ? stored : null;
@@ -2632,6 +2633,31 @@ export default function SessionDetail() {
       }
     };
   }, [sessionStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cockpit-level model switch detection.
+  // Tracks the last-seen activeNimModelId across polling refetches and fires a
+  // toast whenever auto-routing switches the model — even when the user is not on
+  // the Inference tab. Uses `undefined` sentinel so the first data arrival is
+  // silently swallowed (no toast on initial load).
+  const prevActiveNimModelRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!session) return;
+    const nim = session as typeof session & {
+      activeNimModelId?: string | null;
+      currentPhase?: string | null;
+      modelRoutingMode?: "auto" | "pinned" | null;
+    };
+    const current = nim.activeNimModelId ?? null;
+    const prev = prevActiveNimModelRef.current;
+    if (prev !== undefined && current !== prev && current) {
+      const phase = nim.currentPhase;
+      toast({
+        title: `Model switched${phase ? ` · ${phase}` : ""}`,
+        description: `Now using ${current.split("/").pop()}`,
+      });
+    }
+    prevActiveNimModelRef.current = current;
+  }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Swarm status — polled every 3 seconds when session is ready
   // Must be called unconditionally before early returns (rules of hooks)
@@ -3017,6 +3043,12 @@ export default function SessionDetail() {
             setActiveTab("swarm");
           }
           break;
+        case "7":
+          if ((session as typeof session & { provider?: string }).provider === "nim") {
+            e.preventDefault();
+            setActiveTab("inference");
+          }
+          break;
         case "r":
           e.preventDefault();
           handleReindexShortcut();
@@ -3048,6 +3080,8 @@ export default function SessionDetail() {
       onSuccess: () => {
         createSession.mutate({ data: { profileId: session.profileId, intentText: session.intentText ?? null } }, {
           onSuccess: (newSession) => {
+            const token = (newSession as typeof newSession & { ownerToken?: string | null }).ownerToken;
+            if (token) sessionStorage.setItem(`nim-owner-token:${newSession.id}`, token);
             toast({ title: "Retrying on a new machine", description: "Launched a fresh instance." });
             queryClient.invalidateQueries({ queryKey: getGetActiveSessionQueryKey() });
             setLocation(`/sessions/${newSession.id}`);
@@ -3170,9 +3204,17 @@ export default function SessionDetail() {
             {(session as typeof session & { provider?: string; nimModelId?: string; nimProvider?: string }).provider === "nim" ? (
               <span className="inline-flex items-center gap-1 text-emerald-400 font-sans text-xs font-semibold not-italic border border-emerald-500/30 bg-emerald-500/10 rounded px-1.5 py-0.5">
                 ⚡ NIM · Fly
-                {(session as typeof session & { nimModelId?: string }).nimModelId && (
-                  <span className="opacity-60 font-normal">· {(session as typeof session & { nimModelId?: string }).nimModelId!.split("/").pop()}</span>
-                )}
+                {(() => {
+                  const nim = session as typeof session & { nimModelId?: string; activeNimModelId?: string | null };
+                  const active = nim.activeNimModelId ?? nim.nimModelId;
+                  const switched = nim.activeNimModelId && nim.activeNimModelId !== nim.nimModelId;
+                  return active ? (
+                    <span className="opacity-60 font-normal">
+                      · {active.split("/").pop()}
+                      {switched && <span className="ml-0.5 text-cyan-400 opacity-80">↻</span>}
+                    </span>
+                  ) : null;
+                })()}
               </span>
             ) : (
               <>· {session.gpuName} x{session.numGpus}{(session as typeof session & { flyMachineId?: string | null }).flyMachineId ? ` · Fly ${(session as typeof session & { flyMachineId?: string | null }).flyMachineId!.slice(0, 8)}` : session.vastInstanceId ? ` · Vast #${session.vastInstanceId}` : ""}</>
@@ -3348,6 +3390,40 @@ export default function SessionDetail() {
               {swarmBadge}
             </button>
           )}
+
+          {/* Live active-model chip — NIM sessions only.
+              Shows the currently-routed model (activeNimModelId ?? nimModelId)
+              and the current session phase when auto-routing is enabled.
+              Clicking opens the Inference tab for full routing controls. */}
+          {(session as typeof session & { provider?: string }).provider === "nim" && (() => {
+            const nim = session as typeof session & {
+              nimModelId?: string;
+              activeNimModelId?: string | null;
+              activeNimProvider?: string | null;
+              currentPhase?: string | null;
+              modelRoutingMode?: "auto" | "pinned" | null;
+            };
+            const displayModel = (nim.activeNimModelId ?? nim.nimModelId ?? "").split("/").pop() ?? "";
+            const phase = nim.currentPhase;
+            const isAutoRouted = nim.modelRoutingMode === "auto" && nim.activeNimModelId && nim.activeNimModelId !== nim.nimModelId;
+            if (!displayModel) return null;
+            return (
+              <button
+                onClick={() => { lastDetailTabRef.current = "inference"; setActiveTab("inference"); }}
+                className="flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full transition-opacity hover:opacity-80"
+                title={`Active model: ${displayModel}${phase ? ` · phase: ${phase}` : ""} — click to open Inference`}
+                style={{
+                  background: isAutoRouted ? "rgba(0,200,255,0.12)" : "rgba(16,185,129,0.10)",
+                  color: isAutoRouted ? "var(--accent-cyan)" : "rgb(52,211,153)",
+                  border: `1px solid ${isAutoRouted ? "rgba(0,200,255,0.25)" : "rgba(52,211,153,0.25)"}`,
+                }}
+              >
+                <span className="font-mono">{displayModel}</span>
+                {phase && <span className="opacity-70">· {phase}</span>}
+                {isAutoRouted && <span className="opacity-60 text-[9px]">auto</span>}
+              </button>
+            );
+          })()}
 
           {/* Details → button */}
           <button
@@ -3887,6 +3963,14 @@ export default function SessionDetail() {
                   )}
                 </button>
               )}
+              {(session as typeof session & { provider?: string }).provider === "nim" && (
+                <button
+                  onClick={() => { lastDetailTabRef.current = "inference"; setActiveTab("inference"); }}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "inference" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
+                >
+                  <Zap className="w-3 h-3 text-emerald-400" /> Inference
+                </button>
+              )}
             </div>
           </SheetHeader>
 
@@ -3917,6 +4001,21 @@ export default function SessionDetail() {
                 isReady={isReady}
                 isSessionOwner={isSessionOwner}
                 ownerToken={undefined}
+              />
+            )}
+            {activeTab === "inference" && (
+              <InferenceTab
+                sessionId={sessionId}
+                isNimSession={(session as typeof session & { provider?: string }).provider === "nim"}
+                isActive={isActive}
+                ownerToken={
+                  // ownerToken is redacted from GET /sessions/:id for security.
+                  // It is persisted to sessionStorage at session creation time
+                  // (all createSession.mutate onSuccess handlers) and read back here.
+                  typeof window !== "undefined"
+                    ? (sessionStorage.getItem(`nim-owner-token:${sessionId}`) ?? undefined)
+                    : undefined
+                }
               />
             )}
           </div>

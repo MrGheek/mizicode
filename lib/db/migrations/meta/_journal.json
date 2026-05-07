@@ -80,6 +80,13 @@
                         "breakpoints": true
                 },
                 {
+                        "idx": 22,
+                        "version": "7",
+                        "when": 1746921900000,
+                        "tag": "0022_nim_catalog_benchmark_fields",
+                        "breakpoints": true
+                },
+                {
                         "idx": 23,
                         "version": "7",
                         "when": 1746922000000,
@@ -94,10 +101,24 @@
                         "breakpoints": true
                 },
                 {
+                        "idx": 25,
+                        "version": "7",
+                        "when": 1746922150000,
+                        "tag": "0024_operator_credentials_provider_unique",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 26,
+                        "version": "7",
+                        "when": 1746922200000,
+                        "tag": "0024_nim_inference_routing",
+                        "breakpoints": true
+                },
+                {
                         "idx": 24,
                         "version": "7",
                         "when": 1746922100000,
-                        "tag": "0024_operator_credentials_provider_unique",
+                        "tag": "0024_model_switches_token_metrics",
                         "breakpoints": true
                 }
         ]

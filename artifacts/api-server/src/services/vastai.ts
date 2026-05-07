@@ -282,6 +282,17 @@ export function buildOnStartScript(profileConfig: {
   nimModelId?: string;
   nimApiBase?: string;
   nimApiKey?: string;
+  // Swarm-specific model override: when phase-aware auto-routing is enabled, the
+  // orchestrator picks a separate economy model for swarm workers to maximise
+  // throughput while keeping orchestrator quality high. Exported as SWARM_MODEL_ID
+  // and SWARM_PROVIDER so the Claw Runner can forward them to worker agents.
+  // swarmApiBase/swarmApiKey are the resolved provider credentials for the swarm
+  // model — critical when swarm uses a different provider than the orchestrator,
+  // since onstart.sh uses them for the LiteLLM "swarm" route (not orchestrator creds).
+  swarmModelId?: string;
+  swarmProvider?: string;
+  swarmApiBase?: string;
+  swarmApiKey?: string;
   // GitHub PAT: injected as GITHUB_TOKEN. When set, git is configured to use
   // the token for HTTPS github.com operations and all pushes are redirected to
   // a dedicated session branch (mizi/session-<id>) via a git wrapper script.
@@ -322,7 +333,71 @@ export function buildOnStartScript(profileConfig: {
         `export NIM_MODEL_ID="${profileConfig.nimModelId}"`,
         `export NIM_API_BASE="${profileConfig.nimApiBase || "https://integrate.api.nvidia.com/v1"}"`,
         `export NIM_API_KEY="${profileConfig.nimApiKey || ""}"`,
-      ].join("\n")
+        // Swarm-specific model override for economy/throughput-optimised workers.
+        // Includes provider-specific API credentials so the LiteLLM "swarm" route
+        // uses the correct upstream even when swarm uses a different provider than
+        // the orchestrator (e.g. DeepInfra swarm + NVIDIA orchestrator).
+        profileConfig.swarmModelId
+          ? [
+              `export SWARM_MODEL_ID="${profileConfig.swarmModelId}"`,
+              `export SWARM_PROVIDER="${profileConfig.swarmProvider || "nvidia"}"`,
+              profileConfig.swarmApiBase ? `export SWARM_API_BASE="${profileConfig.swarmApiBase}"` : "",
+              profileConfig.swarmApiKey ? `export SWARM_API_KEY="${profileConfig.swarmApiKey}"` : "",
+            ].filter(Boolean).join("\n")
+          : "",
+        // Install the hot-reload script so PATCH /sessions/:id/model can live-swap
+        // the active LiteLLM model without restarting the Fly machine.
+        // Called via Fly exec API with env vars LITELLM_MODEL_ID + LITELLM_PROVIDER.
+        // The script writes a fresh litellm_config.yaml and sends SIGHUP to litellm.
+        `mkdir -p /opt/mizi`,
+        `cat > /opt/mizi/reload-model.sh << 'MIZI_RELOAD_EOF'`,
+        `#!/bin/bash`,
+        `set -euo pipefail`,
+        `MODEL_ID="\${LITELLM_MODEL_ID:-}"`,
+        `PROVIDER="\${LITELLM_PROVIDER:-}"`,
+        `[ -z "$MODEL_ID" ] && { echo "LITELLM_MODEL_ID not set" >&2; exit 1; }`,
+        `[ -z "$PROVIDER" ] && { echo "LITELLM_PROVIDER not set" >&2; exit 1; }`,
+        `# Use switch-time credentials passed by the API server (not launch-time env).`,
+        `# LITELLM_API_BASE and LITELLM_API_KEY are set per-provider by sessions.ts.`,
+        `API_BASE="\${LITELLM_API_BASE:-https://integrate.api.nvidia.com/v1}"`,
+        `API_KEY="\${LITELLM_API_KEY:-}"`,
+        `# Rewrite the LiteLLM proxy config so it routes to the new model/provider.`,
+        `# litellm watches /opt/mizi/litellm_config.yaml and reloads on SIGHUP.`,
+        `# Model is always prefixed with "openai/" — LiteLLM uses api_base/api_key`,
+        `# to determine the actual upstream; the prefix just selects the SDK codec.`,
+        `#`,
+        `# Dual-model config: if SWARM_MODEL_ID is set (injected at session launch),`,
+        `# a second model_name "swarm" entry is appended so swarm workers can route`,
+        `# to their economy model independently of the orchestrator "default" model.`,
+        `# The orchestrator model uses the new model/provider; swarm keeps its own.`,
+        `SWARM_SECTION=""`,
+        `if [ -n "\${SWARM_MODEL_ID:-}" ]; then`,
+        `  SWARM_API_BASE="\${SWARM_API_BASE:-https://integrate.api.nvidia.com/v1}"`,
+        `  SWARM_API_KEY="\${SWARM_API_KEY:-}"`,
+        `  SWARM_SECTION=$(cat << SWARM_EOF`,
+        `  - model_name: swarm`,
+        `    litellm_params:`,
+        `      model: "openai/\${SWARM_MODEL_ID}"`,
+        `      api_base: "\${SWARM_API_BASE}"`,
+        `      api_key: "\${SWARM_API_KEY}"`,
+        `SWARM_EOF`,
+        `)`,
+        `fi`,
+        `cat > /opt/mizi/litellm_config.yaml << LITELLM_YAML`,
+        `model_list:`,
+        `  - model_name: default`,
+        `    litellm_params:`,
+        `      model: "openai/\${MODEL_ID}"`,
+        `      api_base: "\${API_BASE}"`,
+        `      api_key: "\${API_KEY}"`,
+        `\${SWARM_SECTION}`,
+        `LITELLM_YAML`,
+        `# Signal litellm to reload config; SIGHUP triggers graceful config reload.`,
+        `pkill -HUP -f "litellm" 2>/dev/null || true`,
+        `echo "Reload complete: openai/\${MODEL_ID} via \${PROVIDER} (\${API_BASE})"`,
+        `MIZI_RELOAD_EOF`,
+        `chmod +x /opt/mizi/reload-model.sh`,
+      ].filter(Boolean).join("\n")
     : "";
 
   // GitHub PAT: configure git credential substitution and install a lightweight

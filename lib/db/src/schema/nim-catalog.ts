@@ -10,6 +10,9 @@ export const nimCatalogTable = pgTable("nim_catalog", {
   contextLength: text("context_length"),
   sweBenchScore: real("swe_bench_score"),
   benchmarkVariant: text("benchmark_variant"),
+  // Throughput class: "high" for MoE (large total / small active params),
+  // "standard" for dense mid-size models, "economy" for small/fast models.
+  throughputClass: text("throughput_class"),
   syncedAt: timestamp("synced_at").notNull().defaultNow(),
 });
 
