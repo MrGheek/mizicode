@@ -96,6 +96,14 @@ interface NimCatalogModel {
   shortDescription: string;
 }
 
+interface NimProviderHealth {
+  key: string;
+  displayName: string;
+  configured: boolean;
+  live: boolean;
+  latencyMs: number | null;
+}
+
 // ── RepoPanel ────────────────────────────────────────────────────────────────
 
 function RepoPanel({
@@ -223,7 +231,7 @@ const TOKEN_MODES = [
   { value: "ultra", label: "Ultra", hint: "minimal" },
 ] as const;
 
-function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog }: {
+function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHealth }: {
   onGpuLaunch: (profileId: number, opts?: Omit<LaunchOptions, "profileId">) => void;
   onNimLaunch: (opts: {
     nimModelId: string; nimProvider: string;
@@ -231,7 +239,10 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog }: {
     taskMode?: string | null; tokenMode?: string | null; skillBundle?: string | null;
   }) => void;
   nimCatalog: NimCatalogModel[];
+  nimConfigured: Record<string, boolean>;
+  nimHealth: Record<string, NimProviderHealth>;
 }) {
+  const [, navigate] = useLocation();
   const [intent, setIntent] = useState("");
   const [classifying, setClassifying] = useState(false);
   const [result, setResult] = useState<IntentResult | null>(null);
@@ -596,37 +607,88 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog }: {
                     {nimCatalog
                       .filter(m => m.nimModelId !== selectedNimSuggestion.nimModelId)
                       .map(m => {
-                        const provider = m.nimTypes.includes("nim_type_preview")
+                        const isFree = m.nimTypes.includes("nim_type_preview");
+
+                        // Determine configured / live state across all relevant providers
+                        const relevantProviders = isFree
+                          ? ["nvidia"]
+                          : m.partnerProviders.length > 0 ? m.partnerProviders : ["nvidia"];
+
+                        // Pick the best provider for launch:
+                        // 1) first configured + live, 2) first configured, 3) fallback to first
+                        const bestProvider =
+                          relevantProviders.find(p => nimConfigured[p] && nimHealth[p]?.live) ??
+                          relevantProviders.find(p => nimConfigured[p]) ??
+                          relevantProviders[0];
+
+                        const isConfigured = !!nimConfigured[bestProvider];
+                        const isLive = isConfigured && !!nimHealth[bestProvider]?.live;
+
+                        const PROVIDER_LABEL_MAP: Record<string, string> = {
+                          nvidia: "NVIDIA NIM", vultr: "Vultr",
+                          together: "Together AI", deepinfra: "DeepInfra",
+                        };
+                        const providerKey = isFree ? "nvidia" : bestProvider;
+                        const providerLabel = isFree
                           ? "NVIDIA NIM"
-                          : m.partnerProviders[0]
-                            ? (m.partnerProviders[0].charAt(0).toUpperCase() + m.partnerProviders[0].slice(1))
-                            : "NIM";
+                          : (PROVIDER_LABEL_MAP[bestProvider] ?? (bestProvider.charAt(0).toUpperCase() + bestProvider.slice(1)));
+
                         return (
                           <button
                             key={m.nimModelId}
                             type="button"
                             className="w-full text-left px-3 py-2 transition-colors"
-                            style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
+                            style={{
+                              borderBottom: "1px solid rgba(255,255,255,0.05)",
+                              opacity: isConfigured ? 1 : 0.5,
+                            }}
                             onMouseEnter={e => (e.currentTarget.style.background = "rgba(16,185,129,0.08)")}
                             onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                             onClick={() => {
                               setSelectedNimSuggestion({
                                 nimModelId: m.nimModelId,
-                                nimProvider: m.nimTypes.includes("nim_type_preview") ? "nvidia" : (m.partnerProviders[0] ?? "nvidia"),
+                                nimProvider: providerKey,
                                 displayName: m.displayName,
-                                providerLabel: provider,
+                                providerLabel,
                                 estimatedStartMin: 2,
                                 description: m.shortDescription,
                               });
                               setShowMoreModels(false);
                             }}
                           >
-                            <span className="text-[11px] font-medium block" style={{ color: "var(--text-primary)" }}>
-                              {m.displayName}
-                            </span>
-                            <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                              via {provider} · ~2m
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] font-medium" style={{ color: "var(--text-primary)" }}>
+                                {m.displayName}
+                              </span>
+                              {isLive && (
+                                <span className="flex items-center gap-0.5 text-[9px] font-medium" style={{ color: "#10b981" }}>
+                                  <span className="relative flex h-1.5 w-1.5">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
+                                  </span>
+                                  Live
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                                via {providerLabel} · ~2m
+                              </span>
+                              {!isConfigured && (
+                                <span
+                                  role="link"
+                                  tabIndex={0}
+                                  onClick={e => { e.stopPropagation(); navigate("/settings"); }}
+                                  onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); navigate("/settings"); } }}
+                                  className="text-[9px] underline cursor-pointer transition-colors"
+                                  style={{ color: "rgba(16,185,129,0.6)" }}
+                                  onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = "#10b981")}
+                                  onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = "rgba(16,185,129,0.6)")}
+                                >
+                                  Add key
+                                </span>
+                              )}
+                            </div>
                           </button>
                         );
                       })}
@@ -839,10 +901,25 @@ export default function Dashboard() {
 
   // NIM catalog — fetched once at page level, passed down to IntentBar for the "More models…" picker
   const [nimCatalog, setNimCatalog] = useState<NimCatalogModel[]>([]);
+  const [nimConfigured, setNimConfigured] = useState<Record<string, boolean>>({});
+  const [nimHealth, setNimHealth] = useState<Record<string, NimProviderHealth>>({});
   useEffect(() => {
     fetch(`${BASE_URL}api/nim/catalog`)
-      .then((r) => r.ok ? r.json() as Promise<{ models: NimCatalogModel[] }> : null)
-      .then((data) => { if (data?.models) setNimCatalog(data.models); })
+      .then((r) => r.ok ? r.json() as Promise<{ models: NimCatalogModel[]; configured?: Record<string, boolean> }> : null)
+      .then((data) => {
+        if (data?.models) setNimCatalog(data.models);
+        if (data?.configured) setNimConfigured(data.configured);
+      })
+      .catch(() => {});
+    fetch(`${BASE_URL}api/nim/health`)
+      .then((r) => r.ok ? r.json() as Promise<{ providers: NimProviderHealth[] }> : null)
+      .then((data) => {
+        if (data?.providers) {
+          const map: Record<string, NimProviderHealth> = {};
+          for (const p of data.providers) map[p.key] = p;
+          setNimHealth(map);
+        }
+      })
       .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -976,7 +1053,7 @@ export default function Dashboard() {
 
         {/* Intent field — hero */}
         <div className="glass-emerge" style={{ animationDelay: "20ms" }}>
-          <IntentBar onGpuLaunch={handleGpuLaunch} onNimLaunch={handleNimLaunch} nimCatalog={nimCatalog} />
+          <IntentBar onGpuLaunch={handleGpuLaunch} onNimLaunch={handleNimLaunch} nimCatalog={nimCatalog} nimConfigured={nimConfigured} nimHealth={nimHealth} />
         </div>
 
         {/* Recent sessions — compact list */}
