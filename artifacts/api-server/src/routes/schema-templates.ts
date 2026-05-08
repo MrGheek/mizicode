@@ -74,7 +74,7 @@ router.get("/schema-templates", optionalAgentAuth(["sessions:read"]), async (_re
 });
 
 router.get("/schema-templates/:id", optionalAgentAuth(["sessions:read"]), async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params["id"] ?? ""));
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid template ID" });
     return;
@@ -123,7 +123,7 @@ router.post("/schema-templates", requireAgentAuth(["sessions:write"]), async (re
 });
 
 router.delete("/schema-templates/:id", requireAgentAuth(["sessions:write"]), async (req, res) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(String(req.params["id"] ?? ""));
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid template ID" });
     return;

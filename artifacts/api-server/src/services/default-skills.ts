@@ -751,6 +751,7 @@ export const DEFAULT_SKILLS: MiziSkillManifest[] = [
     id: "test-environment-provisioning",
     name: "Test Environment Provisioning",
     class: "workflow",
+    source: MIZI_NATIVE_SOURCE,
     summary: "Provision isolated Postgres branches (Neon) and Redis instances for agent test sessions via the provision_test_db claw tool.",
     triggers: {
       tasks: ["build", "debug"],

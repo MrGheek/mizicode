@@ -17,7 +17,7 @@ import type { SessionContext } from "../services/skills-types";
 import { autoEnqueueRepoIndexIfNeeded } from "./repo";
 
 import { randomBytes } from "crypto";
-import { requireAgentAuth, permitBearer } from "../middlewares/agent-auth";
+import { requireAgentAuth, permitBearer, type ApiKeyRecord } from "../middlewares/agent-auth";
 import { getStoredGitHubToken } from "./auth";
 import { encryptConnectionString, decryptConnectionString, maskConnectionString } from "../lib/encrypt";
 
@@ -3142,8 +3142,9 @@ router.get("/sessions/:sessionId/resources", permitBearer(["sessions:read"], { o
 
   // Ownership check: raw bearer (not a validated API key) must match session ownerToken.
   // Validated API keys (req.apiKey set) already passed scope checks — allow cross-session access.
-  if (req.rawBearer && !req.apiKey) {
-    if (!session.ownerToken || req.rawBearer !== session.ownerToken) {
+  const { rawBearer: listRawBearer, apiKey: listApiKey } = req as typeof req & { rawBearer?: string; apiKey?: ApiKeyRecord };
+  if (listRawBearer && !listApiKey) {
+    if (!session.ownerToken || listRawBearer !== session.ownerToken) {
       res.status(403).json({ error: "Not authorized to access this session's resources" });
       return;
     }
@@ -3181,12 +3182,13 @@ router.get("/sessions/:sessionId/resources/:resourceId/connection-string", permi
   }
 
   // Ownership check: unknown bearer must match session ownerToken
-  if (req.rawBearer) {
+  const { rawBearer: revealRawBearer } = req as typeof req & { rawBearer?: string };
+  if (revealRawBearer) {
     const [session] = await db
       .select({ ownerToken: sessionsTable.ownerToken })
       .from(sessionsTable)
       .where(eq(sessionsTable.id, sessionId));
-    if (!session || !session.ownerToken || req.rawBearer !== session.ownerToken) {
+    if (!session || !session.ownerToken || revealRawBearer !== session.ownerToken) {
       res.status(403).json({ error: "Not authorized to access this session's resources" });
       return;
     }
@@ -3253,8 +3255,9 @@ router.post("/sessions/:sessionId/provision", permitBearer(["sessions:write"], {
 
   // Ownership check: raw bearer (not a validated API key) must match session ownerToken.
   // Validated API keys (req.apiKey set) already passed scope checks — allow cross-session access.
-  if (req.rawBearer && !req.apiKey) {
-    if (!session.ownerToken || req.rawBearer !== session.ownerToken) {
+  const { rawBearer: provRawBearer, apiKey: provApiKey } = req as typeof req & { rawBearer?: string; apiKey?: ApiKeyRecord };
+  if (provRawBearer && !provApiKey) {
+    if (!session.ownerToken || provRawBearer !== session.ownerToken) {
       res.status(403).json({ error: "Not authorized to provision resources for this session" });
       return;
     }
