@@ -32,10 +32,9 @@ jobs:
 
       - name: Deploy
         run: |
-          flyctl deploy \
+          flyctl deploy . \
             --config artifacts/api-server/fly.toml \
             --dockerfile artifacts/api-server/Dockerfile \
-            --build-context . \
             --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.MIZIAPI }}
@@ -61,10 +60,9 @@ jobs:
         # VITE_API_BASE_URL is defined in artifacts/dashboard/fly.toml [build.args]
         # and does not need to be repeated here.
         run: |
-          flyctl deploy \
+          flyctl deploy . \
             --config artifacts/dashboard/fly.toml \
             --dockerfile artifacts/dashboard/Dockerfile \
-            --build-context . \
             --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.MIZIDASHBOARD }}
