@@ -34,7 +34,7 @@ app = "mizi-api"
 primary_region = "ord"
 
 [build]
-  dockerfile = "artifacts/api-server/Dockerfile"
+  dockerfile = "Dockerfile"
 
 [env]
   PORT             = "8080"

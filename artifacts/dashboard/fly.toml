@@ -16,7 +16,7 @@ app = "mizicode"
 primary_region = "ord"
 
 [build]
-  dockerfile = "artifacts/dashboard/Dockerfile"
+  dockerfile = "Dockerfile"
 
   [build.args]
     # Point the dashboard at your API server's Fly.io URL.
