@@ -7,7 +7,7 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.26.1 --activate
 
 # Copy workspace manifests first so layer caching works well
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
@@ -29,7 +29,9 @@ RUN node build.mjs
 # Use pnpm deploy to create a self-contained production deployment
 # directory with all native/external deps resolved (no symlinks).
 WORKDIR /app
-RUN pnpm deploy --filter @workspace/api-server --prod /app/prod-deploy
+# --legacy: pnpm v10 requires inject-workspace-packages=true by default;
+# --legacy restores the previous copy-based deploy behaviour.
+RUN pnpm deploy --filter @workspace/api-server --prod --legacy /app/prod-deploy
 
 # ============================================================
 # Stage 2 — Runtime
