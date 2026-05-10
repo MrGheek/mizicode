@@ -1,3 +1,6 @@
+## v0.6.3 — 2026-05-10\n\n- Merge branch 'main' of https://github.com/MrGheek/mizicode (1f115bc)
+- fix: resolve two GitHub Actions CI/deploy failures (9f2c2cd)\n
+
 ## v0.6.2 — 2026-05-10\n\n- Merge branch 'main' of https://github.com/MrGheek/mizicode (52f55f5)
 - fix: resolve FK constraint violations in test cleanup (coordination.test.ts et al.) (bff7f9b)
 - fix: resolve CI pnpm version error and CodeQL permissions failure (2e6c0dd)\n
