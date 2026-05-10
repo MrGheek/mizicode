@@ -1,3 +1,7 @@
+## v0.6.2 — 2026-05-10\n\n- Merge branch 'main' of https://github.com/MrGheek/mizicode (52f55f5)
+- fix: resolve FK constraint violations in test cleanup (coordination.test.ts et al.) (bff7f9b)
+- fix: resolve CI pnpm version error and CodeQL permissions failure (2e6c0dd)\n
+
 ## v0.6.1 — 2026-05-10\n\n- Update app name to match Fly.io deployment configuration (f4bad0e)
 - fix: resolve TypeScript CI failures from merged task errors (6a39fea)
 - Fix preview deployments failing on dependency updates (16b4fba)
