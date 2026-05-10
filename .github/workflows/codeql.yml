@@ -58,3 +58,8 @@ jobs:
         uses: github/codeql-action/analyze@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
         with:
           category: "/language:javascript-typescript"
+        # The SARIF upload requires "Code scanning" to be enabled in the
+        # repository's Security settings (Settings → Code security → Code scanning).
+        # For private repos it also requires GitHub Advanced Security.
+        # continue-on-error prevents a missing repo setting from failing CI.
+        continue-on-error: true
