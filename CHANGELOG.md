@@ -1,3 +1,11 @@
+## v0.6.1 — 2026-05-10\n\n- Update app name to match Fly.io deployment configuration (f4bad0e)
+- fix: resolve TypeScript CI failures from merged task errors (6a39fea)
+- Fix preview deployments failing on dependency updates (16b4fba)
+- Update image assets for branding and documentation (6ddf6b2)
+- Task #330: Show provider availability (live/unconfigured) in the inline model picker (6fe5e2f)
+- docs+fix: update docs for tasks #301 #312 #313 #314 #315 #326; fix test regressions (e71dcd0)
+- docs: update wiki.md, MIZI_SPEC.md, README.md for tasks #301, #312, #313, #314, #315, #326 (069ed2a)\n
+
 ## v0.6.0 — 2026-05-07\n\n- fix: restore coverage thresholds broken by merged code in coordination.ts and lane-policy.ts (61a980e)
 - Add per-lane activity timeline (Task #315) (075697c)
 - feat: Push lane work to sub-branches and auto-open draft PRs on handoff (69414a6)
