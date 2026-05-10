@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi, afterEach, beforeEach } from "vitest";
 import request from "supertest";
 import app from "../app";
-import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, skillBundlesTable } from "@workspace/db";
+import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, skillBundlesTable, laneEventsTable, provisionedResourcesTable, orchestrationIdempotencyTable } from "@workspace/db";
 import { eq, inArray, and } from "drizzle-orm";
 
 // ─── Mock Vast.ai ──────────────────────────────────────────────────────────────
@@ -69,10 +69,15 @@ async function cleanupSession(sessionId: number) {
     .from(sessionLanesTable)
     .where(eq(sessionLanesTable.sessionId, sessionId));
   const laneIds = lanes.map((l) => l.id);
+  await db.delete(laneEventsTable).where(eq(laneEventsTable.sessionId, sessionId));
+  await db.delete(provisionedResourcesTable).where(eq(provisionedResourcesTable.sessionId, sessionId));
+  await db.delete(orchestrationIdempotencyTable).where(eq(orchestrationIdempotencyTable.sessionId, sessionId));
   if (laneIds.length > 0) {
     await db.delete(laneClaimsTable).where(inArray(laneClaimsTable.laneId, laneIds));
     await db.delete(sessionLanesTable).where(eq(sessionLanesTable.sessionId, sessionId));
   }
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await db.delete(laneEventsTable).where(eq(laneEventsTable.sessionId, sessionId));
   await db.delete(sessionsTable).where(eq(sessionsTable.id, sessionId));
 }
 

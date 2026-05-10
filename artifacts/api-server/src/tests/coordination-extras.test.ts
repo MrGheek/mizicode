@@ -27,6 +27,9 @@ import {
   laneClaimsTable,
   laneHandoffsTable,
   laneHeavyJobsTable,
+  laneEventsTable,
+  provisionedResourcesTable,
+  orchestrationIdempotencyTable,
 } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 
@@ -44,11 +47,16 @@ async function cleanupSession(sessionId: number) {
     .where(eq(sessionLanesTable.sessionId, sessionId));
   const laneIds = lanes.map((l) => l.id);
   await db.delete(laneHeavyJobsTable).where(eq(laneHeavyJobsTable.sessionId, sessionId));
+  await db.delete(laneEventsTable).where(eq(laneEventsTable.sessionId, sessionId));
+  await db.delete(provisionedResourcesTable).where(eq(provisionedResourcesTable.sessionId, sessionId));
+  await db.delete(orchestrationIdempotencyTable).where(eq(orchestrationIdempotencyTable.sessionId, sessionId));
   if (laneIds.length > 0) {
     await db.delete(laneClaimsTable).where(inArray(laneClaimsTable.laneId, laneIds));
     await db.delete(laneHandoffsTable).where(inArray(laneHandoffsTable.laneId, laneIds));
     await db.delete(sessionLanesTable).where(eq(sessionLanesTable.sessionId, sessionId));
   }
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await db.delete(laneEventsTable).where(eq(laneEventsTable.sessionId, sessionId));
   await db.delete(sessionsTable).where(eq(sessionsTable.id, sessionId));
 }
 

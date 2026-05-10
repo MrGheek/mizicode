@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import request from "supertest";
 import app from "../app";
-import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneHandoffsTable, laneHeavyJobsTable, laneEventsTable, claimPurgeLogsTable } from "@workspace/db";
+import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneHandoffsTable, laneHeavyJobsTable, laneEventsTable, claimPurgeLogsTable, provisionedResourcesTable, orchestrationIdempotencyTable } from "@workspace/db";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { sweepExpiredClaims, expireStaleClaimsForSession } from "../services/claim-sweeper";
 import { LANE_HEARTBEAT_WINDOW_SECONDS } from "../services/lane-policy";
@@ -29,12 +29,18 @@ async function cleanupSession(sessionId: number) {
 
   await db.delete(laneHeavyJobsTable).where(eq(laneHeavyJobsTable.sessionId, sessionId));
   await db.delete(laneEventsTable).where(eq(laneEventsTable.sessionId, sessionId));
+  await db.delete(provisionedResourcesTable).where(eq(provisionedResourcesTable.sessionId, sessionId));
+  await db.delete(orchestrationIdempotencyTable).where(eq(orchestrationIdempotencyTable.sessionId, sessionId));
 
   if (laneIds.length > 0) {
     await db.delete(laneClaimsTable).where(inArray(laneClaimsTable.laneId, laneIds));
     await db.delete(laneHandoffsTable).where(inArray(laneHandoffsTable.laneId, laneIds));
     await db.delete(sessionLanesTable).where(eq(sessionLanesTable.sessionId, sessionId));
   }
+  // Drain the event loop so any fire-and-forget laneEvent inserts (emitLaneEvent)
+  // that were queued during API calls have a chance to land, then re-sweep.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await db.delete(laneEventsTable).where(eq(laneEventsTable.sessionId, sessionId));
   await db.delete(sessionsTable).where(eq(sessionsTable.id, sessionId));
 }
 
