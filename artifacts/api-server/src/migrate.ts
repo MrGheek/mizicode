@@ -71,10 +71,21 @@ function withReadWrite(connectionString: string): string {
 const pool = createPool(withReadWrite(rawUrl));
 const db = drizzle(pool);
 
+/**
+ * Override any role-level read-only default on a raw client.
+ * The startup-message option handles Drizzle's internal connections;
+ * raw pool.connect() clients need an explicit SET at the session level
+ * before any DDL or BEGIN.
+ */
+async function setReadWrite(client: Awaited<ReturnType<typeof pool.connect>>): Promise<void> {
+  await client.query("SET default_transaction_read_only = off");
+}
+
 /** True when the public schema has no user tables (completely fresh DB). */
 async function isDatabaseEmpty(): Promise<boolean> {
   const client = await pool.connect();
   try {
+    await setReadWrite(client);
     const res = await client.query(
       `SELECT tablename FROM pg_tables
        WHERE schemaname = 'public' AND tablename = 'lane_claims'
@@ -105,6 +116,7 @@ async function bootstrapFreshDatabase(migrationsFolder: string): Promise<void> {
 
   const client = await pool.connect();
   try {
+    await setReadWrite(client);
     await client.query("BEGIN");
 
     // Apply the full schema (every statement has IF NOT EXISTS so this is safe).
