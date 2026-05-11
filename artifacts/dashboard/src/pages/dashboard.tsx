@@ -904,23 +904,37 @@ export default function Dashboard() {
   const [nimConfigured, setNimConfigured] = useState<Record<string, boolean>>({});
   const [nimHealth, setNimHealth] = useState<Record<string, NimProviderHealth>>({});
   useEffect(() => {
-    fetch(`${BASE_URL}api/nim/catalog`)
-      .then((r) => r.ok ? r.json() as Promise<{ models: NimCatalogModel[]; configured?: Record<string, boolean> }> : null)
-      .then((data) => {
-        if (data?.models) setNimCatalog(data.models);
-        if (data?.configured) setNimConfigured(data.configured);
-      })
-      .catch(() => {});
-    fetch(`${BASE_URL}api/nim/health`)
-      .then((r) => r.ok ? r.json() as Promise<{ providers: NimProviderHealth[] }> : null)
-      .then((data) => {
-        if (data?.providers) {
-          const map: Record<string, NimProviderHealth> = {};
-          for (const p of data.providers) map[p.key] = p;
-          setNimHealth(map);
-        }
-      })
-      .catch(() => {});
+    function fetchNimCatalog() {
+      fetch(`${BASE_URL}api/nim/catalog`)
+        .then((r) => r.ok ? r.json() as Promise<{ models: NimCatalogModel[]; configured?: Record<string, boolean> }> : null)
+        .then((data) => {
+          if (data?.models) setNimCatalog(data.models);
+          if (data?.configured) setNimConfigured(data.configured);
+        })
+        .catch(() => {});
+    }
+    function fetchNimHealth() {
+      fetch(`${BASE_URL}api/nim/health`)
+        .then((r) => r.ok ? r.json() as Promise<{ providers: NimProviderHealth[] }> : null)
+        .then((data) => {
+          if (data?.providers) {
+            const map: Record<string, NimProviderHealth> = {};
+            for (const p of data.providers) map[p.key] = p;
+            setNimHealth(map);
+          }
+        })
+        .catch(() => {});
+    }
+
+    fetchNimCatalog();
+    fetchNimHealth();
+
+    const interval = setInterval(() => {
+      fetchNimCatalog();
+      fetchNimHealth();
+    }, 60_000);
+
+    return () => clearInterval(interval);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Skill bundles — fetched once to resolve user's chosen bundle slug → numeric bundleId
