@@ -159,14 +159,21 @@ async function bootstrapFreshDatabase(migrationsFolder: string): Promise<void> {
     // Only safe to call AFTER waitForPrimary() confirms we're not in recovery.
     await client.query("BEGIN READ WRITE");
 
-    // Apply the full schema (every statement has IF NOT EXISTS so this is safe).
-    await client.query(bootstrapSql);
-
-    // Make sure the Drizzle journal table has the proper primary-key default.
+    // Previous failed deploys may have left the drizzle tracking schema in a
+    // partial state (e.g. Drizzle's own migrator created __drizzle_migrations
+    // with its PRIMARY KEY before the actual migration SQL failed).  That leaves
+    // an existing PK that conflicts when bootstrap SQL tries to ADD CONSTRAINT.
+    // Since we are in the "fresh DB" path (lane_claims absent), no real schema
+    // has been applied yet — the drizzle schema is just leftover bookkeeping.
+    // Drop and recreate it so bootstrap gets a clean slate.
     await client.query(`
-      ALTER TABLE drizzle.__drizzle_migrations
-        ALTER COLUMN id SET DEFAULT nextval('drizzle.__drizzle_migrations_id_seq'::regclass)
+      DROP SCHEMA IF EXISTS drizzle CASCADE;
+      CREATE SCHEMA drizzle;
     `);
+
+    // Apply the full schema.  Every CREATE in _bootstrap.sql uses IF NOT EXISTS,
+    // and the drizzle schema is now empty so no constraint conflicts occur.
+    await client.query(bootstrapSql);
 
     // Read the journal and mark every listed migration as applied.
     const journalPath = path.join(migrationsFolder, "meta", "_journal.json");

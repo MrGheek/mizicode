@@ -1,0 +1,121 @@
+Run flyctl deploy . \
+==> Verifying app config
+--> Verified app config
+Validating artifacts/api-server/fly.toml
+✓ Configuration is valid
+==> Building image
+Waiting for depot builder...
+
+==> Building image with Depot
+--> build:  (​)
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.15kB 0.0s done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/node:20-alpine
+#2 DONE 0.2s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B 0.0s done
+#3 DONE 0.0s
+
+#4 [builder  1/12] FROM docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+#4 resolve docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 done
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 2.45MB 0.2s done
+#5 DONE 0.2s
+
+#6 [builder  3/12] RUN corepack enable && corepack prepare pnpm@10.26.1 --activate
+#6 CACHED
+
+#7 [builder  4/12] COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+#7 CACHED
+
+#8 [builder  5/12] COPY tsconfig.base.json tsconfig.json ./
+#8 CACHED
+
+#9 [builder  2/12] WORKDIR /app
+#9 CACHED
+
+#10 [builder  6/12] COPY lib/ lib/
+#10 CACHED
+#20 exporting layers 1.2s done
+#20 exporting manifest sha256:2d3864ad4e7b13045363b4144bcc2d3d0f90405e2e01e313e4d2128b80b53e96 done
+#20 exporting config sha256:c02f2bd8f6e23d166c3182235773aa73ba33188011a26ad2f2b5397e6933407f done
+#20 pushing layers for registry.fly.io/mizi-api:deployment-01KRBQ5BC26H0RRCE1KP03H0BF@sha256:2d3864ad4e7b13045363b4144bcc2d3d0f90405e2e01e313e4d2128b80b53e96
+#20 pushing layer sha256:c02f2bd8f6e23d166c3182235773aa73ba33188011a26ad2f2b5397e6933407f
+#20 pushing layer sha256:954682f87ed3c802bd8f5b163696fa4bbdda1d97bcd366cf41e7ff599606762d
+#20 pushing layer sha256:79162180734b88ff8cc67216853fcd9fe1fc55fc61873d5bfd6e8f93d0897bf4 0.0s done
+#20 pushing layer sha256:c59f4feb5aa577638f9280b984a9bdd2d8a599eafeb85538ea635e3a54545cdb 0.1s done
+#20 pushing layer sha256:dfaccaaf20da8808391e29158de0075c0ae04c0794cefecb1af906b81b550f43 0.1s done
+#20 pushing layer sha256:768b5f9ea07876e05a29d9a197c62b329dbdb20475b6ed780fb304ff9d8f4691
+#20 pushing layer sha256:17f6084667ded826c9c434edbaa2c6387137afa0b336e94c8f3493347c42a76f
+#20 pushing layer sha256:4b0509c947003be1323a5a38977845d73b4980e37144df3290035d51059ccb48 0.1s done
+#20 pushing layer sha256:1c7f9b6c07a76147766c1efbea9c1fba8d3bc76d8cbece5c13abe8afc1ffc36f 0.0s done
+#20 pushing layer sha256:c02f2bd8f6e23d166c3182235773aa73ba33188011a26ad2f2b5397e6933407f 0.2s done
+#20 pushing layer sha256:954682f87ed3c802bd8f5b163696fa4bbdda1d97bcd366cf41e7ff599606762d 0.2s done
+#20 pushing layer sha256:17f6084667ded826c9c434edbaa2c6387137afa0b336e94c8f3493347c42a76f 0.3s done
+#20 pushing layers for registry.fly.io/mizi-api:deployment-01KRBQ5BC26H0RRCE1KP03H0BF@sha256:2d3864ad4e7b13045363b4144bcc2d3d0f90405e2e01e313e4d2128b80b53e96 0.3s done
+#20 pushing layer sha256:768b5f9ea07876e05a29d9a197c62b329dbdb20475b6ed780fb304ff9d8f4691 0.3s done
+#20 pushing manifest for registry.fly.io/mizi-api:deployment-01KRBQ5BC26H0RRCE1KP03H0BF@sha256:2d3864ad4e7b13045363b4144bcc2d3d0f90405e2e01e313e4d2128b80b53e96 0.1s done
+#20 DONE 1.7s
+--> Build Summary:  (​)
+--> Building image done
+image: registry.fly.io/mizi-api:deployment-01KRBQ5BC26H0RRCE1KP03H0BF
+
+image size: 52 MB
+Watch your deployment at https://fly.io/apps/mizi-api/monitoring
+
+Running mizi-api release_command: node dist/migrate.mjs
+> Created release_command machine 5683e341b45238
+> Waiting for 5683e341b45238 to have state: stopped
+> Machine 5683e341b45238 has state: stopped
+Starting machine
+> Waiting for 5683e341b45238 to have state: started
+> Waiting for 5683e341b45238 to have state: started
+> Machine 5683e341b45238 has state: started
+> Waiting for 5683e341b45238 to have state: destroyed
+> Machine 5683e341b45238 has state: destroyed
+> Waiting for 5683e341b45238 to get exit event
+Error release_command failed running on machine 5683e341b45238 with exit code 1.
+✖ release_command failed
+✖ Failed: machine 5683e341b45238 exited with non-zero status of 1
+Checking logs: fetching the last 100 lines below:
+2026-05-11T14:31:51Z 2026-05-11T14:31:51.642626340 [01KRBQ6YQ8YPBN59XN4HA27DM2:main] Running Firecracker v1.14.4
+2026-05-11T14:31:51Z 2026-05-11T14:31:51.642740700 [01KRBQ6YQ8YPBN59XN4HA27DM2:main] Listening on API socket ("/fc.sock").
+2026-05-11T14:31:52Z  INFO Starting init (commit: 3040ac0)...
+2026-05-11T14:31:52Z  INFO Preparing to run: `docker-entrypoint.sh node dist/migrate.mjs` as root
+2026-05-11T14:31:52Z  INFO [fly api proxy] listening at /.fly/api
+2026-05-11T14:31:52Z Machine started in 870ms
+2026-05-11T14:31:52Z 2026/05/11 14:31:52 INFO SSH listening listen_address=[fdaa:73:b6ac:a7b:853:201c:763d:2]:22
+2026-05-11T14:31:52Z [migrate] Starting database migrations…
+2026-05-11T14:31:52Z [migrate] Migrations folder: /app/dist/migrations
+2026-05-11T14:31:54Z [migrate] Fresh database detected — running bootstrap SQL…
+2026-05-11T14:31:54Z [migrate] Migration failed: error: multiple primary keys for table "__drizzle_migrations" are not allowed
+2026-05-11T14:31:54Z     at file:///app/dist/migrate.mjs:4165:21
+2026-05-11T14:31:54Z     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2026-05-11T14:31:54Z     at async bootstrapFreshDatabase (file:///app/dist/migrate.mjs:24355:5)
+2026-05-11T14:31:54Z     at async main (file:///app/dist/migrate.mjs:24397:7) {
+2026-05-11T14:31:54Z   length: 137,
+2026-05-11T14:31:54Z   severity: 'ERROR',
+2026-05-11T14:31:54Z   code: '42P16',
+2026-05-11T14:31:54Z   detail: undefined,
+2026-05-11T14:31:54Z   hint: undefined,
+2026-05-11T14:31:54Z   position: undefined,
+2026-05-11T14:31:54Z   internalPosition: undefined,
+2026-05-11T14:31:54Z   internalQuery: undefined,
+2026-05-11T14:31:54Z   where: undefined,
+2026-05-11T14:31:54Z   schema: undefined,
+2026-05-11T14:31:54Z   table: undefined,
+2026-05-11T14:31:54Z   column: undefined,
+2026-05-11T14:31:54Z   dataType: undefined,
+2026-05-11T14:31:54Z   constraint: undefined,
+2026-05-11T14:31:54Z   file: 'index.c',
+2026-05-11T14:31:54Z   line: '217',
+2026-05-11T14:31:54Z   routine: 'index_check_primary_key'
+2026-05-11T14:31:54Z }
+2026-05-11T14:31:54Z  INFO Main child exited normally with code: 1
+Error: release command failed - aborting deployment. machine 5683e341b45238 exited with non-zero status of 1
+Error: Process completed with exit code 1.
