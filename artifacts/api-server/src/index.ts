@@ -1,5 +1,7 @@
 import http from "http";
+import path from "path";
 import { WebSocketServer } from "ws";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { seedProfiles } from "./services/profiles";
@@ -91,6 +93,24 @@ try {
 if (process.env["NODE_ENV"] === "production" && !process.env["MIZI_ENCRYPTION_KEY"]) {
   logger.error("MIZI_ENCRYPTION_KEY is required in production — provisioned connection strings would be stored in plaintext. Set a 64-hex-char key and restart.");
   process.exit(1);
+}
+
+// ─── Database migrations ──────────────────────────────────────────────────────
+// Run all pending Drizzle migrations before the server accepts connections.
+// Safe to run on every restart — Drizzle tracks applied migrations in the
+// drizzle.__drizzle_migrations table and skips already-applied ones.
+if (process.env.DATABASE_URL) {
+  try {
+    // __dirname is injected by the esbuild banner (globalThis.__dirname)
+    const migrationsFolder = path.join(__dirname, "migrations");
+    await migrate(db, { migrationsFolder });
+    logger.info("Database migrations applied");
+  } catch (err) {
+    logger.error({ err }, "Database migration failed — aborting startup");
+    process.exit(1);
+  }
+} else {
+  logger.warn("DATABASE_URL not set — skipping migrations");
 }
 
 // ─── HTTP server + WebSocket bridge ──────────────────────────────────────────
