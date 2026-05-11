@@ -5,6 +5,9 @@
 # ============================================================
 FROM node:20-alpine AS builder
 
+# libc6-compat is required for rollup 4.x native bindings on Alpine (musl).
+RUN apk add --no-cache libc6-compat
+
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@10.26.1 --activate
