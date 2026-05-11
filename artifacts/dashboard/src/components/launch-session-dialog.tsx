@@ -12,13 +12,27 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from "@/components/ui/command";
 import {
   Loader2, ChevronDown, ChevronRight, Wand2, Info,
-  Users, Plus, X, Play, Eye, EyeOff, KeyRound, Github,
+  Users, Plus, X, Play, Eye, EyeOff, KeyRound, Github, Lock, ChevronsUpDown, Check,
 } from "lucide-react";
 import { SkillClassBadge } from "@/components/skill-badges";
 import { useGitHubConnection } from "@/hooks/use-github-connection";
+import { useGitHubRepos } from "@/hooks/use-github-repos";
 import { API_BASE_URL } from "@/lib/api-url";
+
+function buildOAuthUrl(): string {
+  const base = `${API_BASE_URL}api/auth/github`;
+  try {
+    return `${base}?return_to=${encodeURIComponent(window.location.href)}`;
+  } catch {
+    return base;
+  }
+}
 
 const LS_PAT_PREFIX = "mizi:github_pat:";
 
@@ -114,6 +128,9 @@ export function LaunchSessionDialog({
 }: LaunchSessionDialogProps) {
   const hasPrefill = !!prefill;
   const { status: ghStatus } = useGitHubConnection();
+  const { repos, loading: reposLoading } = useGitHubRepos(ghStatus.connected);
+  const [repoPickerOpen, setRepoPickerOpen] = useState(false);
+  const [manualUrlMode, setManualUrlMode] = useState(() => !!(prefill?.repoUrl));
   const [taskMode, setTaskMode] = useState(() => prefill?.taskMode || "build");
   const [tokenMode, setTokenMode] = useState(() => prefill?.tokenMode || "core");
   const [repoUrl, setRepoUrl] = useState(() => prefill?.repoUrl ?? "");
@@ -256,19 +273,92 @@ export function LaunchSessionDialog({
           {/* Repo URL — comes first because it auto-suggests session intent. */}
           <div className="space-y-1.5">
             <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              Repo URL
+              Repo
               <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground/60">(optional)</span>
             </Label>
-            <Input
-              placeholder="https://github.com/org/repo"
-              value={repoUrl}
-              onChange={e => setRepoUrl(e.target.value)}
-              className="text-sm font-mono"
-            />
-            <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-              <Info className="w-3 h-3 shrink-0" />
-              Used to recommend the best skill bundle for your repo
-            </p>
+
+            {ghStatus.connected && !manualUrlMode ? (
+              <>
+                <Popover open={repoPickerOpen} onOpenChange={setRepoPickerOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-between gap-2 h-9 rounded-md border border-input bg-background px-3 text-sm text-left hover:bg-accent/30 transition-colors"
+                    >
+                      <span className={repoUrl ? "font-mono text-foreground truncate" : "text-muted-foreground"}>
+                        {repoUrl
+                          ? (repos.find(r => r.cloneUrl === repoUrl)?.fullName ?? repoUrl)
+                          : "Select a repo…"}
+                      </span>
+                      {reposLoading
+                        ? <Loader2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground animate-spin" />
+                        : <ChevronsUpDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search repos…" className="h-9 text-sm" />
+                      <CommandList>
+                        <CommandEmpty>No repos found.</CommandEmpty>
+                        <CommandGroup>
+                          {repos.map(repo => (
+                            <CommandItem
+                              key={repo.fullName}
+                              value={repo.fullName}
+                              onSelect={() => {
+                                setRepoUrl(repo.cloneUrl);
+                                setRepoPickerOpen(false);
+                              }}
+                            >
+                              <Check className={`w-3.5 h-3.5 shrink-0 ${repoUrl === repo.cloneUrl ? "opacity-100" : "opacity-0"}`} />
+                              <span className="font-mono text-xs truncate flex-1">{repo.fullName}</span>
+                              {repo.private && <Lock className="w-3 h-3 shrink-0 text-muted-foreground/60" />}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                    <Info className="w-3 h-3 shrink-0" />
+                    Used to recommend the best skill bundle for your repo
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setManualUrlMode(true)}
+                    className="text-[10px] text-muted-foreground hover:text-foreground underline transition-colors"
+                  >
+                    Enter URL manually
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <Input
+                  placeholder="https://github.com/org/repo"
+                  value={repoUrl}
+                  onChange={e => setRepoUrl(e.target.value)}
+                  className="text-sm font-mono"
+                />
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                    <Info className="w-3 h-3 shrink-0" />
+                    Used to recommend the best skill bundle for your repo
+                  </p>
+                  {ghStatus.connected && manualUrlMode && (
+                    <button
+                      type="button"
+                      onClick={() => setManualUrlMode(false)}
+                      className="text-[10px] text-muted-foreground hover:text-foreground underline transition-colors"
+                    >
+                      Pick from repos
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           {/* GitHub Token — show PAT field only when no OAuth token is stored */}
@@ -316,7 +406,7 @@ export function LaunchSessionDialog({
               <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                 <Github className="w-3 h-3 shrink-0" />
                 Or{" "}
-                <a href={`${API_BASE_URL}api/auth/github`} target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground transition-colors">
+                <a href={buildOAuthUrl()} className="underline hover:text-foreground transition-colors">
                   Connect GitHub once
                 </a>{" "}
                 to skip entering tokens every launch.

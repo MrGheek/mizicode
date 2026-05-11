@@ -239,9 +239,14 @@ function decryptToken(encoded: string): string {
   return decipher.update(ct).toString("utf8") + decipher.final("utf8");
 }
 
-// Short-lived in-memory state map (oauth state parameter → { expiry, returnOrigin })
+// Short-lived in-memory state map (oauth state parameter → { expiry, returnOrigin, returnTo })
 // Single-operator model: a simple Map is sufficient.
-interface OAuthStateEntry { expiry: number; returnOrigin: string }
+interface OAuthStateEntry {
+  expiry: number;
+  returnOrigin: string;
+  /** Optional full URL to redirect to after OAuth (validated against DASHBOARD_URL). */
+  returnTo?: string;
+}
 const oauthStateMap = new Map<string, OAuthStateEntry>();
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -296,7 +301,21 @@ router.get("/auth/github", (req, res) => {
   // Final fallback to same API origin (never an external domain)
   if (!returnOrigin) returnOrigin = sameOrigin;
 
-  oauthStateMap.set(state, { expiry: Date.now() + OAUTH_STATE_TTL_MS, returnOrigin });
+  // Optional return_to: a full URL the browser should land on after OAuth.
+  // Security: it must start with the configured DASHBOARD_URL (or same origin
+  // if DASHBOARD_URL is not set) to prevent open-redirect to arbitrary sites.
+  let returnTo: string | undefined;
+  const rawReturnTo = (req.query["return_to"] as string | undefined) ?? "";
+  if (rawReturnTo) {
+    const allowedPrefix = configuredDashboardUrl || sameOrigin;
+    if (allowedPrefix && rawReturnTo.startsWith(allowedPrefix)) {
+      returnTo = rawReturnTo;
+    } else {
+      logger.warn({ rawReturnTo, allowedPrefix }, "GitHub OAuth: return_to rejected — not a trusted prefix");
+    }
+  }
+
+  oauthStateMap.set(state, { expiry: Date.now() + OAUTH_STATE_TTL_MS, returnOrigin, returnTo });
 
   // Build callback URL from request host so it works in both dev and prod.
   // x-forwarded-proto/host can be comma-separated on multi-hop proxies (e.g. Fly.io);
@@ -404,11 +423,35 @@ router.get("/auth/github/callback", async (req, res) => {
 
     logger.info({ githubLogin }, "GitHub OAuth: token stored successfully");
 
-    // Redirect back to the dashboard (returnOrigin captured at flow initiation)
-    res.redirect(`${returnOrigin}/?github_oauth=connected`);
+    // Build the final redirect URL.
+    // If the initiating page passed a validated return_to URL, append the
+    // github_oauth param to that exact URL so the user lands back on the
+    // same page (and same scroll position / dialog state) they started from.
+    // Otherwise fall back to the plain origin root.
+    let successUrl: string;
+    if (stateEntry.returnTo) {
+      try {
+        const u = new URL(stateEntry.returnTo);
+        u.searchParams.set("github_oauth", "connected");
+        successUrl = u.toString();
+      } catch {
+        successUrl = `${returnOrigin}/?github_oauth=connected`;
+      }
+    } else {
+      successUrl = `${returnOrigin}/?github_oauth=connected`;
+    }
+    res.redirect(successUrl);
   } catch (err) {
     logger.error(err, "GitHub OAuth callback failed");
-    res.redirect(`${returnOrigin}/?github_oauth=error`);
+    // On error, redirect to the return_to URL if available, else root.
+    const errBase = stateEntry?.returnTo ?? `${returnOrigin}/`;
+    try {
+      const u = new URL(errBase);
+      u.searchParams.set("github_oauth", "error");
+      res.redirect(u.toString());
+    } catch {
+      res.redirect(`${returnOrigin}/?github_oauth=error`);
+    }
   }
 });
 
@@ -434,6 +477,54 @@ router.get("/auth/github/status", requireOperator, async (_req, res) => {
   } catch (err) {
     logger.error(err, "Failed to fetch GitHub OAuth status");
     res.status(500).json({ error: "Failed to fetch GitHub OAuth status" });
+  }
+});
+
+// ─── GET /auth/github/repos — list operator's GitHub repos (operator-only) ───
+
+router.get("/auth/github/repos", requireOperator, async (_req, res) => {
+  try {
+    const token = await getStoredGitHubToken();
+    if (!token) {
+      res.status(404).json({ error: "No GitHub OAuth token stored — connect GitHub first" });
+      return;
+    }
+
+    const r = await fetch(
+      "https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner",
+      {
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+      }
+    );
+
+    if (!r.ok) {
+      throw new Error(`GitHub repos API returned ${r.status}`);
+    }
+
+    const data = await r.json() as Array<{
+      full_name: string;
+      name: string;
+      private: boolean;
+      html_url: string;
+      clone_url: string;
+    }>;
+
+    res.json(
+      data.map((repo) => ({
+        fullName: repo.full_name,
+        name: repo.name,
+        private: repo.private,
+        htmlUrl: repo.html_url,
+        cloneUrl: repo.clone_url,
+      }))
+    );
+  } catch (err) {
+    logger.error(err, "Failed to fetch GitHub repos");
+    res.status(500).json({ error: "Failed to fetch GitHub repos" });
   }
 });
 

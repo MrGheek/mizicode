@@ -3,6 +3,16 @@ import { API_BASE_URL } from "@/lib/api-url";
 import { Github, Loader2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+function buildOAuthUrl(): string {
+  const base = `${API_BASE_URL}api/auth/github`;
+  try {
+    const returnTo = window.location.href;
+    return `${base}?return_to=${encodeURIComponent(returnTo)}`;
+  } catch {
+    return base;
+  }
+}
+
 export function GitHubConnectionWidget() {
   const { status, loading, disconnecting, disconnect } = useGitHubConnection();
 
@@ -50,9 +60,7 @@ export function GitHubConnectionWidget() {
 
   return (
     <a
-      href={`${API_BASE_URL}api/auth/github`}
-      target="_blank"
-      rel="noopener noreferrer"
+      href={buildOAuthUrl()}
       className="inline-flex items-center gap-2 px-3 py-1.5 rounded border border-border/60 bg-background text-xs font-medium text-foreground hover:bg-secondary/40 transition-colors"
     >
       <Github className="w-3.5 h-3.5" />
