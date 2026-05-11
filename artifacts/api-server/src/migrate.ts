@@ -12,17 +12,20 @@
  * READ-ONLY ROLE WORKAROUND:
  *   fly postgres attach creates the mizi_api role with
  *   default_transaction_read_only = on at the role/database level.
+ *   withReadWrite() appends `-c default_transaction_read_only=off` to
+ *   the DATABASE_URL startup options.  Raw pool.connect() calls use
+ *   "BEGIN READ WRITE" to force a read-write transaction regardless of
+ *   the role or session default.
  *
- *   Two-layer fix:
- *   1. withReadWrite() appends `-c default_transaction_read_only=off` to
- *      the DATABASE_URL startup options so Drizzle's internal connections
- *      open in read-write mode.
- *   2. Every raw pool.connect() call uses "BEGIN READ WRITE" instead of
- *      plain "BEGIN".  BEGIN READ WRITE overrides default_transaction_read_only
- *      unconditionally — it is the only reliable way to force a read-write
- *      transaction when the role has the read-only default baked in at the
- *      role level, because a session-level SET is reset to the role default
- *      when Fly's connection pooler resets the connection state.
+ * RECOVERY-MODE GUARD:
+ *   After a Fly machine restart the Postgres server briefly enters WAL
+ *   recovery before becoming the primary.  "BEGIN READ WRITE" is
+ *   outright rejected during recovery (PostgreSQL error 0A000).
+ *   waitForPrimary() polls pg_is_in_recovery() with a 5-second delay
+ *   between attempts and waits up to 90 seconds.  This covers the
+ *   post-restart window.  If recovery persists beyond 90 s the script
+ *   aborts so that a mis-configured standby never silently skips
+ *   migrations.
  *
  * BOOTSTRAP STRATEGY FOR FRESH DATABASES:
  *   The migration journal only tracks a subset of schema changes — the
@@ -56,9 +59,8 @@ if (!rawUrl) {
 
 /**
  * Append `-c default_transaction_read_only=off` to the PostgreSQL startup
- * options so DDL runs even when the role/database default is read-only.
- * pg-connection-string forwards the `options` query param verbatim in the
- * startup message, where PostgreSQL treats it like `psql -c "SET ..."`.
+ * options so Drizzle's internal connections open in read-write mode even
+ * when the role default is read-only.
  */
 function withReadWrite(connectionString: string): string {
   try {
@@ -75,6 +77,49 @@ function withReadWrite(connectionString: string): string {
 
 const pool = createPool(withReadWrite(rawUrl));
 const db = drizzle(pool);
+
+/**
+ * Wait until the connected Postgres server is the primary (not in
+ * recovery).  Polls pg_is_in_recovery() every 5 seconds up to
+ * maxWaitMs (default 90 s).  Throws if the server never leaves
+ * recovery within the timeout.
+ */
+async function waitForPrimary(maxWaitMs = 90_000): Promise<void> {
+  const start = Date.now();
+  let attempt = 0;
+
+  while (true) {
+    attempt++;
+    const client = await pool.connect();
+    let inRecovery: boolean;
+    try {
+      const res = await client.query<{ r: boolean }>(
+        "SELECT pg_is_in_recovery() AS r"
+      );
+      inRecovery = res.rows[0]?.r ?? true;
+    } finally {
+      client.release();
+    }
+
+    if (!inRecovery) {
+      if (attempt > 1) {
+        console.log(`[migrate] Primary is ready after ${Math.round((Date.now() - start) / 1000)}s.`);
+      }
+      return;
+    }
+
+    const elapsed = Date.now() - start;
+    if (elapsed >= maxWaitMs) {
+      throw new Error(
+        `[migrate] Postgres server is still in recovery mode after ${Math.round(elapsed / 1000)}s. ` +
+        `Ensure DATABASE_URL points to the primary, not a standby replica.`
+      );
+    }
+
+    console.log(`[migrate] Server in recovery mode (attempt ${attempt}, ${Math.round(elapsed / 1000)}s elapsed) — waiting 5s…`);
+    await new Promise<void>((resolve) => setTimeout(resolve, 5_000));
+  }
+}
 
 /** True when the public schema has no user tables (completely fresh DB). */
 async function isDatabaseEmpty(): Promise<boolean> {
@@ -111,8 +156,7 @@ async function bootstrapFreshDatabase(migrationsFolder: string): Promise<void> {
   const client = await pool.connect();
   try {
     // BEGIN READ WRITE overrides default_transaction_read_only unconditionally.
-    // A plain BEGIN or session-level SET is not enough when the Fly postgres
-    // role has default_transaction_read_only = on baked in at the role level.
+    // Only safe to call AFTER waitForPrimary() confirms we're not in recovery.
     await client.query("BEGIN READ WRITE");
 
     // Apply the full schema (every statement has IF NOT EXISTS so this is safe).
@@ -170,6 +214,9 @@ async function main(): Promise<void> {
   console.log("[migrate] Migrations folder:", migrationsFolder);
 
   try {
+    // Wait until the primary is out of WAL recovery before touching DDL.
+    await waitForPrimary();
+
     if (await isDatabaseEmpty()) {
       await bootstrapFreshDatabase(migrationsFolder);
     } else {

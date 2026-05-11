@@ -1,0 +1,228 @@
+Run flyctl deploy . \
+==> Verifying app config
+--> Verified app config
+Validating artifacts/api-server/fly.toml
+✓ Configuration is valid
+==> Building image
+Waiting for depot builder...
+
+==> Building image with Depot
+--> build:  (​)
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.15kB 0.2s done
+#1 DONE 0.2s
+
+#2 [internal] load metadata for docker.io/library/node:20-alpine
+#2 DONE 0.3s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B 0.1s done
+#3 DONE 0.1s
+
+#4 [builder  1/12] FROM docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+#4 resolve docker.io/library/node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 done
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 2.45MB 0.8s done
+#5 DONE 0.8s
+
+#6 [builder  2/12] WORKDIR /app
+#6 CACHED
+
+#7 [builder  3/12] RUN corepack enable && corepack prepare pnpm@10.26.1 --activate
+#7 CACHED
+
+#8 [builder  4/12] COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+#8 CACHED
+
+#9 [builder  5/12] COPY tsconfig.base.json tsconfig.json ./
+#9 CACHED
+
+#10 [builder  6/12] COPY lib/ lib/
+#10 CACHED
+
+#11 [builder  7/12] COPY artifacts/api-server/ artifacts/api-server/
+#11 DONE 0.1s
+
+#12 [builder  8/12] RUN pnpm install --frozen-lockfile
+#12 1.419 Scope: all 7 workspace projects
+#12 1.628 Lockfile is up to date, resolution step is skipped
+#12 1.722 Progress: resolved 1, reused 0, downloaded 0, added 0
+#12 1.804 Packages: +379
+#12 1.804 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#12 2.166 
+#12 2.166    ╭──────────────────────────────────────────────╮
+#12 2.166    │                                              │
+#12 2.166    │     Update available! 10.26.1 → 11.0.9.      │
+#12 2.166    │     Changelog: https://pnpm.io/v/11.0.9      │
+#12 2.166    │   To update, run: corepack use pnpm@11.0.9   │
+#12 2.166    │                                              │
+#12 2.166    ╰──────────────────────────────────────────────╯
+#12 2.166 
+#12 2.724 Progress: resolved 379, reused 0, downloaded 90, added 35
+#12 3.734 Progress: resolved 379, reused 0, downloaded 254, added 151
+#12 4.733 Progress: resolved 379, reused 0, downloaded 377, added 219
+#12 5.382 Progress: resolved 379, reused 0, downloaded 379, added 379, done
+#12 5.696 .../node_modules/better-sqlite3 install$ prebuild-install || node-gyp rebuild --release
+#12 5.699 .../esbuild@0.27.3/node_modules/esbuild postinstall$ node install.js
+#12 5.806 .../esbuild@0.27.3/node_modules/esbuild postinstall: Done
+#12 6.232 .../node_modules/better-sqlite3 install: Done
+#12 6.607 
+#12 6.607 devDependencies:
+#12 6.607 + prettier 3.8.1
+#12 6.607 + typescript 5.9.3
+#12 6.607 
+#12 6.621 . preinstall$ sh -c 'rm -f package-lock.json yarn.lock; case "$npm_config_user_agent" in pnpm/*) ;; *) echo "Use pnpm instead" >&2; exit 1 ;; esac'
+#12 6.629 . preinstall: Done
+#12 6.856 Done in 6.2s using pnpm v10.26.1
+#12 DONE 8.3s
+
+#13 [builder  9/12] WORKDIR /app/artifacts/api-server
+#13 DONE 0.4s
+
+#14 [builder 10/12] RUN node build.mjs
+#14 0.614 
+#14 0.614   dist/index.mjs                       3.5mb ⚠️
+#14 0.614   dist/migrate.mjs                   831.7kb
+#14 0.614   dist/pino-worker.mjs               153.4kb
+#14 0.614   dist/pino-file.mjs                 142.0kb
+#14 0.614   dist/pino-pretty.mjs               114.6kb
+#14 0.614   dist/thread-stream-worker.mjs        7.3kb
+#14 0.614   dist/index.mjs.map                   7.3mb
+#14 0.614   dist/migrate.mjs.map                 1.6mb
+#14 0.614   dist/pino-worker.mjs.map           256.9kb
+#14 0.614   dist/pino-file.mjs.map             229.0kb
+#14 0.614   dist/pino-pretty.mjs.map           203.9kb
+#14 0.614   dist/thread-stream-worker.mjs.map   12.0kb
+#14 0.614 
+#14 0.614 ⚡ Done in 421ms
+#14 0.648 Copied migrations → dist/migrations
+#14 DONE 0.7s
+
+#15 [builder 11/12] WORKDIR /app
+#15 DONE 0.0s
+
+#16 [builder 12/12] RUN pnpm deploy --filter @workspace/api-server --prod --legacy /app/prod-deploy
+#16 0.764  WARN  Shared workspace lockfile detected but configuration forces legacy deploy implementation.
+#16 0.860 Packages are copied from the content-addressable store to the virtual store.
+#16 0.860   Content-addressable store is at: /root/.local/share/pnpm/store/v10
+#16 0.860   Virtual store is at:             prod-deploy/node_modules/.pnpm
+#16 0.937 Progress: resolved 1, reused 0, downloaded 0, added 0
+#16 2.123 Progress: resolved 33, reused 0, downloaded 0, added 0
+#16 3.124 Progress: resolved 34, reused 0, downloaded 0, added 0
+#16 10.68 Progress: resolved 35, reused 0, downloaded 0, added 0
+#16 11.69 Progress: resolved 177, reused 0, downloaded 0, added 0
+#16 12.69 Progress: resolved 368, reused 0, downloaded 0, added 0
+#16 13.94 Progress: resolved 369, reused 0, downloaded 0, added 0
+#16 14.28  WARN  1 deprecated subdependencies found: prebuild-install@7.1.3
+#16 14.28 Progress: resolved 382, reused 0, downloaded 0, added 0, done
+#16 14.29  WARN  Issues with peer dependencies found
+#16 14.29 lib/api-client-react
+#16 14.29 └─┬ @tanstack/react-query 5.90.21
+#16 14.29   └── ✕ missing peer react@"^18 || ^19"
+#16 14.29 Peer dependencies that should be installed:
+#16 14.29   react@"^18 || ^19"
+#16 14.36 .                                        | +145 +++++++++++++++
+#16 19.30 . preinstall$ sh -c 'rm -f package-lock.json yarn.lock; case "$npm_config_user_agent" in pnpm/*) ;; *) echo "Use pnpm instead" >&2; exit 1 ;; esac'
+#16 19.32 . preinstall: Done
+#16 DONE 20.0s
+
+#6 [builder  2/12] WORKDIR /app
+#6 CACHED
+
+#17 [runner 3/5] COPY --from=builder /app/prod-deploy/node_modules ./node_modules
+#17 DONE 1.9s
+
+#18 [runner 4/5] COPY --from=builder /app/artifacts/api-server/dist ./dist
+#18 DONE 0.2s
+
+#19 [runner 5/5] RUN mkdir -p /data/memory
+#19 DONE 0.1s
+
+#20 exporting to image
+#20 exporting layers
+#20 exporting layers 1.2s done
+#20 exporting manifest sha256:49689f9b12e894bde32d2e28a77051a8233d9961ae4f1948aadec4e204fb0594 done
+#20 exporting config sha256:b3eaee9bcbfe9e086dac80ff8d214bd4b513d9f08d29f293294ad4178a44e5e8 done
+#20 pushing layers for registry.fly.io/mizi-api:deployment-01KRBKGSQADS2MDR6X0HFBNA99@sha256:49689f9b12e894bde32d2e28a77051a8233d9961ae4f1948aadec4e204fb0594
+#20 pushing layer sha256:0c39fdd38971cd22cc58cb30070419accd0d370bfa10c39272e6d962cfdc6cb0
+#20 pushing layer sha256:79162180734b88ff8cc67216853fcd9fe1fc55fc61873d5bfd6e8f93d0897bf4
+#20 pushing layer sha256:b3eaee9bcbfe9e086dac80ff8d214bd4b513d9f08d29f293294ad4178a44e5e8
+#20 pushing layer sha256:dfaccaaf20da8808391e29158de0075c0ae04c0794cefecb1af906b81b550f43
+#20 pushing layer sha256:1c7f9b6c07a76147766c1efbea9c1fba8d3bc76d8cbece5c13abe8afc1ffc36f
+#20 pushing layer sha256:56999971c9e5776c25d6654fb47c71ba79e9bed6e2044de59b5954d1fa7886e7
+#20 pushing layer sha256:c9f22d813c29c46c4ed8099f38a0ea2b6b3b369de628dae6007bd6c581341742
+#20 pushing layer sha256:c59f4feb5aa577638f9280b984a9bdd2d8a599eafeb85538ea635e3a54545cdb
+#20 pushing layer sha256:4b0509c947003be1323a5a38977845d73b4980e37144df3290035d51059ccb48
+#20 pushing layer sha256:1c7f9b6c07a76147766c1efbea9c1fba8d3bc76d8cbece5c13abe8afc1ffc36f 0.2s done
+#20 pushing layer sha256:dfaccaaf20da8808391e29158de0075c0ae04c0794cefecb1af906b81b550f43 0.3s done
+#20 pushing layer sha256:79162180734b88ff8cc67216853fcd9fe1fc55fc61873d5bfd6e8f93d0897bf4 0.4s done
+#20 pushing layer sha256:4b0509c947003be1323a5a38977845d73b4980e37144df3290035d51059ccb48 0.4s done
+#20 pushing layer sha256:c59f4feb5aa577638f9280b984a9bdd2d8a599eafeb85538ea635e3a54545cdb 0.6s done
+#20 pushing layer sha256:0c39fdd38971cd22cc58cb30070419accd0d370bfa10c39272e6d962cfdc6cb0 0.7s done
+#20 pushing layer sha256:c9f22d813c29c46c4ed8099f38a0ea2b6b3b369de628dae6007bd6c581341742 0.6s done
+#20 pushing layers for registry.fly.io/mizi-api:deployment-01KRBKGSQADS2MDR6X0HFBNA99@sha256:49689f9b12e894bde32d2e28a77051a8233d9961ae4f1948aadec4e204fb0594 0.7s done
+#20 pushing layer sha256:b3eaee9bcbfe9e086dac80ff8d214bd4b513d9f08d29f293294ad4178a44e5e8 0.7s done
+#20 pushing layer sha256:56999971c9e5776c25d6654fb47c71ba79e9bed6e2044de59b5954d1fa7886e7 0.7s done
+#20 pushing manifest for registry.fly.io/mizi-api:deployment-01KRBKGSQADS2MDR6X0HFBNA99@sha256:49689f9b12e894bde32d2e28a77051a8233d9961ae4f1948aadec4e204fb0594
+#20 pushing manifest for registry.fly.io/mizi-api:deployment-01KRBKGSQADS2MDR6X0HFBNA99@sha256:49689f9b12e894bde32d2e28a77051a8233d9961ae4f1948aadec4e204fb0594 0.3s done
+#20 DONE 2.3s
+--> Build Summary:  (​)
+--> Building image done
+image: registry.fly.io/mizi-api:deployment-01KRBKGSQADS2MDR6X0HFBNA99
+
+Watch your deployment at https://fly.io/apps/mizi-api/monitoring
+image size: 52 MB
+
+Running mizi-api release_command: node dist/migrate.mjs
+> Created release_command machine 148ee392c3d268
+> Waiting for 148ee392c3d268 to have state: stopped
+Starting machine
+> Machine 148ee392c3d268 has state: stopped
+> Waiting for 148ee392c3d268 to have state: started
+> Waiting for 148ee392c3d268 to have state: started
+> Machine 148ee392c3d268 has state: started
+> Waiting for 148ee392c3d268 to have state: destroyed
+> Machine 148ee392c3d268 has state: destroyed
+> Waiting for 148ee392c3d268 to get exit event
+Error release_command failed running on machine 148ee392c3d268 with exit code 1.
+✖ release_command failed
+✖ Failed: machine 148ee392c3d268 exited with non-zero status of 1
+Checking logs: fetching the last 100 lines below:
+2026-05-11T13:28:24Z 2026-05-11T13:28:24.371836580 [01KRBKJSA7XQ668WZAZREZZCE1:main] Running Firecracker v1.14.4
+2026-05-11T13:28:24Z 2026-05-11T13:28:24.372007761 [01KRBKJSA7XQ668WZAZREZZCE1:main] Listening on API socket ("/fc.sock").
+2026-05-11T13:28:25Z  INFO Starting init (commit: 3040ac0)...
+2026-05-11T13:28:25Z  INFO Preparing to run: `docker-entrypoint.sh node dist/migrate.mjs` as root
+2026-05-11T13:28:25Z  INFO [fly api proxy] listening at /.fly/api
+2026-05-11T13:28:25Z Machine started in 1.153s
+2026-05-11T13:28:25Z 2026/05/11 13:28:25 INFO SSH listening listen_address=[fdaa:73:b6ac:a7b:878:c8ea:b044:2]:22
+2026-05-11T13:28:25Z [migrate] Starting database migrations…
+2026-05-11T13:28:25Z [migrate] Migrations folder: /app/dist/migrations
+2026-05-11T13:28:25Z [migrate] Fresh database detected — running bootstrap SQL…
+2026-05-11T13:28:25Z [migrate] Migration failed: error: cannot set transaction read-write mode during recovery
+2026-05-11T13:28:25Z     at file:///app/dist/migrate.mjs:4165:21
+2026-05-11T13:28:25Z     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+2026-05-11T13:28:25Z     at async bootstrapFreshDatabase (file:///app/dist/migrate.mjs:24323:5)
+2026-05-11T13:28:25Z     at async main (file:///app/dist/migrate.mjs:24365:7) {
+2026-05-11T13:28:25Z   length: 117,
+2026-05-11T13:28:25Z   severity: 'ERROR',
+2026-05-11T13:28:25Z   code: '0A000',
+2026-05-11T13:28:25Z   detail: undefined,
+2026-05-11T13:28:25Z   hint: undefined,
+2026-05-11T13:28:25Z   position: undefined,
+2026-05-11T13:28:25Z   internalPosition: undefined,
+2026-05-11T13:28:25Z   internalQuery: undefined,
+2026-05-11T13:28:25Z   where: undefined,
+2026-05-11T13:28:25Z   schema: undefined,
+2026-05-11T13:28:25Z   table: undefined,
+2026-05-11T13:28:25Z   column: undefined,
+2026-05-11T13:28:25Z   dataType: undefined,
+2026-05-11T13:28:25Z   constraint: undefined,
+2026-05-11T13:28:25Z   file: 'guc.c',
+2026-05-11T13:28:25Z   line: '6827',
+2026-05-11T13:28:25Z   routine: 'call_bool_check_hook'
+2026-05-11T13:28:25Z }
+2026-05-11T13:28:26Z  INFO Main child exited normally with code: 1
+Error: release command failed - aborting deployment. machine 148ee392c3d268 exited with non-zero status of 1
+Error: Process completed with exit code 1.
