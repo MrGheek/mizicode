@@ -24,7 +24,7 @@ RUN pnpm install --frozen-lockfile
 
 # VITE_API_BASE_URL is injected at build time so the SPA knows
 # where to reach the API server on Fly.io.
-ARG VITE_API_BASE_URL=https://floatr-api.fly.dev
+ARG VITE_API_BASE_URL=https://mizi-api.fly.dev
 
 # BASE_PATH and PORT are required by vite.config.ts even for builds
 ENV BASE_PATH="/" \

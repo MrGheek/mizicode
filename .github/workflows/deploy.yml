@@ -56,11 +56,10 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.MIZIAPI }}
 
       - name: Deploy
-        # VITE_API_BASE_URL is defined in artifacts/dashboard/fly.toml [build.args]
-        # and does not need to be repeated here.
         run: |
           flyctl deploy . \
             --config artifacts/dashboard/fly.toml \
+            --build-arg VITE_API_BASE_URL=https://mizi-api.fly.dev \
             --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.MIZIAPI }}
