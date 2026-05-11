@@ -36,6 +36,9 @@ primary_region = "ord"
 [build]
   dockerfile = "Dockerfile"
 
+[deploy]
+  release_command = "node dist/migrate.mjs"
+
 [env]
   PORT             = "8080"
   MEM_DATA_DIR     = "/data/memory"

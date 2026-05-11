@@ -96,31 +96,31 @@ if (process.env["NODE_ENV"] === "production" && !process.env["MIZI_ENCRYPTION_KE
 }
 
 // ─── Database migrations ──────────────────────────────────────────────────────
-// Run all pending Drizzle migrations before the server accepts connections.
-// A PostgreSQL session-level advisory lock (key 0x4d495a49 = "MIZI") serialises
-// concurrent migration attempts — e.g. rolling Fly.io deploys starting two
-// instances at once, or the dev server + test runner sharing the same DB.
-// The second process to acquire the lock finds nothing left to migrate and
-// returns immediately.  The lock is released automatically when the session ends.
-if (process.env.DATABASE_URL) {
-  const MIGRATION_LOCK_KEY = 0x4d495a49; // "MIZI" as a 32-bit int
-  const migClient = await pool.connect();
+// In production, migrations are applied by the Fly.io release command
+// (dist/migrate.mjs) before any instances start, so we skip them here.
+//
+// In development, run migrations at startup with a pg advisory lock so
+// concurrent processes (e.g. dev server + test runner) don't deadlock.
+// Migration failures are non-fatal in dev — the server still starts so
+// developers can iterate without a fully-seeded local DB.
+if (process.env.DATABASE_URL && process.env["NODE_ENV"] !== "production") {
+  const MIGRATION_LOCK_KEY = 1297044553; // 0x4d495a49 — "MIZI"
+  let migClient;
   try {
-    await migClient.query(`SELECT pg_advisory_lock($1)`, [MIGRATION_LOCK_KEY]);
-    logger.info("Migration advisory lock acquired");
-    // __dirname is injected by the esbuild banner (globalThis.__dirname)
+    migClient = await pool.connect();
+    await migClient.query(`SELECT pg_advisory_lock($1::bigint)`, [MIGRATION_LOCK_KEY]);
     const migrationsFolder = path.join(__dirname, "migrations");
     await migrate(db, { migrationsFolder });
-    logger.info("Database migrations applied");
+    logger.info("Database migrations applied (dev)");
   } catch (err) {
-    logger.error({ err }, "Database migration failed — aborting startup");
-    process.exit(1);
+    logger.warn({ err }, "Database migration failed in dev (non-fatal) — run: pnpm --filter @workspace/db migrate");
   } finally {
-    // Unlock even if migrate throws so other waiters are not stuck.
-    try { await migClient.query(`SELECT pg_advisory_unlock($1)`, [MIGRATION_LOCK_KEY]); } catch (_) { /* ignore */ }
-    migClient.release();
+    if (migClient) {
+      try { await migClient.query(`SELECT pg_advisory_unlock($1::bigint)`, [MIGRATION_LOCK_KEY]); } catch (_) { /* ignore */ }
+      migClient.release();
+    }
   }
-} else {
+} else if (!process.env.DATABASE_URL) {
   logger.warn("DATABASE_URL not set — skipping migrations");
 }
 
