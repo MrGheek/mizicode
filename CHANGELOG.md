@@ -1,3 +1,25 @@
+## v0.6.4 — 2026-05-11\n\n- fix: serialize DB migrations with pg advisory lock to prevent deadlocks (092284c)
+- Add automatic database migrations to server startup (c461c7a)
+- Address missing environment variables required for production (528d023)
+- Update screenshots to reflect recent application changes (210f056)
+- Update screenshot for visual reference and clarity (5c967e1)
+- Improve GitHub connection process and secure API traffic (a7fb1e6)
+- Improve GitHub connection flow and secure API access (6dc4b64)
+- Update dashboard configuration to use the correct API server URL (2aa47ad)
+- Fix broken link that redirects to GitHub authentication (08afb60)
+- Add screenshot for GitHub OAuth setup instructions (2f7a096)
+- Update screenshot for the GitHub OAuth application setup (b0adcec)
+- Update builder image to resolve build failures (665f412)
+- Fix dashboard build errors by ensuring compatibility with native dependencies (1de5d53)
+- Use a single API token for dashboard deployments (305e729)
+- Prevent startup crash when database connection is not configured (92ede27)
+- Update development environment with specific package manager versions (9b8375d)
+- Add legacy flag to pnpm deploy command and pin pnpm version (bd642ef)
+- Update pnpm version and deploy command for API server (213c561)
+- Allow code scanning upload to continue even if repository settings are not enabled (a8d3a6f)
+- Merge branch 'main' of https://github.com/MrGheek/mizicode (32e53a6)
+- Fix deployment process and dashboard build errors (9df419b)\n
+
 ## v0.6.3 — 2026-05-10\n\n- Merge branch 'main' of https://github.com/MrGheek/mizicode (1f115bc)
 - fix: resolve two GitHub Actions CI/deploy failures (9f2c2cd)\n
 
