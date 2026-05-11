@@ -3,10 +3,7 @@
 # Build context must be the monorepo root so that shared lib/
 # packages and pnpm-lock.yaml are available.
 # ============================================================
-FROM node:20-alpine AS builder
-
-# libc6-compat is required for rollup 4.x native bindings on Alpine (musl).
-RUN apk add --no-cache libc6-compat
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
