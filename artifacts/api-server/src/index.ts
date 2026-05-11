@@ -16,7 +16,7 @@ import { startAmbientRunner, registerAmbientExecutors } from "./services/ambient
 import { startClaimSweeper, sweepExpiredClaims, recordExternalSweep } from "./services/claim-sweeper";
 import { syncNimCatalog } from "./services/nim-catalog";
 import { handleBridgeUpgrade } from "./routes/bridge";
-import { db, laneClaimsTable, claimPurgeLogsTable } from "@workspace/db";
+import { db, pool, laneClaimsTable, claimPurgeLogsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
 
 const CLAIM_RETENTION_DAYS = parseInt(process.env["CLAIM_RETENTION_DAYS"] ?? "7", 10);
@@ -97,10 +97,17 @@ if (process.env["NODE_ENV"] === "production" && !process.env["MIZI_ENCRYPTION_KE
 
 // ─── Database migrations ──────────────────────────────────────────────────────
 // Run all pending Drizzle migrations before the server accepts connections.
-// Safe to run on every restart — Drizzle tracks applied migrations in the
-// drizzle.__drizzle_migrations table and skips already-applied ones.
+// A PostgreSQL session-level advisory lock (key 0x4d495a49 = "MIZI") serialises
+// concurrent migration attempts — e.g. rolling Fly.io deploys starting two
+// instances at once, or the dev server + test runner sharing the same DB.
+// The second process to acquire the lock finds nothing left to migrate and
+// returns immediately.  The lock is released automatically when the session ends.
 if (process.env.DATABASE_URL) {
+  const MIGRATION_LOCK_KEY = 0x4d495a49; // "MIZI" as a 32-bit int
+  const migClient = await pool.connect();
   try {
+    await migClient.query(`SELECT pg_advisory_lock($1)`, [MIGRATION_LOCK_KEY]);
+    logger.info("Migration advisory lock acquired");
     // __dirname is injected by the esbuild banner (globalThis.__dirname)
     const migrationsFolder = path.join(__dirname, "migrations");
     await migrate(db, { migrationsFolder });
@@ -108,6 +115,10 @@ if (process.env.DATABASE_URL) {
   } catch (err) {
     logger.error({ err }, "Database migration failed — aborting startup");
     process.exit(1);
+  } finally {
+    // Unlock even if migrate throws so other waiters are not stuck.
+    try { await migClient.query(`SELECT pg_advisory_unlock($1)`, [MIGRATION_LOCK_KEY]); } catch (_) { /* ignore */ }
+    migClient.release();
   }
 } else {
   logger.warn("DATABASE_URL not set — skipping migrations");
