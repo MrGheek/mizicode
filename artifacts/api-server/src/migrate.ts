@@ -9,15 +9,20 @@
  * to production secrets.  Exits 0 on success, 1 on failure (which aborts
  * the deploy so broken schemas never reach production traffic).
  *
- * WHY a custom pool instead of @workspace/db's shared pool:
+ * READ-ONLY ROLE WORKAROUND:
  *   fly postgres attach creates the mizi_api role with
  *   default_transaction_read_only = on at the role/database level.
- *   Drizzle's migrator opens a transaction and immediately tries
- *   CREATE SCHEMA "drizzle", which Postgres rejects with error 25006
- *   ("cannot execute CREATE SCHEMA in a read-only transaction").
- *   Passing `-c default_transaction_read_only=off` in the PostgreSQL
- *   startup options overrides the role default for every connection
- *   this pool opens, allowing DDL statements to execute.
+ *
+ *   Two-layer fix:
+ *   1. withReadWrite() appends `-c default_transaction_read_only=off` to
+ *      the DATABASE_URL startup options so Drizzle's internal connections
+ *      open in read-write mode.
+ *   2. Every raw pool.connect() call uses "BEGIN READ WRITE" instead of
+ *      plain "BEGIN".  BEGIN READ WRITE overrides default_transaction_read_only
+ *      unconditionally — it is the only reliable way to force a read-write
+ *      transaction when the role has the read-only default baked in at the
+ *      role level, because a session-level SET is reset to the role default
+ *      when Fly's connection pooler resets the connection state.
  *
  * BOOTSTRAP STRATEGY FOR FRESH DATABASES:
  *   The migration journal only tracks a subset of schema changes — the
@@ -71,21 +76,10 @@ function withReadWrite(connectionString: string): string {
 const pool = createPool(withReadWrite(rawUrl));
 const db = drizzle(pool);
 
-/**
- * Override any role-level read-only default on a raw client.
- * The startup-message option handles Drizzle's internal connections;
- * raw pool.connect() clients need an explicit SET at the session level
- * before any DDL or BEGIN.
- */
-async function setReadWrite(client: Awaited<ReturnType<typeof pool.connect>>): Promise<void> {
-  await client.query("SET default_transaction_read_only = off");
-}
-
 /** True when the public schema has no user tables (completely fresh DB). */
 async function isDatabaseEmpty(): Promise<boolean> {
   const client = await pool.connect();
   try {
-    await setReadWrite(client);
     const res = await client.query(
       `SELECT tablename FROM pg_tables
        WHERE schemaname = 'public' AND tablename = 'lane_claims'
@@ -116,8 +110,10 @@ async function bootstrapFreshDatabase(migrationsFolder: string): Promise<void> {
 
   const client = await pool.connect();
   try {
-    await setReadWrite(client);
-    await client.query("BEGIN");
+    // BEGIN READ WRITE overrides default_transaction_read_only unconditionally.
+    // A plain BEGIN or session-level SET is not enough when the Fly postgres
+    // role has default_transaction_read_only = on baked in at the role level.
+    await client.query("BEGIN READ WRITE");
 
     // Apply the full schema (every statement has IF NOT EXISTS so this is safe).
     await client.query(bootstrapSql);
@@ -144,8 +140,7 @@ async function bootstrapFreshDatabase(migrationsFolder: string): Promise<void> {
         const sqlContent = fs.readFileSync(sqlPath, "utf-8");
         const hash = crypto.createHash("sha256").update(sqlContent).digest("hex");
 
-        // Only insert if not already present (idempotent in case bootstrap
-        // SQL itself already included the drizzle_migrations rows).
+        // Only insert if not already present (idempotent).
         await client.query(
           `INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
            SELECT $1, $2
