@@ -15,6 +15,7 @@ function getOperatorAuthHeaders(): Record<string, string> {
 export interface GitHubRepo {
   fullName: string;
   name: string;
+  owner: string;
   private: boolean;
   htmlUrl: string;
   cloneUrl: string;

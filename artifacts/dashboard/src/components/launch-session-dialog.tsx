@@ -304,24 +304,35 @@ export function LaunchSessionDialog({
                       <CommandInput placeholder="Search repos…" className="h-9 text-sm" />
                       <CommandList>
                         <CommandEmpty>No repos found.</CommandEmpty>
-                        <CommandGroup>
-                          {repos.map(repo => (
-                            <CommandItem
-                              key={repo.fullName}
-                              value={repo.fullName}
-                              onSelect={() => {
-                                setRepoUrl(repo.cloneUrl);
-                                setRepoPickerOpen(false);
-                              }}
-                            >
-                              <Check className={`w-3.5 h-3.5 shrink-0 ${repoUrl === repo.cloneUrl ? "opacity-100" : "opacity-0"}`} />
-                              <span className="font-mono text-xs truncate flex-1">{repo.fullName}</span>
-                              {repo.private
-                                ? <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/70 shrink-0"><Lock className="w-2.5 h-2.5" />Private</span>
-                                : <span className="text-[10px] text-muted-foreground/50 shrink-0">Public</span>}
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
+                        {(() => {
+                          const grouped = repos.reduce<Record<string, typeof repos>>((acc, repo) => {
+                            const key = repo.owner;
+                            if (!acc[key]) acc[key] = [];
+                            acc[key].push(repo);
+                            return acc;
+                          }, {});
+                          const owners = Object.keys(grouped).sort();
+                          return owners.map(owner => (
+                            <CommandGroup key={owner} heading={owner}>
+                              {grouped[owner].map(repo => (
+                                <CommandItem
+                                  key={repo.fullName}
+                                  value={repo.fullName}
+                                  onSelect={() => {
+                                    setRepoUrl(repo.cloneUrl);
+                                    setRepoPickerOpen(false);
+                                  }}
+                                >
+                                  <Check className={`w-3.5 h-3.5 shrink-0 ${repoUrl === repo.cloneUrl ? "opacity-100" : "opacity-0"}`} />
+                                  <span className="font-mono text-xs truncate flex-1">{repo.name}</span>
+                                  {repo.private
+                                    ? <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/70 shrink-0"><Lock className="w-2.5 h-2.5" />Private</span>
+                                    : <span className="text-[10px] text-muted-foreground/50 shrink-0">Public</span>}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          ));
+                        })()}
                       </CommandList>
                     </Command>
                   </PopoverContent>

@@ -495,6 +495,45 @@ router.get("/auth/github/status", requireOperator, async (_req, res) => {
 
 // ─── GET /auth/github/repos — list operator's GitHub repos (operator-only) ───
 
+type GithubRepoRaw = {
+  full_name: string;
+  name: string;
+  private: boolean;
+  html_url: string;
+  clone_url: string;
+  owner: { login: string };
+};
+
+function parseLinkNext(linkHeader: string | null): string | null {
+  if (!linkHeader) return null;
+  const match = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
+  return match ? match[1] : null;
+}
+
+async function fetchAllRepos(token: string): Promise<GithubRepoRaw[]> {
+  const headers = {
+    "Authorization": `Bearer ${token}`,
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+
+  let url: string | null =
+    "https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner,organization_member";
+  const all: GithubRepoRaw[] = [];
+
+  while (url) {
+    const r = await fetch(url, { headers });
+    if (!r.ok) {
+      throw new Error(`GitHub repos API returned ${r.status}`);
+    }
+    const page = await r.json() as GithubRepoRaw[];
+    all.push(...page);
+    url = parseLinkNext(r.headers.get("Link"));
+  }
+
+  return all;
+}
+
 router.get("/auth/github/repos", requireOperator, async (_req, res) => {
   try {
     const token = await getStoredGitHubToken();
@@ -503,33 +542,13 @@ router.get("/auth/github/repos", requireOperator, async (_req, res) => {
       return;
     }
 
-    const r = await fetch(
-      "https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner",
-      {
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Accept": "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-        },
-      }
-    );
-
-    if (!r.ok) {
-      throw new Error(`GitHub repos API returned ${r.status}`);
-    }
-
-    const data = await r.json() as Array<{
-      full_name: string;
-      name: string;
-      private: boolean;
-      html_url: string;
-      clone_url: string;
-    }>;
+    const data = await fetchAllRepos(token);
 
     res.json(
       data.map((repo) => ({
         fullName: repo.full_name,
         name: repo.name,
+        owner: repo.owner.login,
         private: repo.private,
         htmlUrl: repo.html_url,
         cloneUrl: repo.clone_url,
