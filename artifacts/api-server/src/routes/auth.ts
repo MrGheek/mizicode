@@ -268,8 +268,8 @@ router.get("/auth/github", (req, res) => {
   // Security: only redirect to DASHBOARD_URL (explicit config), same API origin, or a
   // Referer/Origin that is HTTPS — preventing open-redirect to arbitrary HTTP URLs.
   const configuredDashboardUrl = (process.env["DASHBOARD_URL"] ?? "").replace(/\/$/, "");
-  const apiProto = (req.headers["x-forwarded-proto"] as string | undefined) || req.protocol || "http";
-  const apiHost = (req.headers["x-forwarded-host"] as string | undefined) || req.headers["host"] || "";
+  const apiProto = ((req.headers["x-forwarded-proto"] as string | undefined) || req.protocol || "http").split(",")[0]!.trim();
+  const apiHost = ((req.headers["x-forwarded-host"] as string | undefined) || (req.headers["host"] as string | undefined) || "").split(",")[0]!.trim();
   const sameOrigin = apiHost ? `${apiProto}://${apiHost}` : "";
 
   // Derive candidate origin from browser-set Referer or Origin headers
@@ -298,9 +298,13 @@ router.get("/auth/github", (req, res) => {
 
   oauthStateMap.set(state, { expiry: Date.now() + OAUTH_STATE_TTL_MS, returnOrigin });
 
-  // Build callback URL from request host so it works in both dev and prod
-  const proto = req.headers["x-forwarded-proto"] || req.protocol || "http";
-  const host = req.headers["x-forwarded-host"] || req.headers["host"] || "localhost";
+  // Build callback URL from request host so it works in both dev and prod.
+  // x-forwarded-proto/host can be comma-separated on multi-hop proxies (e.g. Fly.io);
+  // always take the first (outermost) value to avoid a malformed URL.
+  const rawProto = (req.headers["x-forwarded-proto"] as string | undefined) || req.protocol || "http";
+  const proto = rawProto.split(",")[0]!.trim();
+  const rawHost = (req.headers["x-forwarded-host"] as string | undefined) || (req.headers["host"] as string | undefined) || "localhost";
+  const host = rawHost.split(",")[0]!.trim();
   const callbackUrl = `${proto}://${host}/api/auth/github/callback`;
 
   const params = new URLSearchParams({
