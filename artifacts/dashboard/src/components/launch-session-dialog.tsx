@@ -316,7 +316,7 @@ export function LaunchSessionDialog({
               <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                 <Github className="w-3 h-3 shrink-0" />
                 Or{" "}
-                <a href={`${API_BASE_URL}api/auth/github`} className="underline hover:text-foreground transition-colors">
+                <a href={`${API_BASE_URL}api/auth/github`} target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground transition-colors">
                   Connect GitHub once
                 </a>{" "}
                 to skip entering tokens every launch.

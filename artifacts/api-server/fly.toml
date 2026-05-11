@@ -60,6 +60,7 @@ primary_region = "ord"
   [[services.ports]]
     port     = 80
     handlers = ["http"]
+    force_https = true
 
   [services.http_checks]
     interval       = "15s"
