@@ -135,7 +135,7 @@ export function LaunchSessionDialog({
 }: LaunchSessionDialogProps) {
   const hasPrefill = !!prefill;
   const { status: ghStatus } = useGitHubConnection();
-  const { repos, loading: reposLoading } = useGitHubRepos(ghStatus.connected);
+  const { repos, loading: reposLoading, loadingMore, hasMore, search: searchRepos, loadMore } = useGitHubRepos(ghStatus.connected);
   const [repoPickerOpen, setRepoPickerOpen] = useState(false);
   const [manualUrlMode, setManualUrlMode] = useState(() => !!(prefill?.repoUrl));
   const [taskMode, setTaskMode] = useState(() => prefill?.taskMode || "build");
@@ -303,39 +303,68 @@ export function LaunchSessionDialog({
                     </button>
                   </PopoverTrigger>
                   <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                    <Command>
-                      <CommandInput placeholder="Search repos…" className="h-9 text-sm" />
+                    <Command shouldFilter={false}>
+                      <CommandInput
+                        placeholder="Search repos…"
+                        className="h-9 text-sm"
+                        onValueChange={(val) => searchRepos(val)}
+                      />
                       <CommandList>
-                        <CommandEmpty>No repos found.</CommandEmpty>
-                        {(() => {
-                          const grouped = repos.reduce<Record<string, typeof repos>>((acc, repo) => {
-                            const key = repo.owner;
-                            if (!acc[key]) acc[key] = [];
-                            acc[key].push(repo);
-                            return acc;
-                          }, {});
-                          const owners = Object.keys(grouped).sort();
-                          return owners.map(owner => (
-                            <CommandGroup key={owner} heading={owner}>
-                              {grouped[owner].map(repo => (
-                                <CommandItem
-                                  key={repo.fullName}
-                                  value={repo.fullName}
-                                  onSelect={() => {
-                                    setRepoUrl(repo.cloneUrl);
-                                    setRepoPickerOpen(false);
-                                  }}
-                                >
-                                  <Check className={`w-3.5 h-3.5 shrink-0 ${repoUrl === repo.cloneUrl ? "opacity-100" : "opacity-0"}`} />
-                                  <span className="font-mono text-xs truncate flex-1">{repo.name}</span>
-                                  {repo.private
-                                    ? <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/70 shrink-0"><Lock className="w-2.5 h-2.5" />Private</span>
-                                    : <span className="text-[10px] text-muted-foreground/50 shrink-0">Public</span>}
-                                </CommandItem>
-                              ))}
-                            </CommandGroup>
-                          ));
-                        })()}
+                        {reposLoading
+                          ? (
+                            <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              Loading…
+                            </div>
+                          )
+                          : (
+                            <>
+                              <CommandEmpty>No repos found.</CommandEmpty>
+                              {(() => {
+                                const grouped = repos.reduce<Record<string, typeof repos>>((acc, repo) => {
+                                  const key = repo.owner;
+                                  if (!acc[key]) acc[key] = [];
+                                  acc[key].push(repo);
+                                  return acc;
+                                }, {});
+                                const owners = Object.keys(grouped).sort();
+                                return owners.map(owner => (
+                                  <CommandGroup key={owner} heading={owner}>
+                                    {grouped[owner].map(repo => (
+                                      <CommandItem
+                                        key={repo.fullName}
+                                        value={repo.fullName}
+                                        onSelect={() => {
+                                          setRepoUrl(repo.cloneUrl);
+                                          setRepoPickerOpen(false);
+                                        }}
+                                      >
+                                        <Check className={`w-3.5 h-3.5 shrink-0 ${repoUrl === repo.cloneUrl ? "opacity-100" : "opacity-0"}`} />
+                                        <span className="font-mono text-xs truncate flex-1">{repo.name}</span>
+                                        {repo.private
+                                          ? <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/70 shrink-0"><Lock className="w-2.5 h-2.5" />Private</span>
+                                          : <span className="text-[10px] text-muted-foreground/50 shrink-0">Public</span>}
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                ));
+                              })()}
+                              {hasMore && (
+                                <div className="p-1.5 border-t border-border/30">
+                                  <button
+                                    type="button"
+                                    onClick={loadMore}
+                                    disabled={loadingMore}
+                                    className="w-full flex items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground py-1.5 rounded hover:bg-accent/30 transition-colors disabled:opacity-50"
+                                  >
+                                    {loadingMore
+                                      ? <><Loader2 className="w-3 h-3 animate-spin" />Loading more…</>
+                                      : "Load more repos"}
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
                       </CommandList>
                     </Command>
                   </PopoverContent>

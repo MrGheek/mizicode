@@ -510,31 +510,74 @@ function parseLinkNext(linkHeader: string | null): string | null {
   return match ? match[1] : null;
 }
 
-async function fetchAllRepos(token: string): Promise<GithubRepoRaw[]> {
+const REPOS_PER_PAGE = 100;
+
+type GithubSearchRepoRaw = {
+  full_name: string;
+  name: string;
+  private: boolean;
+  html_url: string;
+  clone_url: string;
+  owner: { login: string };
+};
+
+async function fetchReposPage(token: string, page: number): Promise<{ repos: GithubRepoRaw[]; hasMore: boolean }> {
   const headers = {
     "Authorization": `Bearer ${token}`,
     "Accept": "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
   };
 
-  let url: string | null =
-    "https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner,organization_member";
-  const all: GithubRepoRaw[] = [];
-
-  while (url) {
-    const r = await fetch(url, { headers });
-    if (!r.ok) {
-      throw new Error(`GitHub repos API returned ${r.status}`);
-    }
-    const page = await r.json() as GithubRepoRaw[];
-    all.push(...page);
-    url = parseLinkNext(r.headers.get("Link"));
+  const url = `https://api.github.com/user/repos?sort=updated&per_page=${REPOS_PER_PAGE}&affiliation=owner,organization_member&page=${page}`;
+  const r = await fetch(url, { headers });
+  if (!r.ok) {
+    throw new Error(`GitHub repos API returned ${r.status}`);
   }
-
-  return all;
+  const repos = await r.json() as GithubRepoRaw[];
+  const hasMore = !!parseLinkNext(r.headers.get("Link"));
+  return { repos, hasMore };
 }
 
-router.get("/auth/github/repos", requireOperator, async (_req, res) => {
+async function getUserOrgs(token: string): Promise<string[]> {
+  const headers = {
+    "Authorization": `Bearer ${token}`,
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  try {
+    const r = await fetch("https://api.github.com/user/orgs?per_page=100", { headers });
+    if (!r.ok) return [];
+    const orgs = await r.json() as Array<{ login: string }>;
+    return orgs.map((o) => o.login);
+  } catch {
+    return [];
+  }
+}
+
+async function searchRepos(token: string, login: string, q: string): Promise<GithubRepoRaw[]> {
+  const headers = {
+    "Authorization": `Bearer ${token}`,
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+
+  // Fetch org memberships in parallel with no extra blocking
+  const orgs = await getUserOrgs(token);
+
+  // Build owner qualifiers: personal account + all member orgs
+  // GitHub search supports multiple user:/org: qualifiers in one query
+  const ownerQualifiers = [`user:${login}`, ...orgs.map((o) => `org:${o}`)].join(" ");
+  const query = `${q} ${ownerQualifiers} fork:true`;
+  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&per_page=30&sort=updated`;
+  const r = await fetch(url, { headers });
+  if (!r.ok) {
+    throw new Error(`GitHub search API returned ${r.status}`);
+  }
+  const data = await r.json() as { items: GithubSearchRepoRaw[] };
+  return (data.items ?? []) as GithubRepoRaw[];
+}
+
+router.get("/auth/github/repos", requireOperator, async (req, res) => {
   try {
     const token = await getStoredGitHubToken();
     if (!token) {
@@ -542,18 +585,51 @@ router.get("/auth/github/repos", requireOperator, async (_req, res) => {
       return;
     }
 
-    const data = await fetchAllRepos(token);
+    const q = ((req.query["q"] as string | undefined) ?? "").trim();
+    const rawPage = parseInt((req.query["page"] as string | undefined) ?? "1", 10);
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
 
-    res.json(
-      data.map((repo) => ({
-        fullName: repo.full_name,
-        name: repo.name,
-        owner: repo.owner.login,
-        private: repo.private,
-        htmlUrl: repo.html_url,
-        cloneUrl: repo.clone_url,
-      }))
-    );
+    if (q) {
+      // Server-side search via GitHub search API
+      const [row] = await db
+        .select({ githubLogin: operatorCredentialsTable.githubLogin })
+        .from(operatorCredentialsTable)
+        .where(eq(operatorCredentialsTable.provider, "github"))
+        .limit(1);
+      const login = row?.githubLogin ?? "";
+      if (!login) {
+        res.status(404).json({ error: "GitHub login not found — reconnect GitHub" });
+        return;
+      }
+      const data = await searchRepos(token, login, q);
+      res.json({
+        repos: data.map((repo) => ({
+          fullName: repo.full_name,
+          name: repo.name,
+          owner: repo.owner.login,
+          private: repo.private,
+          htmlUrl: repo.html_url,
+          cloneUrl: repo.clone_url,
+        })),
+        hasMore: false,
+        page,
+      });
+    } else {
+      // Paginated browse — fetch one page at a time
+      const { repos: data, hasMore } = await fetchReposPage(token, page);
+      res.json({
+        repos: data.map((repo) => ({
+          fullName: repo.full_name,
+          name: repo.name,
+          owner: repo.owner.login,
+          private: repo.private,
+          htmlUrl: repo.html_url,
+          cloneUrl: repo.clone_url,
+        })),
+        hasMore,
+        page,
+      });
+    }
   } catch (err) {
     logger.error(err, "Failed to fetch GitHub repos");
     res.status(500).json({ error: "Failed to fetch GitHub repos" });
