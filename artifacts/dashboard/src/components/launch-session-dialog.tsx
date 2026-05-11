@@ -25,13 +25,16 @@ import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { useGitHubRepos } from "@/hooks/use-github-repos";
 import { API_BASE_URL } from "@/lib/api-url";
 
-function buildOAuthUrl(): string {
+function buildOAuthUrl(profileId?: number): string {
   const base = `${API_BASE_URL}api/auth/github`;
   try {
-    // Add launch=open to the return_to URL so the hook can re-open the dialog
-    // after the OAuth round-trip completes.
+    // Add launch=open (and optionally launch_profile_id) to the return_to URL
+    // so the hook can re-open the correct dialog after OAuth completes.
     const returnToUrl = new URL(window.location.href);
     returnToUrl.searchParams.set("launch", "open");
+    if (profileId != null) {
+      returnToUrl.searchParams.set("launch_profile_id", String(profileId));
+    }
     return `${base}?return_to=${encodeURIComponent(returnToUrl.toString())}`;
   } catch {
     return base;
@@ -423,7 +426,7 @@ export function LaunchSessionDialog({
               <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                 <Github className="w-3 h-3 shrink-0" />
                 Or{" "}
-                <a href={buildOAuthUrl()} className="underline hover:text-foreground transition-colors">
+                <a href={buildOAuthUrl(profile.id)} className="underline hover:text-foreground transition-colors">
                   Connect GitHub once
                 </a>{" "}
                 to skip entering tokens every launch.

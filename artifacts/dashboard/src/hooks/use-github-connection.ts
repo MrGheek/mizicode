@@ -75,15 +75,22 @@ export function useGitHubConnection() {
       // the return_to URL.  Re-open the dialog by dispatching the same global
       // event the command palette and keyboard shortcut use.
       if (params.get("launch") === "open") {
+        const profileIdRaw = params.get("launch_profile_id");
+        const profileId = profileIdRaw ? Number(profileIdRaw) : undefined;
         // Small delay so the connection status fetch can settle first
         setTimeout(() => {
-          window.dispatchEvent(new Event("mizi:open-launch-dialog"));
+          window.dispatchEvent(
+            new CustomEvent("mizi:open-launch-dialog", {
+              detail: profileId != null && !Number.isNaN(profileId) ? { profileId } : undefined,
+            })
+          );
         }, 300);
       }
 
       // Clean up OAuth and launch params without reloading the page
       params.delete("github_oauth");
       params.delete("launch");
+      params.delete("launch_profile_id");
       const newSearch = params.toString();
       window.history.replaceState(null, "", newSearch ? `?${newSearch}` : window.location.pathname);
     }

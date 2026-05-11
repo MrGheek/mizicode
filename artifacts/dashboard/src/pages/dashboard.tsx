@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
+import { LaunchSessionDialog } from "@/components/launch-session-dialog";
 import type { LaunchOptions } from "@/components/launch-session-dialog";
 import {
   Sparkles, Loader2, Terminal, ArrowRight,
@@ -935,7 +936,24 @@ export default function Dashboard() {
   });
   const { data: allSessions } = useListSessions();
   const { data: schedulerConfig } = useGetSchedulerConfig();
+  const { data: profilesData } = useListProfiles();
   const createSession = useCreateSession();
+
+  // Re-open the launch dialog when the user returns from GitHub OAuth.
+  // The hook in use-github-connection dispatches this event when it sees
+  // ?github_oauth=connected&launch=open in the URL. The event detail may
+  // carry the profile ID that was active when the user clicked "Connect GitHub".
+  const [oauthDialogOpen, setOauthDialogOpen] = useState(false);
+  const [oauthProfileId, setOauthProfileId] = useState<number | null>(null);
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent<{ profileId?: number } | undefined>).detail;
+      setOauthProfileId(detail?.profileId ?? null);
+      setOauthDialogOpen(true);
+    };
+    window.addEventListener("mizi:open-launch-dialog", onOpen);
+    return () => window.removeEventListener("mizi:open-launch-dialog", onOpen);
+  }, []);
 
   // NIM catalog — fetched once at page level, passed down to IntentBar for the "More models…" picker
   const [nimCatalog, setNimCatalog] = useState<NimCatalogModel[]>([]);
@@ -1200,6 +1218,24 @@ export default function Dashboard() {
         </div>
 
       </div>
+
+      {/* Re-open launch dialog after GitHub OAuth round-trip */}
+      {oauthDialogOpen && profilesData && profilesData.length > 0 && (() => {
+        const oauthProfile =
+          (oauthProfileId != null && profilesData.find((p) => p.id === oauthProfileId)) ||
+          profilesData[0];
+        return (
+          <LaunchSessionDialog
+            profile={oauthProfile}
+            onConfirm={(opts) => {
+              setOauthDialogOpen(false);
+              handleGpuLaunch(opts.profileId, opts);
+            }}
+            onClose={() => setOauthDialogOpen(false)}
+            isLaunching={createSession.isPending}
+          />
+        );
+      })()}
     </div>
   );
 }
