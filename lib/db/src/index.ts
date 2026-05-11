@@ -18,4 +18,13 @@ if (!process.env.DATABASE_URL) {
 export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 export const db = drizzle(pool, { schema });
 
+/**
+ * Create a fresh pg Pool with the given connection string.
+ * Used by the migration script to build a pool with custom startup options
+ * (e.g. default_transaction_read_only=off) without altering the shared pool.
+ */
+export function createPool(connectionString: string): InstanceType<typeof Pool> {
+  return new Pool({ connectionString });
+}
+
 export * from "./schema";
