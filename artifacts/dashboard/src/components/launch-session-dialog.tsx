@@ -316,7 +316,9 @@ export function LaunchSessionDialog({
                             >
                               <Check className={`w-3.5 h-3.5 shrink-0 ${repoUrl === repo.cloneUrl ? "opacity-100" : "opacity-0"}`} />
                               <span className="font-mono text-xs truncate flex-1">{repo.fullName}</span>
-                              {repo.private && <Lock className="w-3 h-3 shrink-0 text-muted-foreground/60" />}
+                              {repo.private
+                                ? <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/70 shrink-0"><Lock className="w-2.5 h-2.5" />Private</span>
+                                : <span className="text-[10px] text-muted-foreground/50 shrink-0">Public</span>}
                             </CommandItem>
                           ))}
                         </CommandGroup>
