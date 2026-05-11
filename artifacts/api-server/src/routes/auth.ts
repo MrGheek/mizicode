@@ -395,12 +395,21 @@ router.get("/auth/github/callback", async (req, res) => {
       throw new Error(`GitHub token endpoint returned ${tokenRes.status}`);
     }
 
-    const tokenData = await tokenRes.json() as { access_token?: string; error?: string };
+    const tokenData = await tokenRes.json() as {
+      access_token?: string;
+      error?: string;
+      refresh_token?: string;
+      refresh_token_expires_in?: number;
+    };
     if (tokenData.error || !tokenData.access_token) {
       throw new Error(tokenData.error || "No access_token in response");
     }
 
     const accessToken = tokenData.access_token;
+    const refreshToken = tokenData.refresh_token ?? null;
+    const refreshTokenExpiresAt = tokenData.refresh_token_expires_in
+      ? new Date(Date.now() + tokenData.refresh_token_expires_in * 1000)
+      : null;
 
     // Fetch authenticated user info
     const userRes = await fetch("https://api.github.com/user", {
@@ -421,6 +430,7 @@ router.get("/auth/github/callback", async (req, res) => {
 
     // Encrypt and upsert into operator_credentials
     const encryptedToken = encryptToken(accessToken);
+    const encryptedRefreshToken = refreshToken ? encryptToken(refreshToken) : null;
 
     // Delete any existing github credential and insert fresh (upsert pattern)
     await db
@@ -430,6 +440,8 @@ router.get("/auth/github/callback", async (req, res) => {
     await db.insert(operatorCredentialsTable).values({
       provider: "github",
       accessTokenEncrypted: encryptedToken,
+      refreshTokenEncrypted: encryptedRefreshToken,
+      refreshTokenExpiresAt: refreshTokenExpiresAt ?? undefined,
       githubLogin,
       githubAvatarUrl,
     });
@@ -492,6 +504,93 @@ router.get("/auth/github/status", requireOperator, async (_req, res) => {
     res.status(500).json({ error: "Failed to fetch GitHub OAuth status" });
   }
 });
+
+// ─── Token refresh helper ─────────────────────────────────────────────────────
+
+/**
+ * Attempt to refresh the GitHub access token using the stored refresh token.
+ * Returns the new access token on success, or null if refresh is not possible
+ * or fails.
+ */
+async function refreshGitHubToken(): Promise<string | null> {
+  const clientId = process.env["GITHUB_OAUTH_CLIENT_ID"];
+  const clientSecret = process.env["GITHUB_OAUTH_CLIENT_SECRET"];
+  if (!clientId || !clientSecret) return null;
+
+  try {
+    const [row] = await db
+      .select({
+        refreshTokenEncrypted: operatorCredentialsTable.refreshTokenEncrypted,
+        refreshTokenExpiresAt: operatorCredentialsTable.refreshTokenExpiresAt,
+      })
+      .from(operatorCredentialsTable)
+      .where(eq(operatorCredentialsTable.provider, "github"))
+      .limit(1);
+
+    if (!row?.refreshTokenEncrypted) {
+      logger.warn("GitHub token refresh: no refresh token stored");
+      return null;
+    }
+
+    if (row.refreshTokenExpiresAt && row.refreshTokenExpiresAt < new Date()) {
+      logger.warn("GitHub token refresh: refresh token has expired");
+      return null;
+    }
+
+    const refreshToken = decryptToken(row.refreshTokenEncrypted);
+
+    const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      logger.warn({ status: tokenRes.status }, "GitHub token refresh: token endpoint returned non-OK status");
+      return null;
+    }
+
+    const tokenData = await tokenRes.json() as {
+      access_token?: string;
+      error?: string;
+      refresh_token?: string;
+      refresh_token_expires_in?: number;
+    };
+
+    if (tokenData.error || !tokenData.access_token) {
+      logger.warn({ error: tokenData.error }, "GitHub token refresh: failed to get new access token");
+      return null;
+    }
+
+    const newAccessToken = tokenData.access_token;
+    const newRefreshToken = tokenData.refresh_token ?? null;
+    const newRefreshTokenExpiresAt = tokenData.refresh_token_expires_in
+      ? new Date(Date.now() + tokenData.refresh_token_expires_in * 1000)
+      : null;
+
+    // Persist the new tokens
+    await db
+      .update(operatorCredentialsTable)
+      .set({
+        accessTokenEncrypted: encryptToken(newAccessToken),
+        refreshTokenEncrypted: newRefreshToken ? encryptToken(newRefreshToken) : null,
+        refreshTokenExpiresAt: newRefreshTokenExpiresAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(operatorCredentialsTable.provider, "github"));
+
+    logger.info("GitHub token refresh: new access token stored successfully");
+    return newAccessToken;
+  } catch (err) {
+    logger.error(err, "GitHub token refresh: unexpected error");
+    return null;
+  }
+}
 
 // ─── GET /auth/github/repos — list operator's GitHub repos (operator-only) ───
 
@@ -579,7 +678,7 @@ async function searchRepos(token: string, login: string, q: string): Promise<Git
 
 router.get("/auth/github/repos", requireOperator, async (req, res) => {
   try {
-    const token = await getStoredGitHubToken();
+    let token = await getStoredGitHubToken();
     if (!token) {
       res.status(404).json({ error: "No GitHub OAuth token stored — connect GitHub first" });
       return;
@@ -588,6 +687,22 @@ router.get("/auth/github/repos", requireOperator, async (req, res) => {
     const q = ((req.query["q"] as string | undefined) ?? "").trim();
     const rawPage = parseInt((req.query["page"] as string | undefined) ?? "1", 10);
     const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+
+    // On 401 from GitHub, attempt token refresh and retry once.
+    // Returns false (and sends the 401 response) when refresh fails.
+    const tryRefresh = async (): Promise<boolean> => {
+      logger.warn("GitHub repos API returned 401 — attempting token refresh");
+      const refreshed = await refreshGitHubToken();
+      if (!refreshed) {
+        res.status(401).json({
+          error: "GitHub token expired and could not be refreshed — please reconnect",
+          reconnect_required: true,
+        });
+        return false;
+      }
+      token = refreshed;
+      return true;
+    };
 
     if (q) {
       // Server-side search via GitHub search API
@@ -601,7 +716,14 @@ router.get("/auth/github/repos", requireOperator, async (req, res) => {
         res.status(404).json({ error: "GitHub login not found — reconnect GitHub" });
         return;
       }
-      const data = await searchRepos(token, login, q);
+      let data;
+      try {
+        data = await searchRepos(token, login, q);
+      } catch (err) {
+        if (!(err instanceof Error && err.message.includes("401"))) throw err;
+        if (!await tryRefresh()) return;
+        data = await searchRepos(token, login, q);
+      }
       res.json({
         repos: data.map((repo) => ({
           fullName: repo.full_name,
@@ -616,7 +738,15 @@ router.get("/auth/github/repos", requireOperator, async (req, res) => {
       });
     } else {
       // Paginated browse — fetch one page at a time
-      const { repos: data, hasMore } = await fetchReposPage(token, page);
+      let result;
+      try {
+        result = await fetchReposPage(token, page);
+      } catch (err) {
+        if (!(err instanceof Error && err.message.includes("401"))) throw err;
+        if (!await tryRefresh()) return;
+        result = await fetchReposPage(token, page);
+      }
+      const { repos: data, hasMore } = result;
       res.json({
         repos: data.map((repo) => ({
           fullName: repo.full_name,

@@ -63,6 +63,7 @@ export function useGitHubRepos(enabled: boolean) {
   const [hasMore, setHasMore] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
+  const [reconnectRequired, setReconnectRequired] = useState(false);
 
   // Refs for stale-request protection
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -83,11 +84,32 @@ export function useGitHubRepos(enabled: boolean) {
     setLoading(true);
     setError(null);
     setSearchQuery("");
+    setReconnectRequired(false);
     try {
-      const data = await fetchReposPage(1, controller.signal);
-      setRepos(data.repos);
-      setHasMore(data.hasMore);
-      setCurrentPage(1);
+      const r = await fetch(`${API_BASE_URL}api/auth/github/repos?page=1`, {
+        headers: getOperatorAuthHeaders(),
+        signal: controller.signal,
+      });
+      if (r.ok) {
+        const data = await r.json() as ReposResponse;
+        setRepos(data.repos);
+        setHasMore(data.hasMore);
+        setCurrentPage(1);
+      } else if (r.status === 404) {
+        setRepos([]);
+        setHasMore(false);
+      } else if (r.status === 401) {
+        const body = await r.json().catch(() => ({})) as { reconnect_required?: boolean };
+        if (body.reconnect_required) {
+          setReconnectRequired(true);
+          setRepos([]);
+          setHasMore(false);
+        } else {
+          setError("Failed to load repos");
+        }
+      } else {
+        setError("Failed to load repos");
+      }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
         setError("Failed to load repos");
@@ -157,5 +179,16 @@ export function useGitHubRepos(enabled: boolean) {
     load();
   }, [load]);
 
-  return { repos, loading, loadingMore, error, hasMore, searchQuery, search, loadMore, refresh: load };
+  return {
+    repos,
+    loading,
+    loadingMore,
+    error,
+    reconnectRequired,
+    hasMore,
+    searchQuery,
+    search,
+    loadMore,
+    refresh: load
+  };
 }

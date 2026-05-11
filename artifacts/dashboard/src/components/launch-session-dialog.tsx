@@ -135,7 +135,7 @@ export function LaunchSessionDialog({
 }: LaunchSessionDialogProps) {
   const hasPrefill = !!prefill;
   const { status: ghStatus } = useGitHubConnection();
-  const { repos, loading: reposLoading, loadingMore, hasMore, search: searchRepos, loadMore } = useGitHubRepos(ghStatus.connected);
+  const { repos, loading: reposLoading, loadingMore, hasMore, search: searchRepos, loadMore, reconnectRequired: reposReconnectRequired } = useGitHubRepos(ghStatus.connected);
   const [repoPickerOpen, setRepoPickerOpen] = useState(false);
   const [manualUrlMode, setManualUrlMode] = useState(() => !!(prefill?.repoUrl));
   const [taskMode, setTaskMode] = useState(() => prefill?.taskMode || "build");
@@ -286,102 +286,123 @@ export function LaunchSessionDialog({
 
             {ghStatus.connected && !manualUrlMode ? (
               <>
-                <Popover open={repoPickerOpen} onOpenChange={setRepoPickerOpen}>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      className="w-full flex items-center justify-between gap-2 h-9 rounded-md border border-input bg-background px-3 text-sm text-left hover:bg-accent/30 transition-colors"
-                    >
-                      <span className={repoUrl ? "font-mono text-foreground truncate" : "text-muted-foreground"}>
-                        {repoUrl
-                          ? (repos.find(r => r.cloneUrl === repoUrl)?.fullName ?? repoUrl)
-                          : "Select a repo…"}
-                      </span>
-                      {reposLoading
-                        ? <Loader2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground animate-spin" />
-                        : <ChevronsUpDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />}
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                    <Command shouldFilter={false}>
-                      <CommandInput
-                        placeholder="Search repos…"
-                        className="h-9 text-sm"
-                        onValueChange={(val) => searchRepos(val)}
-                      />
-                      <CommandList>
-                        {reposLoading
-                          ? (
-                            <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              Loading…
-                            </div>
-                          )
-                          : (
-                            <>
-                              <CommandEmpty>No repos found.</CommandEmpty>
-                              {(() => {
-                                const grouped = repos.reduce<Record<string, typeof repos>>((acc, repo) => {
-                                  const key = repo.owner;
-                                  if (!acc[key]) acc[key] = [];
-                                  acc[key].push(repo);
-                                  return acc;
-                                }, {});
-                                const owners = Object.keys(grouped).sort();
-                                return owners.map(owner => (
-                                  <CommandGroup key={owner} heading={owner}>
-                                    {grouped[owner].map(repo => (
-                                      <CommandItem
-                                        key={repo.fullName}
-                                        value={repo.fullName}
-                                        onSelect={() => {
-                                          setRepoUrl(repo.cloneUrl);
-                                          setRepoPickerOpen(false);
-                                        }}
-                                      >
-                                        <Check className={`w-3.5 h-3.5 shrink-0 ${repoUrl === repo.cloneUrl ? "opacity-100" : "opacity-0"}`} />
-                                        <span className="font-mono text-xs truncate flex-1">{repo.name}</span>
-                                        {repo.private
-                                          ? <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/70 shrink-0"><Lock className="w-2.5 h-2.5" />Private</span>
-                                          : <span className="text-[10px] text-muted-foreground/50 shrink-0">Public</span>}
-                                      </CommandItem>
-                                    ))}
-                                  </CommandGroup>
-                                ));
-                              })()}
-                              {hasMore && (
-                                <div className="p-1.5 border-t border-border/30">
-                                  <button
-                                    type="button"
-                                    onClick={loadMore}
-                                    disabled={loadingMore}
-                                    className="w-full flex items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground py-1.5 rounded hover:bg-accent/30 transition-colors disabled:opacity-50"
-                                  >
-                                    {loadingMore
-                                      ? <><Loader2 className="w-3 h-3 animate-spin" />Loading more…</>
-                                      : "Load more repos"}
-                                  </button>
+                {reposReconnectRequired ? (
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+                      <Github className="w-3.5 h-3.5 shrink-0" />
+                      <span className="flex-1 text-xs">GitHub token expired</span>
+                      <a
+                        href={buildOAuthUrl()}
+                        className="text-xs font-medium underline hover:no-underline shrink-0"
+                      >
+                        Re-connect GitHub
+                      </a>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                      <Info className="w-3 h-3 shrink-0" />
+                      Used to recommend the best skill bundle for your repo
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <Popover open={repoPickerOpen} onOpenChange={setRepoPickerOpen}>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="w-full flex items-center justify-between gap-2 h-9 rounded-md border border-input bg-background px-3 text-sm text-left hover:bg-accent/30 transition-colors"
+                        >
+                          <span className={repoUrl ? "font-mono text-foreground truncate" : "text-muted-foreground"}>
+                            {repoUrl
+                              ? (repos.find(r => r.cloneUrl === repoUrl)?.fullName ?? repoUrl)
+                              : "Select a repo…"}
+                          </span>
+                          {reposLoading
+                            ? <Loader2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground animate-spin" />
+                            : <ChevronsUpDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />}
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                        <Command shouldFilter={false}>
+                          <CommandInput
+                            placeholder="Search repos…"
+                            className="h-9 text-sm"
+                            onValueChange={(val) => searchRepos(val)}
+                          />
+                          <CommandList>
+                            {reposLoading
+                              ? (
+                                <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  Loading…
                                 </div>
+                              )
+                              : (
+                                <>
+                                  <CommandEmpty>No repos found.</CommandEmpty>
+                                  {(() => {
+                                    const grouped = repos.reduce<Record<string, typeof repos>>((acc, repo) => {
+                                      const key = repo.owner;
+                                      if (!acc[key]) acc[key] = [];
+                                      acc[key].push(repo);
+                                      return acc;
+                                    }, {});
+                                    const owners = Object.keys(grouped).sort();
+                                    return owners.map(owner => (
+                                      <CommandGroup key={owner} heading={owner}>
+                                        {grouped[owner].map(repo => (
+                                          <CommandItem
+                                            key={repo.fullName}
+                                            value={repo.fullName}
+                                            onSelect={() => {
+                                              setRepoUrl(repo.cloneUrl);
+                                              setRepoPickerOpen(false);
+                                            }}
+                                          >
+                                            <Check className={`w-3.5 h-3.5 shrink-0 ${repoUrl === repo.cloneUrl ? "opacity-100" : "opacity-0"}`} />
+                                            <span className="font-mono text-xs truncate flex-1">{repo.fullName}</span>
+                                            {repo.private
+                                              ? <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/70 shrink-0"><Lock className="w-2.5 h-2.5" />Private</span>
+                                              : <span className="text-[10px] text-muted-foreground/50 shrink-0">Public</span>}
+                                          </CommandItem>
+                                        ))}
+                                      </CommandGroup>
+                                    ));
+                                  })()}
+                                  {hasMore && (
+                                    <div className="p-1.5 border-t border-border/30">
+                                      <button
+                                        type="button"
+                                        onClick={loadMore}
+                                        disabled={loadingMore}
+                                        className="w-full flex items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground py-1.5 rounded hover:bg-accent/30 transition-colors disabled:opacity-50"
+                                      >
+                                        {loadingMore
+                                          ? <><Loader2 className="w-3 h-3 animate-spin" />Loading more…</>
+                                          : "Load more repos"}
+                                      </button>
+                                    </div>
+                                  )}
+                                </>
                               )}
-                            </>
-                          )}
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                    <Info className="w-3 h-3 shrink-0" />
-                    Used to recommend the best skill bundle for your repo
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setManualUrlMode(true)}
-                    className="text-[10px] text-muted-foreground hover:text-foreground underline transition-colors"
-                  >
-                    Enter URL manually
-                  </button>
-                </div>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                        <Info className="w-3 h-3 shrink-0" />
+                        Used to recommend the best skill bundle for your repo
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setManualUrlMode(true)}
+                        className="text-[10px] text-muted-foreground hover:text-foreground underline transition-colors"
+                      >
+                        Enter URL manually
+                      </button>
+                    </div>
+                  </>
+                )}
               </>
             ) : (
               <>
