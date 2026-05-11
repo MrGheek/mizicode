@@ -46,6 +46,9 @@ export function useGitHubConnection() {
 
   // On mount: if the URL contains ?github_oauth=connected, clear all cached PATs
   // and remove the param — the operator just completed the OAuth flow.
+  // If the URL also contains ?launch=open (set by the launch dialog before it
+  // navigated to GitHub), dispatch the global open event so the dialog
+  // re-opens automatically on return.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const oauthResult = params.get("github_oauth");
@@ -67,8 +70,20 @@ export function useGitHubConnection() {
       } catch { /* ignore */ }
       // Refresh connection status now that a token is stored
       refresh();
-      // Clean up URL without reloading the page
+
+      // If the launch dialog initiated the OAuth flow it tagged ?launch=open on
+      // the return_to URL.  Re-open the dialog by dispatching the same global
+      // event the command palette and keyboard shortcut use.
+      if (params.get("launch") === "open") {
+        // Small delay so the connection status fetch can settle first
+        setTimeout(() => {
+          window.dispatchEvent(new Event("mizi:open-launch-dialog"));
+        }, 300);
+      }
+
+      // Clean up OAuth and launch params without reloading the page
       params.delete("github_oauth");
+      params.delete("launch");
       const newSearch = params.toString();
       window.history.replaceState(null, "", newSearch ? `?${newSearch}` : window.location.pathname);
     }

@@ -302,16 +302,29 @@ router.get("/auth/github", (req, res) => {
   if (!returnOrigin) returnOrigin = sameOrigin;
 
   // Optional return_to: a full URL the browser should land on after OAuth.
-  // Security: it must start with the configured DASHBOARD_URL (or same origin
-  // if DASHBOARD_URL is not set) to prevent open-redirect to arbitrary sites.
+  // Security: we parse the URL and compare origins exactly — prefix-based
+  // startsWith checks are bypassable via crafted hostnames (e.g.
+  // https://trusted.com.evil.tld/...).  Only an exact origin match against
+  // configuredDashboardUrl and/or sameOrigin is accepted.
   let returnTo: string | undefined;
   const rawReturnTo = (req.query["return_to"] as string | undefined) ?? "";
   if (rawReturnTo) {
-    const allowedPrefix = configuredDashboardUrl || sameOrigin;
-    if (allowedPrefix && rawReturnTo.startsWith(allowedPrefix)) {
-      returnTo = rawReturnTo;
-    } else {
-      logger.warn({ rawReturnTo, allowedPrefix }, "GitHub OAuth: return_to rejected — not a trusted prefix");
+    try {
+      const returnToUrl = new URL(rawReturnTo);
+      // Build the set of accepted origins
+      const allowedOrigins = new Set<string>();
+      if (configuredDashboardUrl) {
+        try { allowedOrigins.add(new URL(configuredDashboardUrl + "/").origin); } catch { /* ignore bad config */ }
+      }
+      if (sameOrigin) allowedOrigins.add(sameOrigin);
+
+      if (allowedOrigins.size > 0 && allowedOrigins.has(returnToUrl.origin)) {
+        returnTo = rawReturnTo;
+      } else {
+        logger.warn({ rawReturnTo, allowedOrigins: [...allowedOrigins] }, "GitHub OAuth: return_to rejected — origin not trusted");
+      }
+    } catch {
+      logger.warn({ rawReturnTo }, "GitHub OAuth: return_to rejected — invalid URL");
     }
   }
 

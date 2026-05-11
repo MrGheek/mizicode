@@ -28,7 +28,11 @@ import { API_BASE_URL } from "@/lib/api-url";
 function buildOAuthUrl(): string {
   const base = `${API_BASE_URL}api/auth/github`;
   try {
-    return `${base}?return_to=${encodeURIComponent(window.location.href)}`;
+    // Add launch=open to the return_to URL so the hook can re-open the dialog
+    // after the OAuth round-trip completes.
+    const returnToUrl = new URL(window.location.href);
+    returnToUrl.searchParams.set("launch", "open");
+    return `${base}?return_to=${encodeURIComponent(returnToUrl.toString())}`;
   } catch {
     return base;
   }
