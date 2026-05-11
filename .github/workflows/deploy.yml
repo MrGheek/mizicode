@@ -53,7 +53,7 @@ jobs:
       - name: Ensure app exists
         run: flyctl apps create mizicode --org personal 2>/dev/null || true
         env:
-          FLY_API_TOKEN: ${{ secrets.MIZIDASHBOARD }}
+          FLY_API_TOKEN: ${{ secrets.MIZIAPI }}
 
       - name: Deploy
         # VITE_API_BASE_URL is defined in artifacts/dashboard/fly.toml [build.args]
@@ -63,4 +63,4 @@ jobs:
             --config artifacts/dashboard/fly.toml \
             --remote-only
         env:
-          FLY_API_TOKEN: ${{ secrets.MIZIDASHBOARD }}
+          FLY_API_TOKEN: ${{ secrets.MIZIAPI }}
