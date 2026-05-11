@@ -565,15 +565,53 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHea
                 className="flex-1 min-w-[200px] rounded-xl p-3.5 space-y-2"
                 style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.14)" }}
               >
-                <div className="flex items-center gap-2">
-                  <Zap className="w-3.5 h-3.5" style={{ color: "#10b981" }} />
-                  <span className="text-xs font-semibold" style={{ color: "#10b981" }}>
-                    {selectedNimSuggestion.displayName} · ~{selectedNimSuggestion.estimatedStartMin}m
-                  </span>
-                </div>
-                <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-                  via {selectedNimSuggestion.providerLabel}
-                </p>
+                {(() => {
+                  const featuredProvider = selectedNimSuggestion.nimProvider ?? "nvidia";
+                  const featuredConfigured = !!nimConfigured[featuredProvider];
+                  const featuredLive = featuredConfigured && !!nimHealth[featuredProvider]?.live;
+                  return (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <Zap className="w-3.5 h-3.5" style={{ color: "#10b981" }} />
+                        <span className="text-xs font-semibold" style={{ color: "#10b981" }}>
+                          {selectedNimSuggestion.displayName} · ~{selectedNimSuggestion.estimatedStartMin}m
+                        </span>
+                        {featuredLive && (
+                          <span className="flex items-center gap-0.5 text-[9px] font-medium" style={{ color: "#10b981" }}>
+                            <span className="relative flex h-1.5 w-1.5">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
+                            </span>
+                            Live
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                          via {selectedNimSuggestion.providerLabel}
+                        </p>
+                        {!featuredConfigured && (
+                          <span
+                            role="link"
+                            tabIndex={0}
+                            onClick={() => navigate("/settings")}
+                            onKeyDown={e => { if (e.key === "Enter" || e.key === " ") navigate("/settings"); }}
+                            className="text-[9px] px-1.5 py-0.5 rounded-full cursor-pointer transition-colors"
+                            style={{
+                              color: "rgba(16,185,129,0.7)",
+                              background: "rgba(16,185,129,0.08)",
+                              border: "1px solid rgba(16,185,129,0.18)",
+                            }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#10b981"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(16,185,129,0.4)"; }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "rgba(16,185,129,0.7)"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(16,185,129,0.18)"; }}
+                          >
+                            Key needed
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
                 {selectedNimSuggestion.description && (
                   <p className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
                     {selectedNimSuggestion.description}
