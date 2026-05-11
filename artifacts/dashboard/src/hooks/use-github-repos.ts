@@ -27,6 +27,37 @@ interface ReposResponse {
   page: number;
 }
 
+// ---------------------------------------------------------------------------
+// Module-level page cache
+// ---------------------------------------------------------------------------
+const CACHE_TTL_MS = 60_000;
+
+interface CacheEntry {
+  data: ReposResponse;
+  fetchedAt: number;
+}
+
+const repoPageCache = new Map<number, CacheEntry>();
+
+function getCachedPage(page: number): ReposResponse | null {
+  const entry = repoPageCache.get(page);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > CACHE_TTL_MS) {
+    repoPageCache.delete(page);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCachedPage(data: ReposResponse): void {
+  repoPageCache.set(data.page, { data, fetchedAt: Date.now() });
+}
+
+export function invalidateRepoCache(): void {
+  repoPageCache.clear();
+}
+// ---------------------------------------------------------------------------
+
 async function fetchReposPage(page: number, signal?: AbortSignal): Promise<ReposResponse> {
   const r = await fetch(`${API_BASE_URL}api/auth/github/repos?page=${page}`, {
     headers: getOperatorAuthHeaders(),
@@ -70,7 +101,7 @@ export function useGitHubRepos(enabled: boolean) {
   const searchAbortRef = useRef<AbortController | null>(null);
   const loadAbortRef = useRef<AbortController | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
     if (!enabled) return;
 
     // Cancel any in-flight search or prior load
@@ -78,13 +109,29 @@ export function useGitHubRepos(enabled: boolean) {
     loadAbortRef.current?.abort();
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
 
+    setSearchQuery("");
+    setReconnectRequired(false);
+
+    if (forceRefresh) {
+      invalidateRepoCache();
+    }
+
+    // Serve from cache immediately if available
+    const cached = getCachedPage(1);
+    if (cached) {
+      setRepos(cached.repos);
+      setHasMore(cached.hasMore);
+      setCurrentPage(1);
+      setError(null);
+    } else {
+      setLoading(true);
+      setError(null);
+    }
+
+    // Always kick off a background refresh; show spinner only when no cache hit
     const controller = new AbortController();
     loadAbortRef.current = controller;
 
-    setLoading(true);
-    setError(null);
-    setSearchQuery("");
-    setReconnectRequired(false);
     try {
       const r = await fetch(`${API_BASE_URL}api/auth/github/repos?page=1`, {
         headers: getOperatorAuthHeaders(),
@@ -92,10 +139,12 @@ export function useGitHubRepos(enabled: boolean) {
       });
       if (r.ok) {
         const data = await r.json() as ReposResponse;
+        setCachedPage(data);
         setRepos(data.repos);
         setHasMore(data.hasMore);
         setCurrentPage(1);
       } else if (r.status === 404) {
+        setCachedPage({ repos: [], hasMore: false, page: 1 });
         setRepos([]);
         setHasMore(false);
       } else if (r.status === 401) {
@@ -104,34 +153,51 @@ export function useGitHubRepos(enabled: boolean) {
           setReconnectRequired(true);
           setRepos([]);
           setHasMore(false);
-        } else {
+        } else if (!cached) {
           setError("Failed to load repos");
         }
-      } else {
+      } else if (!cached) {
         setError("Failed to load repos");
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
-        setError("Failed to load repos");
+        if (!cached) {
+          setError("Failed to load repos");
+        }
       }
     } finally {
       setLoading(false);
     }
   }, [enabled]);
 
+  const refresh = useCallback(() => load(true), [load]);
+
   const loadMore = useCallback(async () => {
     if (!hasMore || loadingMore || searchQuery) return;
     setLoadingMore(true);
+    const nextPage = currentPage + 1;
     try {
-      const nextPage = currentPage + 1;
-      const data = await fetchReposPage(nextPage);
-      setRepos((prev) => {
-        const existingKeys = new Set(prev.map((r) => r.fullName));
-        const fresh = data.repos.filter((r) => !existingKeys.has(r.fullName));
-        return [...prev, ...fresh];
-      });
-      setHasMore(data.hasMore);
-      setCurrentPage(nextPage);
+      // Check cache first
+      const cached = getCachedPage(nextPage);
+      if (cached) {
+        setRepos((prev) => {
+          const existingKeys = new Set(prev.map((r) => r.fullName));
+          const fresh = cached.repos.filter((r) => !existingKeys.has(r.fullName));
+          return [...prev, ...fresh];
+        });
+        setHasMore(cached.hasMore);
+        setCurrentPage(nextPage);
+      } else {
+        const data = await fetchReposPage(nextPage);
+        setCachedPage(data);
+        setRepos((prev) => {
+          const existingKeys = new Set(prev.map((r) => r.fullName));
+          const fresh = data.repos.filter((r) => !existingKeys.has(r.fullName));
+          return [...prev, ...fresh];
+        });
+        setHasMore(data.hasMore);
+        setCurrentPage(nextPage);
+      }
     } catch {
       setError("Failed to load more repos");
     } finally {
@@ -189,6 +255,6 @@ export function useGitHubRepos(enabled: boolean) {
     searchQuery,
     search,
     loadMore,
-    refresh: load
+    refresh,
   };
 }

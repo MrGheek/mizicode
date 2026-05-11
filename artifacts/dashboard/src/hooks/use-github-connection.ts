@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { API_BASE_URL } from "@/lib/api-url";
+import { invalidateRepoCache } from "@/hooks/use-github-repos";
 
 const OPERATOR_TOKEN_LS_KEY = "mizi.ambient.operatorToken";
 
@@ -53,6 +54,8 @@ export function useGitHubConnection() {
     const params = new URLSearchParams(window.location.search);
     const oauthResult = params.get("github_oauth");
     if (oauthResult === "connected") {
+      // Invalidate repo list cache so the picker fetches fresh data for this account
+      invalidateRepoCache();
       // Clear cached PATs now that OAuth is active
       try {
         const ssKeys: string[] = [];
@@ -106,6 +109,9 @@ export function useGitHubConnection() {
         throw new Error(body.error ?? `Disconnect failed (${r.status})`);
       }
       setStatus({ connected: false, login: null, avatarUrl: null });
+
+      // Invalidate repo list cache so a reconnect starts fresh
+      invalidateRepoCache();
 
       // Clear any locally cached PATs on disconnect
       try {
