@@ -54,6 +54,9 @@ export const sessionsTable = pgTable("sessions", {
   intentText: text("intent_text"),
   routingStatsJson: jsonb("routing_stats_json").$type<SessionRoutingStats>(),
   swarmSnapshotJson: jsonb("swarm_snapshot_json"),
+  // Plan progress snapshot pushed by the Claw Runner via POST /plan-push.
+  // Shape: { activeTask, planCheckpoint, activeFiles, unresolvedErrors, updatedAt }
+  planSnapshotJson: jsonb("plan_snapshot_json"),
   // Token issued at session creation time. Required to call session-owner actions
   // (e.g. swarm abort) from the dashboard. Not a team-member credential — the
   // owner token gates destructive controls that team members must not access.

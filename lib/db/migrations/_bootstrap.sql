@@ -1026,6 +1026,7 @@ CREATE TABLE IF NOT EXISTS public.sessions (
     repo_fingerprint_json jsonb,
     routing_stats_json jsonb,
     swarm_snapshot_json jsonb,
+    plan_snapshot_json jsonb,
     owner_token text,
     intent_text text,
     provider text DEFAULT 'vastai'::text NOT NULL,

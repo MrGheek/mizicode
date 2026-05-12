@@ -127,6 +127,13 @@
                         "when": 1746922300000,
                         "tag": "0023_lane_events",
                         "breakpoints": true
+                },
+                {
+                        "idx": 28,
+                        "version": "7",
+                        "when": 1747094400000,
+                        "tag": "0027_sessions_plan_snapshot",
+                        "breakpoints": true
                 }
         ]
 }

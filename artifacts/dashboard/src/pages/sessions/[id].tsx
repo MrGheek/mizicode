@@ -64,6 +64,7 @@ import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActiv
 import { GitHubBranchChip } from "@/components/github-branch-chip";
 import { useOrchestrationStatus } from "@/hooks/use-orchestration-status";
 import { OrchestrationProgressPanel } from "@/components/orchestration-progress";
+import { PlanProgressPanel } from "@/components/plan-progress-panel";
 
 import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 
@@ -3866,6 +3867,9 @@ export default function SessionDetail() {
           {isActive && (
             <ChatPanel sessionId={sessionId} isActive={isActive} />
           )}
+
+          {/* Plan progress — shows MIZI's current task, plan checkpoint, active files */}
+          <PlanProgressPanel sessionId={sessionId} isActive={isActive} />
 
           {/* Team Activity — compact summary card for team sessions */}
           {hasNamedTeamMembers && (() => {
