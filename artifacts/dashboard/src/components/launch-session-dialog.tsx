@@ -14,15 +14,16 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+  Command, CommandInput,
 } from "@/components/ui/command";
 import {
   Loader2, ChevronDown, ChevronRight, Wand2, Info,
-  Users, Plus, X, Play, Eye, EyeOff, KeyRound, Github, Lock, ChevronsUpDown, Check,
+  Users, Plus, X, Play, Eye, EyeOff, KeyRound, Github, ChevronsUpDown,
 } from "lucide-react";
 import { SkillClassBadge } from "@/components/skill-badges";
 import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { useGitHubRepos } from "@/hooks/use-github-repos";
+import { RepoGroupedList } from "@/components/repo-grouped-list";
 import { API_BASE_URL } from "@/lib/api-url";
 
 function buildOAuthUrl(profileId?: number): string {

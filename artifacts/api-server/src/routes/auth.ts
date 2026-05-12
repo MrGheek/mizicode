@@ -603,7 +603,7 @@ type GithubRepoRaw = {
   owner: { login: string };
 };
 
-function parseLinkNext(linkHeader: string | null): string | null {
+export function parseLinkNext(linkHeader: string | null): string | null {
   if (!linkHeader) return null;
   const match = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
   return match ? match[1] : null;
@@ -635,6 +635,23 @@ async function fetchReposPage(token: string, page: number): Promise<{ repos: Git
   const repos = await r.json() as GithubRepoRaw[];
   const hasMore = !!parseLinkNext(r.headers.get("Link"));
   return { repos, hasMore };
+}
+
+/**
+ * Fetch every page of the user's repos and return them all.
+ * Exported for unit testing; production route uses fetchReposPage for
+ * per-page pagination controlled by the client.
+ */
+export async function fetchAllRepos(token: string): Promise<GithubRepoRaw[]> {
+  const all: GithubRepoRaw[] = [];
+  let page = 1;
+  while (true) {
+    const { repos, hasMore } = await fetchReposPage(token, page);
+    all.push(...repos);
+    if (!hasMore) break;
+    page++;
+  }
+  return all;
 }
 
 async function getUserOrgs(token: string): Promise<string[]> {
