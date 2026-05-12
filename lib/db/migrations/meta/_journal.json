@@ -1,146 +1,153 @@
 {
-	"version": "7",
-	"dialect": "postgresql",
-	"entries": [
-		{
-			"idx": 0,
-			"version": "7",
-			"when": 1776796480339,
-			"tag": "0000_add_lane_claims_active_unique_idx",
-			"breakpoints": true
-		},
-		{
-			"idx": 9,
-			"version": "7",
-			"when": 1746316800000,
-			"tag": "0009_scheduler_repo_url",
-			"breakpoints": true
-		},
-		{
-			"idx": 13,
-			"version": "7",
-			"when": 1746835200000,
-			"tag": "0013_palette_intents",
-			"breakpoints": true
-		},
-		{
-			"idx": 14,
-			"version": "7",
-			"when": 1746835201000,
-			"tag": "0014_palette_intents_user_id",
-			"breakpoints": true
-		},
-		{
-			"idx": 15,
-			"version": "7",
-			"when": 1777974274260,
-			"tag": "0015_nim_provider",
-			"breakpoints": true
-		},
-		{
-			"idx": 16,
-			"version": "7",
-			"when": 1777975800000,
-			"tag": "0016_gpu_profiles_nim_metadata",
-			"breakpoints": true
-		},
-		{
-			"idx": 17,
-			"version": "7",
-			"when": 1777980000000,
-			"tag": "0017_gpu_profiles_nim_model_metadata",
-			"breakpoints": true
-		},
-		{
-			"idx": 18,
-			"version": "7",
-			"when": 1777983600000,
-			"tag": "0018_sessions_has_github_token",
-			"breakpoints": true
-		},
-		{
-			"idx": 19,
-			"version": "7",
-			"when": 1746921600000,
-			"tag": "0019_api_keys",
-			"breakpoints": true
-		},
-		{
-			"idx": 20,
-			"version": "7",
-			"when": 1746921700000,
-			"tag": "0020_session_fly_machine_id",
-			"breakpoints": true
-		},
-		{
-			"idx": 21,
-			"version": "7",
-			"when": 1746921800000,
-			"tag": "0021_orchestration_idempotency",
-			"breakpoints": true
-		},
-		{
-			"idx": 22,
-			"version": "7",
-			"when": 1746921900000,
-			"tag": "0022_nim_catalog_benchmark_fields",
-			"breakpoints": true
-		},
-		{
-			"idx": 23,
-			"version": "7",
-			"when": 1746922000000,
-			"tag": "0023_custom_lane_types",
-			"breakpoints": true
-		},
-		{
-			"idx": 24,
-			"version": "7",
-			"when": 1746922100000,
-			"tag": "0023_operator_credentials",
-			"breakpoints": true
-		},
-		{
-			"idx": 25,
-			"version": "7",
-			"when": 1746922150000,
-			"tag": "0024_operator_credentials_provider_unique",
-			"breakpoints": true
-		},
-		{
-			"idx": 26,
-			"version": "7",
-			"when": 1746922200000,
-			"tag": "0024_nim_inference_routing",
-			"breakpoints": true
-		},
-		{
-			"idx": 24,
-			"version": "7",
-			"when": 1746922100000,
-			"tag": "0024_model_switches_token_metrics",
-			"breakpoints": true
-		},
-		{
-			"idx": 27,
-			"version": "7",
-			"when": 1746922300000,
-			"tag": "0023_lane_events",
-			"breakpoints": true
-		},
-		{
-			"idx": 28,
-			"version": "7",
-			"when": 1747094400000,
-			"tag": "0027_sessions_plan_snapshot",
-			"breakpoints": true
-		},
-		{
-			"idx": 29,
-			"version": "7",
-			"when": 1747353600000,
-			"tag": "0028_project_plans",
-			"breakpoints": true
-		}
-	]
+        "version": "7",
+        "dialect": "postgresql",
+        "entries": [
+                {
+                        "idx": 0,
+                        "version": "7",
+                        "when": 1776796480339,
+                        "tag": "0000_add_lane_claims_active_unique_idx",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 9,
+                        "version": "7",
+                        "when": 1746316800000,
+                        "tag": "0009_scheduler_repo_url",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 13,
+                        "version": "7",
+                        "when": 1746835200000,
+                        "tag": "0013_palette_intents",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 14,
+                        "version": "7",
+                        "when": 1746835201000,
+                        "tag": "0014_palette_intents_user_id",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 15,
+                        "version": "7",
+                        "when": 1777974274260,
+                        "tag": "0015_nim_provider",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 16,
+                        "version": "7",
+                        "when": 1777975800000,
+                        "tag": "0016_gpu_profiles_nim_metadata",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 17,
+                        "version": "7",
+                        "when": 1777980000000,
+                        "tag": "0017_gpu_profiles_nim_model_metadata",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 18,
+                        "version": "7",
+                        "when": 1777983600000,
+                        "tag": "0018_sessions_has_github_token",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 19,
+                        "version": "7",
+                        "when": 1746921600000,
+                        "tag": "0019_api_keys",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 20,
+                        "version": "7",
+                        "when": 1746921700000,
+                        "tag": "0020_session_fly_machine_id",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 21,
+                        "version": "7",
+                        "when": 1746921800000,
+                        "tag": "0021_orchestration_idempotency",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 22,
+                        "version": "7",
+                        "when": 1746921900000,
+                        "tag": "0022_nim_catalog_benchmark_fields",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 23,
+                        "version": "7",
+                        "when": 1746922000000,
+                        "tag": "0023_custom_lane_types",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 24,
+                        "version": "7",
+                        "when": 1746922100000,
+                        "tag": "0023_operator_credentials",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 25,
+                        "version": "7",
+                        "when": 1746922150000,
+                        "tag": "0024_operator_credentials_provider_unique",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 26,
+                        "version": "7",
+                        "when": 1746922200000,
+                        "tag": "0024_nim_inference_routing",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 24,
+                        "version": "7",
+                        "when": 1746922100000,
+                        "tag": "0024_model_switches_token_metrics",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 27,
+                        "version": "7",
+                        "when": 1746922300000,
+                        "tag": "0023_lane_events",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 28,
+                        "version": "7",
+                        "when": 1747094400000,
+                        "tag": "0027_sessions_plan_snapshot",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 29,
+                        "version": "7",
+                        "when": 1747353600000,
+                        "tag": "0028_project_plans",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 30,
+                        "version": "7",
+                        "when": 1747440000000,
+                        "tag": "0029_project_tasks_detail",
+                        "breakpoints": true
+                }
+        ]
 }

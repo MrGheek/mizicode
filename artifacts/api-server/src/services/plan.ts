@@ -16,6 +16,9 @@ interface PlanStep {
   stepIndex: number;
   text: string;
   priority: PlanTaskPriority;
+  doneLooksLike?: string | null;
+  outOfScope?: string | null;
+  fileDependencies?: string | null;
 }
 
 interface GeneratedPlan {
@@ -37,16 +40,23 @@ async function callLlmForPlan(params: {
   const raw = await callLlm({
     logTag: "plan.generate",
     temperature: 0.3,
-    max_tokens: 1200,
+    max_tokens: 2200,
     messages: [
       {
         role: "system",
-        content: `You are MIZI, an AI project planner. Decompose a software development intent into 3–7 concrete, actionable steps. 
+        content: `You are MIZI, an AI project planner. Decompose a software development intent into 3–7 concrete, actionable steps.
 Return ONLY valid JSON in this exact format:
 {
   "title": "Short project title (max 60 chars)",
   "steps": [
-    { "stepIndex": 0, "text": "Concrete step description", "priority": "high|normal|low" },
+    {
+      "stepIndex": 0,
+      "text": "Concrete step description",
+      "priority": "high|normal|low",
+      "doneLooksLike": "2-3 bullet lines (\\n-separated) describing observable outcomes when this step is done",
+      "outOfScope": "1-2 bullet lines (\\n-separated) of what this step does NOT cover",
+      "fileDependencies": "newline-separated list of relevant file paths or sibling task names this step depends on"
+    },
     ...
   ]
 }
@@ -55,6 +65,9 @@ Rules:
 - Each step must be a concrete implementation action, not vague
 - Respect user-confirmed tasks from the existing board — preserve their meaning
 - Priority: "high" for critical path, "normal" for standard, "low" for nice-to-have
+- doneLooksLike: 2-3 short bullet lines describing the observable result (not code)
+- outOfScope: 1-2 short bullet lines of explicit exclusions
+- fileDependencies: newline-separated paths/names, or empty string if none
 - No markdown, no extra text — pure JSON only`,
       },
       {
@@ -143,6 +156,9 @@ export interface DraftStep {
   isChanged: boolean;
   isRemoved: boolean;
   existingTaskId?: number;
+  doneLooksLike?: string | null;
+  outOfScope?: string | null;
+  fileDependencies?: string | null;
 }
 
 export interface RemovedStep {
@@ -248,6 +264,9 @@ export async function generatePlan(params: {
       isChanged: !!existing && existing.priority !== step.priority,
       isRemoved: false,
       existingTaskId: existing?.id,
+      doneLooksLike: step.doneLooksLike ?? null,
+      outOfScope: step.outOfScope ?? null,
+      fileDependencies: step.fileDependencies ?? null,
     };
   });
 
@@ -301,7 +320,15 @@ export function shouldPreserveTask(
 export async function approvePlan(params: {
   planId: number;
   userId: string;
-  steps: Array<{ text: string; priority: PlanTaskPriority; stepIndex: number; existingTaskId?: number }>;
+  steps: Array<{
+    text: string;
+    priority: PlanTaskPriority;
+    stepIndex: number;
+    existingTaskId?: number;
+    doneLooksLike?: string | null;
+    outOfScope?: string | null;
+    fileDependencies?: string | null;
+  }>;
   explicitRemovals?: number[];
 }): Promise<ProjectTask[]> {
   const plan = await getPlanById(params.planId);
@@ -349,8 +376,13 @@ export async function approvePlan(params: {
       if (existing) {
         // Update text, index, priority, and mark as user-confirmed.
         // Preserve status/session/history fields so in-progress work is not lost.
+        // Only overwrite detail fields if the new step supplies them (non-null).
+        const detailPatch: Partial<typeof projectTasksTable.$inferInsert> = {};
+        if (step.doneLooksLike != null) detailPatch.doneLooksLike = step.doneLooksLike;
+        if (step.outOfScope != null) detailPatch.outOfScope = step.outOfScope;
+        if (step.fileDependencies != null) detailPatch.fileDependencies = step.fileDependencies;
         const [updated] = await tx.update(projectTasksTable)
-          .set({ text: step.text.trim(), stepIndex: i, priority, confirmedByUser: true, updatedAt: new Date() })
+          .set({ text: step.text.trim(), stepIndex: i, priority, confirmedByUser: true, updatedAt: new Date(), ...detailPatch })
           .where(eq(projectTasksTable.id, existing.id))
           .returning();
         rows.push(updated!);
@@ -364,6 +396,9 @@ export async function approvePlan(params: {
           priority,
           confirmedByUser: true,
           originPlanVersion: plan.version + 1,
+          doneLooksLike: step.doneLooksLike ?? null,
+          outOfScope: step.outOfScope ?? null,
+          fileDependencies: step.fileDependencies ?? null,
         }).returning();
         rows.push(inserted!);
       }
@@ -423,6 +458,9 @@ export async function updateTask(params: {
     confirmedByUser?: boolean;
     stepIndex?: number;
     blockedBy?: number[] | null;
+    doneLooksLike?: string | null;
+    outOfScope?: string | null;
+    fileDependencies?: string | null;
   };
 }): Promise<ProjectTask | null> {
   // Task-level ownership: join to project_plans and verify userId — prevents
@@ -448,6 +486,9 @@ export async function updateTask(params: {
   if (params.updates.confirmedByUser !== undefined) setData.confirmedByUser = params.updates.confirmedByUser;
   if (params.updates.stepIndex !== undefined) setData.stepIndex = params.updates.stepIndex;
   if (params.updates.blockedBy !== undefined) setData.blockedBy = params.updates.blockedBy;
+  if (params.updates.doneLooksLike !== undefined) setData.doneLooksLike = params.updates.doneLooksLike;
+  if (params.updates.outOfScope !== undefined) setData.outOfScope = params.updates.outOfScope;
+  if (params.updates.fileDependencies !== undefined) setData.fileDependencies = params.updates.fileDependencies;
 
   const [updated] = await db.update(projectTasksTable)
     .set(setData)

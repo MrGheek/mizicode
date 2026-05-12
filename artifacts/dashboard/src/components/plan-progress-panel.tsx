@@ -4,8 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   CheckCircle2, Loader2, FileCode2, AlertCircle, ListTodo, Clock,
-  CheckSquare, Circle, SkipForward, ChevronDown, ChevronRight, ListChecks,
+  CheckSquare, Circle, SkipForward, ChevronDown, ChevronRight, ListChecks, Eye,
 } from "lucide-react";
+import { TaskDetailDrawer, type TaskDetail } from "./task-detail-drawer";
 import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 
 // ── Live plan-status types (MIZI active-task snapshot) ────────────────────────
@@ -48,6 +49,9 @@ interface ProjectTask {
   priority: "high" | "normal" | "low";
   confirmedByUser: boolean;
   completedAt: string | null;
+  doneLooksLike: string | null;
+  outOfScope: string | null;
+  fileDependencies: string | null;
 }
 
 interface SessionPlanResponse {
@@ -182,11 +186,13 @@ function TaskRow({
   planId,
   userId,
   onStatusChange,
+  onView,
 }: {
   task: ProjectTask;
   planId: number;
   userId: string;
   onStatusChange: (taskId: number, status: PlanTaskStatus) => void;
+  onView: (task: ProjectTask) => void;
 }) {
   const [saving, setSaving] = useState(false);
 
@@ -209,7 +215,7 @@ function TaskRow({
   const isDone = task.status === "done" || task.status === "skipped";
 
   return (
-    <div className="flex items-start gap-2 py-1">
+    <div className="group flex items-start gap-2 py-1">
       <button
         onClick={handleClick}
         disabled={saving}
@@ -234,6 +240,14 @@ function TaskRow({
       {task.priority === "high" && (
         <span className="text-[9px] font-semibold uppercase text-amber-400 shrink-0 mt-0.5">high</span>
       )}
+      <button
+        onClick={() => onView(task)}
+        className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
+        title="View task details"
+        style={{ color: "var(--accent-cyan)" }}
+      >
+        <Eye className="w-3 h-3" />
+      </button>
     </div>
   );
 }
@@ -250,6 +264,7 @@ function PlanProgressStrip({
   const queryClient = useQueryClient();
   const { data, isLoading } = useSessionPlan(sessionId, isActive);
   const [expanded, setExpanded] = useState(false);
+  const [drawerTask, setDrawerTask] = useState<TaskDetail | null>(null);
 
   const handleStatusChange = useCallback(
     (taskId: number, status: PlanTaskStatus) => {
@@ -368,6 +383,7 @@ function PlanProgressStrip({
                 planId={plan.id}
                 userId={plan.userId}
                 onStatusChange={handleStatusChange}
+                onView={(t) => setDrawerTask({ id: t.id, planId: t.planId, text: t.text, status: t.status, priority: t.priority, doneLooksLike: t.doneLooksLike, outOfScope: t.outOfScope, fileDependencies: t.fileDependencies, userId: plan.userId })}
               />
             ))}
         </div>
@@ -382,6 +398,11 @@ function PlanProgressStrip({
           ? "Hide task list"
           : `Show all ${totalTasks} task${totalTasks !== 1 ? "s" : ""} · ${plannedTasks.length} planned`}
       </button>
+
+      <TaskDetailDrawer
+        task={drawerTask}
+        onClose={() => setDrawerTask(null)}
+      />
     </div>
   );
 }
@@ -530,6 +551,7 @@ function PlanProgressStripCard({
   const queryClient = useQueryClient();
   const { data, isLoading } = useSessionPlan(sessionId, isActive);
   const [expanded, setExpanded] = useState(false);
+  const [drawerTask, setDrawerTask] = useState<TaskDetail | null>(null);
 
   const handleStatusChange = useCallback(
     (taskId: number, status: PlanTaskStatus) => {
@@ -656,6 +678,7 @@ function PlanProgressStripCard({
                   planId={plan.id}
                   userId={plan.userId}
                   onStatusChange={handleStatusChange}
+                  onView={(t) => setDrawerTask({ id: t.id, planId: t.planId, text: t.text, status: t.status, priority: t.priority, doneLooksLike: t.doneLooksLike, outOfScope: t.outOfScope, fileDependencies: t.fileDependencies, userId: plan.userId })}
                 />
               ))}
           </div>
@@ -670,6 +693,11 @@ function PlanProgressStripCard({
             ? "Hide task list"
             : `Show all ${totalTasks} task${totalTasks !== 1 ? "s" : ""} · ${plannedTasks.length} planned`}
         </button>
+
+        <TaskDetailDrawer
+          task={drawerTask}
+          onClose={() => setDrawerTask(null)}
+        />
       </CardContent>
     </Card>
   );

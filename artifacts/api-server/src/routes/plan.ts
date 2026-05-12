@@ -297,7 +297,7 @@ router.patch("/plans/:planId/tasks/:taskId", async (req, res) => {
     const taskId = parseInt(req.params["taskId"]!, 10);
     if (isNaN(taskId)) { res.status(400).json({ error: "Invalid taskId" }); return; }
 
-    const { userId, text, status, priority, confirmedByUser, stepIndex, blockedBy } = req.body as {
+    const { userId, text, status, priority, confirmedByUser, stepIndex, blockedBy, doneLooksLike, outOfScope, fileDependencies } = req.body as {
       userId?: string;
       text?: string;
       status?: PlanTaskStatus;
@@ -305,6 +305,9 @@ router.patch("/plans/:planId/tasks/:taskId", async (req, res) => {
       confirmedByUser?: boolean;
       stepIndex?: number;
       blockedBy?: number[] | null;
+      doneLooksLike?: string | null;
+      outOfScope?: string | null;
+      fileDependencies?: string | null;
     };
     if (!userId?.trim()) {
       res.status(400).json({ error: "userId is required" });
@@ -329,7 +332,7 @@ router.patch("/plans/:planId/tasks/:taskId", async (req, res) => {
     const updated = await updateTask({
       taskId,
       userId: userId.trim(),
-      updates: { text, status, priority, confirmedByUser, stepIndex, blockedBy },
+      updates: { text, status, priority, confirmedByUser, stepIndex, blockedBy, doneLooksLike, outOfScope, fileDependencies },
     });
     if (!updated) { res.status(404).json({ error: "Task not found" }); return; }
     res.json(updated);

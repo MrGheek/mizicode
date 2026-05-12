@@ -7,9 +7,10 @@ import { useState, useRef, useEffect } from "react";
 import {
   CheckSquare, Circle, Clock, ChevronDown, ChevronRight,
   Plus, Trash2, Download, Loader2, GripVertical,
-  AlertCircle, SkipForward, X, Edit2, Check,
+  AlertCircle, SkipForward, X, Edit2, Check, Eye,
 } from "lucide-react";
 import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
+import { TaskDetailDrawer, type TaskDetail } from "./task-detail-drawer";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -39,6 +40,9 @@ interface ProjectTask {
   blockedBy: number[] | null;
   sessionId: number | null;
   completedAt: string | null;
+  doneLooksLike: string | null;
+  outOfScope: string | null;
+  fileDependencies: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -80,6 +84,7 @@ function TaskCard({
   onStatusChange,
   onTextChange,
   onDelete,
+  onView,
   dragging,
   onDragStart,
   onDragEnd,
@@ -88,6 +93,7 @@ function TaskCard({
   onStatusChange: (taskId: number, status: PlanTaskStatus, confirmedByUser: boolean) => Promise<void>;
   onTextChange: (taskId: number, text: string) => Promise<void>;
   onDelete: (taskId: number) => Promise<void>;
+  onView: (task: ProjectTask) => void;
   dragging: boolean;
   onDragStart: (taskId: number) => void;
   onDragEnd: () => void;
@@ -264,6 +270,15 @@ function TaskCard({
             blocked by #{task.blockedBy.join(", #")}
           </span>
         )}
+        <button
+          onClick={() => onView(task)}
+          className="ml-auto opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity flex items-center gap-1 text-[9px]"
+          style={{ color: "var(--accent-cyan)" }}
+          title="View task details"
+        >
+          <Eye className="w-2.5 h-2.5" />
+          View
+        </button>
       </div>
     </div>
   );
@@ -278,6 +293,7 @@ function Column({
   onStatusChange,
   onTextChange,
   onDelete,
+  onView,
   draggedId,
   onDragStart,
   onDragEnd,
@@ -289,6 +305,7 @@ function Column({
   onStatusChange: (taskId: number, status: PlanTaskStatus, confirmedByUser: boolean) => Promise<void>;
   onTextChange: (taskId: number, text: string) => Promise<void>;
   onDelete: (taskId: number) => Promise<void>;
+  onView: (task: ProjectTask) => void;
   draggedId: number | null;
   onDragStart: (taskId: number) => void;
   onDragEnd: () => void;
@@ -335,6 +352,7 @@ function Column({
             onStatusChange={onStatusChange}
             onTextChange={onTextChange}
             onDelete={onDelete}
+            onView={onView}
             dragging={draggedId === task.id}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
@@ -462,6 +480,21 @@ export function ProjectPlanBoard({ userId, repoUrl }: { userId: string; repoUrl?
   const [draggedId, setDraggedId] = useState<number | null>(null);
   const [expanded, setExpanded] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [drawerTask, setDrawerTask] = useState<TaskDetail | null>(null);
+
+  const handleViewTask = (task: ProjectTask) => {
+    setDrawerTask({
+      id: task.id,
+      planId: task.planId,
+      text: task.text,
+      status: task.status,
+      priority: task.priority,
+      doneLooksLike: task.doneLooksLike,
+      outOfScope: task.outOfScope,
+      fileDependencies: task.fileDependencies,
+      userId,
+    });
+  };
 
   const fetchPlans = async () => {
     try {
@@ -700,6 +733,7 @@ export function ProjectPlanBoard({ userId, repoUrl }: { userId: string; repoUrl?
                 onStatusChange={handleStatusChange}
                 onTextChange={handleTextChange}
                 onDelete={handleDelete}
+                onView={handleViewTask}
                 draggedId={draggedId}
                 onDragStart={setDraggedId}
                 onDragEnd={() => setDraggedId(null)}
@@ -712,6 +746,14 @@ export function ProjectPlanBoard({ userId, repoUrl }: { userId: string; repoUrl?
           <AddTaskRow planId={activePlanId} userId={userId} onAdded={refresh} />
         </div>
       )}
+
+      <TaskDetailDrawer
+        task={drawerTask}
+        onClose={() => setDrawerTask(null)}
+        onUpdated={(taskId, patch) => {
+          setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...patch } : t));
+        }}
+      />
     </div>
   );
 }
