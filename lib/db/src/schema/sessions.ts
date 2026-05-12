@@ -3,6 +3,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { gpuProfilesTable } from "./gpu-profiles";
 import { skillBundlesTable } from "./skills";
+import { projectPlansTable } from "./project-plan";
 
 export interface TeamMemberRecord {
   name: string;
@@ -79,6 +80,8 @@ export const sessionsTable = pgTable("sessions", {
   activeNimProvider: text("active_nim_provider"),
   // "auto" = phase-aware routing enabled; "pinned" = user-locked model, no auto-switching.
   modelRoutingMode: text("model_routing_mode").default("auto"),
+  // Project plan linked to this session (nullable — not all sessions have a plan).
+  planId: integer("plan_id").references(() => projectPlansTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

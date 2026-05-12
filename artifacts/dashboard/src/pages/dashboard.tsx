@@ -25,10 +25,13 @@ import {
   Sparkles, Loader2, Terminal, ArrowRight,
   GitBranch, Eye, EyeOff, Zap, Cpu, Github,
   ChevronDown, ChevronRight, RotateCcw, X, Globe,
+  ClipboardList, Plus, Trash2, GripVertical,
+  Check, AlertTriangle,
 } from "lucide-react";
 import { SwarmPill } from "@/components/swarm-activity-panel";
 import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { GitHubConnectionWidget } from "@/components/github-connection-widget";
+import { ProjectPlanBoard } from "@/components/project-plan-board";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -69,6 +72,261 @@ function projectNameFromRepoUrl(repoUrl: string | null | undefined): string | nu
 const GITHUB_URL_RE = /https?:\/\/(github|gitlab)\.com\/[\w.\-]+\/[\w.\-]+/i;
 const REPO_KEYWORD_RE =
   /\b(my repo|existing (repo|project|code|codebase)|working on|add to my|fix in my|in the repo|in my codebase|clone|connect.*repo|pull request|pr review|open pr|my (github|gitlab)|push to|commit to|branch|checkout)\b/i;
+
+// ── Plan types ────────────────────────────────────────────────────────────────
+
+type PlanTaskPriority = "high" | "normal" | "low";
+
+interface DraftPlanStep {
+  tempId: string; // client-side id for list key
+  stepIndex: number;
+  text: string;
+  priority: PlanTaskPriority;
+  isAdded?: boolean;       // new in this generation
+  isChanged?: boolean;     // changed from prev plan
+  isRemoved?: boolean;     // removed in this generation (ghost row)
+  existingTaskId?: number; // DB task id, present for tasks that existed before this generation
+}
+
+interface GeneratePlanResponse {
+  plan: { id: number; title: string; version: number };
+  // draftSteps are NOT yet persisted — only written to DB on approve.
+  draftSteps: Array<{
+    stepIndex: number;
+    text: string;
+    priority: PlanTaskPriority;
+    isAdded: boolean;
+    isChanged: boolean;
+    isRemoved: boolean;
+    existingTaskId?: number;
+  }>;
+  diff: {
+    removedSteps: Array<{ id: number; text: string; stepIndex: number }>;
+  };
+  llmFailed: boolean;
+}
+
+// ── PlanApprovalUI ────────────────────────────────────────────────────────────
+
+function PlanApprovalUI({
+  steps,
+  onStepsChange,
+  onApprove,
+  onSkip,
+  loading,
+  llmFailed,
+  title,
+}: {
+  steps: DraftPlanStep[];
+  onStepsChange: (steps: DraftPlanStep[]) => void;
+  onApprove: () => void;
+  onSkip: () => void;
+  loading: boolean;
+  llmFailed: boolean;
+  title: string;
+}) {
+  const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+  const [addingText, setAddingText] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+
+  const updateStep = (idx: number, text: string) => {
+    onStepsChange(steps.map((s, i) => i === idx ? { ...s, text } : s));
+  };
+
+  const removeStep = (idx: number) => {
+    const next = steps.filter((_, i) => i !== idx).map((s, i) => ({ ...s, stepIndex: i }));
+    onStepsChange(next);
+  };
+
+  const addStep = () => {
+    if (!addingText.trim()) return;
+    const next: DraftPlanStep = {
+      tempId: `new-${Date.now()}`,
+      stepIndex: steps.length,
+      text: addingText.trim(),
+      priority: "normal",
+      isAdded: true,
+    };
+    onStepsChange([...steps, next]);
+    setAddingText("");
+    setShowAdd(false);
+  };
+
+  const handleDrop = (targetIdx: number) => {
+    if (draggedIdx === null || draggedIdx === targetIdx) { setDraggedIdx(null); return; }
+    const reordered = [...steps];
+    const [moved] = reordered.splice(draggedIdx, 1);
+    reordered.splice(targetIdx, 0, moved!);
+    onStepsChange(reordered.map((s, i) => ({ ...s, stepIndex: i })));
+    setDraggedIdx(null);
+  };
+
+  const PRIORITY_DOT: Record<PlanTaskPriority, string> = {
+    high: "#f59e0b", normal: "var(--text-muted)", low: "var(--text-muted)",
+  };
+
+  return (
+    <div
+      className="space-y-4 p-5 rounded-2xl glass-emerge"
+      style={{
+        background: "linear-gradient(145deg, rgba(255,255,255,0.04) 0%, transparent 55%), rgba(255,255,255,0.024)",
+        border: "1px solid var(--border-glass-soft)",
+        backdropFilter: "blur(40px)",
+      }}
+    >
+      {/* Header */}
+      <div className="flex items-start gap-3">
+        <ClipboardList className="w-4 h-4 mt-0.5 shrink-0" style={{ color: "var(--accent-violet)" }} />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+            {title || "Project plan"}
+          </p>
+          {llmFailed && (
+            <div className="flex items-center gap-1.5 mt-1">
+              <AlertTriangle className="w-3 h-3 text-amber-400" />
+              <p className="text-[11px] text-amber-400">
+                AI plan unavailable — edit or add steps manually, or skip to launch directly.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Steps list */}
+      <div className="space-y-1.5">
+        {steps.map((step, idx) => (
+          <div
+            key={step.tempId}
+            draggable
+            onDragStart={() => setDraggedIdx(idx)}
+            onDragEnd={() => setDraggedIdx(null)}
+            onDragOver={e => e.preventDefault()}
+            onDrop={() => handleDrop(idx)}
+            className="flex items-start gap-2 rounded-xl px-3 py-2.5 transition-all"
+            style={{
+              background: step.isAdded
+                ? "rgba(16,185,129,0.06)"
+                : step.isChanged
+                  ? "rgba(0,180,216,0.06)"
+                  : step.isRemoved
+                    ? "rgba(239,68,68,0.06)"
+                    : "rgba(255,255,255,0.025)",
+              border: step.isAdded
+                ? "1px solid rgba(16,185,129,0.15)"
+                : step.isChanged
+                  ? "1px solid rgba(0,180,216,0.15)"
+                  : step.isRemoved
+                    ? "1px solid rgba(239,68,68,0.15)"
+                    : "1px solid var(--border-glass-soft)",
+              opacity: draggedIdx === idx ? 0.5 : 1,
+            }}
+          >
+            <GripVertical className="w-3.5 h-3.5 mt-0.5 shrink-0 opacity-20 cursor-grab" />
+            <span
+              className="text-[11px] font-mono shrink-0 mt-0.5 w-4 text-center"
+              style={{ color: "var(--text-muted)" }}
+            >
+              {idx + 1}
+            </span>
+            <div
+              className="w-1.5 h-1.5 rounded-full shrink-0 mt-1.5"
+              style={{ background: PRIORITY_DOT[step.priority] }}
+            />
+            <input
+              value={step.text}
+              onChange={e => updateStep(idx, e.target.value)}
+              className="flex-1 text-xs bg-transparent outline-none"
+              style={{ color: "var(--text-primary)" }}
+            />
+            {/* Diff badge */}
+            {step.isAdded && (
+              <span className="text-[9px] font-semibold shrink-0" style={{ color: "#10b981" }}>+new</span>
+            )}
+            {step.isChanged && (
+              <span className="text-[9px] font-semibold shrink-0" style={{ color: "var(--accent-cyan)" }}>~changed</span>
+            )}
+            <button
+              onClick={() => removeStep(idx)}
+              className="shrink-0 transition-colors"
+              style={{ color: "var(--text-muted)" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "#ef4444")}
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* Add step */}
+      {showAdd ? (
+        <div className="flex items-center gap-2">
+          <input
+            autoFocus
+            value={addingText}
+            onChange={e => setAddingText(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter") { e.preventDefault(); addStep(); }
+              if (e.key === "Escape") setShowAdd(false);
+            }}
+            placeholder="Add a step…"
+            className="flex-1 text-xs px-3 py-2 rounded-xl bg-transparent outline-none"
+            style={{ border: "1px solid var(--border-glass)", color: "var(--text-primary)" }}
+          />
+          <button
+            onClick={addStep}
+            className="p-1.5 rounded-lg transition-colors"
+            style={{ color: "#10b981", background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.16)" }}
+          >
+            <Check className="w-3 h-3" />
+          </button>
+          <button onClick={() => setShowAdd(false)} style={{ color: "var(--text-muted)" }}>
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setShowAdd(true)}
+          className="flex items-center gap-1.5 text-[11px] transition-colors"
+          style={{ color: "var(--text-muted)" }}
+          onMouseEnter={e => (e.currentTarget.style.color = "var(--text-secondary)")}
+          onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
+        >
+          <Plus className="w-3 h-3" />
+          Add step
+        </button>
+      )}
+
+      {/* Action buttons */}
+      <div className="flex items-center gap-3 pt-1">
+        <button
+          onClick={onApprove}
+          disabled={steps.length === 0 || loading}
+          className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-40"
+          style={{
+            background: "rgba(124,111,247,0.14)",
+            color: "var(--accent-violet)",
+            border: "1px solid rgba(124,111,247,0.25)",
+          }}
+        >
+          {loading
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : <Check className="w-3.5 h-3.5" />}
+          {loading ? "Saving…" : "Approve & Launch"}
+        </button>
+        <button
+          onClick={onSkip}
+          className="text-xs px-4 py-2.5 rounded-xl transition-all"
+          style={{ color: "var(--text-muted)", border: "1px solid var(--border-glass)" }}
+          onMouseEnter={e => (e.currentTarget.style.color = "var(--text-secondary)")}
+          onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
+        >
+          Skip planning
+        </button>
+      </div>
+    </div>
+  );
+}
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -232,23 +490,28 @@ const TOKEN_MODES = [
   { value: "ultra", label: "Ultra", hint: "minimal" },
 ] as const;
 
-function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHealth }: {
+interface IntentBarProps {
   onGpuLaunch: (profileId: number, opts?: Omit<LaunchOptions, "profileId">) => void;
   onNimLaunch: (opts: {
     nimModelId: string; nimProvider: string;
     intentText?: string; repoUrl?: string | null; githubToken?: string | null;
     taskMode?: string | null; tokenMode?: string | null; skillBundle?: string | null;
+    planId?: number | null; userId?: string | null;
   }) => void;
   nimCatalog: NimCatalogModel[];
   nimConfigured: Record<string, boolean>;
   nimHealth: Record<string, NimProviderHealth>;
-}) {
+  userId?: string;
+  repoUrl: string;
+  onRepoUrlChange: (v: string) => void;
+}
+
+function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHealth, userId, repoUrl, onRepoUrlChange: setRepoUrl }: IntentBarProps) {
   const [, navigate] = useLocation();
   const [intent, setIntent] = useState("");
   const [classifying, setClassifying] = useState(false);
   const [result, setResult] = useState<IntentResult | null>(null);
   const [showRepo, setShowRepo] = useState(false);
-  const [repoUrl, setRepoUrl] = useState(() => loadSavedRepoUrl());
   const [githubToken, setGithubToken] = useState(() => repoUrl ? loadSessionPat(repoUrl) : "");
   const { status: ghStatus } = useGitHubConnection();
   const [gpuOpen, setGpuOpen] = useState(false);
@@ -263,6 +526,40 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHea
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { data: profiles } = useListProfiles();
+
+  // Plan-it state
+  const [planning, setPlanning] = useState(false);
+  const [planSteps, setPlanSteps] = useState<DraftPlanStep[]>([]);
+  const [planTitle, setPlanTitle] = useState("");
+  const [planLlmFailed, setPlanLlmFailed] = useState(false);
+  const [planId, setPlanId] = useState<number | null>(null);
+  // Immutable snapshot of all existingTaskIds present at the time the plan approval
+  // dialog opens. Used to compute explicitRemovals correctly even after the user
+  // manually deletes steps from the editor (which removes them from planSteps entirely).
+  const planBaselineExistingIds = useRef<number[]>([]);
+  const [showPlanApproval, setShowPlanApproval] = useState(false);
+  const [approvingPlan, setApprovingPlan] = useState(false);
+
+  // Hydrate active planId from API on mount and when repoUrl/userId change,
+  // so re-generates after reload extend the existing plan rather than creating a new one.
+  useEffect(() => {
+    if (!userId) return;
+    const params = new URLSearchParams({ userId });
+    if (repoUrl.trim()) params.set("repoUrl", repoUrl.trim());
+    fetch(`${BASE_URL}api/plans?${params}`)
+      .then(r => r.ok ? r.json() : null)
+      .then((plans: Array<{ id: number }> | null) => {
+        if (Array.isArray(plans) && plans.length > 0 && plans[0]) {
+          setPlanId(plans[0].id);
+        } else {
+          // No plan found for this userId/repoUrl — clear stale planId so a
+          // subsequent "Plan it" creates a fresh plan rather than extending
+          // a plan belonging to a different repo that was loaded previously.
+          setPlanId(null);
+        }
+      })
+      .catch(() => {});
+  }, [userId, repoUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-resize textarea
   useEffect(() => {
@@ -323,19 +620,148 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHea
     }
   };
 
-  const handleNimLaunch = () => {
-    if (!selectedNimSuggestion || launchingNim) return;
+  const handleNimLaunch = (overridePlanId?: number | null) => {
+    if (launchingNim) return;
+    // Use the classified suggestion if available; otherwise fall back to the first
+    // available catalog model so that Approve & Launch always proceeds without
+    // requiring the user to have typed enough text to trigger classification.
+    const suggestion = selectedNimSuggestion ?? (nimCatalog[0]
+      ? { nimModelId: nimCatalog[0].nimModelId, nimProvider: "nvidia" as const }
+      : null);
+    if (!suggestion) {
+      // No NIM models configured — open the GPU model picker as the fallback path.
+      setGpuOpen(true);
+      return;
+    }
     setLaunchingNim(true);
     onNimLaunch({
-      nimModelId: selectedNimSuggestion.nimModelId,
-      nimProvider: selectedNimSuggestion.nimProvider ?? "nvidia",
+      nimModelId: suggestion.nimModelId,
+      nimProvider: suggestion.nimProvider ?? "nvidia",
       intentText: intent || undefined,
       repoUrl: repoUrl || null,
       githubToken: ghStatus.connected ? null : (githubToken || null),
       taskMode: taskMode || null,
       tokenMode: tokenMode || null,
       skillBundle: skillBundle !== "auto" ? skillBundle : null,
+      planId: overridePlanId !== undefined ? overridePlanId : planId,
+      userId: userId ?? null,
     });
+  };
+
+  const handlePlanIt = async () => {
+    if (!intent.trim() || planning) return;
+    setPlanning(true);
+    setShowPlanApproval(false);
+    try {
+      const r = await fetch(`${BASE_URL}api/plan/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intentText: intent,
+          userId: userId ?? "anonymous",
+          repoUrl: repoUrl || undefined,
+          // Pass existing planId so the backend can extend/diff rather than create a new plan
+          existingPlanId: planId ?? undefined,
+        }),
+      });
+      if (!r.ok) throw new Error(`Plan generation failed (${r.status})`);
+      const data: GeneratePlanResponse = await r.json();
+      // Build draft steps with diff markers — these are NOT yet in the DB.
+      const currentSteps: DraftPlanStep[] = data.draftSteps.map((s, i) => ({
+        tempId: `draft-${s.stepIndex}-${i}`,
+        stepIndex: s.stepIndex,
+        text: s.text,
+        priority: s.priority,
+        isAdded: s.isAdded,
+        isChanged: s.isChanged,
+        isRemoved: false as const,
+        existingTaskId: s.existingTaskId,
+      }));
+      // Append ghost "removed" rows so the user can see what the LLM dropped.
+      // existingTaskId is set so the approve handler can send them as explicitRemovals,
+      // allowing the server to delete them even if confirmedByUser=true.
+      const removedSteps: DraftPlanStep[] = (data.diff.removedSteps ?? []).map((r, i) => ({
+        tempId: `removed-${r.id}-${i}`,
+        stepIndex: r.stepIndex,
+        text: r.text,
+        priority: "normal" as PlanTaskPriority,
+        isAdded: false,
+        isChanged: false,
+        isRemoved: true,
+        existingTaskId: r.id,
+      }));
+      const rawSteps = [...currentSteps, ...removedSteps];
+      // Snapshot the initial set of existingTaskIds so handleApprovePlan can
+      // compute explicitRemovals correctly even after the user manually removes
+      // steps from the editor (those rows disappear from planSteps entirely).
+      planBaselineExistingIds.current = rawSteps
+        .filter(s => s.existingTaskId != null)
+        .map(s => s.existingTaskId!);
+      setPlanSteps(rawSteps);
+      setPlanTitle(data.plan.title);
+      setPlanLlmFailed(data.llmFailed);
+      setPlanId(data.plan.id);
+      setShowPlanApproval(true);
+    } catch {
+      // Show empty plan so user can author it manually
+      setPlanSteps([]);
+      setPlanTitle(intent.slice(0, 80));
+      setPlanLlmFailed(true);
+      setPlanId(null);
+      setShowPlanApproval(true);
+    } finally {
+      setPlanning(false);
+    }
+  };
+
+  const handleApprovePlan = async () => {
+    if (approvingPlan) return;
+    setApprovingPlan(true);
+    try {
+      // If we have a plan, persist the approved steps before launching.
+      // Fail-closed: do NOT launch if the approve call fails.
+      if (planId) {
+        const r = await fetch(`${BASE_URL}api/plan/${planId}/approve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            // Exclude ghost "removed" rows — display-only diff context.
+            steps: planSteps
+              .filter(s => !s.isRemoved)
+              .map((s, i) => ({ text: s.text, priority: s.priority, stepIndex: i, existingTaskId: s.existingTaskId ?? undefined })),
+            // Explicit removals: compare the immutable baseline (all existingTaskIds
+            // that were present when the dialog opened) against the final approved set.
+            // This correctly captures BOTH:
+            //  a) Ghost "removed by LLM" rows (isRemoved=true, still in planSteps)
+            //  b) Confirmed tasks manually deleted from the editor (gone from planSteps)
+            // Using planBaselineExistingIds.current (a ref) avoids missing case (b).
+            explicitRemovals: (() => {
+              const approvedIds = new Set(
+                planSteps
+                  .filter(s => !s.isRemoved && s.existingTaskId != null)
+                  .map(s => s.existingTaskId!)
+              );
+              return planBaselineExistingIds.current.filter(id => !approvedIds.has(id));
+            })(),
+            userId: userId ?? "anonymous",
+          }),
+        });
+        if (!r.ok) {
+          const msg = await r.json().then((b: { error?: string }) => b.error).catch(() => "Unknown error");
+          throw new Error(`Approve failed: ${msg}`);
+        }
+      }
+      setShowPlanApproval(false);
+      // handleNimLaunch falls back to catalog[0] or opens GPU picker when no NIM
+      // suggestion is available — handles both NIM and GPU launch paths.
+      handleNimLaunch(planId);
+    } catch (err) {
+      console.error("[plan] approve-and-launch failed", err);
+      // Surface error inline — do NOT launch with unsaved state.
+      alert(`Could not save your plan before launching. Please try again.\n\n${(err as Error).message}`);
+    } finally {
+      setApprovingPlan(false);
+    }
   };
 
   const handleGpuLaunch = (profileId: number) => {
@@ -346,6 +772,8 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHea
       taskMode: taskMode || null,
       tokenMode: tokenMode || null,
       skillBundle: skillBundle !== "auto" ? skillBundle : undefined,
+      planId: planId ?? null,
+      userId: userId ?? null,
     } as Omit<LaunchOptions, "profileId">);
     setResult(null);
     setIntent("");
@@ -401,27 +829,62 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHea
             {repoUrl ? repoLabel : "Existing repo"}
           </button>
 
-          <button
-            onClick={() => classify()}
-            disabled={!intent.trim() || classifying}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all disabled:opacity-35"
-            style={{
-              background: intent.trim() ? "rgba(0,180,216,0.1)" : "rgba(255,255,255,0.04)",
-              color: intent.trim() ? "var(--accent-cyan)" : "var(--text-muted)",
-              border: `1px solid ${intent.trim() ? "rgba(0,180,216,0.2)" : "var(--border-glass-ultra)"}`,
-              boxShadow: intent.trim() ? "inset 0 1px 0 rgba(255,255,255,0.06)" : "none",
-            }}
-          >
-            {classifying
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <Sparkles className="w-3.5 h-3.5" />}
-            {classifying ? "Thinking…" : "Ask MIZI"}
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Plan it button */}
+            <button
+              onClick={handlePlanIt}
+              disabled={!intent.trim() || planning || classifying}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all disabled:opacity-35"
+              style={{
+                background: intent.trim() ? "rgba(124,111,247,0.1)" : "rgba(255,255,255,0.04)",
+                color: intent.trim() ? "var(--accent-violet)" : "var(--text-muted)",
+                border: `1px solid ${intent.trim() ? "rgba(124,111,247,0.2)" : "var(--border-glass-ultra)"}`,
+                boxShadow: intent.trim() ? "inset 0 1px 0 rgba(255,255,255,0.06)" : "none",
+              }}
+              title="Generate a step-by-step project plan before launching"
+            >
+              {planning
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <ClipboardList className="w-3.5 h-3.5" />}
+              {planning ? "Planning…" : "Plan it"}
+            </button>
+
+            {/* Ask MIZI button */}
+            <button
+              onClick={() => classify()}
+              disabled={!intent.trim() || classifying}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all disabled:opacity-35"
+              style={{
+                background: intent.trim() ? "rgba(0,180,216,0.1)" : "rgba(255,255,255,0.04)",
+                color: intent.trim() ? "var(--accent-cyan)" : "var(--text-muted)",
+                border: `1px solid ${intent.trim() ? "rgba(0,180,216,0.2)" : "var(--border-glass-ultra)"}`,
+                boxShadow: intent.trim() ? "inset 0 1px 0 rgba(255,255,255,0.06)" : "none",
+              }}
+            >
+              {classifying
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <Sparkles className="w-3.5 h-3.5" />}
+              {classifying ? "Thinking…" : "Ask MIZI"}
+            </button>
+          </div>
         </div>
       </div>
 
+      {/* Plan approval panel */}
+      {showPlanApproval && (
+        <PlanApprovalUI
+          steps={planSteps}
+          onStepsChange={setPlanSteps}
+          onApprove={handleApprovePlan}
+          onSkip={() => { setShowPlanApproval(false); handleNimLaunch(null); }}
+          loading={approvingPlan}
+          llmFailed={planLlmFailed}
+          title={planTitle}
+        />
+      )}
+
       {/* Repo panel */}
-      {hasRepo && (
+      {!showPlanApproval && hasRepo && (
         <RepoPanel
           repoUrl={repoUrl} setRepoUrl={setRepoUrl}
           githubToken={githubToken} setGithubToken={setGithubToken}
@@ -735,7 +1198,7 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHea
                 )}
 
                 <button
-                  onClick={handleNimLaunch}
+                  onClick={() => handleNimLaunch()}
                   disabled={launchingNim}
                   className="mt-1 w-full py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                   style={{
@@ -931,6 +1394,23 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
 
   const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary();
+
+  // repoUrl is lifted here so both IntentBar and the plan board can read it reactively.
+  const [repoUrl, setRepoUrl] = useState(() => loadSavedRepoUrl());
+
+  // Stable per-browser userId for plan ownership — not tied to auth.
+  // Stored in localStorage so plans persist across page reloads.
+  const dashboardUserId = useMemo(() => {
+    const STORAGE_KEY = "mizi.plan.userId";
+    let id = localStorage.getItem(STORAGE_KEY);
+    if (!id) {
+      id = `user-${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem(STORAGE_KEY, id);
+    }
+    return id;
+  }, []);
+  // repoUrl is already reactive state from the IntentBar section above — use it directly
+  // so the board re-scopes immediately when the user switches repos without needing a reload.
   const { data: activeSessionResp, isLoading: isLoadingSession } = useGetActiveSession({
     query: { refetchInterval: 10_000, queryKey: getGetActiveSessionQueryKey() },
   });
@@ -1022,7 +1502,9 @@ export default function Dashboard() {
         repoUrl: opts?.repoUrl ?? null,
         intentText: opts?.intentText ?? null,
         githubToken: opts?.githubToken ?? null,
-      },
+        planId: (opts as LaunchOptions | undefined)?.planId ?? null,
+        userId: (opts as LaunchOptions | undefined)?.userId ?? null,
+      } as Parameters<typeof createSession.mutate>[0]["data"],
     }, {
       onSuccess: (session) => {
         const token = (session as typeof session & { ownerToken?: string | null }).ownerToken;
@@ -1042,6 +1524,7 @@ export default function Dashboard() {
     nimModelId: string; nimProvider: string;
     intentText?: string; repoUrl?: string | null; githubToken?: string | null;
     taskMode?: string | null; tokenMode?: string | null; skillBundle?: string | null;
+    planId?: number | null; userId?: string | null;
   }) => {
     // Resolve skillBundle slug → numeric bundleId if the user made a specific selection
     const resolvedBundleId = opts.skillBundle ? (skillBundleMap[opts.skillBundle] ?? null) : null;
@@ -1055,6 +1538,8 @@ export default function Dashboard() {
         taskMode: opts.taskMode ?? null,
         tokenMode: opts.tokenMode ?? null,
         bundleId: resolvedBundleId,
+        planId: opts.planId ?? null,
+        userId: opts.userId ?? null,
       } as Parameters<typeof createSession.mutate>[0]["data"],
     }, {
       onSuccess: (session) => {
@@ -1123,7 +1608,16 @@ export default function Dashboard() {
 
         {/* Intent field — hero */}
         <div className="glass-emerge" style={{ animationDelay: "20ms" }}>
-          <IntentBar onGpuLaunch={handleGpuLaunch} onNimLaunch={handleNimLaunch} nimCatalog={nimCatalog} nimConfigured={nimConfigured} nimHealth={nimHealth} />
+          <IntentBar
+            onGpuLaunch={handleGpuLaunch}
+            onNimLaunch={handleNimLaunch}
+            nimCatalog={nimCatalog}
+            nimConfigured={nimConfigured}
+            nimHealth={nimHealth}
+            userId={dashboardUserId}
+            repoUrl={repoUrl}
+            onRepoUrlChange={v => { setRepoUrl(v); saveRepoUrl(v); }}
+          />
         </div>
 
         {/* Recent sessions — compact list */}
@@ -1215,6 +1709,11 @@ export default function Dashboard() {
               ))}
             </div>
           )}
+        </div>
+
+        {/* Project plan task board */}
+        <div className="glass-emerge" style={{ animationDelay: "120ms" }}>
+          <ProjectPlanBoard userId={dashboardUserId} repoUrl={repoUrl.trim() || undefined} />
         </div>
 
       </div>

@@ -74,6 +74,8 @@ export interface LaunchOptions {
   intentText?: string | null;
   teamMembers?: string[];
   githubToken?: string | null;
+  planId?: number | null;
+  userId?: string | null;
 }
 
 export interface LaunchPrefill {

@@ -376,7 +376,7 @@ function runGovernanceMigrations(db: Database.Database): void {
   safeAlter(`ALTER TABLE mem_items ADD COLUMN last_used_at INTEGER`);
 }
 
-export type MemoryType = "observation" | "research" | "session_summary" | "convention" | "guardrail" | "note" | "warning";
+export type MemoryType = "observation" | "research" | "session_summary" | "convention" | "guardrail" | "note" | "warning" | "project_plan";
 export type MemoryScope = "task" | "lane_user" | "repo_shared" | "session_core" | "user_operator" | "global";
 export type ConflictStatus = "none" | "open" | "reviewed" | "resolved" | "accepted_override";
 export type StaleStatus = "fresh" | "stale" | "invalidated";
@@ -419,6 +419,7 @@ export const TTL_BY_TYPE: Record<MemoryType, number | null> = {
   guardrail: 365 * 86400,
   note: 30 * 86400,
   warning: 14 * 86400,
+  project_plan: null, // never expires — plan board state must outlive sessions
 };
 
 export const DECAY_RATE_BY_TYPE: Record<MemoryType, number> = {
@@ -429,6 +430,7 @@ export const DECAY_RATE_BY_TYPE: Record<MemoryType, number> = {
   guardrail: 0.05,
   note: 0.5,
   warning: 0.7,
+  project_plan: 0.02, // very slow decay — plans persist across many sessions
 };
 
 export interface MemoryBudgetProfile {
@@ -1527,9 +1529,50 @@ export interface Observation {
   recordedAt: number;
 }
 
-export function getPastContext(userId: string, projectPath?: string, maxChars = 8000): string {
+export function getPastContext(userId: string, projectPath?: string, maxChars = 8000, repoUrl?: string): string {
   const db = getDb();
 
+  const sections: string[] = [];
+  let totalChars = 0;
+
+  // ── 1. Project plan (most current approved plan, scoped to repo when known) ──
+  // Injected first so the agent always has the active task board in context.
+  // When repoUrl is provided, only the plan for that repo is injected;
+  // cross-repo contamination is prevented by filtering on metadata.repoUrl.
+  try {
+    const planItems = repoUrl
+      ? (db.prepare(`
+          SELECT content, created_at
+          FROM mem_items
+          WHERE user_id = ?
+            AND memory_type = 'project_plan'
+            AND validity_status != 'retracted'
+            AND json_extract(metadata, '$.repoUrl') = ?
+          ORDER BY created_at DESC
+          LIMIT 1
+        `).all(userId, repoUrl) as Array<{ content: string; created_at: number }>)
+      : (db.prepare(`
+          SELECT content, created_at
+          FROM mem_items
+          WHERE user_id = ?
+            AND memory_type = 'project_plan'
+            AND validity_status != 'retracted'
+          ORDER BY created_at DESC
+          LIMIT 1
+        `).all(userId) as Array<{ content: string; created_at: number }>);
+
+    if (planItems.length > 0 && planItems[0]) {
+      const planBlock = `## Active Project Plan\n${planItems[0].content}`;
+      if (totalChars + planBlock.length <= maxChars) {
+        sections.push(planBlock);
+        totalChars += planBlock.length + 1;
+      }
+    }
+  } catch {
+    // mem_items may not exist yet on a fresh DB — non-fatal
+  }
+
+  // ── 2. Past session summaries ─────────────────────────────────────────────
   const sessions = db.prepare(`
     SELECT s.id, s.project_path, s.started_at, s.ended_at, s.summary,
            COUNT(o.id) as observation_count
@@ -1550,21 +1593,22 @@ export function getPastContext(userId: string, projectPath?: string, maxChars = 
     observation_count: number;
   }>;
 
-  if (sessions.length === 0) return "";
-
-  const lines: string[] = [];
-  let totalChars = 0;
-
-  for (const session of sessions) {
-    if (!session.summary) continue;
-    const date = new Date(session.started_at * 1000).toISOString().slice(0, 10);
-    const line = `[${date}] Session ${session.id}: ${session.summary}`;
-    if (totalChars + line.length > maxChars) break;
-    lines.push(line);
-    totalChars += line.length + 1;
+  if (sessions.length > 0) {
+    const sessionLines: string[] = [];
+    for (const session of sessions) {
+      if (!session.summary) continue;
+      const date = new Date(session.started_at * 1000).toISOString().slice(0, 10);
+      const line = `[${date}] Session ${session.id}: ${session.summary}`;
+      if (totalChars + line.length > maxChars) break;
+      sessionLines.push(line);
+      totalChars += line.length + 1;
+    }
+    if (sessionLines.length > 0) {
+      sections.push(sessionLines.join("\n"));
+    }
   }
 
-  return lines.join("\n");
+  return sections.join("\n\n");
 }
 
 export function listObservations(userId: string, limit = 100, offset = 0): Observation[] {

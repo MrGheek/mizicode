@@ -150,8 +150,9 @@ router.get("/mem/context/:userId", (req, res) => {
   if (!verifyMemToken(req, res)) return;
   const { userId } = req.params;
   const projectPath = req.query["projectPath"] as string | undefined;
+  const repoUrl = req.query["repoUrl"] as string | undefined;
   try {
-    const context = getPastContext(userId, projectPath);
+    const context = getPastContext(userId, projectPath, 8000, repoUrl);
     res.json({ context, empty: context.length === 0 });
   } catch (err) {
     logger.error(err, "Failed to get mem context");

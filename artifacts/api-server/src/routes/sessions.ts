@@ -1,5 +1,5 @@
 import { Router, type RequestHandler } from "express";
-import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable, sessionLanesTable, sessionModelSwitchesTable, nimCatalogTable, provisionedResourcesTable, schemaTemplatesTable } from "@workspace/db";
+import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable, sessionLanesTable, sessionModelSwitchesTable, nimCatalogTable, provisionedResourcesTable, schemaTemplatesTable, projectPlansTable } from "@workspace/db";
 import { eq, desc, inArray, and, isNull } from "drizzle-orm";
 import * as neonService from "../services/neon";
 import { getBridge } from "../services/bridge-registry";
@@ -302,6 +302,29 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
     (mapped.status === "stopped" && prevSession?.status !== "stopped")
   ) {
     cleanupSessionResources(sessionId).catch(() => {});
+  }
+
+  // Post-session plan reassessment: fire-and-forget when a session stops.
+  // Retrieves the session's linked plan_id and re-evaluates task statuses
+  // against memory observations. Skips user-confirmed tasks.
+  if (mapped.status === "stopped" && prevSession?.status !== "stopped") {
+    (async () => {
+      try {
+        const [stoppedSession] = await db.select({ planId: sessionsTable.planId, id: sessionsTable.id }).from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+        if (stoppedSession?.planId) {
+          const { reassessSession } = await import("../services/plan");
+          // userId for reassessment: read from the plan owner since sessions don't store userId
+          const { projectPlansTable: plansTable } = await import("@workspace/db");
+          const [plan] = await db.select({ userId: plansTable.userId }).from(plansTable).where(eq(plansTable.id, stoppedSession.planId));
+          if (plan?.userId) {
+            await reassessSession({ sessionId, userId: plan.userId });
+            logger.info({ sessionId, planId: stoppedSession.planId }, "[plan] Post-session reassessment completed");
+          }
+        }
+      } catch (err) {
+        logger.warn({ err, sessionId }, "[plan] Post-session reassessment failed (non-fatal)");
+      }
+    })();
   }
 
   res.json({ ok: true, status: mapped.status });
@@ -645,7 +668,7 @@ router.patch("/sessions/:sessionId", async (req, res) => {
 });
 
 router.post("/sessions", requireAgentAuth(["sessions:write"]), async (req, res) => {
-  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider, githubToken: rawGithubToken, modelRoutingMode: rawModelRoutingMode, enableLaneBranches: rawEnableLaneBranches } = req.body;
+  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider, githubToken: rawGithubToken, modelRoutingMode: rawModelRoutingMode, enableLaneBranches: rawEnableLaneBranches, planId: requestedPlanId } = req.body;
   const modelRoutingMode: "auto" | "pinned" = rawModelRoutingMode === "pinned" ? "pinned" : "auto";
 
   // If no PAT was passed from the dashboard, attempt to load the stored OAuth token.
@@ -703,6 +726,38 @@ router.post("/sessions", requireAgentAuth(["sessions:write"]), async (req, res) 
     if (!nimApiKey) {
       res.status(400).json({
         error: `Provider "${prov}" is not configured — set the ${pc.envKey} environment variable to use this provider.`,
+      });
+      return;
+    }
+  }
+
+  // Validate planId existence before any DB writes to prevent sessions from
+  // being created with a dangling FK reference.
+  if (requestedPlanId != null) {
+    const planIdNum = Number(requestedPlanId);
+    if (!Number.isFinite(planIdNum) || planIdNum <= 0) {
+      res.status(400).json({ error: "planId must be a positive integer" });
+      return;
+    }
+    const [existingPlan] = await db
+      .select({ id: projectPlansTable.id, planRepoUrl: projectPlansTable.repoUrl, userId: projectPlansTable.userId })
+      .from(projectPlansTable)
+      .where(eq(projectPlansTable.id, planIdNum));
+    if (!existingPlan) {
+      res.status(400).json({ error: `Plan #${planIdNum} does not exist` });
+      return;
+    }
+    // Ownership: require userId in the request and verify it matches the plan owner.
+    // Unconditional — planId without a matching userId is rejected with 403.
+    const requestedUserId = typeof req.body.userId === "string" ? req.body.userId.trim() : "";
+    if (!requestedUserId || existingPlan.userId !== requestedUserId) {
+      res.status(403).json({ error: "Forbidden: plan does not belong to the requesting user" });
+      return;
+    }
+    // Reject cross-repo linkage when both sides carry a repoUrl.
+    if (repoUrl && existingPlan.planRepoUrl && existingPlan.planRepoUrl !== repoUrl) {
+      res.status(400).json({
+        error: `Plan #${planIdNum} belongs to a different repository (${existingPlan.planRepoUrl})`,
       });
       return;
     }
@@ -873,6 +928,8 @@ router.post("/sessions", requireAgentAuth(["sessions:write"]), async (req, res) 
         // Seed the active model from the launch parameters so model-history works immediately
         activeNimModelId: nimModelId ? String(nimModelId) : null,
         activeNimProvider: nimModelId ? String(nimProvider ?? "nvidia") : null,
+        // Link an approved project plan to this session for task tracking.
+        planId: requestedPlanId ? Number(requestedPlanId) : null,
       })
       .returning();
 
