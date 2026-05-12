@@ -94,6 +94,7 @@ function SectionEditor({
             ref={ref}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => { void handleSave(); }}
             onKeyDown={(e) => {
               if (e.key === "Escape") { setEditing(false); setDraft(value); }
             }}
@@ -106,7 +107,8 @@ function SectionEditor({
               color: "var(--text-primary)",
             }}
           />
-          <div className="flex gap-2 justify-end">
+          <div className="flex gap-2 justify-end items-center">
+            {saving && <Loader2 className="w-3 h-3 animate-spin" style={{ color: "var(--text-muted)" }} />}
             <button
               onClick={() => { setEditing(false); setDraft(value); }}
               className="text-[11px] px-3 py-1 rounded-lg transition-colors"
@@ -115,7 +117,7 @@ function SectionEditor({
               Cancel
             </button>
             <button
-              onClick={() => { void handleSave(); }}
+              onMouseDown={(e) => { e.preventDefault(); void handleSave(); }}
               disabled={saving}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1 rounded-lg transition-all disabled:opacity-40"
               style={{
@@ -124,7 +126,6 @@ function SectionEditor({
                 border: "1px solid rgba(0,180,216,0.2)",
               }}
             >
-              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
               Save
             </button>
           </div>
@@ -211,6 +212,7 @@ function FileDepsSection({
             ref={ref}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => { void handleSave(); }}
             onKeyDown={(e) => {
               if (e.key === "Escape") { setEditing(false); setDraft(value); }
             }}
@@ -223,7 +225,8 @@ function FileDepsSection({
               color: "var(--text-primary)",
             }}
           />
-          <div className="flex gap-2 justify-end">
+          <div className="flex gap-2 justify-end items-center">
+            {saving && <Loader2 className="w-3 h-3 animate-spin" style={{ color: "var(--text-muted)" }} />}
             <button
               onClick={() => { setEditing(false); setDraft(value); }}
               className="text-[11px] px-3 py-1 rounded-lg transition-colors"
@@ -232,7 +235,7 @@ function FileDepsSection({
               Cancel
             </button>
             <button
-              onClick={() => { void handleSave(); }}
+              onMouseDown={(e) => { e.preventDefault(); void handleSave(); }}
               disabled={saving}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1 rounded-lg transition-all disabled:opacity-40"
               style={{
@@ -241,7 +244,6 @@ function FileDepsSection({
                 border: "1px solid rgba(0,180,216,0.2)",
               }}
             >
-              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
               Save
             </button>
           </div>

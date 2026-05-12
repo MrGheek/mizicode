@@ -172,7 +172,15 @@ router.post("/plan/:planId/approve", async (req, res) => {
 
     const { userId, steps, explicitRemovals } = req.body as {
       userId?: string;
-      steps?: Array<{ text: string; priority?: string; stepIndex: number; existingTaskId?: unknown }>;
+      steps?: Array<{
+        text: string;
+        priority?: string;
+        stepIndex: number;
+        existingTaskId?: unknown;
+        doneLooksLike?: string | null;
+        outOfScope?: string | null;
+        fileDependencies?: string | null;
+      }>;
       explicitRemovals?: unknown;
     };
     if (!userId?.trim()) { res.status(400).json({ error: "userId is required" }); return; }
@@ -202,6 +210,9 @@ router.post("/plan/:planId/approve", async (req, res) => {
           ? s.priority : "normal") as "high" | "normal" | "low",
         stepIndex: i,
         existingTaskId,
+        doneLooksLike: typeof s.doneLooksLike === "string" ? s.doneLooksLike : s.doneLooksLike ?? null,
+        outOfScope: typeof s.outOfScope === "string" ? s.outOfScope : s.outOfScope ?? null,
+        fileDependencies: typeof s.fileDependencies === "string" ? s.fileDependencies : s.fileDependencies ?? null,
       };
     });
 
