@@ -2201,6 +2201,55 @@ ALTER TABLE ONLY public.templates
 
 
 --
+-- project_plans and project_tasks: added in migration 0028/0029.
+-- Included here so fresh bootstrap environments get the full current schema.
+--
+
+CREATE TABLE IF NOT EXISTS public.project_plans (
+    id serial PRIMARY KEY NOT NULL,
+    user_id text NOT NULL,
+    repo_url text,
+    title text NOT NULL,
+    version integer NOT NULL DEFAULT 1,
+    last_reassessment_summary text,
+    created_at timestamp NOT NULL DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.project_tasks (
+    id serial PRIMARY KEY NOT NULL,
+    plan_id integer NOT NULL,
+    step_index integer NOT NULL,
+    text text NOT NULL,
+    status text NOT NULL DEFAULT 'planned',
+    priority text NOT NULL DEFAULT 'normal',
+    confirmed_by_user boolean NOT NULL DEFAULT false,
+    origin_plan_version integer,
+    blocked_by jsonb,
+    session_id integer,
+    completed_at timestamp,
+    done_looks_like text,
+    out_of_scope text,
+    file_dependencies text,
+    created_at timestamp NOT NULL DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT now()
+);
+
+ALTER TABLE ONLY public.project_tasks
+    ADD CONSTRAINT project_tasks_plan_id_project_plans_id_fk
+    FOREIGN KEY (plan_id) REFERENCES public.project_plans(id) ON DELETE CASCADE
+    NOT VALID;
+
+ALTER TABLE ONLY public.project_tasks
+    ADD CONSTRAINT project_tasks_session_id_sessions_id_fk
+    FOREIGN KEY (session_id) REFERENCES public.sessions(id) ON DELETE SET NULL
+    NOT VALID;
+
+ALTER TABLE ONLY public.sessions
+    ADD COLUMN IF NOT EXISTS plan_id integer REFERENCES public.project_plans(id) ON DELETE SET NULL;
+
+
+--
 -- PostgreSQL database dump complete
 --
 
