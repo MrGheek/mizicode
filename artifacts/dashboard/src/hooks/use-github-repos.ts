@@ -31,13 +31,20 @@ interface ReposResponse {
 // Module-level page cache
 // ---------------------------------------------------------------------------
 const CACHE_TTL_MS = 60_000;
+const SEARCH_CACHE_TTL_MS = 30_000;
 
 interface CacheEntry {
   data: ReposResponse;
   fetchedAt: number;
 }
 
+interface SearchCacheEntry {
+  repos: GitHubRepo[];
+  fetchedAt: number;
+}
+
 const repoPageCache = new Map<number, CacheEntry>();
+const searchCache = new Map<string, SearchCacheEntry>();
 
 function getCachedPage(page: number): ReposResponse | null {
   const entry = repoPageCache.get(page);
@@ -53,8 +60,23 @@ function setCachedPage(data: ReposResponse): void {
   repoPageCache.set(data.page, { data, fetchedAt: Date.now() });
 }
 
+function getCachedSearch(q: string): GitHubRepo[] | null {
+  const entry = searchCache.get(q);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > SEARCH_CACHE_TTL_MS) {
+    searchCache.delete(q);
+    return null;
+  }
+  return entry.repos;
+}
+
+function setCachedSearch(q: string, repos: GitHubRepo[]): void {
+  searchCache.set(q, { repos, fetchedAt: Date.now() });
+}
+
 export function invalidateRepoCache(): void {
   repoPageCache.clear();
+  searchCache.clear();
 }
 // ---------------------------------------------------------------------------
 
@@ -219,6 +241,18 @@ export function useGitHubRepos(enabled: boolean) {
         return;
       }
 
+      const trimmed = q.trim();
+
+      // Serve from cache immediately if available — no spinner, no network call
+      const cached = getCachedSearch(trimmed);
+      if (cached) {
+        setRepos(cached);
+        setHasMore(false);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
       searchDebounceRef.current = setTimeout(async () => {
         const controller = new AbortController();
         searchAbortRef.current = controller;
@@ -226,7 +260,8 @@ export function useGitHubRepos(enabled: boolean) {
         setLoading(true);
         setError(null);
         try {
-          const results = await fetchSearchRepos(q.trim(), controller.signal);
+          const results = await fetchSearchRepos(trimmed, controller.signal);
+          setCachedSearch(trimmed, results);
           setRepos(results);
           setHasMore(false);
         } catch (err) {
