@@ -437,14 +437,36 @@ router.get("/auth/github/callback", async (req, res) => {
       .delete(operatorCredentialsTable)
       .where(eq(operatorCredentialsTable.provider, "github"));
 
-    await db.insert(operatorCredentialsTable).values({
-      provider: "github",
-      accessTokenEncrypted: encryptedToken,
-      refreshTokenEncrypted: encryptedRefreshToken,
-      refreshTokenExpiresAt: refreshTokenExpiresAt ?? undefined,
-      githubLogin,
-      githubAvatarUrl,
-    });
+    try {
+      await db.insert(operatorCredentialsTable).values({
+        provider: "github",
+        accessTokenEncrypted: encryptedToken,
+        refreshTokenEncrypted: encryptedRefreshToken,
+        refreshTokenExpiresAt: refreshTokenExpiresAt ?? undefined,
+        githubLogin,
+        githubAvatarUrl,
+      });
+    } catch (insertErr: unknown) {
+      // If the refresh_token columns don't exist yet (migration 0026 not yet
+      // applied — e.g. production hasn't been redeployed), retry without them
+      // so OAuth still succeeds. A redeploy will apply the migration.
+      const msg = String(insertErr instanceof Error ? insertErr.message : insertErr);
+      const isMissingColumn =
+        msg.includes("refresh_token_encrypted") ||
+        msg.includes("refresh_token_expires_at") ||
+        (msg.includes("column") && msg.includes("does not exist"));
+      if (!isMissingColumn) throw insertErr;
+      logger.warn(
+        { msg },
+        "GitHub OAuth: refresh_token columns missing — inserting without them (migration 0026 pending)"
+      );
+      await db.insert(operatorCredentialsTable).values({
+        provider: "github",
+        accessTokenEncrypted: encryptedToken,
+        githubLogin,
+        githubAvatarUrl,
+      });
+    }
 
     logger.info({ githubLogin }, "GitHub OAuth: token stored successfully");
 
