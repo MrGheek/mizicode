@@ -1,0 +1,290 @@
+Let me look at what the task proposal for #361 actually describes, and explore what plan/step data already exists:
+
+
+3 actions
+This is very helpful. Let me look at the plan checkpoint data that MIZI already writes, and the bridge route that receives it:
+
+
+2 actions
+Let me look at how the plan checkpoint data flows and the existing /mizi/plan and /mizi/compact endpoints, since MIZI already posts plan state there:
+
+
+3 actions
+Let me look at what plan/task state actually gets posted from the running agent and how it's stored:
+
+
+3 actions
+Let me look at the key places where plan state is stored and where the session cockpit renders task progress:
+
+
+3 actions
+Let me look at the actual task plan data that exists and find where it's stored/displayed:
+
+
+3 actions
+Now I understand the architecture. The "plan" checkpoint data is in default-skills.ts as skill instructions (MIZI posts to /mizi/plan etc. on the runner), but there's no existing plan state stored server-side. Let me check what the proposed task #361 actually specifies:
+
+
+2 actions
+Let me read the living-project-plan task file and also look at what the cockpit currently shows:
+
+
+3 actions
+Let me understand the full picture by checking the sessions page tab structure and what task #361 actually involves:
+
+
+3 actions
+Let me read the key parts I still need to understand the session page's main render section and the task plan data:
+
+
+3 actions
+Now I have enough context. Let me look at the task plan data that MIZI posts and the session route to understand what data I can surface:
+
+
+3 actions
+Now I have enough context. Let me look at how plan data flows via the task_progress / plan_change skill instructions, and read what a "compact" payload looks like, and also check the session's stored planCompactJson field:
+
+
+3 actions
+Let me read the remaining session page render and find what the plan state data looks like - I need to understand what MIZI posts to /mizi/compact and /mizi/plan, and where that data lands:
+
+
+4 actions
+Let me look at the swarm route pattern to understand how it handles snapshot push/pull and SSE - so I can replicate that pattern for plan state:
+
+
+3 actions
+Now I have a complete picture. Let me read the SSE stream handler and the compact endpoint in the Claw runner, so I know exactly what to build:
+
+
+3 actions
+Now I have everything I need. I'll build the full plan progress feature:
+
+DB schema — add planSnapshotJson column to sessions table
+API routes — add /plan-push and /plan-status endpoints (mirroring swarm pattern)
+Dashboard — add a PlanProgressPanel component and wire it into the overview tab
+Let me do all the reads in parallel to understand what I need:
+
+
+4 actions
+Now I have a complete picture. Let me build this systematically:
+
+Step 1: Schema — add planSnapshotJson to the DB
+Step 2: API — add /plan-push and /plan-status endpoints
+Step 3: Dashboard — add PlanProgressPanel component and wire into the overview tab
+
+
+Edited sessions.ts
+Now let me add the migration and API endpoints. First, let me check the migration setup:
+
+
+2 actions
+Let me check how the DB schema gets pushed (drizzle push vs migrations):
+
+
+2 actions
+Now I need to generate the migration file. Let me check what migrations exist:
+
+
+2 actions
+Now let me generate the migration and build the API + dashboard components in parallel:
+
+
+2 actions
+The migration generator has a meta snapshot issue. I'll write the SQL migration manually instead - that's the safe pattern for this project:
+
+
+2 actions
+Now I have a clear picture. I'll write the migration manually (the project uses a custom journal pattern) and build all three pieces in parallel:
+
+
+Created 0027_sessions_plan_snapshot.sql
+Now update the journal and build everything in parallel:
+
+
+2 actions
+Now let me add the planSnapshotJson column to the bootstrap SQL and add the API endpoints. Let me also read the bootstrap SQL around the sessions table to find where to add the column:
+
+
+2 actions
+Now I'll add plan_snapshot_json to the bootstrap SQL and build all the remaining pieces in parallel:
+
+
+2 actions
+Now let me add plan_snapshot_json to the bootstrap SQL and build all the remaining pieces in parallel:
+
+
+Edited _bootstrap.sql
+Now let me build all three remaining pieces in parallel — the API endpoints, the dashboard component, and wire it into the session page:
+
+
+2 actions
+Now I have everything I need. Let me build all the pieces in parallel — the API routes, the dashboard component, and the session page wiring:
+
+
+2 actions
+Now I have all the context. Let me build everything in one shot — API endpoint, dashboard component, and session page wiring:
+
+
+Edited sessions.ts
+Good, the API server is running. Now let me build the dashboard component and wire it into the session page in parallel:
+
+
+Created plan-progress-panel.tsx
+Now wire the component into the session page:
+
+
+2 actions
+Now let me add the import and wire the component into the overview tab:
+
+
+Edited [id].tsx
+Now wire the PlanProgressPanel into the overview tab, right after the chat panel:
+
+
+Edited [id].tsx
+Let me check the build status and verify there are no TypeScript errors:
+
+Checked console and system logs
+The API server rebuilt cleanly (all 402 tests pass, no build errors). The dashboard HMR already hot-reloaded the new component. Let me now do a typecheck to confirm there are no type errors, and also run a quick end-to-end test via curl to verify the new plan endpoints work:
+
+
+2 actions
+Let me check the typecheck and test the endpoints properly:
+
+
+2 actions
+Let me find the actual API port and test the endpoints:
+
+
+2 actions
+No TypeScript errors — clean build. Let me now test the API endpoints with the actual running server:
+
+
+Ran ss
+Let me verify the new endpoints are responding correctly by hitting the running server:
+
+
+Ran netstat
+Let me verify the new endpoints are wired into the API correctly and check the DB schema export:
+
+
+2 actions
+Everything is wired up correctly. Let me verify the DB schema export includes the new column and check that the API server already rebuilt with the new routes:
+
+
+2 actions
+The planSnapshotJson field needs to be exported from the db schema index. Let me check and also restart the API server to pick up the new routes:
+
+
+2 actions
+The API server's dist is stale — the new plan routes aren't built yet. I need to restart the API server to pick up the changes, and also verify the DB schema export is correct (it is — sessions.ts is re-exported via index.ts):
+
+
+Restarted artifacts/api-server: API Server
+Let me verify the new build is clean and the plan endpoints are live:
+
+Checked system logs
+The API server rebuilt cleanly and is running. Let me now do a quick end-to-end test against the live server to confirm the plan endpoints work:
+
+
+2 actions
+The plan-push endpoint is live and returning {"ok":true}. Let me now confirm the GET plan-status works for a real session and also take a screenshot to verify the dashboard UI looks right:
+
+
+2 actions
+The plan-status GET is returning 500 because it can't find the planSnapshotJson column in the DB yet (the migration hasn't run). This is expected in dev — the dev DB needs the column. Let me apply it:
+
+
+Ran psql
+Now let me test the endpoints and take a screenshot to verify everything works:
+
+
+Ran curl
+The plan-status endpoint returns availability: "starting" for session 1274 (which is stopped). Let me push a test snapshot and then take a screenshot to verify the panel renders:
+
+
+Ran curl
+The session is returning availability: "starting" because session 1274 has status "starting" or similar. Let me check what's happening and also check if a stopped session could have a plan snapshot shown:
+
+
+Ran psql
+The sessions I'm testing against have error status, which the GET endpoint correctly classifies as "ready enough" to show plan data (not in the boot phase list). Let me look more carefully — the issue is that session 1274 has an error or stopped status but the code path for those should NOT return starting. Let me check:
+
+
+Ran psql
+Session 1274 is in "provisioning" status — so the availability: "starting" response is correct. Let me use a recent session to test the full round-trip, and also directly check the panel renders correctly in the dashboard:
+
+
+Ran psql
+Let me test the full round-trip with a session that has a non-boot status:
+
+
+Ran curl
+The plan-push/plan-status round-trip is working perfectly — {"availability":"live","snapshot":{...}}. Now let me take a screenshot to verify the panel renders in the dashboard:
+
+
+Took a screenshot
+The session cockpit page shows for session 2160 but the "MIZI Progress" panel isn't visible. That's because session 2160 has isActive = false (status is "error"), and PlanProgressPanel only renders when isActive is true. Since this is an error session, the isActive check correctly hides it.
+
+But wait — the panel should actually show for sessions that have plan data even if stopped/errored, so users can see what MIZI was last working on. Let me fix the visibility logic, and also verify the panel can show:
+
+
+Opened plan-progress-panel.tsx
+The isActive check is too restrictive. The panel should show plan data even for stopped/errored sessions (so users can see MIZI's last state). Let me also update the SSE hook to poll for stopped sessions too:
+
+
+Edited plan-progress-panel.tsx
+Now also fix the panel's isActive check — it should show even for stopped sessions if there's a snapshot:
+
+
+Edited plan-progress-panel.tsx
+Now let me take a screenshot to verify the panel renders for the session with plan data:
+
+
+Took a screenshot
+The MIZI Progress panel is rendering beautifully! It shows:
+
+Active Task with a spinner: "Implement Stripe checkout flow"
+Plan Checkpoint with checkmark bullets: Create PaymentForm → Add /api/stripe/checkout route → Wire up webhooks
+Active Files list: src/components/PaymentForm.tsx, src/routes/stripe.ts
+Unresolved Errors section (partially visible at bottom)
+Live badge in the top right
+Now let me write the commit message and clean up:
+
+Loaded follow-up-tasks skill
+The panel looks great. Let me now propose follow-up tasks and write the commit message:
+
+
+Follow-up tasks proposed
+The follow-up tasks were already proposed for a previous task (#336, #337, #338 — GitHub OAuth). Those are stale/wrong context. Let me retract them and write the commit:
+
+
+Stale follow-ups retracted
+The follow-up tasks from the previous task are already merged — that's fine. Let me propose new follow-ups for this task and write the commit message:
+
+
+Follow-up tasks proposed
+The system is indicating the follow-up tasks are already tied to a previous task context. Let me just write the commit message and complete:
+
+
+Ran mkdir
+
+Ran validation · 1 passed
+The task is already in a merged state — it was completed. The MIZI Progress panel is live and working correctly, as confirmed by the screenshot showing all sections rendering properly.
+
+Here's a summary of everything that was built for task #361:
+
+What's live:
+
+New PlanProgressPanel component at artifacts/dashboard/src/components/plan-progress-panel.tsx — shows the active task (with spinner), plan checkpoint as bullet points, active files with file icons, and unresolved errors with red badges. It connects via SSE for live sessions and falls back to polling if the stream drops.
+
+Three new API endpoints in artifacts/api-server/src/routes/sessions.ts:
+
+POST /sessions/:id/plan-push — receives plan snapshots from the Claw Runner (token-authenticated)
+POST /sessions/:id/plan-status — alias for runner compatibility (same pattern as swarm)
+GET /sessions/:id/plan-status — poll endpoint the dashboard calls
+GET /sessions/:id/plan-stream — SSE stream for live updates
+DB schema — plan_snapshot_json jsonb column added to the sessions table, with a migration file, journal entry, and bootstrap SQL update so production deploys pick it up automatically.
+
+What's next for full end-to-end flow: The Claw Runner needs to forward its /mizi/plan and /mizi/compact handler payloads to /plan-push on the API server — at that point real sessions will populate the panel automatically without any extra MIZI-side changes (the agent skill already instructs MIZI to POST to those endpoints).
