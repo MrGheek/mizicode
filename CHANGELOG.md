@@ -1,3 +1,6 @@
+## v0.7.1 — 2026-05-12\n\n- Merge branch 'main' of https://github.com/MrGheek/mizicode (7e84526)
+- fix: OAuth callback defensive insert + rebuild stale lib/db type declarations (459022a)\n
+
 ## v0.7.0 — 2026-05-12\n\n- feat: persist repo list page-1 cache to localStorage (task #355) (421f333)
 - task(341): Add automated tests for GitHub repo picker (pagination and org grouping) (6b8e820)
 - feat: cache GitHub repo search results with 30s TTL (task #354) (166e65a)
