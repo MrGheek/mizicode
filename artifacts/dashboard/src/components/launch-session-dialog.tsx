@@ -14,11 +14,11 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Command, CommandInput,
+  Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem,
 } from "@/components/ui/command";
 import {
   Loader2, ChevronDown, ChevronRight, Wand2, Info,
-  Users, Plus, X, Play, Eye, EyeOff, KeyRound, Github, ChevronsUpDown,
+  Users, Plus, X, Play, Eye, EyeOff, KeyRound, Github, ChevronsUpDown, Check, Lock,
 } from "lucide-react";
 import { SkillClassBadge } from "@/components/skill-badges";
 import { useGitHubConnection } from "@/hooks/use-github-connection";

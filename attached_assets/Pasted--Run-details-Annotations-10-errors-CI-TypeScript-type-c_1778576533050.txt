@@ -1,0 +1,48 @@
+
+Run details
+Annotations
+10 errors
+CI / TypeScript type-check
+failed 1 hour ago in 55s
+Search logs
+2s
+2s
+1s
+9s
+6s
+31s
+Run pnpm run typecheck
+
+> workspace@0.0.0 typecheck /home/runner/work/mizicode/mizicode
+> pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck
+
+
+> workspace@0.0.0 typecheck:libs /home/runner/work/mizicode/mizicode
+> tsc --build
+
+Scope: 4 of 10 workspace projects
+artifacts/api-server typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/dashboard typecheck$ tsc -p tsconfig.json --noEmit
+artifacts/api-server typecheck: Done
+artifacts/mockup-sandbox typecheck$ tsc -p tsconfig.json --noEmit
+Error: artifacts/dashboard typecheck: src/components/launch-session-dialog.tsx(332,28): error TS2304: Cannot find name 'CommandList'.
+Error: artifacts/dashboard typecheck: src/components/launch-session-dialog.tsx(342,36): error TS2304: Cannot find name 'CommandEmpty'.
+Error: artifacts/dashboard typecheck: src/components/launch-session-dialog.tsx(342,66): error TS2304: Cannot find name 'CommandEmpty'.
+Error: artifacts/dashboard typecheck: src/components/launch-session-dialog.tsx(352,40): error TS2304: Cannot find name 'CommandGroup'.
+Error: artifacts/dashboard typecheck: src/components/launch-session-dialog.tsx(354,44): error TS2304: Cannot find name 'CommandItem'.
+Error: artifacts/dashboard typecheck: src/components/launch-session-dialog.tsx(362,46): error TS2304: Cannot find name 'Check'.
+Error: artifacts/dashboard typecheck: src/components/launch-session-dialog.tsx(365,139): error TS2607: JSX element class does not support attributes because it does not have a 'props' property.
+Error: artifacts/dashboard typecheck: src/components/launch-session-dialog.tsx(365,140): error TS2786: 'Lock' cannot be used as a JSX component.
+artifacts/dashboard typecheck:   Its type '{ new (): Lock; prototype: Lock; }' is not a valid JSX element type.
+artifacts/dashboard typecheck:     Type '{ new (): Lock; prototype: Lock; }' is not assignable to type 'new (props: any, context: any) => Component<any, any, any>'.
+artifacts/dashboard typecheck:       Type 'Lock' is missing the following properties from type 'Component<any, any, any>': context, setState, forceUpdate, render, and 2 more.
+Error: artifacts/dashboard typecheck: src/components/launch-session-dialog.tsx(367,45): error TS2304: Cannot find name 'CommandItem'.
+Error: artifacts/dashboard typecheck: src/components/launch-session-dialog.tsx(369,41): error TS2304: Cannot find name 'CommandGroup'.
+Error: artifacts/dashboard typecheck: src/components/launch-session-dialog.tsx(388,29): error TS2304: Cannot find name 'CommandList'.
+artifacts/dashboard typecheck: Failed
+/home/runner/work/mizicode/mizicode/artifacts/dashboard:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/dashboard@0.0.0 typecheck: `tsc -p tsconfig.json --noEmit`
+Exit status 2
+scripts typecheck$ tsc -p tsconfig.json --noEmit
+ ELIFECYCLE  Command failed with exit code 2.
+Error: Process completed with exit code 2.
