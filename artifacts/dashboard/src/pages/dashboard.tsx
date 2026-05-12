@@ -82,6 +82,9 @@ interface DraftPlanStep {
   stepIndex: number;
   text: string;
   priority: PlanTaskPriority;
+  doneLooksLike?: string | null;
+  outOfScope?: string | null;
+  fileDependencies?: string | null;
   isAdded?: boolean;       // new in this generation
   isChanged?: boolean;     // changed from prev plan
   isRemoved?: boolean;     // removed in this generation (ghost row)
@@ -95,6 +98,9 @@ interface GeneratePlanResponse {
     stepIndex: number;
     text: string;
     priority: PlanTaskPriority;
+    doneLooksLike?: string | null;
+    outOfScope?: string | null;
+    fileDependencies?: string | null;
     isAdded: boolean;
     isChanged: boolean;
     isRemoved: boolean;
@@ -676,6 +682,9 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHea
         isChanged: s.isChanged,
         isRemoved: false as const,
         existingTaskId: s.existingTaskId,
+        doneLooksLike: s.doneLooksLike ?? null,
+        outOfScope: s.outOfScope ?? null,
+        fileDependencies: s.fileDependencies ?? null,
       }));
       // Append ghost "removed" rows so the user can see what the LLM dropped.
       // existingTaskId is set so the approve handler can send them as explicitRemovals,
@@ -728,7 +737,7 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHea
             // Exclude ghost "removed" rows — display-only diff context.
             steps: planSteps
               .filter(s => !s.isRemoved)
-              .map((s, i) => ({ text: s.text, priority: s.priority, stepIndex: i, existingTaskId: s.existingTaskId ?? undefined })),
+              .map((s, i) => ({ text: s.text, priority: s.priority, stepIndex: i, existingTaskId: s.existingTaskId ?? undefined, doneLooksLike: s.doneLooksLike ?? null, outOfScope: s.outOfScope ?? null, fileDependencies: s.fileDependencies ?? null })),
             // Explicit removals: compare the immutable baseline (all existingTaskIds
             // that were present when the dialog opened) against the final approved set.
             // This correctly captures BOTH:
