@@ -370,6 +370,41 @@ router.delete("/plans/:planId/tasks/:taskId", async (req, res) => {
   }
 });
 
+// ── GET /api/sessions/:sessionId/plan ────────────────────────────────────────
+// Public (dashboard-safe): returns the plan + tasks linked to a session.
+// Returns { plan: null, tasks: [] } when no plan is linked.
+
+router.get("/sessions/:sessionId/plan", async (req, res) => {
+  try {
+    const sessionId = parseInt(req.params["sessionId"] as string, 10);
+    if (isNaN(sessionId)) { res.status(400).json({ error: "Invalid sessionId" }); return; }
+
+    const [session] = await db
+      .select({ planId: sessionsTable.planId })
+      .from(sessionsTable)
+      .where(eq(sessionsTable.id, sessionId));
+
+    if (!session) { res.status(404).json({ error: "Session not found" }); return; }
+
+    if (!session.planId) {
+      res.json({ plan: null, tasks: [] });
+      return;
+    }
+
+    const plan = await getPlanById(session.planId);
+    if (!plan) {
+      res.json({ plan: null, tasks: [] });
+      return;
+    }
+
+    const tasks = await getTasksForPlan(session.planId);
+    res.json({ plan, tasks });
+  } catch (err) {
+    logger.error({ err }, "[plan] GET /sessions/:sessionId/plan failed");
+    res.status(500).json({ error: "Failed to get session plan" });
+  }
+});
+
 // ── PATCH /api/sessions/:sessionId/plan ──────────────────────────────────────
 // Agent-only: requires a valid API key. The dashboard does not call this endpoint —
 // planId is passed at session creation time. This is used by server-side workflows
