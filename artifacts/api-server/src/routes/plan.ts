@@ -207,8 +207,11 @@ router.post("/plan/:planId/approve", async (req, res) => {
 
     const tasks = await approvePlan({ planId, userId: userId.trim(), steps: normalizedSteps, explicitRemovals: sanitisedRemovals });
 
+    // Re-fetch the plan so the response includes the bumped version number.
+    const plan = await getPlanById(planId);
+
     logger.info({ planId, userId, stepCount: tasks.length }, "[plan] Plan approved by user");
-    res.json({ ok: true, planId, tasks });
+    res.json({ ok: true, plan, tasks });
   } catch (err: unknown) {
     const statusCode = (err as { statusCode?: number }).statusCode;
     if (statusCode === 403) { res.status(403).json({ error: "Access denied" }); return; }

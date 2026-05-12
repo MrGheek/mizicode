@@ -347,20 +347,22 @@ export async function approvePlan(params: {
         : currentByText.get(step.text.toLowerCase().trim());
 
       if (existing) {
-        // Update text, index, and priority; preserve status/session/history fields.
+        // Update text, index, priority, and mark as user-confirmed.
+        // Preserve status/session/history fields so in-progress work is not lost.
         const [updated] = await tx.update(projectTasksTable)
-          .set({ text: step.text.trim(), stepIndex: i, priority, updatedAt: new Date() })
+          .set({ text: step.text.trim(), stepIndex: i, priority, confirmedByUser: true, updatedAt: new Date() })
           .where(eq(projectTasksTable.id, existing.id))
           .returning();
         rows.push(updated!);
       } else {
+        // New step authored or accepted by the user — mark confirmed immediately.
         const [inserted] = await tx.insert(projectTasksTable).values({
           planId: params.planId,
           stepIndex: i,
           text: step.text.trim(),
           status: "planned",
           priority,
-          confirmedByUser: false,
+          confirmedByUser: true,
           originPlanVersion: plan.version + 1,
         }).returning();
         rows.push(inserted!);
@@ -380,9 +382,10 @@ export async function approvePlan(params: {
   const authoritative = await getTasksForPlan(params.planId);
   await persistPlanToMemory(plan, authoritative);
 
-  const finalTasks = result.sort((a, b) => a.stepIndex - b.stepIndex);
+  // Return the full authoritative post-approve task set (includes any preserved
+  // confirmed/done tasks that were not in the transaction loop but survived deletion).
   logger.info({ planId: params.planId, userId: params.userId, stepCount: authoritative.length }, "[plan] Plan approved");
-  return finalTasks;
+  return authoritative;
 }
 
 export async function getPlansForUser(userId: string, repoUrl?: string | null): Promise<ProjectPlan[]> {
