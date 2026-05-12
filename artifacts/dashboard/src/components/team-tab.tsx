@@ -935,11 +935,27 @@ export function TeamTab({ sessionId }: { sessionId: number }) {
   const [subTab, setSubTab] = useState<TeamSubTab>("overview");
   const [latestLaneEvent, setLatestLaneEvent] = useState<LaneEventItem | null>(null);
   const latestLaneEventRef = useRef<LaneEventItem | null>(null);
+  const { toast } = useToast();
 
   const streamStatus = useCoordinationStream(sessionId, {
     onLaneEvent: (event) => {
       latestLaneEventRef.current = event;
       setLatestLaneEvent(event);
+    },
+    onPrOpened: (prUrl) => {
+      toast({
+        title: "Draft PR opened",
+        description: (
+          <a
+            href={prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 hover:opacity-80 transition-opacity break-all"
+          >
+            {prUrl}
+          </a>
+        ),
+      });
     },
   });
   const queryClient = useQueryClient();

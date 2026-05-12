@@ -33,6 +33,7 @@ import type { LaneEventItem } from "@/components/lane-timeline";
 
 export interface CoordinationStreamOptions {
   onLaneEvent?: (event: LaneEventItem) => void;
+  onPrOpened?: (prUrl: string) => void;
 }
 
 export function useCoordinationStream(
@@ -41,6 +42,8 @@ export function useCoordinationStream(
 ): CoordinationStreamStatus {
   const onLaneEventRef = useRef<((event: LaneEventItem) => void) | undefined>(options?.onLaneEvent);
   onLaneEventRef.current = options?.onLaneEvent;
+  const onPrOpenedRef = useRef<((prUrl: string) => void) | undefined>(options?.onPrOpened);
+  onPrOpenedRef.current = options?.onPrOpened;
   const queryClient = useQueryClient();
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -110,9 +113,12 @@ export function useCoordinationStream(
         if (cancelled) return;
         resetHeartbeat();
         try {
-          const msg = JSON.parse(event.data) as { type?: string; event?: LaneEventItem };
+          const msg = JSON.parse(event.data) as { type?: string; event?: LaneEventItem; prUrl?: string };
           if (msg.type === "coordination_update") {
             invalidateAll();
+            if (msg.prUrl) {
+              onPrOpenedRef.current?.(msg.prUrl);
+            }
           } else if (msg.type === "lane_event" && msg.event) {
             onLaneEventRef.current?.(msg.event);
           }

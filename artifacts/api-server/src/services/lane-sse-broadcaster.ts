@@ -31,10 +31,12 @@ export function removeCoordinationClient(sessionId: number, res: SseClient): voi
   }
 }
 
-export function broadcastCoordinationUpdate(sessionId: number): void {
+export function broadcastCoordinationUpdate(sessionId: number, prUrl?: string): void {
   const clients = coordinationClients.get(sessionId);
   if (!clients || clients.size === 0) return;
-  const payload = `data: ${JSON.stringify({ type: "coordination_update", sessionId })}\n\n`;
+  const msg: Record<string, unknown> = { type: "coordination_update", sessionId };
+  if (prUrl) msg["prUrl"] = prUrl;
+  const payload = `data: ${JSON.stringify(msg)}\n\n`;
   const dead: SseClient[] = [];
   for (const res of clients) {
     try { res.write(payload); } catch { dead.push(res); }

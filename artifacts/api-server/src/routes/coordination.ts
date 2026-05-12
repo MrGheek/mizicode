@@ -728,7 +728,7 @@ router.post("/sessions/:id/lanes/:laneId/handoff", async (req, res) => {
             .returning();
           if (updated) finalHandoff = updated;
           logger.info({ handoffId: handoff.id, prUrl }, "Draft PR opened for safe_to_merge handoff");
-          broadcastCoordinationUpdate(sessionId);
+          broadcastCoordinationUpdate(sessionId, prUrl);
         }
       } catch (err) {
         logger.warn({ err, handoffId: handoff.id }, "PR creation for safe_to_merge handoff failed (non-fatal)");
