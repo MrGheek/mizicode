@@ -1,3 +1,6 @@
+## v0.7.2 — 2026-05-12\n\n- Merge branch 'main' of https://github.com/MrGheek/mizicode (8c09f36)
+- fix: restore missing imports in launch-session-dialog.tsx (CI typecheck) (206697a)\n
+
 ## v0.7.1 — 2026-05-12\n\n- Merge branch 'main' of https://github.com/MrGheek/mizicode (7e84526)
 - fix: OAuth callback defensive insert + rebuild stale lib/db type declarations (459022a)\n
 
