@@ -11,6 +11,7 @@ import { seedDefaultBundles } from "./services/skills-bundler";
 import { seedCuratedSources } from "./services/curated-sources";
 import { startEvalScheduler } from "./services/skills-evals";
 import { validateMemoryDataDir, startMemoryDiskMonitor, runPassiveRecallBackfill } from "./services/memory";
+import { startPlanAutoAdvance } from "./services/plan-auto-advance";
 import { initSafetySubsystem, drainApprovedActions } from "./services/safety";
 import { startAmbientRunner, registerAmbientExecutors } from "./services/ambient";
 import { startClaimSweeper, sweepExpiredClaims, recordExternalSweep } from "./services/claim-sweeper";
@@ -213,6 +214,7 @@ server.listen(port, async (err?: Error) => {
   startClaimPurger();
   startEvalScheduler(60);
   startMemoryDiskMonitor();
+  startPlanAutoAdvance();
 
   try {
     await syncNimCatalog();
