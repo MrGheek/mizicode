@@ -280,6 +280,8 @@ export function TaskDetailDrawer({ task, onClose, onUpdated }: TaskDetailDrawerP
     setLocalTask(task);
   }, [task]);
 
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -291,16 +293,18 @@ export function TaskDetailDrawer({ task, onClose, onUpdated }: TaskDetailDrawerP
   if (!localTask) return null;
 
   const patchField = async (field: "doneLooksLike" | "outOfScope" | "fileDependencies", value: string) => {
-    const body: Record<string, string> = { userId: localTask.userId };
-    const apiField =
-      field === "doneLooksLike" ? "doneLooksLike" :
-      field === "outOfScope" ? "outOfScope" : "fileDependencies";
-    body[apiField] = value;
-    await fetch(`${BASE_URL}api/plans/${localTask.planId}/tasks/${localTask.id}`, {
+    const body: Record<string, string | null> = { userId: localTask.userId };
+    body[field] = value;
+    setSaveError(null);
+    const res = await fetch(`${BASE_URL}api/plans/${localTask.planId}/tasks/${localTask.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    if (!res.ok) {
+      setSaveError(`Save failed (${res.status})`);
+      return;
+    }
     const patch = { [field]: value } as Partial<Pick<TaskDetail, "doneLooksLike" | "outOfScope" | "fileDependencies">>;
     setLocalTask((prev) => prev ? { ...prev, ...patch } : prev);
     onUpdated?.(localTask.id, patch);
@@ -402,10 +406,10 @@ export function TaskDetailDrawer({ task, onClose, onUpdated }: TaskDetailDrawerP
           className="px-5 py-3 shrink-0 text-[10px]"
           style={{
             borderTop: "1px solid var(--border-glass-soft)",
-            color: "var(--text-muted)",
+            color: saveError ? "#f87171" : "var(--text-muted)",
           }}
         >
-          Changes are saved automatically · Press Esc to close
+          {saveError ?? "Changes are saved automatically · Press Esc to close"}
         </div>
       </div>
     </>
