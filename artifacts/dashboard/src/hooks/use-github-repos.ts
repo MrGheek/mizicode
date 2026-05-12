@@ -32,6 +32,7 @@ interface ReposResponse {
 // ---------------------------------------------------------------------------
 const CACHE_TTL_MS = 60_000;
 const SEARCH_CACHE_TTL_MS = 30_000;
+const LS_CACHE_KEY = "mizi.repoCache.page1";
 
 interface CacheEntry {
   data: ReposResponse;
@@ -46,18 +47,56 @@ interface SearchCacheEntry {
 const repoPageCache = new Map<number, CacheEntry>();
 const searchCache = new Map<string, SearchCacheEntry>();
 
+// Seed in-memory cache from localStorage on module load
+(function seedFromLocalStorage() {
+  try {
+    const raw = localStorage.getItem(LS_CACHE_KEY);
+    if (!raw) return;
+    const entry = JSON.parse(raw) as CacheEntry;
+    // Basic shape guard — reject corrupted or manually-set entries
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      typeof entry.fetchedAt !== "number" ||
+      typeof entry.data !== "object" ||
+      !Array.isArray(entry.data?.repos) ||
+      typeof entry.data?.hasMore !== "boolean" ||
+      typeof entry.data?.page !== "number"
+    ) {
+      localStorage.removeItem(LS_CACHE_KEY);
+      return;
+    }
+    if (Date.now() - entry.fetchedAt <= CACHE_TTL_MS) {
+      repoPageCache.set(1, entry);
+    } else {
+      localStorage.removeItem(LS_CACHE_KEY);
+    }
+  } catch {
+    // ignore parse errors
+  }
+})();
+
 function getCachedPage(page: number): ReposResponse | null {
   const entry = repoPageCache.get(page);
   if (!entry) return null;
   if (Date.now() - entry.fetchedAt > CACHE_TTL_MS) {
     repoPageCache.delete(page);
+    if (page === 1) {
+      try { localStorage.removeItem(LS_CACHE_KEY); } catch { /* ignore */ }
+    }
     return null;
   }
   return entry.data;
 }
 
 function setCachedPage(data: ReposResponse): void {
-  repoPageCache.set(data.page, { data, fetchedAt: Date.now() });
+  const entry: CacheEntry = { data, fetchedAt: Date.now() };
+  repoPageCache.set(data.page, entry);
+  if (data.page === 1) {
+    try {
+      localStorage.setItem(LS_CACHE_KEY, JSON.stringify(entry));
+    } catch { /* ignore quota errors */ }
+  }
 }
 
 function getCachedSearch(q: string): GitHubRepo[] | null {
@@ -77,6 +116,7 @@ function setCachedSearch(q: string, repos: GitHubRepo[]): void {
 export function invalidateRepoCache(): void {
   repoPageCache.clear();
   searchCache.clear();
+  try { localStorage.removeItem(LS_CACHE_KEY); } catch { /* ignore */ }
 }
 // ---------------------------------------------------------------------------
 
