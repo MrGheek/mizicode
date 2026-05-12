@@ -12,9 +12,9 @@
 #       VULTR_INFERENCE_API_KEY="..." \
 #       TOGETHER_API_KEY="..." \
 #       DEEPINFRA_API_KEY="..."
-#   fly deploy --config artifacts/api-server/fly.toml \
-#       --dockerfile artifacts/api-server/Dockerfile \
-#       --build-context .
+#   fly deploy . \
+#       --config artifacts/api-server/fly.toml \
+#       --dockerfile artifacts/api-server/Dockerfile
 #
 # Secrets (set via `fly secrets set`):
 #   Required:
