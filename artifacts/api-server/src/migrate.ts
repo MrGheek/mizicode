@@ -50,6 +50,7 @@ import crypto from "crypto";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { createPool } from "@workspace/db";
+import { withReadWrite, withFlyLeaderPort } from "./migrate-helpers.js";
 
 // MIGRATE_DATABASE_URL takes priority over DATABASE_URL.
 // Use it to provide a URL that explicitly targets the primary, e.g. the
@@ -58,53 +59,6 @@ const rawUrl = process.env["MIGRATE_DATABASE_URL"] ?? process.env["DATABASE_URL"
 if (!rawUrl) {
   console.error("[migrate] DATABASE_URL (or MIGRATE_DATABASE_URL) is not set — cannot run migrations");
   process.exit(1);
-}
-
-/**
- * Append `-c default_transaction_read_only=off` to the PostgreSQL startup
- * options so Drizzle's internal connections open in read-write mode even
- * when the role default is read-only.
- */
-function withReadWrite(connectionString: string): string {
-  try {
-    const u = new URL(connectionString);
-    const existing = u.searchParams.get("options") ?? "";
-    const flag = "-c default_transaction_read_only=off";
-    u.searchParams.set("options", existing ? `${existing} ${flag}` : flag);
-    return u.toString();
-  } catch {
-    console.warn("[migrate] Could not parse DATABASE_URL as a URL — using as-is");
-    return connectionString;
-  }
-}
-
-/**
- * For Fly.io Postgres clusters: DATABASE_URL from `fly postgres attach`
- * uses port 5432 which connects directly to a specific machine — that
- * machine may be a replica.  Port 5433 is served by HAProxy and always
- * routes to the current leader/primary, so swap 5432 → 5433 for any
- * Fly.io internal hostname (.internal or .flycast).
- *
- * Only activates when MIGRATE_DATABASE_URL is not already set (if the
- * caller explicitly provided a URL they know it's correct).
- */
-function withFlyLeaderPort(connectionString: string): string {
-  if (process.env["MIGRATE_DATABASE_URL"]) return connectionString; // explicit override, don't touch
-  try {
-    const u = new URL(connectionString);
-    const isFlyInternal =
-      u.hostname.endsWith(".internal") || u.hostname.endsWith(".flycast");
-    if (isFlyInternal && u.port === "5432") {
-      u.port = "5433";
-      console.log(
-        `[migrate] Fly.io Postgres detected — routing via HAProxy leader port 5433 ` +
-        `(was 5432 direct). Set MIGRATE_DATABASE_URL to override.`
-      );
-    }
-    return u.toString();
-  } catch {
-    return connectionString;
-  }
 }
 
 const pool = createPool(withReadWrite(withFlyLeaderPort(rawUrl)));
