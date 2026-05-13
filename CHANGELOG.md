@@ -1,3 +1,11 @@
+## v0.9.0 — 2026-05-13\n\n- Merge branch 'main' of https://github.com/MrGheek/mizicode (af28078)
+- Improve task detail saving and error handling (31e3be8)
+- feat: Task #374 — task detail drawer with View button on plan board cards (5e6b65f)
+- feat: Task #374 — task detail drawer with View button on plan board cards (d8422ce)
+- feat: Task #374 — task detail drawer with View button on plan board cards (da524c7)
+- feat: Task #374 — task detail drawer with View button on plan board cards (211d80a)
+- Transitioned from Plan to Build mode (15e4a96)\n
+
 ## v0.8.0 — 2026-05-12\n\n- Task #361: Show task progress in the session cockpit while MIZI is working (341084a)
 - feat(plan-auto-advance): auto-advance plan task status from memory observations (Task #362) (4849fc3)
 - Add panel to show task progress during a session (8788e34)
