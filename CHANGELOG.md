@@ -1,3 +1,15 @@
+## v0.8.0 — 2026-05-12\n\n- Task #361: Show task progress in the session cockpit while MIZI is working (341084a)
+- feat(plan-auto-advance): auto-advance plan task status from memory observations (Task #362) (4849fc3)
+- Add panel to show task progress during a session (8788e34)
+- Task #363: Wire up the plan-approve endpoint so edited steps are saved before launch (d75c018)
+- feat(#327): Show 'Draft PR opened' toast when handoff auto-opens a PR (ebb8807)
+- fix(#360): round 20 — audit trail, memory identity, event contract (db6b46f)
+- feat: show MIZI task progress in session cockpit (task #361) (9e8ea0e)
+- Update deployment process to use correct commands (9f65acd)
+- Correct deploy command and clarify project requirements (37190ec)
+- Merge branch 'main' of https://github.com/MrGheek/mizicode (f6a16fd)
+- Improve database migration reliability on Fly.io (5b6b4e6)\n
+
 ## v0.7.2 — 2026-05-12\n\n- Merge branch 'main' of https://github.com/MrGheek/mizicode (8c09f36)
 - fix: restore missing imports in launch-session-dialog.tsx (CI typecheck) (206697a)\n
 
