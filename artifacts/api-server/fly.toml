@@ -3,28 +3,44 @@
 #
 # Deploy with:
 #   fly launch --config artifacts/api-server/fly.toml
-#   fly secrets set --config artifacts/api-server/fly.toml \
+#   fly secrets set --app mizi-api \
 #       DATABASE_URL="postgres://..." \
+#       MIZI_ENCRYPTION_KEY="$(openssl rand -hex 32)" \
+#       MIZI_MEM_TOKEN="$(openssl rand -hex 32)" \
 #       VASTAI_API_KEY="..." \
-#       AI_INTEGRATIONS_OPENAI_API_KEY="..." \
-#       AI_INTEGRATIONS_OPENAI_BASE_URL="https://..." \
-#       NVIDIA_NIM_API_KEY="nvapi-..." \
-#       VULTR_INFERENCE_API_KEY="..." \
-#       TOGETHER_API_KEY="..." \
-#       DEEPINFRA_API_KEY="..."
+#       GITHUB_OAUTH_CLIENT_ID="..." \
+#       GITHUB_OAUTH_CLIENT_SECRET="..." \
+#       DASHBOARD_URL="https://mizicode.fly.dev" \
+#       NVIDIA_NIM_API_KEY="nvapi-..."
 #   fly deploy . \
 #       --config artifacts/api-server/fly.toml \
 #       --dockerfile artifacts/api-server/Dockerfile
 #
-# Secrets (set via `fly secrets set`):
-#   Required:
+# Secrets (set via `fly secrets set --app mizi-api`):
+#
+#   Core (required — server will not start without these in production):
 #     DATABASE_URL                     — PostgreSQL connection string (auto-set by fly postgres attach)
+#     MIZI_ENCRYPTION_KEY              — 64-hex-char key for encrypting stored connection strings
+#                                        Generate: openssl rand -hex 32
+#     MIZI_MEM_TOKEN                   — Token used to derive the GitHub OAuth token encryption key.
+#                                        Generate: openssl rand -hex 32
+#                                        Missing = server crashes mid-OAuth-callback with "error" redirect
+#
+#   GitHub OAuth (required for Connect GitHub to work):
+#     GITHUB_OAUTH_CLIENT_ID           — OAuth App client ID (from github.com/settings/developers)
+#     GITHUB_OAUTH_CLIENT_SECRET       — OAuth App client secret
+#     DASHBOARD_URL                    — Full URL of the dashboard, e.g. https://mizicode.fly.dev
+#                                        Required when the dashboard and API are on different origins.
+#                                        Without it, post-OAuth redirects go to the API root instead
+#                                        of the dashboard — the token is stored but the dashboard
+#                                        never receives the ?github_oauth=connected signal.
+#
+#   AI providers (at least one required for AI features):
+#     NVIDIA_NIM_API_KEY               — NVIDIA NIM API key (recommended, free tier available)
 #     VASTAI_API_KEY                   — Vast.ai REST API key
-#     NVIDIA_NIM_API_KEY               — NVIDIA NIM API key (recommended AI provider, free tier available)
-#   Optional AI providers (only needed if not using NVIDIA NIM):
+#   Optional additional model providers:
 #     AI_INTEGRATIONS_OPENAI_API_KEY   — OpenAI-compatible API key
 #     AI_INTEGRATIONS_OPENAI_BASE_URL  — OpenAI-compatible base URL
-#   Optional additional model providers:
 #     VULTR_INFERENCE_API_KEY          — Vultr Inference model provider
 #     TOGETHER_API_KEY                 — Together.xyz model provider
 #     DEEPINFRA_API_KEY                — DeepInfra model provider

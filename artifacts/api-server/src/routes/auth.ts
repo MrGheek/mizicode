@@ -328,6 +328,26 @@ router.get("/auth/github", (req, res) => {
     }
   }
 
+  // Warn in production when DASHBOARD_URL is not configured and the candidate
+  // origin (from Referer/Origin headers) was the only signal we had.  This
+  // surfaces the misconfiguration immediately in server logs instead of leaving
+  // the operator wondering why OAuth redirects land on the API server root.
+  if (process.env["NODE_ENV"] === "production" && !configuredDashboardUrl) {
+    if (candidateOrigin && candidateOrigin !== sameOrigin) {
+      logger.warn(
+        { candidateOrigin, sameOrigin },
+        "GitHub OAuth: DASHBOARD_URL is not set — return_to origin validated via Referer/Origin header only (less reliable). " +
+        `Set DASHBOARD_URL=${candidateOrigin} on the mizi-api Fly.io app to make this explicit.`,
+      );
+    } else if (!candidateOrigin) {
+      logger.warn(
+        { sameOrigin },
+        "GitHub OAuth: DASHBOARD_URL is not set and no Referer/Origin header present — post-OAuth redirect will go to API server root " +
+        `(${sameOrigin}) instead of the dashboard. Set DASHBOARD_URL=https://<dashboard-hostname> on the mizi-api Fly.io app.`,
+      );
+    }
+  }
+
   oauthStateMap.set(state, { expiry: Date.now() + OAUTH_STATE_TTL_MS, returnOrigin, returnTo });
 
   // Build callback URL from request host so it works in both dev and prod.

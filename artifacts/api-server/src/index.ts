@@ -96,6 +96,23 @@ if (process.env["NODE_ENV"] === "production" && !process.env["MIZI_ENCRYPTION_KE
   process.exit(1);
 }
 
+// Production guard: MIZI_MEM_TOKEN must be set when NODE_ENV=production.
+// Without it, deriveEncryptionKey() throws mid-OAuth-callback, causing the
+// GitHub token to never be stored and the user to see ?github_oauth=error.
+if (process.env["NODE_ENV"] === "production" && !process.env["MIZI_MEM_TOKEN"]) {
+  logger.error("MIZI_MEM_TOKEN is required in production — GitHub OAuth token encryption will crash at runtime without it. Generate one with: openssl rand -hex 32");
+  process.exit(1);
+}
+
+// Production warning: DASHBOARD_URL should be set when the dashboard and API
+// are on different origins (the typical Fly.io deployment: mizicode.fly.dev +
+// mizi-api.fly.dev). Without it, post-OAuth redirects fall back to the API
+// server root instead of the dashboard — the token IS stored but the dashboard
+// never sees the ?github_oauth=connected signal, so it shows as disconnected.
+if (process.env["NODE_ENV"] === "production" && !process.env["DASHBOARD_URL"]) {
+  logger.warn("DASHBOARD_URL is not set. GitHub OAuth redirects will fall back to the API server origin after sign-in. Set DASHBOARD_URL=https://<your-dashboard-hostname> on the mizi-api Fly.io app.");
+}
+
 // ─── Database migrations ──────────────────────────────────────────────────────
 // In production, migrations are applied by the Fly.io release command
 // (dist/migrate.mjs) before any instances start, so we skip them here.
