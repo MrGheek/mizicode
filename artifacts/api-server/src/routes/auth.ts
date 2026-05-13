@@ -321,7 +321,15 @@ router.get("/auth/github", (req, res) => {
       if (allowedOrigins.size > 0 && allowedOrigins.has(returnToUrl.origin)) {
         returnTo = rawReturnTo;
       } else {
-        logger.warn({ rawReturnTo, allowedOrigins: [...allowedOrigins] }, "GitHub OAuth: return_to rejected — origin not trusted");
+        const isProdMissingDashboardUrl =
+          process.env["NODE_ENV"] === "production" && !configuredDashboardUrl;
+        const hint = isProdMissingDashboardUrl
+          ? ` Set DASHBOARD_URL=${returnToUrl.origin} on the mizi-api Fly.io app to allow this origin.`
+          : "";
+        logger.warn(
+          { rejectedOrigin: returnToUrl.origin, allowedOrigins: [...allowedOrigins] },
+          `GitHub OAuth: return_to rejected — origin not trusted.${hint}`,
+        );
       }
     } catch {
       logger.warn({ rawReturnTo }, "GitHub OAuth: return_to rejected — invalid URL");
