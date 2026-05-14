@@ -251,3 +251,124 @@ describe("rankSkills — intent signal differentiates same-taskMode sessions", (
     ).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// rankSkills — language-specific workflow skills rank for their repo type
+// ---------------------------------------------------------------------------
+
+const LANG_NATIVE_SOURCE = { repoUrl: "https://github.com/mizi/skills", trust: "mizi_native" as const };
+
+const pythonWorkflow = makeManifest({
+  id: "python-workflow",
+  name: "Python Workflow",
+  class: "efficiency",
+  source: LANG_NATIVE_SOURCE,
+  summary: "Idiomatic Python toolchain guidance — uv for packages, mypy/ruff for quality, pytest via uv run — prevents broken venvs and silent type errors.",
+  triggers: {
+    tasks: ["build", "debug", "refactor", "review"],
+    repoKinds: ["python", "django", "fastapi", "flask"],
+    sessionModes: ["solo", "team"],
+  },
+  compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode", "bolt"] },
+  cost: { tokenOverheadEstimate: 200 },
+  rankingHints: { taskFitWeight: 0.9, repoFitWeight: 0.9, measuredLiftWeight: 0.9 },
+});
+
+const goWorkflow = makeManifest({
+  id: "go-workflow",
+  name: "Go Workflow",
+  class: "efficiency",
+  source: LANG_NATIVE_SOURCE,
+  summary: "Idiomatic Go toolchain guidance — build, vet, mod tidy, gofmt — prevents silent compile failures and import errors.",
+  triggers: {
+    tasks: ["build", "debug", "refactor", "review"],
+    repoKinds: ["go", "golang"],
+    sessionModes: ["solo", "team"],
+  },
+  compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode", "bolt"] },
+  cost: { tokenOverheadEstimate: 160 },
+  rankingHints: { taskFitWeight: 0.9, repoFitWeight: 0.9, measuredLiftWeight: 0.9 },
+});
+
+const rustWorkflow = makeManifest({
+  id: "rust-workflow",
+  name: "Rust Workflow",
+  class: "efficiency",
+  source: LANG_NATIVE_SOURCE,
+  summary: "Idiomatic Rust toolchain guidance — cargo check, clippy, fmt, cargo add — prevents silent compile failures and avoids hand-editing Cargo.toml.",
+  triggers: {
+    tasks: ["build", "debug", "refactor", "review"],
+    repoKinds: ["rust"],
+    sessionModes: ["solo", "team"],
+  },
+  compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode", "bolt"] },
+  cost: { tokenOverheadEstimate: 180 },
+  rankingHints: { taskFitWeight: 0.9, repoFitWeight: 0.95, measuredLiftWeight: 0.9 },
+});
+
+// Five generic competitor skills with repoKinds: ["any"] — broad but not
+// language-specialised. They score well (~5.05 each) against a deepseek
+// model profile but cannot match the language-specific repoFit boost that
+// the workflow skills earn when the session language aligns.
+const genericCompetitors = ["generic-a", "generic-b", "generic-c", "generic-d", "generic-e"].map(id =>
+  makeManifest({
+    id,
+    name: id,
+    summary: `General-purpose skill: ${id}`,
+    triggers: { tasks: ["build"], repoKinds: ["any"], sessionModes: ["solo"] },
+    compatibility: { models: ["all"], interfaces: ["all"] },
+    cost: { tokenOverheadEstimate: 100 },
+    rankingHints: { taskFitWeight: 1.0, repoFitWeight: 0.5, measuredLiftWeight: 0.0 },
+  }),
+);
+
+// Helper: build a build-mode session context for a given language.
+// modelProfile "deepseek" is in the compatibility list of all three language
+// workflow skills, giving them full modelFit (1.0) and making the repo-kind
+// signal the clean differentiator under test.
+function langCtx(lang: string): SessionContext {
+  return {
+    sessionType: "solo",
+    taskMode: "build",
+    modelProfile: "deepseek",
+    repoLangs: [lang],
+    tokenMode: "core",
+  };
+}
+
+describe("rankSkills — language workflow skills rank in top 5 for their repo type", () => {
+  it("python-workflow ranks in top 5 for a Python build session", () => {
+    const pool = [...genericCompetitors, pythonWorkflow, goWorkflow, rustWorkflow];
+    const ranked = rankSkills(pool, langCtx("python"));
+    const position = ranked.findIndex(r => r.manifest.id === "python-workflow");
+    expect(position).toBeGreaterThanOrEqual(0);
+    expect(position).toBeLessThan(5);
+  });
+
+  it("go-workflow ranks in top 5 for a Go build session", () => {
+    const pool = [...genericCompetitors, pythonWorkflow, goWorkflow, rustWorkflow];
+    const ranked = rankSkills(pool, langCtx("go"));
+    const position = ranked.findIndex(r => r.manifest.id === "go-workflow");
+    expect(position).toBeGreaterThanOrEqual(0);
+    expect(position).toBeLessThan(5);
+  });
+
+  it("rust-workflow ranks in top 5 for a Rust build session", () => {
+    const pool = [...genericCompetitors, pythonWorkflow, goWorkflow, rustWorkflow];
+    const ranked = rankSkills(pool, langCtx("rust"));
+    const position = ranked.findIndex(r => r.manifest.id === "rust-workflow");
+    expect(position).toBeGreaterThanOrEqual(0);
+    expect(position).toBeLessThan(5);
+  });
+
+  it("go-workflow does NOT appear in top 5 for a Python build session", () => {
+    // python-workflow (repoKinds: python/django/fastapi/flask) gets full
+    // repoFit against repoLangs:["python"]; go-workflow (repoKinds: go/golang)
+    // falls back to the no-match score (0.2) and is pushed outside the top 5
+    // by python-workflow plus the five generic competitors.
+    const pool = [...genericCompetitors, pythonWorkflow, goWorkflow];
+    const ranked = rankSkills(pool, langCtx("python"));
+    const position = ranked.findIndex(r => r.manifest.id === "go-workflow");
+    expect(position).toBeGreaterThanOrEqual(5);
+  });
+});
