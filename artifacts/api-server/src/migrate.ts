@@ -113,11 +113,25 @@ async function waitForPrimary(maxWaitMs = 90_000): Promise<void> {
       try { await client.query("ROLLBACK"); } catch { /* ignore */ }
 
       const elapsed = Date.now() - start;
-      if (!isReadOnly || elapsed >= maxWaitMs) {
+      if (!isReadOnly) {
+        // Non-recovery error (auth failure, connection refused, etc.) — fatal.
         throw new Error(
-          `[migrate] Server not writable after ${Math.round(elapsed / 1000)}s: ${msg}. ` +
-          `Ensure DATABASE_URL points to the primary.`
+          `[migrate] Cannot connect to database: ${msg}. ` +
+          `Ensure DATABASE_URL is set correctly.`
         );
+      }
+
+      if (elapsed >= maxWaitMs) {
+        // Timed out waiting for primary — log a warning and proceed.
+        // Every migration SQL step uses BEGIN READ WRITE explicitly, so if
+        // the server truly isn't writable the migration will fail there with
+        // a clear error.  This avoids blocking deploys when the HAProxy
+        // routing is temporarily stale (e.g. post-failover window on Fly.io).
+        console.warn(
+          `[migrate] WARNING: Server did not become writable after ${Math.round(elapsed / 1000)}s ` +
+          `(last error: ${msg}). Proceeding anyway — migration SQL will fail if not on primary.`
+        );
+        return;
       }
 
       console.log(`[migrate] Server not yet writable (attempt ${attempt}, ${Math.round(elapsed / 1000)}s elapsed): ${msg} — waiting 5s…`);
@@ -279,6 +293,52 @@ async function runIncrementalMigrations(migrationsFolder: string): Promise<void>
     entries: Array<{ tag: string; when: number }>;
   };
 
+  // --- Phase 1: read-only scan to find unapplied migrations ---
+  // This phase works on replicas too, so it never blocks deploys.
+  const unapplied: Array<{ tag: string; content: string; when: number }> = [];
+  {
+    const client = await pool.connect();
+    try {
+      // Check if the tracking table even exists.
+      const tableExists = await client.query<{ exists: boolean }>(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_schema = 'drizzle' AND table_name = '__drizzle_migrations'
+        ) AS exists
+      `);
+
+      let appliedHashes = new Set<string>();
+      if (tableExists.rows[0]?.exists) {
+        const { rows } = await client.query<{ hash: string }>(
+          `SELECT hash FROM drizzle.__drizzle_migrations`
+        );
+        appliedHashes = new Set(rows.map((r) => r.hash));
+      }
+
+      for (const entry of journal.entries) {
+        const sqlPath = path.join(migrationsFolder, `${entry.tag}.sql`);
+        if (!fs.existsSync(sqlPath)) {
+          console.warn(`[migrate] Journal references ${entry.tag}.sql but file is missing — skipping`);
+          continue;
+        }
+        const content = fs.readFileSync(sqlPath, "utf-8");
+        const hash = crypto.createHash("sha256").update(content).digest("hex");
+        if (!appliedHashes.has(hash)) {
+          unapplied.push({ tag: entry.tag, content, when: entry.when });
+        }
+      }
+    } finally {
+      client.release();
+    }
+  }
+
+  if (unapplied.length === 0) {
+    console.log(`[migrate] No new migrations — database is up to date.`);
+    return;
+  }
+
+  // --- Phase 2: write phase — requires a writable (primary) connection ---
+  // This will fail cleanly if the pool is connected to a replica.
   const client = await pool.connect();
   try {
     // Ensure the Drizzle tracking schema and table exist (idempotent).
@@ -293,49 +353,25 @@ async function runIncrementalMigrations(migrationsFolder: string): Promise<void>
     `);
     await client.query("COMMIT");
 
-    // Fetch all hashes that are already applied.
-    const { rows } = await client.query<{ hash: string }>(
-      `SELECT hash FROM drizzle.__drizzle_migrations`
-    );
-    const appliedHashes = new Set(rows.map((r) => r.hash));
-
-    let newCount = 0;
-    for (const entry of journal.entries) {
-      const sqlPath = path.join(migrationsFolder, `${entry.tag}.sql`);
-      if (!fs.existsSync(sqlPath)) {
-        console.warn(`[migrate] Journal references ${entry.tag}.sql but file is missing — skipping`);
-        continue;
-      }
-
-      const content = fs.readFileSync(sqlPath, "utf-8");
-      const hash = crypto.createHash("sha256").update(content).digest("hex");
-
-      if (appliedHashes.has(hash)) continue; // Already applied.
-
-      console.log(`[migrate] Applying migration: ${entry.tag}`);
+    for (const { tag, content, when } of unapplied) {
+      console.log(`[migrate] Applying migration: ${tag}`);
       await client.query("BEGIN READ WRITE");
       try {
         await client.query(content);
         await client.query(
           `INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ($1, $2)`,
-          [hash, entry.when]
+          [crypto.createHash("sha256").update(content).digest("hex"), when]
         );
         await client.query("COMMIT");
-        appliedHashes.add(hash);
-        newCount++;
       } catch (err) {
         await client.query("ROLLBACK");
         throw new Error(
-          `[migrate] Migration ${entry.tag} failed: ${err instanceof Error ? err.message : String(err)}`
+          `[migrate] Migration ${tag} failed: ${err instanceof Error ? err.message : String(err)}`
         );
       }
     }
 
-    if (newCount > 0) {
-      console.log(`[migrate] Applied ${newCount} new migration(s).`);
-    } else {
-      console.log(`[migrate] No new migrations — database is up to date.`);
-    }
+    console.log(`[migrate] Applied ${unapplied.length} new migration(s).`);
   } finally {
     client.release();
   }

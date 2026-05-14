@@ -16,6 +16,24 @@ if (!process.env.DATABASE_URL) {
 }
 
 export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+/**
+ * Force read-write mode on every connection acquired from the pool.
+ *
+ * The production role (mizi_api) has default_transaction_read_only=on.
+ * Drizzle issues a plain BEGIN (not BEGIN READ WRITE), which inherits the
+ * role default and makes every INSERT/UPDATE/DELETE fail.
+ *
+ * Running SET SESSION CHARACTERISTICS AS TRANSACTIONS READ WRITE on each
+ * fresh connection overrides the role default at the session level —
+ * stronger than a connection-string option — so plain BEGIN works correctly.
+ */
+pool.on("connect", (client) => {
+  client.query("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE").catch((err: unknown) => {
+    console.error("[db] Failed to set session read-write mode:", err);
+  });
+});
+
 export const db = drizzle(pool, { schema });
 
 /**
