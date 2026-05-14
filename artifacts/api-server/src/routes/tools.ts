@@ -139,10 +139,10 @@ interface SkillGateResult {
 }
 
 /**
- * Verify the session exists, the "web-search" skill is in the latest
+ * Verify the session exists, the given skill is in the latest
  * activatedSkillsJson, and its safety.networkAccess is not "none".
  */
-async function checkWebSearchGate(sessionId: number): Promise<SkillGateResult> {
+async function checkSkillGate(sessionId: number, skillId: string): Promise<SkillGateResult> {
   const [session] = await db
     .select({ id: sessionsTable.id })
     .from(sessionsTable)
@@ -163,10 +163,10 @@ async function checkWebSearchGate(sessionId: number): Promise<SkillGateResult> {
   const skills = row.activatedSkillsJson as MiziSkillManifest[];
   if (!Array.isArray(skills)) return { ok: false, reason: "skill_not_active" };
 
-  const webSearch = skills.find((s) => s.id === "web-search");
-  if (!webSearch) return { ok: false, reason: "skill_not_active" };
+  const skill = skills.find((s) => s.id === skillId);
+  if (!skill) return { ok: false, reason: "skill_not_active" };
 
-  if (webSearch.safety?.networkAccess === "none") {
+  if (skill.safety?.networkAccess === "none") {
     return { ok: false, reason: "network_access_denied" };
   }
 
@@ -182,7 +182,7 @@ function applyGate(gate: SkillGateResult, res: import("express").Response): bool
   } else if (gate.reason === "network_access_denied") {
     res.status(403).json({ error: "Session network access policy prohibits this tool" });
   } else {
-    res.status(403).json({ error: "The web-search skill is not active for this session" });
+    res.status(403).json({ error: "The required skill is not active for this session" });
   }
   return true; // caller should return early
 }
@@ -280,7 +280,7 @@ router.post(
     }
 
     // Gate first: session existence + skill activation + network-access policy
-    const gate = await checkWebSearchGate(sessionId);
+    const gate = await checkSkillGate(sessionId, "web-search");
     if (applyGate(gate, res)) return;
 
     if (!BRAVE_API_KEY && !SERPER_API_KEY) {
@@ -325,7 +325,7 @@ router.post(
       return;
     }
 
-    const gate = await checkWebSearchGate(sessionId);
+    const gate = await checkSkillGate(sessionId, "web-search");
     if (applyGate(gate, res)) return;
 
     const { url } = req.body as { url?: string };
@@ -399,4 +399,110 @@ router.post(
   }
 );
 
+// ─── POST /sessions/:id/tools/screenshot ─────────────────────────────────────
+
+router.post(
+  "/sessions/:id/tools/screenshot",
+  requireAgentAuth(["sessions:read"]),
+  async (req, res) => {
+    const sessionId = parseInt(String(req.params["id"] ?? ""));
+    if (!Number.isFinite(sessionId)) {
+      res.status(400).json({ error: "Invalid session ID" });
+      return;
+    }
+
+    const gate = await checkSkillGate(sessionId, "browser-preview");
+    if (applyGate(gate, res)) return;
+
+    const { url, viewportWidth, viewportHeight } = req.body as {
+      url?: string;
+      viewportWidth?: number;
+      viewportHeight?: number;
+    };
+    if (!url || typeof url !== "string" || url.trim().length === 0) {
+      res.status(400).json({ error: "url is required" });
+      return;
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url.trim());
+    } catch {
+      res.status(400).json({ error: "Invalid URL" });
+      return;
+    }
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+      res.status(400).json({ error: "Only http and https URLs are supported" });
+      return;
+    }
+
+    const viewport = {
+      width: Math.min(Math.max(400, Number(viewportWidth) || 1280), 2560),
+      height: Math.min(Math.max(300, Number(viewportHeight) || 720), 1920),
+    };
+
+    try {
+      const { screenshotUrl: takeSS } = await import("../services/browser-inspector.js");
+      const buf = await takeSS(parsedUrl.toString(), viewport);
+      logger.info({ sessionId, url: parsedUrl.toString(), viewport }, "tools: screenshot completed");
+      res.json({
+        imageBase64: buf.toString("base64"),
+        mimeType: "image/png",
+        capturedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      logger.error({ err, sessionId, url }, "tools: screenshot failed");
+      res.status(502).json({ error: "Screenshot failed", detail: String(err) });
+    }
+  }
+);
+
+// ─── POST /sessions/:id/tools/console-capture ─────────────────────────────────
+
+router.post(
+  "/sessions/:id/tools/console-capture",
+  requireAgentAuth(["sessions:read"]),
+  async (req, res) => {
+    const sessionId = parseInt(String(req.params["id"] ?? ""));
+    if (!Number.isFinite(sessionId)) {
+      res.status(400).json({ error: "Invalid session ID" });
+      return;
+    }
+
+    const gate = await checkSkillGate(sessionId, "browser-preview");
+    if (applyGate(gate, res)) return;
+
+    const { url, durationMs } = req.body as { url?: string; durationMs?: number };
+    if (!url || typeof url !== "string" || url.trim().length === 0) {
+      res.status(400).json({ error: "url is required" });
+      return;
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url.trim());
+    } catch {
+      res.status(400).json({ error: "Invalid URL" });
+      return;
+    }
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+      res.status(400).json({ error: "Only http and https URLs are supported" });
+      return;
+    }
+
+    const duration = Math.min(Math.max(1_000, Number(durationMs) || 5_000), 30_000);
+
+    try {
+      const { captureConsoleLogs } = await import("../services/browser-inspector.js");
+      const logs = await captureConsoleLogs(parsedUrl.toString(), duration);
+      logger.info({ sessionId, url: parsedUrl.toString(), durationMs: duration, logCount: logs.length }, "tools: console-capture completed");
+      res.json({ url: parsedUrl.toString(), durationMs: duration, logs });
+    } catch (err) {
+      logger.error({ err, sessionId, url }, "tools: console-capture failed");
+      res.status(502).json({ error: "Console capture failed", detail: String(err) });
+    }
+  }
+);
+
 export default router;
+
