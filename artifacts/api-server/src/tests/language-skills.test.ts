@@ -1,9 +1,9 @@
 /**
- * Tests verifying that the four new language workflow skills are correctly
+ * Tests verifying that the language workflow skills are correctly
  * defined in the default skill list and appear with the expected metadata.
  *
  * Covers:
- *   - ruby-workflow, java-workflow, swift-workflow, cpp-workflow are present
+ *   - js-workflow, ruby-workflow, java-workflow, swift-workflow, cpp-workflow are present
  *   - Each has class: "efficiency"
  *   - Each has safety.shellExecution: "restricted" and safety.networkAccess: "none"
  *   - Each has install.type: "virtual"
@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_SKILLS } from "../services/default-skills";
 
-const LANGUAGE_SKILL_IDS = ["ruby-workflow", "java-workflow", "swift-workflow", "cpp-workflow"] as const;
+const LANGUAGE_SKILL_IDS = ["js-workflow", "ruby-workflow", "java-workflow", "swift-workflow", "cpp-workflow"] as const;
 
 function getSkill(id: string) {
   return DEFAULT_SKILLS.find(s => s.id === id);
@@ -56,6 +56,18 @@ describe("language workflow skills — install type", () => {
 });
 
 describe("language workflow skills — repoKinds triggers", () => {
+  it("js-workflow triggers on javascript, typescript, node, nodejs, react, nextjs, express, and vite repos", () => {
+    const skill = getSkill("js-workflow");
+    expect(skill?.triggers.repoKinds).toContain("javascript");
+    expect(skill?.triggers.repoKinds).toContain("typescript");
+    expect(skill?.triggers.repoKinds).toContain("node");
+    expect(skill?.triggers.repoKinds).toContain("nodejs");
+    expect(skill?.triggers.repoKinds).toContain("react");
+    expect(skill?.triggers.repoKinds).toContain("nextjs");
+    expect(skill?.triggers.repoKinds).toContain("express");
+    expect(skill?.triggers.repoKinds).toContain("vite");
+  });
+
   it("ruby-workflow triggers on ruby, rails, and sinatra repos", () => {
     const skill = getSkill("ruby-workflow");
     expect(skill?.triggers.repoKinds).toContain("ruby");

@@ -258,6 +258,22 @@ describe("rankSkills — intent signal differentiates same-taskMode sessions", (
 
 const LANG_NATIVE_SOURCE = { repoUrl: "https://github.com/mizi/skills", trust: "mizi_native" as const };
 
+const jsWorkflow = makeManifest({
+  id: "js-workflow",
+  name: "JavaScript / TypeScript Workflow",
+  class: "efficiency",
+  source: LANG_NATIVE_SOURCE,
+  summary: "Idiomatic Node.js toolchain guidance — pnpm/npm/yarn for packages, eslint and prettier for quality, jest/vitest for tests — prevents mismatched lockfiles and committed node_modules.",
+  triggers: {
+    tasks: ["build", "debug", "refactor", "review"],
+    repoKinds: ["javascript", "typescript", "node", "nodejs", "react", "nextjs", "express", "vite"],
+    sessionModes: ["solo", "team"],
+  },
+  compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode", "bolt"] },
+  cost: { tokenOverheadEstimate: 210 },
+  rankingHints: { taskFitWeight: 0.9, repoFitWeight: 0.9, measuredLiftWeight: 0.9 },
+});
+
 const pythonWorkflow = makeManifest({
   id: "python-workflow",
   name: "Python Workflow",
@@ -359,6 +375,33 @@ describe("rankSkills — language workflow skills rank in top 5 for their repo t
     const position = ranked.findIndex(r => r.manifest.id === "rust-workflow");
     expect(position).toBeGreaterThanOrEqual(0);
     expect(position).toBeLessThan(5);
+  });
+
+  it("js-workflow ranks in top 5 for a TypeScript build session", () => {
+    const pool = [...genericCompetitors, jsWorkflow, pythonWorkflow, goWorkflow, rustWorkflow];
+    const ranked = rankSkills(pool, langCtx("typescript"));
+    const position = ranked.findIndex(r => r.manifest.id === "js-workflow");
+    expect(position).toBeGreaterThanOrEqual(0);
+    expect(position).toBeLessThan(5);
+  });
+
+  it("js-workflow ranks in top 5 for a JavaScript build session", () => {
+    const pool = [...genericCompetitors, jsWorkflow, pythonWorkflow, goWorkflow, rustWorkflow];
+    const ranked = rankSkills(pool, langCtx("javascript"));
+    const position = ranked.findIndex(r => r.manifest.id === "js-workflow");
+    expect(position).toBeGreaterThanOrEqual(0);
+    expect(position).toBeLessThan(5);
+  });
+
+  it("js-workflow does NOT appear in top 5 for a Python build session", () => {
+    // python-workflow gets full repoFit against repoLangs:["python"];
+    // js-workflow (repoKinds: javascript/typescript/node/...) falls back to
+    // the no-match score and is pushed outside the top 5 by python-workflow
+    // plus the five generic competitors.
+    const pool = [...genericCompetitors, jsWorkflow, pythonWorkflow];
+    const ranked = rankSkills(pool, langCtx("python"));
+    const position = ranked.findIndex(r => r.manifest.id === "js-workflow");
+    expect(position).toBeGreaterThanOrEqual(5);
   });
 
   it("go-workflow does NOT appear in top 5 for a Python build session", () => {
