@@ -28,7 +28,7 @@ updates:
       day: monday
       time: "08:00"
       timezone: "UTC"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 3
     labels:
       - "type:deps"
       - "component:shared-lib"
@@ -45,18 +45,10 @@ updates:
         update-types:
           - minor
           - patch
-    # Ignore major version bumps for core framework packages — those require
-    # manual assessment and dedicated PRs.
+    # Ignore ALL major version bumps — major migrations require deliberate
+    # planning and a dedicated PR, not an automated bump.
     ignore:
-      - dependency-name: "react"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "react-dom"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "typescript"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "vite"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "drizzle-orm"
+      - dependency-name: "*"
         update-types: ["version-update:semver-major"]
 
   # ── GitHub Actions ────────────────────────────────────────────────────────
@@ -67,7 +59,7 @@ updates:
       day: monday
       time: "08:00"
       timezone: "UTC"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 1
     labels:
       - "type:deps"
       - "component:ci"
