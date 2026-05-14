@@ -1,3 +1,12 @@
+## v0.10.0 — 2026-05-14\n\n- Merge branch 'main' of https://github.com/MrGheek/mizicode (01c2d9c)
+- Add sysadmin skill pack (SSH, DNS, containers, TLS, DB CLI, port scanning, file transfer) (f333544)
+- feat: close planning loop — auto-append swarm-discovered tasks mid-session (#383) (50c124a)
+- fix: remove leaked test sessions from ActiveSessionBanner (c12f726)
+- feat(plan): upgrade planning pipeline with skill context, phase-aware routing, and semantic diffing (171b90d)
+- fix(launch): fix 401 on POST /sessions + add View link to plan approval UI (ddfc1e5)
+- fix(launch): fix 401 on POST /sessions + add View link to plan approval UI (e0312f7)
+- Add a view link to tasks in the plan approval flow (e828a6c)\n
+
 ## v0.9.1 — 2026-05-14\n\n- Saved progress at the end of the loop (7f7ba8e)
 - fix(db): use port 5432 (primary) instead of 5433 (replica) + session read-write guard (aeedd68)
 - fix(migrate): add 0027 zombie sentinel + replace migrate() with BEGIN READ WRITE runner (368ca6f)
