@@ -36,11 +36,20 @@ export interface PlanReassessedEvent {
   updatedTaskCount: number;
 }
 
+export interface PlanDecomposedEvent {
+  planId: number;
+  sessionId: string;
+  userId: string;
+  newTaskCount: number;
+  planVersion: number;
+}
+
 export type PlanEvent =
   | { type: "plan.created"; payload: PlanCreatedEvent }
   | { type: "plan.updated"; payload: PlanCreatedEvent }
   | { type: "plan.task_status_changed"; payload: PlanTaskStatusChangedEvent }
-  | { type: "plan.reassessed"; payload: PlanReassessedEvent };
+  | { type: "plan.reassessed"; payload: PlanReassessedEvent }
+  | { type: "plan.decomposed"; payload: PlanDecomposedEvent };
 
 class PlanEventEmitter extends EventEmitter {
   emit_plan(event: PlanEvent): void {

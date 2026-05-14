@@ -12,6 +12,7 @@
  * PATCH  /api/sessions/:sessionId/plan   — link a plan to a session
  */
 import { Router } from "express";
+import { z } from "zod";
 import { db, sessionsTable } from "@workspace/db";
 import type { PlanTaskStatus, PlanTaskPriority } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
@@ -29,6 +30,7 @@ import {
   reassessSession,
   exportPlanAsMarkdown,
 } from "../services/plan";
+import { runDecompositionPass } from "../services/plan-decompose";
 
 const router = Router();
 
@@ -416,6 +418,29 @@ router.get("/sessions/:sessionId/plan", async (req, res) => {
   } catch (err) {
     logger.error({ err }, "[plan] GET /sessions/:sessionId/plan failed");
     res.status(500).json({ error: "Failed to get session plan" });
+  }
+});
+
+// ── POST /api/sessions/:sessionId/decompose ───────────────────────────────────
+// On-demand decomposition trigger. Useful for testing and a future manual
+// "re-analyze" button in the UI. Auth: agent-only (API key required).
+
+const DecomposeParamsSchema = z.object({
+  sessionId: z.coerce.number().int().positive(),
+});
+
+router.post("/sessions/:sessionId/decompose", requireAgentAuth([]), async (req, res) => {
+  const parsed = DecomposeParamsSchema.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid sessionId", details: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const added = await runDecompositionPass(String(parsed.data.sessionId));
+    res.json({ ok: true, newTaskCount: added });
+  } catch (err) {
+    logger.error({ err }, "[plan] POST /sessions/:sessionId/decompose failed");
+    res.status(500).json({ error: "Decomposition failed" });
   }
 });
 

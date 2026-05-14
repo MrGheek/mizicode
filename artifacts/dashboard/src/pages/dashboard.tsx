@@ -1752,7 +1752,7 @@ export default function Dashboard() {
 
         {/* Project plan task board */}
         <div className="glass-emerge" style={{ animationDelay: "120ms" }}>
-          <ProjectPlanBoard userId={dashboardUserId} repoUrl={repoUrl.trim() || undefined} />
+          <ProjectPlanBoard userId={dashboardUserId} repoUrl={repoUrl.trim() || undefined} sessionId={activeSession?.id ?? null} />
         </div>
 
       </div>

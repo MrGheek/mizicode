@@ -148,6 +148,13 @@
                         "when": 1747440000000,
                         "tag": "0029_project_tasks_detail",
                         "breakpoints": true
+                },
+                {
+                        "idx": 31,
+                        "version": "7",
+                        "when": 1747526400000,
+                        "tag": "0030_project_tasks_origin",
+                        "breakpoints": true
                 }
         ]
 }

@@ -953,7 +953,7 @@ export function exportPlanAsMarkdown(plan: ProjectPlan, tasks: ProjectTask[]): s
   return lines.join("\n");
 }
 
-async function persistPlanToMemory(plan: ProjectPlan, tasks: ProjectTask[]): Promise<void> {
+export async function persistPlanToMemory(plan: ProjectPlan, tasks: ProjectTask[]): Promise<void> {
   // Always write plan memory under MIZI_MEM_USER_ID ("operator") — the same
   // identity that session memory recall (getPastContext) queries — so that
   // approved/reassessed plans are reliably injected into new session context.

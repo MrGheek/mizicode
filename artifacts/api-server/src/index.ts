@@ -12,6 +12,7 @@ import { seedCuratedSources } from "./services/curated-sources";
 import { startEvalScheduler } from "./services/skills-evals";
 import { validateMemoryDataDir, startMemoryDiskMonitor, runPassiveRecallBackfill } from "./services/memory";
 import { startPlanAutoAdvance } from "./services/plan-auto-advance";
+import { startPlanDecompose } from "./services/plan-decompose";
 import { initSafetySubsystem, drainApprovedActions } from "./services/safety";
 import { startAmbientRunner, registerAmbientExecutors } from "./services/ambient";
 import { startClaimSweeper, sweepExpiredClaims, recordExternalSweep } from "./services/claim-sweeper";
@@ -232,6 +233,7 @@ server.listen(port, async (err?: Error) => {
   startEvalScheduler(60);
   startMemoryDiskMonitor();
   startPlanAutoAdvance();
+  startPlanDecompose();
 
   try {
     await syncNimCatalog();

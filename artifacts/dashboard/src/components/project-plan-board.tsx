@@ -43,6 +43,8 @@ interface ProjectTask {
   doneLooksLike: string | null;
   outOfScope: string | null;
   fileDependencies: string | null;
+  origin: string | null;
+  rationale: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -265,6 +267,15 @@ function TaskCard({
             done {new Date(task.completedAt).toLocaleDateString()}
           </span>
         )}
+        {task.origin === "swarm_discovered" && (
+          <span
+            className="text-[9px] font-semibold px-1 py-0.5 rounded"
+            style={{ background: "rgba(139,92,246,0.15)", color: "#a78bfa" }}
+            title={task.rationale ?? "Discovered by swarm during session"}
+          >
+            Discovered
+          </span>
+        )}
         {task.blockedBy && task.blockedBy.length > 0 && (
           <span className="text-[9px]" style={{ color: "#f59e0b" }}>
             blocked by #{task.blockedBy.join(", #")}
@@ -472,7 +483,7 @@ function AddTaskRow({ planId, userId, onAdded }: { planId: number; userId: strin
 
 // ── ProjectPlanBoard ──────────────────────────────────────────────────────────
 
-export function ProjectPlanBoard({ userId, repoUrl }: { userId: string; repoUrl?: string | null }) {
+export function ProjectPlanBoard({ userId, repoUrl, sessionId }: { userId: string; repoUrl?: string | null; sessionId?: number | null }) {
   const [plans, setPlans] = useState<(ProjectPlan & { taskCount: number; doneCount: number })[]>([]);
   const [activePlanId, setActivePlanId] = useState<number | null>(null);
   const [tasks, setTasks] = useState<ProjectTask[]>([]);
@@ -539,6 +550,60 @@ export function ProjectPlanBoard({ userId, repoUrl }: { userId: string; repoUrl?
     }, 30_000);
     return () => clearInterval(id);
   }, [activePlanId, userId, repoUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Real-time SSE subscription — appends swarm-discovered tasks without a page refresh.
+  // When the swarm decompose service inserts new tasks it broadcasts a `plan_tasks_appended`
+  // event over the session's existing coordination SSE stream. We merge incoming tasks
+  // directly into local state (optimistic) and also trigger a background fetch so any
+  // DB-generated field values (createdAt, stepIndex, etc.) are reconciled.
+  const activePlanIdRef = useRef<number | null>(null);
+  activePlanIdRef.current = activePlanId;
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    let es: EventSource | null = null;
+    let cancelled = false;
+
+    function connect() {
+      if (cancelled) return;
+      es = new EventSource(`${BASE_URL}api/sessions/${sessionId}/coordination/stream`);
+
+      es.onmessage = (event) => {
+        if (cancelled) return;
+        try {
+          const msg = JSON.parse(event.data) as { type?: string; tasks?: ProjectTask[] };
+          if (msg.type === "plan_tasks_appended" && Array.isArray(msg.tasks) && msg.tasks.length > 0) {
+            setTasks(prev => {
+              const existingIds = new Set(prev.map(t => t.id));
+              const fresh = (msg.tasks as ProjectTask[]).filter(t => !existingIds.has(t.id));
+              return fresh.length > 0 ? [...prev, ...fresh] : prev;
+            });
+            if (activePlanIdRef.current) {
+              setTimeout(() => {
+                if (!cancelled && activePlanIdRef.current) void fetchTasks(activePlanIdRef.current);
+              }, 2000);
+            }
+          }
+        } catch { /* ignore parse errors */ }
+      };
+
+      es.onerror = () => {
+        if (!cancelled) {
+          es?.close();
+          es = null;
+          setTimeout(() => { if (!cancelled) connect(); }, 5000);
+        }
+      };
+    }
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      es?.close();
+    };
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refresh = () => {
     if (activePlanId) void fetchTasks(activePlanId);

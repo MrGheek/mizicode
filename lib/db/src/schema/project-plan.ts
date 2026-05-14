@@ -34,6 +34,10 @@ export const projectTasksTable = pgTable("project_tasks", {
   doneLooksLike: text("done_looks_like"),
   outOfScope: text("out_of_scope"),
   fileDependencies: text("file_dependencies"),
+  // Task provenance: 'user' (manually added) | 'initial_plan' (from plan generate/approve) | 'swarm_discovered' (auto-appended by plan-decompose)
+  origin: text("origin").notNull().default("user"),
+  // Short rationale written by the swarm decomposition pass (null for non-swarm tasks)
+  rationale: text("rationale"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

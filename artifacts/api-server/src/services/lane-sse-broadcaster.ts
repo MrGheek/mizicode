@@ -54,6 +54,27 @@ export interface LaneEventRow {
   createdAt: Date;
 }
 
+/**
+ * Broadcast newly discovered plan tasks to all SSE clients subscribed to a session.
+ * Used by plan-decompose after inserting swarm-discovered tasks so the dashboard
+ * updates in real time without a poll or refresh.
+ */
+export function broadcastPlanTasks(sessionId: number, tasks: unknown[]): void {
+  const clients = coordinationClients.get(sessionId);
+  if (!clients || clients.size === 0) return;
+  const msg = `data: ${JSON.stringify({
+    type: "plan_tasks_appended",
+    sessionId,
+    tasks,
+  })}\n\n`;
+  const dead: SseClient[] = [];
+  for (const res of clients) {
+    try { res.write(msg); } catch { dead.push(res); }
+  }
+  for (const res of dead) clients.delete(res);
+  if (clients.size === 0) coordinationClients.delete(sessionId);
+}
+
 export function broadcastLaneEvent(sessionId: number, event: LaneEventRow): void {
   const clients = coordinationClients.get(sessionId);
   if (!clients || clients.size === 0) return;
