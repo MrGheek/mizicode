@@ -1,89 +1,78 @@
 name: Build & Push Docker Image
 
-on:
-  workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "docker/**"
-  pull_request:
-    paths:
-      - "docker/**"
+  on:
+    workflow_dispatch:
+    push:
+      branches: [main]
+      paths:
+        - "docker/**"
+    pull_request:
+      paths:
+        - "docker/**"
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
+  # Cancel in-progress runs for the same PR when a new commit arrives.
+  # Push-to-main and manual runs use unique keys so they always complete.
+  concurrency:
+    group: docker-build-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-    steps:
-      - name: Free disk space
-        run: |
-          # GitHub Actions runners come pre-loaded with ~10 GB of tools we don't need.
-          # Removing them before the Docker build prevents "no space left on device".
-          echo "=== Disk before cleanup ==="
-          df -h
+  jobs:
+    build:
+      runs-on: ubuntu-latest
+      permissions:
+        contents: read
+        id-token: write
+        attestations: write
 
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /usr/local/julia*
-          sudo rm -rf /usr/local/share/chromium
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/share/miniconda
-          sudo apt-get clean
-          docker image prune -a -f
+      steps:
+        - name: Free disk space
+          run: |
+            echo "=== Disk before cleanup ==="
+            df -h
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+            sudo rm -rf /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift
+            sudo rm -rf /usr/local/julia* /usr/local/share/chromium
+            sudo rm -rf /usr/local/share/powershell /usr/share/miniconda
+            sudo apt-get clean
+            docker image prune -a -f
+            echo "=== Disk after cleanup ==="
+            df -h
 
-          echo "=== Disk after cleanup ==="
-          df -h
+        - name: Checkout
+          uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        - name: Set up Docker Buildx
+          uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        - name: Log in to Docker Hub
+          if: github.event_name != 'pull_request'
+          uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+          with:
+            username: ${{ secrets.DOCKERHUB_USERNAME }}
+            password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        - name: Build and push all tags
+          id: push
+          uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v6.2.0
+          with:
+            context: docker/
+            file: docker/Dockerfile
+            push: ${{ github.event_name != 'pull_request' }}
+            tags: |
+              gheeklabs/coding-env:cuda12.4
+              gheeklabs/coding-env:a100
+              gheeklabs/coding-env:h100
+              gheeklabs/coding-env:latest
+            build-args: |
+              CUDA_VERSION=12.4.1
+            cache-from: ${{ github.event_name != 'pull_request' && 'type=registry,ref=gheeklabs/coding-env:buildcache' || '' }}
+            cache-to: ${{ github.event_name != 'pull_request' && 'type=registry,ref=gheeklabs/coding-env:buildcache,mode=max' || '' }}
 
-      - name: Build and push all tags
-        id: push
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v6.2.0
-        with:
-          context: docker/
-          file: docker/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
-          # All tags point to the same image — build once, push multiple tags.
-          tags: |
-            gheeklabs/coding-env:cuda12.4
-            gheeklabs/coding-env:a100
-            gheeklabs/coding-env:h100
-            gheeklabs/coding-env:latest
-          build-args: |
-            CUDA_VERSION=12.4.1
-          # Use registry cache instead of GHA cache to avoid the 10 GB GHA cache
-          # limit from causing secondary disk exhaustion.
-          # Skip registry cache on PRs — no login, no cache writes; build from scratch.
-          cache-from: ${{ github.event_name != 'pull_request' && 'type=registry,ref=gheeklabs/coding-env:buildcache' || '' }}
-          cache-to: ${{ github.event_name != 'pull_request' && 'type=registry,ref=gheeklabs/coding-env:buildcache,mode=max' || '' }}
-
-      # ── Artifact attestation (additive — no existing steps modified) ────────
-      # Generates SLSA provenance for the pushed image using the OIDC token.
-      # Verify with: gh attestation verify oci://docker.io/gheeklabs/coding-env:latest \
-      #   --owner gheeklabs
-      - name: Attest build provenance
-        if: github.event_name != 'pull_request'
-        uses: actions/attest-build-provenance@1c608d11d69870c2092266b3f9a6f3abbf17002c # v2.2.0
-        with:
-          subject-name: index.docker.io/gheeklabs/coding-env
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
+        - name: Attest build provenance
+          if: github.event_name != 'pull_request'
+          uses: actions/attest-build-provenance@1c608d11d69870c2092266b3f9a6f3abbf17002c # v2.2.0
+          with:
+            subject-name: index.docker.io/gheeklabs/coding-env
+            subject-digest: ${{ steps.push.outputs.digest }}
+            push-to-registry: true
+  
