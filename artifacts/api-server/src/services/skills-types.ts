@@ -1,4 +1,4 @@
-export type SkillClass = "doctrine" | "workflow" | "context" | "efficiency" | "team" | "repo";
+export type SkillClass = "doctrine" | "workflow" | "context" | "efficiency" | "team" | "repo" | "ops";
 export type TrustTier = "mizi_native" | "reviewed" | "user_approved" | "experimental";
 export type InstallRisk = "virtual" | "config" | "hooked" | "binary" | "networked";
 export type ReviewStatus = "pending" | "approved" | "rejected";

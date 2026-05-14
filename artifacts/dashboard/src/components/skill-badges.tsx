@@ -10,6 +10,7 @@ export function SkillClassBadge({ skillClass }: { skillClass: string }) {
     efficiency: { label: "Efficiency",  cls: "bg-violet-500/20 text-violet-400 border-violet-500/30" },
     team:       { label: "Team",        cls: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
     repo:       { label: "Repo",        cls: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30" },
+    ops:        { label: "Ops",         cls: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
   };
   const entry = map[skillClass] ?? { label: skillClass, cls: "bg-muted text-muted-foreground border-border" };
   return (
