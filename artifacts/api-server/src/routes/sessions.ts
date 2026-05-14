@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from "express";
 import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable, sessionLanesTable, sessionModelSwitchesTable, nimCatalogTable, provisionedResourcesTable, schemaTemplatesTable, projectPlansTable } from "@workspace/db";
-import { eq, desc, inArray, and, isNull } from "drizzle-orm";
+import { eq, desc, inArray, and, isNull, notLike } from "drizzle-orm";
 import * as neonService from "../services/neon";
 import { getBridge } from "../services/bridge-registry";
 import { getProfileById, getNimWorkspaceProfile } from "../services/profiles";
@@ -408,12 +408,21 @@ router.get("/sessions", async (_req, res) => {
 });
 
 router.get("/sessions/active", async (_req, res) => {
+  // Join gpu_profiles so we can exclude test-suite sessions (profile name starts
+  // with "test-") from surfacing in the dashboard's active-session banner.
   const [rawSession] = await db
-    .select()
+    .select({ session: sessionsTable })
     .from(sessionsTable)
-    .where(inArray(sessionsTable.status, ACTIVE_STATUSES))
+    .leftJoin(gpuProfilesTable, eq(sessionsTable.profileId, gpuProfilesTable.id))
+    .where(
+      and(
+        inArray(sessionsTable.status, ACTIVE_STATUSES),
+        notLike(gpuProfilesTable.name, "test-%"),
+      )
+    )
     .orderBy(desc(sessionsTable.createdAt))
-    .limit(1);
+    .limit(1)
+    .then(rows => rows.map(r => r.session));
 
   if (!rawSession) {
     res.json({ session: null });

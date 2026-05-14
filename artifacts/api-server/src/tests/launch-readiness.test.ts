@@ -75,7 +75,7 @@ describe("launch readiness — coordination claim blast radius", () => {
     const { eq, inArray } = await import("drizzle-orm");
 
     // ── Test fixture ──────────────────────────────────────────────────────
-    const profileName = `launch-readiness-blast-${Date.now()}`;
+    const profileName = `test-launch-readiness-blast-${Date.now()}`;
     const [profile] = await db.insert(gpuProfilesTable).values({
       name: profileName, displayName: "Test", gpuName: "A100", numGpus: 1,
       totalVram: 80, dockerImageTag: "test:latest", defaultQuant: "Q4_K_M",
@@ -149,7 +149,7 @@ describe("launch readiness — instance status callback", () => {
     const { db, gpuProfilesTable, sessionsTable } = dbModule;
     const { eq } = await import("drizzle-orm");
 
-    const profileName = `launch-readiness-callback-${Date.now()}`;
+    const profileName = `test-launch-readiness-callback-${Date.now()}`;
     const [profile] = await db.insert(gpuProfilesTable).values({
       name: profileName, displayName: "Test", gpuName: "A100", numGpus: 1,
       totalVram: 80, dockerImageTag: "test:latest", defaultQuant: "Q4_K_M",
@@ -220,7 +220,7 @@ describe("launch readiness — instance status callback", () => {
     const { db, gpuProfilesTable, sessionsTable } = dbModule;
     const { eq } = await import("drizzle-orm");
 
-    const profileName = `launch-readiness-unknown-${Date.now()}`;
+    const profileName = `test-launch-readiness-unknown-${Date.now()}`;
     const [profile] = await db.insert(gpuProfilesTable).values({
       name: profileName, displayName: "Test", gpuName: "A100", numGpus: 1,
       totalVram: 80, dockerImageTag: "test:latest", defaultQuant: "Q4_K_M",
@@ -250,7 +250,7 @@ describe("launch readiness — instance status callback", () => {
     const { db, gpuProfilesTable, sessionsTable } = dbModule;
     const { eq } = await import("drizzle-orm");
 
-    const profileName = `launch-readiness-authz-${Date.now()}`;
+    const profileName = `test-launch-readiness-authz-${Date.now()}`;
     const [profile] = await db.insert(gpuProfilesTable).values({
       name: profileName, displayName: "Test", gpuName: "A100", numGpus: 1,
       totalVram: 80, dockerImageTag: "test:latest", defaultQuant: "Q4_K_M",

@@ -479,7 +479,7 @@ describe("permitBearer middleware", () => {
     const [profile] = await db
       .insert(gpuProfilesTable)
       .values({
-        name: `permit-bearer-test-profile-${Date.now()}`,
+        name: `test-permit-bearer-${Date.now()}`,
         displayName: "permitBearer test GPU",
         gpuName: "A100",
         numGpus: 1,
