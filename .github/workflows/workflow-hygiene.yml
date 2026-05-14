@@ -1,31 +1,30 @@
 name: Workflow Hygiene
 
-  on:
-    pull_request:
-      paths:
-        - ".github/workflows/**"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
 
-  # Cancel in-progress lint runs when a new commit touches workflows on the same PR.
-  concurrency:
-    group: workflow-hygiene-${{ github.ref }}
-    cancel-in-progress: true
+# Cancel in-progress lint runs when a new commit touches workflows on the same PR.
+concurrency:
+  group: workflow-hygiene-${{ github.ref }}
+  cancel-in-progress: true
 
-  permissions:
-    contents: read
+permissions:
+  contents: read
 
-  jobs:
-    actionlint:
-      name: Lint workflow files with actionlint
-      runs-on: ubuntu-latest
-      permissions:
-        contents: read
+jobs:
+  actionlint:
+    name: Lint workflow files with actionlint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
-      steps:
-        - name: Checkout
-          uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-        - name: Run actionlint
-          uses: rhysd/actionlint@6849a0dbc5a87e04df4efec60e2a0f43a2e8ce4b # v1.7.4
-          with:
-            flags: "-color"
-  
+      - name: Run actionlint
+        uses: rhysd/actionlint@6849a0dbc5a87e04df4efec60e2a0f43a2e8ce4b # v1.7.4
+        with:
+          flags: "-color"
