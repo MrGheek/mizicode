@@ -7,8 +7,10 @@
  *
  * Safety:
  *   - Both endpoints verify the session has the "web-search" skill activated
- *   - fetch-url blocks private/internal IP ranges to prevent SSRF
- *   - fetch-url respects robots.txt for MIZIBot and *
+ *     AND that the skill's safety.networkAccess is not "none"
+ *   - fetch-url blocks private/internal IP ranges to prevent SSRF, including
+ *     redirect-chain hops (every hop is validated before following)
+ *   - fetch-url respects robots.txt for MIZIBot and * (fails open)
  */
 
 import { Router } from "express";
@@ -16,6 +18,7 @@ import { desc, eq } from "drizzle-orm";
 import { db, sessionSkillsTable, sessionsTable } from "@workspace/db";
 import { requireAgentAuth } from "../middlewares/agent-auth";
 import { logger } from "../lib/logger";
+import type { MiziSkillManifest } from "../services/skills-types";
 
 const router = Router();
 
@@ -32,22 +35,67 @@ if (!BRAVE_API_KEY && !SERPER_API_KEY) {
 // ─── SSRF Guard ───────────────────────────────────────────────────────────────
 
 const PRIVATE_HOST_RE = /^(localhost|.*\.local|.*\.internal|.*\.corp|.*\.intranet)$/i;
-
 const PRIVATE_IP_RE = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1$|fc[0-9a-f]{2}:|fd[0-9a-f]{2}:)/i;
+const CLOUD_METADATA_HOSTS = new Set(["169.254.169.254", "metadata.google.internal", "metadata.google.com"]);
 
 function isPrivateHost(hostname: string): boolean {
   if (PRIVATE_HOST_RE.test(hostname)) return true;
   if (PRIVATE_IP_RE.test(hostname)) return true;
-  // Block AWS / GCP / Azure metadata endpoints by IP
-  if (hostname === "169.254.169.254" || hostname === "metadata.google.internal") return true;
+  if (CLOUD_METADATA_HOSTS.has(hostname.toLowerCase())) return true;
   return false;
+}
+
+class SsrfBlockedError extends Error {
+  constructor(msg: string) { super(msg); this.name = "SsrfBlockedError"; }
+}
+
+/**
+ * A fetch wrapper that follows redirects manually so that every redirect
+ * target is validated against the SSRF block-list before being fetched.
+ * Returns the final non-redirect Response.
+ */
+async function safeFetch(startUrl: URL, timeoutMs = 10_000): Promise<Response> {
+  const BOT_UA = "MIZIBot/1.0 (research; +https://mizicode.com/bot)";
+  const MAX_HOPS = 5;
+  let current = startUrl;
+
+  for (let hop = 0; hop <= MAX_HOPS; hop++) {
+    if (isPrivateHost(current.hostname)) {
+      throw new SsrfBlockedError(`Host blocked (private/internal): ${current.hostname}`);
+    }
+    if (!["http:", "https:"].includes(current.protocol)) {
+      throw new SsrfBlockedError(`Protocol not allowed: ${current.protocol}`);
+    }
+
+    const res = await fetch(current.toString(), {
+      redirect: "manual",
+      headers: {
+        "User-Agent": BOT_UA,
+        "Accept": "text/html,text/plain,application/xhtml+xml",
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    // 3xx — follow manually so every hop is validated
+    if (res.status >= 300 && res.status < 400) {
+      if (hop === MAX_HOPS) throw new Error("Too many redirects");
+      const location = res.headers.get("location");
+      if (!location) throw new Error("Redirect with no Location header");
+      current = new URL(location, current.toString());
+      continue;
+    }
+
+    return res;
+  }
+
+  throw new Error("Redirect loop exceeded");
 }
 
 // ─── robots.txt Compliance ────────────────────────────────────────────────────
 
 /**
  * Returns true if MIZIBot (or any bot) is disallowed from fetching the given path.
- * Fails open — if robots.txt cannot be fetched, we allow the request.
+ * Fails open — if robots.txt cannot be fetched or parsed, we allow the request.
  */
 async function isDisallowedByRobots(target: URL): Promise<boolean> {
   const robotsUrl = `${target.protocol}//${target.host}/robots.txt`;
@@ -58,10 +106,9 @@ async function isDisallowedByRobots(target: URL): Promise<boolean> {
     });
     if (!res.ok) return false;
     const text = await res.text();
-    const path = target.pathname || "/";
-    return parseRobotsDisallow(text, path);
+    return parseRobotsDisallow(text, target.pathname || "/");
   } catch {
-    return false; // fail open — don't block if robots.txt is unavailable
+    return false; // fail open — don't block when robots.txt is unreachable
   }
 }
 
@@ -69,11 +116,12 @@ function parseRobotsDisallow(robots: string, path: string): boolean {
   const lines = robots.split(/\r?\n/);
   let applies = false;
   for (const raw of lines) {
-    const line = raw.split("#")[0]!.trim();
+    const line = (raw.split("#")[0] ?? "").trim();
     if (!line) continue;
-    const [field, ...rest] = line.split(":");
-    const key = (field ?? "").toLowerCase().trim();
-    const value = rest.join(":").trim();
+    const colonIdx = line.indexOf(":");
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).toLowerCase().trim();
+    const value = line.slice(colonIdx + 1).trim();
     if (key === "user-agent") {
       applies = value === "*" || value.toLowerCase().includes("mizibot");
     } else if (key === "disallow" && applies) {
@@ -85,11 +133,24 @@ function parseRobotsDisallow(robots: string, path: string): boolean {
 
 // ─── Session Skill Gate ───────────────────────────────────────────────────────
 
+interface SkillGateResult {
+  ok: boolean;
+  reason?: "session_not_found" | "skill_not_active" | "network_access_denied";
+}
+
 /**
- * Returns true when the session's latest activated skill bundle contains
- * the "web-search" skill (matched via manifest id "web-search").
+ * Verify the session exists, the "web-search" skill is in the latest
+ * activatedSkillsJson, and its safety.networkAccess is not "none".
  */
-async function sessionHasWebSearch(sessionId: number): Promise<boolean> {
+async function checkWebSearchGate(sessionId: number): Promise<SkillGateResult> {
+  const [session] = await db
+    .select({ id: sessionsTable.id })
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, sessionId))
+    .limit(1);
+
+  if (!session) return { ok: false, reason: "session_not_found" };
+
   const [row] = await db
     .select({ activatedSkillsJson: sessionSkillsTable.activatedSkillsJson })
     .from(sessionSkillsTable)
@@ -97,30 +158,36 @@ async function sessionHasWebSearch(sessionId: number): Promise<boolean> {
     .orderBy(desc(sessionSkillsTable.activatedAt))
     .limit(1);
 
-  if (!row) return false;
-  const skills = row.activatedSkillsJson as Array<{ slug?: string; id?: string }>;
-  if (!Array.isArray(skills)) return false;
-  return skills.some((s) => s.slug === "web-search" || s.id === "web-search");
+  if (!row) return { ok: false, reason: "skill_not_active" };
+
+  const skills = row.activatedSkillsJson as MiziSkillManifest[];
+  if (!Array.isArray(skills)) return { ok: false, reason: "skill_not_active" };
+
+  const webSearch = skills.find((s) => s.id === "web-search");
+  if (!webSearch) return { ok: false, reason: "skill_not_active" };
+
+  if (webSearch.safety?.networkAccess === "none") {
+    return { ok: false, reason: "network_access_denied" };
+  }
+
+  return { ok: true };
 }
 
-/**
- * Verify session exists (not deleted) and return whether the "web-search"
- * skill is active on it.  Returns null when the session does not exist.
- */
-async function checkSession(sessionId: number): Promise<{ skillActive: boolean } | null> {
-  const [session] = await db
-    .select({ id: sessionsTable.id, status: sessionsTable.status })
-    .from(sessionsTable)
-    .where(eq(sessionsTable.id, sessionId))
-    .limit(1);
+// ─── Shared gate handler ──────────────────────────────────────────────────────
 
-  if (!session) return null;
-
-  const skillActive = await sessionHasWebSearch(sessionId);
-  return { skillActive };
+function applyGate(gate: SkillGateResult, res: import("express").Response): boolean {
+  if (gate.ok) return false;
+  if (gate.reason === "session_not_found") {
+    res.status(404).json({ error: "Session not found" });
+  } else if (gate.reason === "network_access_denied") {
+    res.status(403).json({ error: "Session network access policy prohibits this tool" });
+  } else {
+    res.status(403).json({ error: "The web-search skill is not active for this session" });
+  }
+  return true; // caller should return early
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Search helpers ───────────────────────────────────────────────────────────
 
 interface SearchResult {
   title: string;
@@ -154,10 +221,7 @@ async function searchViaBrave(query: string, limit: number): Promise<SearchResul
 async function searchViaSerper(query: string, limit: number): Promise<SearchResult[]> {
   const res = await fetch("https://google.serper.dev/search", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-KEY": SERPER_API_KEY,
-    },
+    headers: { "Content-Type": "application/json", "X-API-KEY": SERPER_API_KEY },
     body: JSON.stringify({ q: query, num: limit }),
     signal: AbortSignal.timeout(10_000),
   });
@@ -209,26 +273,20 @@ router.post(
   "/sessions/:id/tools/web-search",
   requireAgentAuth(["sessions:read"]),
   async (req, res) => {
-    if (!BRAVE_API_KEY && !SERPER_API_KEY) {
-      res.status(503).json({
-        error: "Web search is not configured. Set BRAVE_SEARCH_API_KEY or SERPER_API_KEY on the server.",
-      });
-      return;
-    }
-
     const sessionId = parseInt(String(req.params["id"] ?? ""));
     if (!Number.isFinite(sessionId)) {
       res.status(400).json({ error: "Invalid session ID" });
       return;
     }
 
-    const sessionCtx = await checkSession(sessionId);
-    if (!sessionCtx) {
-      res.status(404).json({ error: "Session not found" });
-      return;
-    }
-    if (!sessionCtx.skillActive) {
-      res.status(403).json({ error: "The web-search skill is not active for this session" });
+    // Gate first: session existence + skill activation + network-access policy
+    const gate = await checkWebSearchGate(sessionId);
+    if (applyGate(gate, res)) return;
+
+    if (!BRAVE_API_KEY && !SERPER_API_KEY) {
+      res.status(503).json({
+        error: "Web search is not configured. Set BRAVE_SEARCH_API_KEY or SERPER_API_KEY on the server.",
+      });
       return;
     }
 
@@ -241,12 +299,13 @@ router.post(
     const resultLimit = Math.min(Math.max(1, Number(limit) || 8), 20);
 
     try {
-      const results = BRAVE_API_KEY
+      const results: SearchResult[] = BRAVE_API_KEY
         ? await searchViaBrave(query.trim(), resultLimit)
         : await searchViaSerper(query.trim(), resultLimit);
 
       logger.info({ sessionId, query: query.trim(), resultCount: results.length }, "tools: web-search completed");
-      res.json({ query: query.trim(), results });
+      // Return array directly per contract: [{ title, url, snippet }]
+      res.json(results);
     } catch (err) {
       logger.error({ err, sessionId, query }, "tools: web-search failed");
       res.status(502).json({ error: "Search request failed", detail: String(err) });
@@ -266,15 +325,8 @@ router.post(
       return;
     }
 
-    const sessionCtx = await checkSession(sessionId);
-    if (!sessionCtx) {
-      res.status(404).json({ error: "Session not found" });
-      return;
-    }
-    if (!sessionCtx.skillActive) {
-      res.status(403).json({ error: "The web-search skill is not active for this session" });
-      return;
-    }
+    const gate = await checkWebSearchGate(sessionId);
+    if (applyGate(gate, res)) return;
 
     const { url } = req.body as { url?: string };
     if (!url || typeof url !== "string" || url.trim().length === 0) {
@@ -295,6 +347,7 @@ router.post(
       return;
     }
 
+    // Initial SSRF check before any network call
     if (isPrivateHost(parsedUrl.hostname)) {
       res.status(403).json({ error: "Fetching private or internal hosts is not permitted" });
       return;
@@ -310,13 +363,8 @@ router.post(
     }
 
     try {
-      const fetchRes = await fetch(parsedUrl.toString(), {
-        headers: {
-          "User-Agent": "MIZIBot/1.0 (research; +https://mizicode.com/bot)",
-          "Accept": "text/html,text/plain,application/xhtml+xml",
-        },
-        signal: AbortSignal.timeout(10_000),
-      });
+      // safeFetch validates every redirect hop against the SSRF block-list
+      const fetchRes = await safeFetch(parsedUrl);
 
       if (!fetchRes.ok) {
         res.status(502).json({ error: `Remote server returned ${fetchRes.status}`, url: parsedUrl.toString() });
@@ -334,11 +382,17 @@ router.post(
       }
 
       const truncated = text.length > MAX_FETCH_CHARS;
-      const content = truncated ? text.slice(0, MAX_FETCH_CHARS) + "\n\n[... content truncated at 8 000 chars ...]" : text;
+      const content = truncated
+        ? text.slice(0, MAX_FETCH_CHARS) + "\n\n[... content truncated at 8 000 chars ...]"
+        : text;
 
       logger.info({ sessionId, url: parsedUrl.toString(), chars: content.length, truncated }, "tools: fetch-url completed");
       res.json({ url: parsedUrl.toString(), content, truncated, charCount: content.length });
     } catch (err) {
+      if (err instanceof SsrfBlockedError) {
+        res.status(403).json({ error: err.message });
+        return;
+      }
       logger.error({ err, sessionId, url }, "tools: fetch-url failed");
       res.status(502).json({ error: "URL fetch failed", detail: String(err) });
     }
