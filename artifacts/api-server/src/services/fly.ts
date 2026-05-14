@@ -98,7 +98,7 @@ export async function createMachine(params: CreateMachineParams): Promise<Create
       // the protocol directly. Ports 3000/5180/5181/8080/8081 use http handlers
       // so Fly's edge proxy can route HTTP traffic to the right service.
       services: [
-        { ports: [{ port: 22,    handlers: ["tcp"]  }], protocol: "tcp", internal_port: 22   },
+        { ports: [{ port: 22,    handlers: []        }], protocol: "tcp", internal_port: 22   },
         { ports: [{ port: 3000,  handlers: ["http"] }], protocol: "tcp", internal_port: 3000  },
         { ports: [{ port: 5180,  handlers: ["http"] }], protocol: "tcp", internal_port: 5180  },
         { ports: [{ port: 5181,  handlers: ["http"] }], protocol: "tcp", internal_port: 5181  },
