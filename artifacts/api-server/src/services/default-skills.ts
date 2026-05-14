@@ -1056,7 +1056,7 @@ export const DEFAULT_SKILLS: MiziSkillManifest[] = [
     compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode", "bolt"] },
     instructions: {
       system: [
-        "Use uv for all package management. Add a runtime dependency: `uv add <package>`. Add a dev-only dependency: `uv add --dev <package>`. Never run bare `pip install` in a project that has a pyproject.toml managed by uv — it will bypass the lockfile.",
+        "Use uv for all package management. Add a runtime dependency: `uv add <package>`. Add a dev-only dependency: `uv add --dev <package>`. Never run bare `pip install` in a project that has a pyproject.toml or requirements.txt managed by uv — it will bypass the lockfile and produce an inconsistent environment.",
         "Run code through uv so the project's virtual environment is used: `uv run python <script.py>` or `uv run <tool> <args>`. Do not activate the venv manually.",
         "After editing typed Python, run the type checker: `uv run mypy --strict <file_or_dir> 2>&1 | head -60`. If the project uses pyright, prefer `uv run pyright <file_or_dir> 2>&1 | head -60`. Fix every reported error before declaring the work done.",
         "Run the linter after any significant edit: `uv run ruff check . 2>&1 | head -40`. Fix all errors; use `# noqa: <code>` only for genuine false positives, and add a comment explaining why.",
