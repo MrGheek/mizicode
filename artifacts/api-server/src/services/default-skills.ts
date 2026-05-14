@@ -1358,6 +1358,35 @@ export const DEFAULT_SKILLS: MiziSkillManifest[] = [
     rankingHints: { taskFitWeight: 0.9, repoFitWeight: 0.9, measuredLiftWeight: 0.88 },
     safety: { shellExecution: "restricted", networkAccess: "none" },
   },
+  {
+    schemaVersion: 1,
+    id: "python-workflow",
+    name: "Python Workflow",
+    class: "efficiency",
+    source: MIZI_NATIVE_SOURCE,
+    summary: "Idiomatic Python toolchain guidance — virtual environments, pip/poetry dependency management, pytest, ruff/flake8 linting, and black formatting — prevents global package installs and keeps .venv/ and __pycache__/ out of version control.",
+    triggers: {
+      tasks: ["build", "debug", "refactor", "review"],
+      repoKinds: ["python"],
+      sessionModes: ["solo", "team"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw", "vscode", "bolt"] },
+    instructions: {
+      system: [
+        "Always work inside a virtual environment — never install packages into the global Python interpreter. Create one with `python -m venv .venv` and activate it with `source .venv/bin/activate` (Linux/macOS) or `.venv\\Scripts\\activate` (Windows). Verify the active interpreter with `which python` before running any pip or pytest commands.",
+        "Install dependencies with `pip install -r requirements.txt 2>&1` when a requirements file exists. To add a new package, run `pip install <package>` inside the venv and then update the lockfile with `pip freeze > requirements.txt`. If the project uses Poetry, use `poetry add <package>` instead — never mix pip install with a Poetry-managed environment.",
+        "When a project uses Poetry, manage dependencies exclusively through Poetry commands: `poetry install` to install from `pyproject.toml`, `poetry add <package>` to add a runtime dependency, `poetry add --group dev <package>` for dev-only tools, and `poetry update` to refresh `poetry.lock`. Commit both `pyproject.toml` and `poetry.lock` together — a stale lock file breaks reproducible installs.",
+        "Run the full test suite with `python -m pytest 2>&1 | tail -60`. Use `python -m pytest -v 2>&1 | tail -80` for verbose output. Never skip or comment out failing tests to make a run pass — read the full failure output and traceback before proposing a fix.",
+        "Lint every changed file with `ruff check . 2>&1 | head -60` after every non-trivial change. If the project uses flake8 instead, run `flake8 . 2>&1 | head -60`. Treat lint errors as blocking — do not commit code with unresolved lint errors.",
+        "Format all Python files with `black . 2>&1` before committing. If the project uses ruff's formatter (`ruff format .`), use that instead — never run both on the same file. A formatting diff in CI means unformatted code was committed.",
+        "The `.venv/` directory and `__pycache__/` folders must never be committed — verify `.gitignore` contains `.venv/` and `__pycache__/` (or `**/__pycache__/`) before the first commit in any Python repo. Also exclude `.pytest_cache/`, `*.pyc`, `*.pyo`, `dist/`, `build/`, and `*.egg-info/`.",
+      ],
+    },
+    install: { type: "virtual", outputs: ["system_prompt_fragment"] },
+    cost: { tokenOverheadEstimate: 195 },
+    rankingHints: { taskFitWeight: 0.9, repoFitWeight: 0.9, measuredLiftWeight: 0.88 },
+    safety: { shellExecution: "restricted", networkAccess: "none" },
+  },
   // ── Research skills ──────────────────────────────────────────────────────────
   {
     schemaVersion: 1,
