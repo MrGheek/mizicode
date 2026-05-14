@@ -2,13 +2,16 @@
  * Plan service — core logic for project plan generation, CRUD, reassessment,
  * memory integration, and export.
  */
-import { db, projectPlansTable, projectTasksTable, sessionsTable } from "@workspace/db";
+import { db, projectPlansTable, projectTasksTable, sessionsTable, sessionSkillsTable } from "@workspace/db";
 import type { ProjectPlan, ProjectTask, PlanTaskStatus, PlanTaskPriority } from "@workspace/db";
 import { eq, and, asc, desc } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { planEvents } from "./plan-events";
 import { saveMemoryItem } from "./memory";
 import { callLlm } from "./llm-client";
+import { scoreModelsForPhase } from "./inference-router";
+import type { SessionPhase } from "./inference-router";
+import { computeSemanticSimilarityBatch } from "./memory-semantic";
 
 export type { ProjectPlan, ProjectTask };
 
@@ -26,10 +29,176 @@ interface GeneratedPlan {
   steps: PlanStep[];
 }
 
+// ── Skill context loader ──────────────────────────────────────────────────────
+
+/**
+ * Build a compact skill context summary safe to include in an LLM prompt.
+ *
+ * For sessions that already exist, reads the active skill set from `session_skills`.
+ * For new plan generation (no session yet), ranks the default skill set against
+ * the intent text using the skills-ranker to get the anticipated skill set.
+ *
+ * Returns an empty string when no skill context is available, so callers can
+ * safely include it without conditional prompt building.
+ */
+async function loadSkillContextSummary(params: {
+  sessionId?: number | null;
+  intentText?: string | null;
+}): Promise<string> {
+  // 1. Session-based: load active skills from session_skills
+  if (params.sessionId) {
+    try {
+      const [row] = await db
+        .select({ activatedSkillsJson: sessionSkillsTable.activatedSkillsJson })
+        .from(sessionSkillsTable)
+        .where(eq(sessionSkillsTable.sessionId, params.sessionId))
+        .orderBy(desc(sessionSkillsTable.activatedAt))
+        .limit(1);
+
+      if (row && Array.isArray(row.activatedSkillsJson) && row.activatedSkillsJson.length > 0) {
+        const skills = row.activatedSkillsJson as Array<{ id?: string; name?: string; summary?: string }>;
+        const lines = skills
+          .filter(s => s.name)
+          .slice(0, 7)
+          .map(s => `- ${s.name}${s.summary ? `: ${s.summary}` : ""}`);
+        if (lines.length > 0) {
+          return `Active skills (what the swarm can execute):\n${lines.join("\n")}`;
+        }
+      }
+    } catch (err) {
+      logger.warn({ err, sessionId: params.sessionId }, "[plan] Failed to load session skills — skipping skill context");
+    }
+  }
+
+  // 2. Intent-based: rank default skills against the intent text for new plans
+  if (params.intentText && params.intentText.trim().length > 10) {
+    try {
+      const { rankSkills } = await import("./skills-ranker");
+      const { DEFAULT_SKILLS } = await import("./default-skills");
+
+      const ctx = {
+        sessionType: "solo" as const,
+        taskMode: "build" as const,
+        repoLangs: [] as string[],
+        modelProfile: "any",
+        tokenMode: "core" as const,
+        intentText: params.intentText,
+      };
+
+      const ranked = rankSkills(DEFAULT_SKILLS, ctx);
+      const topSkills = ranked
+        .slice(0, 5)
+        .map(r => ({ name: r.manifest.name, summary: r.manifest.summary }));
+
+      if (topSkills.length > 0) {
+        const lines = topSkills.map(s => `- ${s.name}: ${s.summary}`);
+        return `Expected skills (anticipated based on intent):\n${lines.join("\n")}`;
+      }
+    } catch (err) {
+      logger.warn({ err }, "[plan] Failed to rank skills for intent — skipping skill context");
+    }
+  }
+
+  return "";
+}
+
+// ── Phase-aware model routing ─────────────────────────────────────────────────
+
+/**
+ * Resolve the best LLM model for a planning phase via the inference router.
+ * Falls back to the PLAN_LLM_MODEL env-var escape hatch when set.
+ * Returns undefined when no live provider is available (callLlm will then
+ * use its own getLlmClientConfig fallback chain).
+ */
+async function getModelForPhase(phase: SessionPhase): Promise<string | undefined> {
+  const override = process.env["PLAN_LLM_MODEL"];
+  if (override) return override;
+
+  try {
+    const ranked = await scoreModelsForPhase(phase);
+    if (ranked.length > 0 && ranked[0]) {
+      return ranked[0].model.nimModelId;
+    }
+  } catch (err) {
+    logger.warn({ err, phase }, "[plan] Inference router failed — falling back to default model");
+  }
+  return undefined;
+}
+
+// ── Semantic plan diffing ─────────────────────────────────────────────────────
+
+/**
+ * Threshold above which two task texts are considered semantically equivalent.
+ * 0.85 captures paraphrases and minor rewording while rejecting distinct tasks.
+ */
+const SEMANTIC_MATCH_THRESHOLD = 0.85;
+
+/**
+ * For each new step text, find the best-matching existing task using semantic
+ * similarity (NIM embeddings with TF-IDF cosine fallback).
+ *
+ * Uses greedy one-to-one assignment: each existing task can be claimed by at
+ * most one new step. Candidates are processed in descending similarity order so
+ * the highest-confidence pairs are locked in first, preventing an accidental
+ * many-to-one collapse where two paraphrased steps both claim the same existing task.
+ *
+ * Returns a Map keyed by new step index → matched existing task.
+ * Steps with no match above the threshold are absent from the map (i.e. "added").
+ */
+async function buildSemanticMatchMap(
+  newTexts: string[],
+  existingTasks: Array<{ id: number; text: string; stepIndex: number; status: string; priority: PlanTaskPriority; confirmedByUser: boolean }>,
+): Promise<Map<number, typeof existingTasks[0]>> {
+  const matchMap = new Map<number, typeof existingTasks[0]>();
+  if (newTexts.length === 0 || existingTasks.length === 0) return matchMap;
+
+  const existingTexts = existingTasks.map(t => t.text);
+
+  // Collect (newStepIndex, existingTaskIndex, score) for all pairs above threshold.
+  type Candidate = { newIdx: number; existingIdx: number; score: number };
+  const candidates: Candidate[] = [];
+
+  for (let i = 0; i < newTexts.length; i++) {
+    const newText = newTexts[i]!;
+    try {
+      const scores = await computeSemanticSimilarityBatch(newText, existingTexts);
+      for (let j = 0; j < scores.length; j++) {
+        const score = scores[j] ?? 0;
+        if (score >= SEMANTIC_MATCH_THRESHOLD) {
+          candidates.push({ newIdx: i, existingIdx: j, score });
+        }
+      }
+    } catch (err) {
+      logger.warn({ err, stepIndex: i }, "[plan] Semantic similarity failed for step — falling back to string match");
+      // String-match fallback for this step: emit a synthetic max-score candidate
+      const norm = newText.toLowerCase().trim();
+      const fallbackIdx = existingTasks.findIndex(t => t.text.toLowerCase().trim() === norm);
+      if (fallbackIdx !== -1) {
+        candidates.push({ newIdx: i, existingIdx: fallbackIdx, score: 1.0 });
+      }
+    }
+  }
+
+  // Greedy one-to-one assignment: sort descending by score, claim each pair once.
+  candidates.sort((a, b) => b.score - a.score);
+  const claimedNewIdxs = new Set<number>();
+  const claimedExistingIdxs = new Set<number>();
+
+  for (const { newIdx, existingIdx, score: _score } of candidates) {
+    if (claimedNewIdxs.has(newIdx) || claimedExistingIdxs.has(existingIdx)) continue;
+    matchMap.set(newIdx, existingTasks[existingIdx]!);
+    claimedNewIdxs.add(newIdx);
+    claimedExistingIdxs.add(existingIdx);
+  }
+
+  return matchMap;
+}
+
 async function callLlmForPlan(params: {
   intentText: string;
   repoUrl?: string | null;
   existingTasks?: Array<{ stepIndex: number; text: string; status: string; confirmedByUser: boolean }>;
+  skillContext?: string;
 }): Promise<GeneratedPlan | null> {
   const existingContext = params.existingTasks && params.existingTasks.length > 0
     ? `\n\nExisting task board state (MUST preserve user-confirmed tasks):\n${params.existingTasks.map(t =>
@@ -37,10 +206,17 @@ async function callLlmForPlan(params: {
       ).join("\n")}`
     : "";
 
+  const skillSection = params.skillContext
+    ? `\n\n${params.skillContext}\nOnly decompose into tasks that fall within the described capabilities. If the goal requires capabilities outside this set, flag it explicitly in the first step.`
+    : "";
+
+  const routedModel = await getModelForPhase("plan");
+
   const raw = await callLlm({
     logTag: "plan.generate",
     temperature: 0.3,
     max_tokens: 2200,
+    overrideModel: routedModel,
     messages: [
       {
         role: "system",
@@ -72,7 +248,7 @@ Rules:
       },
       {
         role: "user",
-        content: `Intent: ${params.intentText}${params.repoUrl ? `\nRepository: ${params.repoUrl}` : ""}${existingContext}`,
+        content: `Intent: ${params.intentText}${params.repoUrl ? `\nRepository: ${params.repoUrl}` : ""}${skillSection}${existingContext}`,
       },
     ],
   });
@@ -92,6 +268,7 @@ Rules:
 async function callLlmForReassessment(params: {
   tasks: Array<{ id: number; text: string; status: string; confirmedByUser: boolean }>;
   observations: Array<{ toolName: string; inputSummary: string; outputSummary: string }>;
+  skillContext?: string;
 }): Promise<Array<{ taskId: number; newStatus: PlanTaskStatus; reason: string }> | null> {
   const observationSummary = params.observations.slice(0, 40)
     .map(o => `[${o.toolName}] ${o.inputSummary} → ${o.outputSummary}`)
@@ -101,10 +278,17 @@ async function callLlmForReassessment(params: {
     `  taskId=${t.id}: "${t.text}" (current: ${t.status}${t.confirmedByUser ? ", USER CONFIRMED" : ""})`
   ).join("\n");
 
+  const skillSection = params.skillContext
+    ? `\n\n${params.skillContext}\nUse this to inform your assessment — the swarm can only perform actions within these capabilities.`
+    : "";
+
+  const routedModel = await getModelForPhase("review");
+
   const raw = await callLlm({
     logTag: "plan.reassess",
     temperature: 0,
     max_tokens: 800,
+    overrideModel: routedModel,
     messages: [
       {
         role: "system",
@@ -119,7 +303,7 @@ Rules:
       },
       {
         role: "user",
-        content: `Tasks:\n${taskList}\n\nSession observations:\n${observationSummary}`,
+        content: `Tasks:\n${taskList}${skillSection}\n\nSession observations:\n${observationSummary}`,
       },
     ],
   });
@@ -216,10 +400,18 @@ export async function generatePlan(params: {
     confirmedByUser: t.confirmedByUser,
   }));
 
+  // Load skill context: no session yet for new plans, so rank against intent text.
+  // For regeneration of existing plans there is also no sessionId on the plan itself,
+  // so intent-ranking is the best we can do here.
+  const skillContext = await loadSkillContextSummary({
+    intentText: params.intentText,
+  });
+
   const generated = await callLlmForPlan({
     intentText: params.intentText,
     repoUrl: params.repoUrl,
     existingTasks: existingForLlm.length > 0 ? existingForLlm : undefined,
+    skillContext: skillContext || undefined,
   });
 
   const llmFailed = !generated;
@@ -250,12 +442,42 @@ export async function generatePlan(params: {
     plan = newPlan!;
   }
 
-  // Compute diff for UI highlighting (against existing tasks, no DB writes).
+  // Compute diff for UI highlighting using semantic similarity (NIM embeddings with
+  // TF-IDF cosine fallback). Each new step is matched against existing tasks; a
+  // similarity score >= SEMANTIC_MATCH_THRESHOLD treats them as the same task.
+  // String-normalization is kept as the last-resort fallback inside buildSemanticMatchMap.
+  const newStepTexts = planData.steps.map(s => s.text);
+  const existingTasksForDiff = existingTasks.map(t => ({
+    id: t.id,
+    text: t.text,
+    stepIndex: t.stepIndex,
+    status: t.status,
+    priority: t.priority,
+    confirmedByUser: t.confirmedByUser,
+  }));
+
+  const semanticMatchMap = await buildSemanticMatchMap(newStepTexts, existingTasksForDiff);
+  // Also maintain a string-match fallback map so we don't miss exact duplicates
+  // that slip under the semantic threshold (e.g. very short one-word tasks).
   const existingTextMap = new Map(existingTasks.map(t => [t.text.toLowerCase().trim(), t]));
-  const newTextSet = new Set(planData.steps.map(s => s.text.toLowerCase().trim()));
+
+  // Track which existing task IDs were matched so we can identify truly removed tasks.
+  const matchedExistingIds = new Set<number>();
+  for (const existing of semanticMatchMap.values()) {
+    matchedExistingIds.add(existing.id);
+  }
+  // Also mark string-matched tasks (for short tasks that may have scored below threshold)
+  for (let i = 0; i < newStepTexts.length; i++) {
+    if (!semanticMatchMap.has(i)) {
+      const strMatch = existingTextMap.get(newStepTexts[i]!.toLowerCase().trim());
+      if (strMatch) matchedExistingIds.add(strMatch.id);
+    }
+  }
 
   const draftSteps: DraftStep[] = planData.steps.map((step, i) => {
-    const existing = existingTextMap.get(step.text.toLowerCase().trim());
+    const semanticMatch = semanticMatchMap.get(i);
+    const strMatch = existingTextMap.get(step.text.toLowerCase().trim());
+    const existing = semanticMatch ?? strMatch;
     return {
       stepIndex: i,
       text: step.text,
@@ -270,9 +492,9 @@ export async function generatePlan(params: {
     };
   });
 
-  // Identify tasks that exist but are NOT in the new draft — show as "removed" context
+  // Identify tasks that exist but are NOT semantically matched by any new step.
   const removedSteps: RemovedStep[] = existingTasks
-    .filter(t => !newTextSet.has(t.text.toLowerCase().trim()))
+    .filter(t => !matchedExistingIds.has(t.id))
     .map(t => ({ id: t.id, text: t.text, stepIndex: t.stepIndex }));
 
   // Emit plan.created only for truly new plans; existing plan regenerations are updates.
@@ -598,6 +820,12 @@ export async function reassessSession(params: {
     )
     .slice(0, 40);
 
+  // Load active skill context from the session so the LLM knows what the swarm
+  // is capable of when evaluating what was actually accomplished.
+  const reassessSkillContext = await loadSkillContextSummary({
+    sessionId: params.sessionId,
+  });
+
   const reassessments = await callLlmForReassessment({
     tasks: tasks.map(t => ({
       id: t.id,
@@ -610,6 +838,7 @@ export async function reassessSession(params: {
       inputSummary: o.inputSummary,
       outputSummary: o.outputSummary,
     })),
+    skillContext: reassessSkillContext || undefined,
   });
 
   if (!reassessments) {
