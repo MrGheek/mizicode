@@ -49,7 +49,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -69,7 +69,7 @@ jobs:
       # ── GitHub Deployment (created before deploy so the PR sidebar shows it) ─
       - name: Create GitHub deployment
         id: create-deployment
-        uses: chrnorm/deployment-action@55729fcebec3d284f60f5bcabbd8376437d696b1 # v2.0.7
+        uses: chrnorm/deployment-action@500aa6a23c81ffa1acf71072aee3cfa2cc2e556a # v2.0.8
         with:
           token: ${{ github.token }}
           environment: preview
@@ -169,7 +169,7 @@ jobs:
       # Vercel deploy step.
       - name: Update deployment status (success)
         if: success()
-        uses: chrnorm/deployment-status@9a72af4586197112e0491ea843682b5dc280d806 # v2.0.3
+        uses: chrnorm/deployment-status@6df8d036fd2fee9eb82936733953da1f8382b41e # v2.0.4
         with:
           token: ${{ github.token }}
           deployment-id: ${{ steps.create-deployment.outputs.deployment_id }}
@@ -179,7 +179,7 @@ jobs:
 
       - name: Update deployment status (failure)
         if: failure() && steps.create-deployment.outputs.deployment_id != ''
-        uses: chrnorm/deployment-status@9a72af4586197112e0491ea843682b5dc280d806 # v2.0.3
+        uses: chrnorm/deployment-status@6df8d036fd2fee9eb82936733953da1f8382b41e # v2.0.4
         with:
           token: ${{ github.token }}
           deployment-id: ${{ steps.create-deployment.outputs.deployment_id }}
