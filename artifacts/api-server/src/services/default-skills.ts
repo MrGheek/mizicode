@@ -983,6 +983,37 @@ export const DEFAULT_SKILLS: MiziSkillManifest[] = [
     rankingHints: { taskFitWeight: 0.95, repoFitWeight: 0.5, measuredLiftWeight: 0.9 },
     safety: { shellExecution: "none", networkAccess: "restricted" },
   },
+  // ── Research skills ──────────────────────────────────────────────────────────
+  {
+    schemaVersion: 1,
+    id: "web-search",
+    name: "Web Search",
+    class: "research",
+    source: MIZI_NATIVE_SOURCE,
+    summary: "Live web search and URL fetch — lets agents look up documentation, changelogs, Stack Overflow answers, and package versions mid-session.",
+    triggers: {
+      tasks: ["build", "debug", "explore"],
+      repoKinds: ["any"],
+      sessionModes: ["solo", "team"],
+    },
+    compatibility: { models: ["kimi", "qwen", "glm", "deepseek", "minimax"], interfaces: ["claw"] },
+    instructions: {
+      system: [
+        "You have access to two research tools on the MIZI API. Use them when you encounter unfamiliar APIs, need to verify package versions, debug obscure errors, or look up live documentation.",
+        "Web search: POST /tools/web-search with body { \"query\": \"<your query>\", \"limit\": 8 } — returns { results: [{ title, url, snippet }] }. Always prepend /api to the path when calling from inside the session.",
+        "URL fetch: POST /tools/fetch-url with body { \"url\": \"<url>\" } — returns { content: \"<plain text>\", truncated: bool }. Use this after web-search to read the full content of a relevant page rather than relying on the snippet alone.",
+        "Prefer specific, targeted queries over broad ones. Include the library name, version, and error message when searching for a bug fix.",
+        "After fetching a page, extract only the relevant section and include a source citation in your response: Source: <url>.",
+        "Do not embed raw search results verbatim — summarise the key finding in 1–3 sentences and cite the URL.",
+        "If web-search returns 503, the API key is not configured on this server. Fall back to your training knowledge and note the limitation.",
+        "Do not use these tools for login-gated pages, internal company docs, or content that requires authentication — the fetcher has no session cookies.",
+      ],
+    },
+    install: { type: "networked", outputs: ["system_prompt_fragment", "cockpit_badge"] },
+    cost: { tokenOverheadEstimate: 230 },
+    rankingHints: { taskFitWeight: 0.8, repoFitWeight: 0.5, measuredLiftWeight: 0.85 },
+    safety: { shellExecution: "none", networkAccess: "full" },
+  },
 ];
 
 export interface DefaultBundleSpec {

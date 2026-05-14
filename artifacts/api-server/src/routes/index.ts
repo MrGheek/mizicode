@@ -20,6 +20,7 @@ import orchestrateRouter from "./orchestrate";
 import intentRouter from "./intent";
 import schemaTemplatesRouter from "./schema-templates";
 import planRouter from "./plan";
+import toolsRouter from "./tools";
 
 const router: IRouter = Router();
 
@@ -45,5 +46,6 @@ router.use(bridgeRouter);
 router.use(orchestrateRouter);
 router.use(schemaTemplatesRouter);
 router.use(planRouter);
+router.use(toolsRouter);
 
 export default router;
