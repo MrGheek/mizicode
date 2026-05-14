@@ -31,24 +31,9 @@ if (!BRAVE_API_KEY && !SERPER_API_KEY) {
 
 // ─── SSRF Guard ───────────────────────────────────────────────────────────────
 
-const PRIVATE_HOST_RE = /^(
-  localhost |
-  .*\.local |
-  .*\.internal |
-  .*\.corp |
-  .*\.intranet
-)$/ix;
+const PRIVATE_HOST_RE = /^(localhost|.*\.local|.*\.internal|.*\.corp|.*\.intranet)$/i;
 
-const PRIVATE_IP_RE = /^(
-  127\. |
-  10\. |
-  172\.(1[6-9]|2\d|3[01])\. |
-  192\.168\. |
-  169\.254\. |
-  ::1$ |
-  fc[0-9a-f]{2}: |
-  fd[0-9a-f]{2}:
-)/ix;
+const PRIVATE_IP_RE = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1$|fc[0-9a-f]{2}:|fd[0-9a-f]{2}:)/i;
 
 function isPrivateHost(hostname: string): boolean {
   if (PRIVATE_HOST_RE.test(hostname)) return true;
