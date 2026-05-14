@@ -4,9 +4,16 @@
  * Exposes tool endpoints that swarm agents call during sessions:
  *   POST /sessions/:id/tools/web-search  — live web search via Brave Search API
  *   POST /sessions/:id/tools/fetch-url   — fetch and extract text from a URL
+ *
+ * Safety:
+ *   - Both endpoints verify the session has the "web-search" skill activated
+ *   - fetch-url blocks private/internal IP ranges to prevent SSRF
+ *   - fetch-url respects robots.txt for MIZIBot and *
  */
 
 import { Router } from "express";
+import { desc, eq } from "drizzle-orm";
+import { db, sessionSkillsTable, sessionsTable } from "@workspace/db";
 import { requireAgentAuth } from "../middlewares/agent-auth";
 import { logger } from "../lib/logger";
 
@@ -20,6 +27,112 @@ if (!BRAVE_API_KEY && !SERPER_API_KEY) {
     "Neither BRAVE_SEARCH_API_KEY nor SERPER_API_KEY is set — " +
     "POST /sessions/:id/tools/web-search will return 503 until a key is configured."
   );
+}
+
+// ─── SSRF Guard ───────────────────────────────────────────────────────────────
+
+const PRIVATE_HOST_RE = /^(
+  localhost |
+  .*\.local |
+  .*\.internal |
+  .*\.corp |
+  .*\.intranet
+)$/ix;
+
+const PRIVATE_IP_RE = /^(
+  127\. |
+  10\. |
+  172\.(1[6-9]|2\d|3[01])\. |
+  192\.168\. |
+  169\.254\. |
+  ::1$ |
+  fc[0-9a-f]{2}: |
+  fd[0-9a-f]{2}:
+)/ix;
+
+function isPrivateHost(hostname: string): boolean {
+  if (PRIVATE_HOST_RE.test(hostname)) return true;
+  if (PRIVATE_IP_RE.test(hostname)) return true;
+  // Block AWS / GCP / Azure metadata endpoints by IP
+  if (hostname === "169.254.169.254" || hostname === "metadata.google.internal") return true;
+  return false;
+}
+
+// ─── robots.txt Compliance ────────────────────────────────────────────────────
+
+/**
+ * Returns true if MIZIBot (or any bot) is disallowed from fetching the given path.
+ * Fails open — if robots.txt cannot be fetched, we allow the request.
+ */
+async function isDisallowedByRobots(target: URL): Promise<boolean> {
+  const robotsUrl = `${target.protocol}//${target.host}/robots.txt`;
+  try {
+    const res = await fetch(robotsUrl, {
+      headers: { "User-Agent": "MIZIBot/1.0" },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return false;
+    const text = await res.text();
+    const path = target.pathname || "/";
+    return parseRobotsDisallow(text, path);
+  } catch {
+    return false; // fail open — don't block if robots.txt is unavailable
+  }
+}
+
+function parseRobotsDisallow(robots: string, path: string): boolean {
+  const lines = robots.split(/\r?\n/);
+  let applies = false;
+  for (const raw of lines) {
+    const line = raw.split("#")[0]!.trim();
+    if (!line) continue;
+    const [field, ...rest] = line.split(":");
+    const key = (field ?? "").toLowerCase().trim();
+    const value = rest.join(":").trim();
+    if (key === "user-agent") {
+      applies = value === "*" || value.toLowerCase().includes("mizibot");
+    } else if (key === "disallow" && applies) {
+      if (value && path.startsWith(value)) return true;
+    }
+  }
+  return false;
+}
+
+// ─── Session Skill Gate ───────────────────────────────────────────────────────
+
+/**
+ * Returns true when the session's latest activated skill bundle contains
+ * the "web-search" skill (matched via manifest id "web-search").
+ */
+async function sessionHasWebSearch(sessionId: number): Promise<boolean> {
+  const [row] = await db
+    .select({ activatedSkillsJson: sessionSkillsTable.activatedSkillsJson })
+    .from(sessionSkillsTable)
+    .where(eq(sessionSkillsTable.sessionId, sessionId))
+    .orderBy(desc(sessionSkillsTable.activatedAt))
+    .limit(1);
+
+  if (!row) return false;
+  const skills = row.activatedSkillsJson as Array<{ slug?: string; id?: string }>;
+  if (!Array.isArray(skills)) return false;
+  return skills.some((s) => s.slug === "web-search" || s.id === "web-search");
+}
+
+/**
+ * Verify session exists (not deleted) and return whether the "web-search"
+ * skill is active on it.  Returns null when the session does not exist.
+ */
+async function checkSession(sessionId: number): Promise<{ skillActive: boolean } | null> {
+  const [session] = await db
+    .select({ id: sessionsTable.id, status: sessionsTable.status })
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, sessionId))
+    .limit(1);
+
+  if (!session) return null;
+
+  const skillActive = await sessionHasWebSearch(sessionId);
+  return { skillActive };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -78,7 +191,7 @@ async function searchViaSerper(query: string, limit: number): Promise<SearchResu
 
 /**
  * Strip HTML tags, collapse whitespace, and return plain text.
- * Handles common boilerplate patterns (nav/header/footer/script/style removal).
+ * Removes common boilerplate sections before stripping tags.
  */
 function htmlToText(html: string): string {
   return html
@@ -124,6 +237,16 @@ router.post(
       return;
     }
 
+    const sessionCtx = await checkSession(sessionId);
+    if (!sessionCtx) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+    if (!sessionCtx.skillActive) {
+      res.status(403).json({ error: "The web-search skill is not active for this session" });
+      return;
+    }
+
     const { query, limit } = req.body as { query?: string; limit?: number };
     if (!query || typeof query !== "string" || query.trim().length === 0) {
       res.status(400).json({ error: "query is required" });
@@ -158,6 +281,16 @@ router.post(
       return;
     }
 
+    const sessionCtx = await checkSession(sessionId);
+    if (!sessionCtx) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+    if (!sessionCtx.skillActive) {
+      res.status(403).json({ error: "The web-search skill is not active for this session" });
+      return;
+    }
+
     const { url } = req.body as { url?: string };
     if (!url || typeof url !== "string" || url.trim().length === 0) {
       res.status(400).json({ error: "url is required" });
@@ -174,6 +307,20 @@ router.post(
 
     if (!["http:", "https:"].includes(parsedUrl.protocol)) {
       res.status(400).json({ error: "Only http and https URLs are supported" });
+      return;
+    }
+
+    if (isPrivateHost(parsedUrl.hostname)) {
+      res.status(403).json({ error: "Fetching private or internal hosts is not permitted" });
+      return;
+    }
+
+    const disallowed = await isDisallowedByRobots(parsedUrl);
+    if (disallowed) {
+      res.status(403).json({
+        error: "This URL is disallowed by the site's robots.txt for automated agents",
+        url: parsedUrl.toString(),
+      });
       return;
     }
 

@@ -1000,8 +1000,8 @@ export const DEFAULT_SKILLS: MiziSkillManifest[] = [
     instructions: {
       system: [
         "You have access to two research tools on the MIZI API. Use them when you encounter unfamiliar APIs, need to verify package versions, debug obscure errors, or look up live documentation.",
-        "Web search: POST /tools/web-search with body { \"query\": \"<your query>\", \"limit\": 8 } — returns { results: [{ title, url, snippet }] }. Always prepend /api to the path when calling from inside the session.",
-        "URL fetch: POST /tools/fetch-url with body { \"url\": \"<url>\" } — returns { content: \"<plain text>\", truncated: bool }. Use this after web-search to read the full content of a relevant page rather than relying on the snippet alone.",
+        "Web search: POST /api/sessions/{SESSION_ID}/tools/web-search with body { \"query\": \"<your query>\", \"limit\": 8 } — returns { query, results: [{ title, url, snippet }] }. Replace {SESSION_ID} with the numeric ID of the current session.",
+        "URL fetch: POST /api/sessions/{SESSION_ID}/tools/fetch-url with body { \"url\": \"<url>\" } — returns { url, content: \"<plain text>\", truncated: bool, charCount: number }. Replace {SESSION_ID} with the current session ID. Use this after web-search to read the full content of a relevant page. Private/internal URLs and robots.txt-disallowed paths will be rejected with 403.",
         "Prefer specific, targeted queries over broad ones. Include the library name, version, and error message when searching for a bug fix.",
         "After fetching a page, extract only the relevant section and include a source citation in your response: Source: <url>.",
         "Do not embed raw search results verbatim — summarise the key finding in 1–3 sentences and cite the URL.",
