@@ -667,7 +667,7 @@ router.patch("/sessions/:sessionId", async (req, res) => {
   });
 });
 
-router.post("/sessions", requireAgentAuth(["sessions:write"]), async (req, res) => {
+router.post("/sessions", permitBearer([], { optional: true }), async (req, res) => {
   const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider, githubToken: rawGithubToken, modelRoutingMode: rawModelRoutingMode, enableLaneBranches: rawEnableLaneBranches, planId: requestedPlanId } = req.body;
   const modelRoutingMode: "auto" | "pinned" = rawModelRoutingMode === "pinned" ? "pinned" : "auto";
 

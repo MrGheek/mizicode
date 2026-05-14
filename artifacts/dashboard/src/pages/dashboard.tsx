@@ -32,6 +32,7 @@ import { SwarmPill } from "@/components/swarm-activity-panel";
 import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { GitHubConnectionWidget } from "@/components/github-connection-widget";
 import { ProjectPlanBoard } from "@/components/project-plan-board";
+import { TaskDetailDrawer, type TaskDetail } from "@/components/task-detail-drawer";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -122,6 +123,8 @@ function PlanApprovalUI({
   loading,
   llmFailed,
   title,
+  userId,
+  planId,
 }: {
   steps: DraftPlanStep[];
   onStepsChange: (steps: DraftPlanStep[]) => void;
@@ -130,10 +133,13 @@ function PlanApprovalUI({
   loading: boolean;
   llmFailed: boolean;
   title: string;
+  userId?: string | null;
+  planId?: number | null;
 }) {
   const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
   const [addingText, setAddingText] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  const [drawerTask, setDrawerTask] = useState<TaskDetail | null>(null);
 
   const updateStep = (idx: number, text: string) => {
     onStepsChange(steps.map((s, i) => i === idx ? { ...s, text } : s));
@@ -251,6 +257,26 @@ function PlanApprovalUI({
             {step.isChanged && (
               <span className="text-[9px] font-semibold shrink-0" style={{ color: "var(--accent-cyan)" }}>~changed</span>
             )}
+            {step.existingTaskId && planId && (
+              <button
+                onClick={() => setDrawerTask({
+                  id: step.existingTaskId!,
+                  planId: planId,
+                  text: step.text,
+                  status: "planned",
+                  priority: step.priority,
+                  doneLooksLike: step.doneLooksLike ?? null,
+                  outOfScope: step.outOfScope ?? null,
+                  fileDependencies: step.fileDependencies ?? null,
+                  userId: userId ?? "anonymous",
+                })}
+                className="shrink-0 transition-opacity opacity-40 hover:opacity-100"
+                title="View task details"
+                style={{ color: "var(--accent-cyan)" }}
+              >
+                <Eye className="w-3 h-3" />
+              </button>
+            )}
             <button
               onClick={() => removeStep(idx)}
               className="shrink-0 transition-colors"
@@ -330,6 +356,8 @@ function PlanApprovalUI({
           Skip planning
         </button>
       </div>
+
+      <TaskDetailDrawer task={drawerTask} onClose={() => setDrawerTask(null)} />
     </div>
   );
 }
@@ -889,6 +917,8 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHea
           loading={approvingPlan}
           llmFailed={planLlmFailed}
           title={planTitle}
+          userId={userId}
+          planId={planId}
         />
       )}
 
