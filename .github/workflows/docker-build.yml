@@ -1,78 +1,77 @@
 name: Build & Push Docker Image
 
-  on:
-    workflow_dispatch:
-    push:
-      branches: [main]
-      paths:
-        - "docker/**"
-    pull_request:
-      paths:
-        - "docker/**"
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+  pull_request:
+    paths:
+      - "docker/**"
 
-  # Cancel in-progress runs for the same PR when a new commit arrives.
-  # Push-to-main and manual runs use unique keys so they always complete.
-  concurrency:
-    group: docker-build-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# Cancel in-progress runs for the same PR when a new commit arrives.
+# Push-to-main and manual runs use unique keys so they always complete.
+concurrency:
+  group: docker-build-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-  jobs:
-    build:
-      runs-on: ubuntu-latest
-      permissions:
-        contents: read
-        id-token: write
-        attestations: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
 
-      steps:
-        - name: Free disk space
-          run: |
-            echo "=== Disk before cleanup ==="
-            df -h
-            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-            sudo rm -rf /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift
-            sudo rm -rf /usr/local/julia* /usr/local/share/chromium
-            sudo rm -rf /usr/local/share/powershell /usr/share/miniconda
-            sudo apt-get clean
-            docker image prune -a -f
-            echo "=== Disk after cleanup ==="
-            df -h
+    steps:
+      - name: Free disk space
+        run: |
+          echo "=== Disk before cleanup ==="
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift
+          sudo rm -rf /usr/local/julia* /usr/local/share/chromium
+          sudo rm -rf /usr/local/share/powershell /usr/share/miniconda
+          sudo apt-get clean
+          docker image prune -a -f
+          echo "=== Disk after cleanup ==="
+          df -h
 
-        - name: Checkout
-          uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-        - name: Set up Docker Buildx
-          uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
-        - name: Log in to Docker Hub
-          if: github.event_name != 'pull_request'
-          uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-          with:
-            username: ${{ secrets.DOCKERHUB_USERNAME }}
-            password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-        - name: Build and push all tags
-          id: push
-          uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v6.2.0
-          with:
-            context: docker/
-            file: docker/Dockerfile
-            push: ${{ github.event_name != 'pull_request' }}
-            tags: |
-              gheeklabs/coding-env:cuda12.4
-              gheeklabs/coding-env:a100
-              gheeklabs/coding-env:h100
-              gheeklabs/coding-env:latest
-            build-args: |
-              CUDA_VERSION=12.4.1
-            cache-from: ${{ github.event_name != 'pull_request' && 'type=registry,ref=gheeklabs/coding-env:buildcache' || '' }}
-            cache-to: ${{ github.event_name != 'pull_request' && 'type=registry,ref=gheeklabs/coding-env:buildcache,mode=max' || '' }}
+      - name: Build and push all tags
+        id: push
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v6.2.0
+        with:
+          context: docker/
+          file: docker/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            gheeklabs/coding-env:cuda12.4
+            gheeklabs/coding-env:a100
+            gheeklabs/coding-env:h100
+            gheeklabs/coding-env:latest
+          build-args: |
+            CUDA_VERSION=12.4.1
+          cache-from: ${{ github.event_name != 'pull_request' && 'type=registry,ref=gheeklabs/coding-env:buildcache' || '' }}
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=registry,ref=gheeklabs/coding-env:buildcache,mode=max' || '' }}
 
-        - name: Attest build provenance
-          if: github.event_name != 'pull_request'
-          uses: actions/attest-build-provenance@1c608d11d69870c2092266b3f9a6f3abbf17002c # v2.2.0
-          with:
-            subject-name: index.docker.io/gheeklabs/coding-env
-            subject-digest: ${{ steps.push.outputs.digest }}
-            push-to-registry: true
-  
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@1c608d11d69870c2092266b3f9a6f3abbf17002c # v2.2.0
+        with:
+          subject-name: index.docker.io/gheeklabs/coding-env
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
