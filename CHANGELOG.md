@@ -1,3 +1,13 @@
+## v0.9.1 — 2026-05-14\n\n- Saved progress at the end of the loop (7f7ba8e)
+- fix(db): use port 5432 (primary) instead of 5433 (replica) + session read-write guard (aeedd68)
+- fix(migrate): add 0027 zombie sentinel + replace migrate() with BEGIN READ WRITE runner (368ca6f)
+- Fix login issues and related errors by adding missing configuration (c02d1f3)
+- Fix migrate.ts silently connecting to Fly.io replica when DATABASE_URL omits port (8354022)
+- Merge branch 'main' of https://github.com/MrGheek/mizicode (d6bb652)
+- Task #379: Fix GitHub sign-in for production — startup guards + fly.toml docs (da1b1e4)
+- Task #379: Fix GitHub sign-in for production — startup guards + fly.toml docs (67762be)
+- Transitioned from Plan to Build mode (fbaaf99)\n
+
 ## v0.9.0 — 2026-05-13\n\n- Merge branch 'main' of https://github.com/MrGheek/mizicode (af28078)
 - Improve task detail saving and error handling (31e3be8)
 - feat: Task #374 — task detail drawer with View button on plan board cards (5e6b65f)
