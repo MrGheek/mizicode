@@ -3253,7 +3253,7 @@ router.get("/sessions/:sessionId/messages/stream", (req, res) => {
 
 // ─── Provisioning endpoints ──────────────────────────────────────────────────
 
-async function cleanupSessionResources(sessionId: number): Promise<void> {
+export async function cleanupSessionResources(sessionId: number): Promise<void> {
   try {
     const resources = await db
       .select()

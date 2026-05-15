@@ -3,6 +3,8 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { requireAgentAuth } from "./middlewares/agent-auth";
+import mcpRouter from "./mcp/handler";
 
 const app: Express = express();
 
@@ -30,5 +32,26 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
+
+app.use("/api/mcp", requireAgentAuth([]), mcpRouter);
+
+app.get("/.well-known/mcp", (_req, res) => {
+  res.json({
+    schema_version: "2025-03-26",
+    name: "mizi",
+    version: "1.0.0",
+    description: "MIZI AI coding platform — sessions, memory, skills, lanes, safety approvals, planning, repo intelligence, agent tools, design intelligence, model catalog, and ambient observability.",
+    mcp_url: "/api/mcp",
+    auth: {
+      type: "bearer",
+      hint: "Pass your MIZI API key as 'Authorization: Bearer <key>'",
+    },
+    privilege_tiers: {
+      Read: "Safe, no side effects (list, get, search, status).",
+      Write: "Creates or modifies resources.",
+      Admin: "High-impact or irreversible actions — requires an API key with the `admin` scope.",
+    },
+  });
+});
 
 export default app;
