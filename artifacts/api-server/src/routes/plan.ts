@@ -27,6 +27,7 @@ import {
   updateTask,
   addTaskToPlan,
   deleteTask,
+  deletePlan,
   reassessSession,
   exportPlanAsMarkdown,
 } from "../services/plan";
@@ -356,6 +357,30 @@ router.patch("/plans/:planId/tasks/:taskId", async (req, res) => {
     }
     logger.error({ err }, "[plan] PATCH /plans/:planId/tasks/:taskId failed");
     res.status(500).json({ error: "Failed to update task" });
+  }
+});
+
+// ── DELETE /api/plans/:planId ─────────────────────────────────────────────────
+
+router.delete("/plans/:planId", async (req, res) => {
+  try {
+    const planId = parseInt(req.params["planId"]!, 10);
+    if (isNaN(planId)) { res.status(400).json({ error: "Invalid planId" }); return; }
+
+    const userId = req.query["userId"] as string | undefined;
+    if (!userId?.trim()) {
+      res.status(400).json({ error: "userId query param required" });
+      return;
+    }
+
+    await deletePlan(planId, userId.trim());
+    res.json({ ok: true });
+  } catch (err: unknown) {
+    const sc = (err as { statusCode?: number }).statusCode;
+    if (sc === 404) { res.status(404).json({ error: "Plan not found" }); return; }
+    if (sc === 403) { res.status(403).json({ error: "Access denied" }); return; }
+    logger.error({ err }, "[plan] DELETE /plans/:planId failed");
+    res.status(500).json({ error: "Failed to delete plan" });
   }
 });
 

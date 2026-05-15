@@ -663,6 +663,13 @@ export async function getPlanById(planId: number): Promise<ProjectPlan | null> {
   return plan ?? null;
 }
 
+export async function deletePlan(planId: number, userId: string): Promise<void> {
+  const plan = await getPlanById(planId);
+  if (!plan) throw Object.assign(new Error("Plan not found"), { statusCode: 404 });
+  if (plan.userId !== userId) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
+  await db.delete(projectPlansTable).where(eq(projectPlansTable.id, planId));
+}
+
 export async function getTasksForPlan(planId: number): Promise<ProjectTask[]> {
   return db.select()
     .from(projectTasksTable)

@@ -491,6 +491,8 @@ export function ProjectPlanBoard({ userId, repoUrl, sessionId }: { userId: strin
   const [draggedId, setDraggedId] = useState<number | null>(null);
   const [expanded, setExpanded] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [drawerTask, setDrawerTask] = useState<TaskDetail | null>(null);
 
   const handleViewTask = (task: ProjectTask) => {
@@ -644,6 +646,21 @@ export function ProjectPlanBoard({ userId, repoUrl, sessionId }: { userId: strin
     await handleStatusChange(taskId, targetStatus, true);
   };
 
+  const handleDeletePlan = async () => {
+    if (!activePlanId) return;
+    setDeleting(true);
+    try {
+      await fetch(`${BASE_URL}api/plans/${activePlanId}?userId=${encodeURIComponent(userId)}`, { method: "DELETE" });
+      const remaining = plans.filter(p => p.id !== activePlanId);
+      setPlans(remaining);
+      setActivePlanId(remaining.length > 0 ? remaining[0]!.id : null);
+      setTasks([]);
+      setConfirmDelete(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const handleExport = async () => {
     if (!activePlanId) return;
     setExporting(true);
@@ -739,6 +756,47 @@ export function ProjectPlanBoard({ userId, repoUrl, sessionId }: { userId: strin
             {exporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
             Export
           </button>
+        )}
+
+        {/* Delete project */}
+        {activePlanId && (
+          confirmDelete ? (
+            <div className="flex items-center gap-1">
+              <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Delete project?</span>
+              <button
+                onClick={() => { void handleDeletePlan(); }}
+                disabled={deleting}
+                className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg transition-all"
+                style={{ color: "#ef4444", border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.08)" }}
+              >
+                {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                Yes
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="text-[11px] px-2 py-1 rounded-lg transition-all"
+                style={{ color: "var(--text-muted)", border: "1px solid var(--border-glass)", background: "rgba(255,255,255,0.02)" }}
+              >
+                No
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-lg transition-all"
+              style={{
+                color: "var(--text-muted)",
+                border: "1px solid var(--border-glass)",
+                background: "rgba(255,255,255,0.02)",
+              }}
+              onMouseEnter={e => { (e.currentTarget.style.color = "#ef4444"); (e.currentTarget.style.borderColor = "rgba(239,68,68,0.3)"); }}
+              onMouseLeave={e => { (e.currentTarget.style.color = "var(--text-muted)"); (e.currentTarget.style.borderColor = "var(--border-glass)"); }}
+              title="Delete this project and all its tasks"
+            >
+              <Trash2 className="w-3 h-3" />
+              Delete
+            </button>
+          )
         )}
       </div>
 
