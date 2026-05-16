@@ -20,18 +20,18 @@ import {
   getBridge,
   getBridgeStatus,
   bridgeKey,
+  tryAcquireExecLock,
+  releaseExecLock,
 } from "../services/bridge-registry";
 import { triggerSnapshot } from "../services/snapshot";
 
 const router = Router();
 
-// Per-lane exec lock: prevents concurrent execs on the same bridge (avoids
-// multiple callers attaching listeners to the same socket and mixing up frames).
-const activeExecs = new Set<string>();
-
 // Exported for test teardown only — do not use in production paths.
+// Delegates to the centralized exec lock in bridge-registry so the file-tree
+// routes and the bridge exec route share the same mutual-exclusion domain.
 export function _clearActiveExec(sessionId: number, laneId: number): void {
-  activeExecs.delete(bridgeKey(sessionId, laneId));
+  releaseExecLock(sessionId, laneId);
 }
 
 // ─── WebSocket upgrade handler ────────────────────────────────────────────────
@@ -141,12 +141,12 @@ router.post(
 
     // Enforce single-active-exec per lane to prevent listener cross-talk.
     // Lane-busy check runs BEFORE snapshot so rejected calls don't create commits.
-    const laneKey = bridgeKey(sessionId, laneId);
-    if (activeExecs.has(laneKey)) {
+    // Uses the centralized lock in bridge-registry so file-tree exec calls
+    // on the same lane are also blocked (and vice-versa).
+    if (!tryAcquireExecLock(sessionId, laneId)) {
       res.status(409).json({ error: "Another exec is already in progress for this lane" });
       return;
     }
-    activeExecs.add(laneKey);
 
     // Create a git checkpoint BEFORE dispatching the exec prompt so the snapshot
     // captures the true "before" state. Fail-open: any error from triggerSnapshot
@@ -191,7 +191,7 @@ router.post(
       liveWs.off("message", onMessage);
       liveWs.off("close", onBridgeClose);
       res.off("close", onCallerClose);
-      activeExecs.delete(bridgeKey(sessionId, laneId));
+      releaseExecLock(sessionId, laneId);
     }
 
     function onMessage(raw: RawData): void {
