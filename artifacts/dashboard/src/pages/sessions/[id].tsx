@@ -60,6 +60,7 @@ import { RelaunchButton } from "@/components/relaunch-button";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { TeamTab } from "@/components/team-tab";
 import { InferenceTab } from "@/components/inference-tab";
+import { PreviewTab } from "@/components/preview-tab";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 import { GitHubBranchChip } from "@/components/github-branch-chip";
 import { useOrchestrationStatus } from "@/hooks/use-orchestration-status";
@@ -2600,15 +2601,15 @@ export default function SessionDetail() {
   const { toast } = useToast();
   const { pref: handoffNotifPref, setPref: setHandoffNotifPref, browserPermission } = useHandoffNotificationPref();
   const [notifPopoverOpen, setNotifPopoverOpen] = useState(false);
-  const lastDetailTabRef = useRef<"memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference">("memory");
+  const lastDetailTabRef = useRef<"memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "preview">("memory");
   const queryClient = useQueryClient();
-  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm", "inference", "environment"] as const;
-  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" => {
+  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm", "inference", "environment", "preview"] as const;
+  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" => {
     const settled = validTabs.includes(raw as typeof validTabs[number]) ? raw : "overview";
-    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment";
+    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview";
   };
 
-  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment">(() => {
+  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview">(() => {
     const stored = sessionStorage.getItem(`session-tab-${id}`);
     const urlTab = new URLSearchParams(window.location.search).get("tab");
     const validStored = stored && (validTabs as readonly string[]).includes(stored) ? stored : null;
@@ -3312,8 +3313,16 @@ export default function SessionDetail() {
           }
           break;
         case "7":
+          if (sess.boltDiyUrl) {
+            e.preventDefault();
+            lastDetailTabRef.current = "preview";
+            setActiveTab("preview");
+          }
+          break;
+        case "8":
           if ((session as typeof session & { provider?: string }).provider === "nim") {
             e.preventDefault();
+            lastDetailTabRef.current = "inference";
             setActiveTab("inference");
           }
           break;
@@ -4248,6 +4257,14 @@ export default function SessionDetail() {
               >
                 <DatabaseZap className="w-3 h-3" /> Environment
               </button>
+              {session.boltDiyUrl && (
+                <button
+                  onClick={() => { lastDetailTabRef.current = "preview"; setActiveTab("preview"); }}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "preview" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
+                >
+                  <MonitorSmartphone className="w-3 h-3" /> Preview
+                </button>
+              )}
             </div>
           </SheetHeader>
 
@@ -4297,6 +4314,15 @@ export default function SessionDetail() {
             )}
             {activeTab === "environment" && (
               <EnvironmentTab sessionId={sessionId} />
+            )}
+            {activeTab === "preview" && session.boltDiyUrl && (
+              <PreviewTab
+                sessionId={sessionId}
+                previewUrl={session.previewUrl ?? null}
+                boltDiyUrl={session.boltDiyUrl ?? null}
+                codeServerUrl={session.codeServerUrl ?? null}
+                isReady={isReady}
+              />
             )}
           </div>
         </SheetContent>
