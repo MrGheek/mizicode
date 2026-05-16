@@ -21,6 +21,7 @@ import intentRouter from "./intent";
 import schemaTemplatesRouter from "./schema-templates";
 import planRouter from "./plan";
 import toolsRouter from "./tools";
+import snapshotsRouter from "./snapshots";
 
 const router: IRouter = Router();
 
@@ -47,5 +48,6 @@ router.use(orchestrateRouter);
 router.use(schemaTemplatesRouter);
 router.use(planRouter);
 router.use(toolsRouter);
+router.use(snapshotsRouter);
 
 export default router;

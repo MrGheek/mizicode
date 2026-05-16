@@ -400,12 +400,20 @@ describe("POST /api/sessions/:id/lanes/:laneId/exec", () => {
   it("forwards the exec frame to the bridge WebSocket", async () => {
     const mock = await createMockBridgeClient(testSessionId, testLaneId);
 
-    // Race: wait for serverWs to receive the exec frame (or 5 s timeout)
+    // The exec route sends a `shell` frame first (pre-action snapshot) before the
+    // `exec` frame. The mock must respond to `shell` frames with `shell_done` so
+    // triggerSnapshot resolves, then we capture the subsequent `exec` frame.
     const received = await new Promise<unknown>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error("exec frame not received within 5s")), 5_000);
-      mock.serverWs.once("message", (data) => {
-        clearTimeout(t);
-        resolve(JSON.parse(data.toString()));
+      const t = setTimeout(() => reject(new Error("exec frame not received within 10s")), 10_000);
+      mock.serverWs.on("message", (data) => {
+        const frame = JSON.parse(data.toString()) as { type: string; id?: string; prompt?: string };
+        if (frame.type === "shell") {
+          // Respond to the snapshot shell command so triggerSnapshot resolves quickly
+          mock.serverWs.send(JSON.stringify({ type: "shell_done", id: frame.id, output: "", exitCode: 0 }));
+        } else if (frame.type === "exec") {
+          clearTimeout(t);
+          resolve(frame);
+        }
       });
 
       // Make the exec request (fire and forget — SSE stays open while mock is alive)
@@ -430,10 +438,12 @@ describe("POST /api/sessions/:id/lanes/:laneId/exec", () => {
   it("relays SSE observation and done frames from the bridge", async () => {
     const mock = await createMockBridgeClient(testSessionId, testLaneId);
 
-    // Reply immediately when exec frame arrives
-    mock.serverWs.once("message", (data) => {
-      const frame = JSON.parse(data.toString());
-      if (frame.type === "exec") {
+    // Auto-respond to shell frames (snapshot) and send observation+done on exec.
+    mock.serverWs.on("message", (data) => {
+      const frame = JSON.parse(data.toString()) as { type: string; id?: string };
+      if (frame.type === "shell") {
+        mock.serverWs.send(JSON.stringify({ type: "shell_done", id: frame.id, output: "", exitCode: 0 }));
+      } else if (frame.type === "exec") {
         mock.serverWs.send(JSON.stringify({ type: "observation", text: "tool output line 1" }));
         mock.serverWs.send(JSON.stringify({ type: "done", result: "final answer" }));
       }
@@ -485,9 +495,12 @@ describe("POST /api/sessions/:id/lanes/:laneId/exec", () => {
   it("relays SSE error frame when bridge sends error", async () => {
     const mock = await createMockBridgeClient(testSessionId, testLaneId);
 
-    mock.serverWs.once("message", (data) => {
-      const frame = JSON.parse(data.toString());
-      if (frame.type === "exec") {
+    // Auto-respond to shell frames (snapshot) and send error on exec.
+    mock.serverWs.on("message", (data) => {
+      const frame = JSON.parse(data.toString()) as { type: string; id?: string };
+      if (frame.type === "shell") {
+        mock.serverWs.send(JSON.stringify({ type: "shell_done", id: frame.id, output: "", exitCode: 0 }));
+      } else if (frame.type === "exec") {
         mock.serverWs.send(JSON.stringify({ type: "error", message: "claw crashed" }));
       }
     });
@@ -534,10 +547,16 @@ describe("POST /api/sessions/:id/lanes/:laneId/exec", () => {
   it("closes SSE stream with error when bridge disconnects mid-exec", async () => {
     const mock = await createMockBridgeClient(testSessionId, testLaneId);
 
-    // Bridge closes right after receiving exec
-    mock.serverWs.once("message", () => {
-      // Small delay so the exec response headers are sent first
-      setImmediate(() => mock.serverWs.close());
+    // Auto-respond to shell frames (snapshot) then close the WebSocket when exec arrives,
+    // simulating a bridge disconnect mid-exec.
+    mock.serverWs.on("message", (data) => {
+      const frame = JSON.parse(data.toString()) as { type: string; id?: string };
+      if (frame.type === "shell") {
+        mock.serverWs.send(JSON.stringify({ type: "shell_done", id: frame.id, output: "", exitCode: 0 }));
+      } else if (frame.type === "exec") {
+        // Small delay so the SSE response headers are written before disconnect
+        setImmediate(() => mock.serverWs.close());
+      }
     });
 
     const events = await new Promise<Array<Record<string, unknown>>>((resolve, reject) => {

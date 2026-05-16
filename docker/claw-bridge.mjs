@@ -79,6 +79,32 @@ function send(frame) {
   }
 }
 
+// ─── Shell handler ────────────────────────────────────────────────────────────
+
+function runShell(id, cmd) {
+  log(`shell: running command id=${id} (${cmd.length} chars)`);
+
+  const child = spawn("/bin/sh", ["-c", cmd], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env },
+  });
+
+  let outputBuf = "";
+
+  child.stdout.on("data", (chunk) => { outputBuf += chunk.toString(); });
+  child.stderr.on("data", (chunk) => { outputBuf += chunk.toString(); });
+
+  child.on("error", (err) => {
+    log(`shell: spawn error — ${err.message}`);
+    send({ type: "shell_error", id, message: `Failed to spawn shell: ${err.message}` });
+  });
+
+  child.on("close", (code) => {
+    log(`shell: exited with code ${code} id=${id}`);
+    send({ type: "shell_done", id, exitCode: code ?? 0, output: outputBuf });
+  });
+}
+
 // ─── Exec handler ─────────────────────────────────────────────────────────────
 
 function runExec(prompt) {
@@ -156,6 +182,8 @@ function connect() {
 
     if (frame.type === "exec" && typeof frame.prompt === "string") {
       runExec(frame.prompt);
+    } else if (frame.type === "shell" && typeof frame.cmd === "string" && typeof frame.id === "string") {
+      runShell(frame.id, frame.cmd);
     } else if (frame.type === "registered") {
       log(`Registration confirmed: session=${frame.sessionId} lane=${frame.laneId}`);
     } else {

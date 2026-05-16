@@ -34,7 +34,7 @@ import { format, formatDistanceToNow } from "date-fns";
 import {
   Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw, Users, Copy, Check, Eye, EyeOff, FolderOpen,
   Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap, Network, Target, Pencil, Palette, Zap,
-  Bell, BellOff, BellRing, MonitorSmartphone, Plus,
+  Bell, BellOff, BellRing, MonitorSmartphone, Plus, History,
   // RotateCcw was used by the legacy disk-full retry button; the new BootTimeline owns that CTA.
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,6 +61,7 @@ import { isTypingTarget } from "@/lib/shortcuts";
 import { TeamTab } from "@/components/team-tab";
 import { InferenceTab } from "@/components/inference-tab";
 import { PreviewTab } from "@/components/preview-tab";
+import { SnapshotsPanel } from "@/components/snapshots-panel";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 import { GitHubBranchChip } from "@/components/github-branch-chip";
 import { useOrchestrationStatus } from "@/hooks/use-orchestration-status";
@@ -2601,15 +2602,15 @@ export default function SessionDetail() {
   const { toast } = useToast();
   const { pref: handoffNotifPref, setPref: setHandoffNotifPref, browserPermission } = useHandoffNotificationPref();
   const [notifPopoverOpen, setNotifPopoverOpen] = useState(false);
-  const lastDetailTabRef = useRef<"memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "preview">("memory");
+  const lastDetailTabRef = useRef<"memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "preview" | "snapshots">("memory");
   const queryClient = useQueryClient();
-  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm", "inference", "environment", "preview"] as const;
-  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" => {
+  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm", "inference", "environment", "preview", "snapshots"] as const;
+  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "snapshots" => {
     const settled = validTabs.includes(raw as typeof validTabs[number]) ? raw : "overview";
-    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview";
+    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "snapshots";
   };
 
-  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview">(() => {
+  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "snapshots">(() => {
     const stored = sessionStorage.getItem(`session-tab-${id}`);
     const urlTab = new URLSearchParams(window.location.search).get("tab");
     const validStored = stored && (validTabs as readonly string[]).includes(stored) ? stored : null;
@@ -4265,6 +4266,12 @@ export default function SessionDetail() {
                   <MonitorSmartphone className="w-3 h-3" /> Preview
                 </button>
               )}
+              <button
+                onClick={() => { lastDetailTabRef.current = "snapshots"; setActiveTab("snapshots"); }}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "snapshots" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
+              >
+                <History className="w-3 h-3" /> Snapshots
+              </button>
             </div>
           </SheetHeader>
 
@@ -4314,6 +4321,9 @@ export default function SessionDetail() {
             )}
             {activeTab === "environment" && (
               <EnvironmentTab sessionId={sessionId} />
+            )}
+            {activeTab === "snapshots" && (
+              <SnapshotsPanel sessionId={sessionId} />
             )}
             {activeTab === "preview" && session.boltDiyUrl && (
               <PreviewTab
