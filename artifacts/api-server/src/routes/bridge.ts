@@ -21,6 +21,7 @@ import {
   getBridgeStatus,
   bridgeKey,
 } from "../services/bridge-registry";
+import { triggerSnapshot } from "../services/snapshot";
 
 const router = Router();
 
@@ -118,7 +119,7 @@ router.get(
 router.post(
   "/sessions/:id/lanes/:laneId/exec",
   requireAgentAuth(["coordination:write"]),
-  (req, res) => {
+  async (req, res) => {
     const sessionId = parseInt(String(req.params["id"] ?? ""));
     const laneId = parseInt(String(req.params["laneId"] ?? ""));
     if (!Number.isFinite(sessionId) || !Number.isFinite(laneId)) {
@@ -138,13 +139,28 @@ router.post(
       return;
     }
 
-    // Enforce single-active-exec per lane to prevent listener cross-talk
+    // Enforce single-active-exec per lane to prevent listener cross-talk.
+    // Lane-busy check runs BEFORE snapshot so rejected calls don't create commits.
     const laneKey = bridgeKey(sessionId, laneId);
     if (activeExecs.has(laneKey)) {
       res.status(409).json({ error: "Another exec is already in progress for this lane" });
       return;
     }
     activeExecs.add(laneKey);
+
+    // Create a git checkpoint BEFORE dispatching the exec prompt so the snapshot
+    // captures the true "before" state. Fail-open: any error from triggerSnapshot
+    // (bridge disconnect, shell_error, git failure) is swallowed so the exec stream
+    // is never blocked by a snapshot failure. Bounded timeout prevents hangs.
+    const SNAPSHOT_TIMEOUT_MS = 8_000;
+    try {
+      await Promise.race([
+        triggerSnapshot(sessionId, laneId, "bridge_exec"),
+        new Promise<void>((resolve) => setTimeout(resolve, SNAPSHOT_TIMEOUT_MS)),
+      ]);
+    } catch {
+      // snapshot failed — fail open, exec continues regardless
+    }
 
     // Capture as non-nullable after the guard above so TS can prove it's defined
     // inside the closures below.

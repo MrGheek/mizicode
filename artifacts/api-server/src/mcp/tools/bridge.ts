@@ -3,10 +3,30 @@ import WebSocket from "ws";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getBridge, getBridgeStatus } from "../../services/bridge-registry.js";
 import { logger } from "../../lib/logger.js";
+import { triggerSnapshot } from "../../services/snapshot.js";
 
 // Per-lane in-flight exec lock: prevents concurrent bridge_exec calls on the
 // same lane from interleaving each other's output frames. Key format: "sessionId:laneId".
 const inFlightExecs = new Set<string>();
+
+/**
+ * Returns true if the lane currently has a bridge_exec in progress.
+ * Used by snapshot list/rollback routes to reject operations that would race
+ * with an active agent exec (which could cause undefined workspace state).
+ */
+export function isLaneBusy(sessionId: number, laneId: number): boolean {
+  return inFlightExecs.has(`${sessionId}:${laneId}`);
+}
+
+// ─── Test helpers (exported for test teardown only) ───────────────────────────
+/** @internal Use only in tests to simulate a busy lane. */
+export function _testSetLaneBusy(sessionId: number, laneId: number): void {
+  inFlightExecs.add(`${sessionId}:${laneId}`);
+}
+/** @internal Use only in tests to clear a simulated busy lane. */
+export function _testClearLaneBusy(sessionId: number, laneId: number): void {
+  inFlightExecs.delete(`${sessionId}:${laneId}`);
+}
 
 export function registerBridgeTools(server: McpServer): void {
   server.registerTool("bridge_status", {
@@ -36,11 +56,27 @@ export function registerBridgeTools(server: McpServer): void {
 
     // Per-lane execution lock: reject concurrent calls to the same lane to
     // prevent output frame interleaving across simultaneous bridge_exec requests.
+    // The lock check runs BEFORE the snapshot so a rejected "lane busy" call
+    // does not generate a noisy no-op snapshot commit.
     const laneKey = `${sessionId}:${laneId}`;
     if (inFlightExecs.has(laneKey)) {
       return { content: [{ type: "text", text: JSON.stringify({ error: "Lane is busy — another bridge_exec is already in progress. Retry after the current exec completes." }) }] };
     }
     inFlightExecs.add(laneKey);
+
+    // Create a git checkpoint in the container BEFORE dispatching the exec prompt.
+    // This guarantees the snapshot reflects the true "before" state — not a partial or
+    // post-change state. triggerSnapshot always resolves (never rejects); the outer
+    // timeout races it so a slow/absent git never adds more than SNAPSHOT_TIMEOUT_MS
+    // of latency, after which we proceed without a checkpoint (fail-open).
+    //
+    // bridge_exec is the sole file-mutating AI tool path through this server: all agent
+    // work is driven via claw prompts dispatched over the bridge lane.
+    const SNAPSHOT_TIMEOUT_MS = 8_000;
+    await Promise.race([
+      triggerSnapshot(sessionId, laneId, "bridge_exec"),
+      new Promise<void>((resolve) => setTimeout(resolve, SNAPSHOT_TIMEOUT_MS)),
+    ]);
 
     const ws = bridgeWs;
     const timeout = timeoutMs ?? 60_000;
