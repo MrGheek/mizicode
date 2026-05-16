@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Monitor, Tablet, Smartphone, ArrowLeft, ArrowRight,
-  RefreshCw, ExternalLink, ChevronDown, ChevronUp,
-  Camera, Terminal, X, Loader2, Play, WifiOff,
+  RefreshCw, RotateCcw, ExternalLink, ChevronDown, ChevronUp,
+  Camera, Terminal, X, Loader2, Play, WifiOff, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,16 +20,15 @@ const VIEWPORT_DIMS: Record<Viewport, { w: number; h: number }> = {
 
 interface ConsoleEntry {
   level: string;
-  text: string;
-  source?: string;
-  lineNumber?: number;
+  message: string;
   timestamp: number;
 }
 
 interface Screenshot {
   imageBase64: string;
+  mimeType?: string;
   capturedAt: string;
-  viewport: Viewport;
+  viewport: { width: number; height: number };
   url: string;
 }
 
@@ -46,18 +45,29 @@ interface PreviewTabProps {
   isReady: boolean;
 }
 
-function resolveDefaultUrl(
-  previewUrl: string | null,
-  boltDiyUrl: string | null,
-): string {
-  return previewUrl ?? boltDiyUrl ?? "";
-}
-
 const FILE_TOOL_NAMES = new Set([
   "file_write", "write_file", "write_to_file", "create_file", "edit_file",
-  "str_replace_editor", "bash", "shell_exec", "shell_command",
-  "run_terminal_cmd",
+  "str_replace_editor", "bash", "shell_exec", "shell_command", "run_terminal_cmd",
 ]);
+
+const SMART_RETRY_INTERVAL_MS = 5_000;
+const SMART_RETRY_MAX = 12; // 60 s total
+
+function swapPort(currentUrl: string, targetUrl: string): string {
+  try {
+    const cur = new URL(currentUrl);
+    const tgt = new URL(targetUrl);
+    cur.hostname = tgt.hostname;
+    cur.port = tgt.port;
+    return cur.toString();
+  } catch {
+    return targetUrl;
+  }
+}
+
+function resolveDefaultUrl(previewUrl: string | null, boltDiyUrl: string | null): string {
+  return previewUrl ?? boltDiyUrl ?? "";
+}
 
 export function PreviewTab({
   sessionId,
@@ -66,47 +76,71 @@ export function PreviewTab({
   codeServerUrl,
   isReady,
 }: PreviewTabProps) {
-  const storageKey = `preview-tab-${sessionId}`;
-  const storedUrl = sessionStorage.getItem(`${storageKey}-url`);
-  const storedViewport = (sessionStorage.getItem(`${storageKey}-viewport`) as Viewport) ?? "desktop";
+  const sk = `preview-tab-${sessionId}`;
 
-  const [url, setUrl] = useState<string>(storedUrl ?? resolveDefaultUrl(previewUrl, boltDiyUrl));
-  const [inputVal, setInputVal] = useState<string>(storedUrl ?? resolveDefaultUrl(previewUrl, boltDiyUrl));
+  const storedUrl      = sessionStorage.getItem(`${sk}-url`);
+  const storedViewport = (sessionStorage.getItem(`${sk}-viewport`) as Viewport | null) ?? "desktop";
+  const storedSSOpen   = sessionStorage.getItem(`${sk}-ss-open`) === "1";
+  const storedConOpen  = sessionStorage.getItem(`${sk}-con-open`) === "1";
+
+  const [url, setUrl]           = useState(() => storedUrl ?? resolveDefaultUrl(previewUrl, boltDiyUrl));
+  const [inputVal, setInputVal] = useState(() => storedUrl ?? resolveDefaultUrl(previewUrl, boltDiyUrl));
   const [iframeKey, setIframeKey] = useState(0);
   const [viewport, setViewport] = useState<Viewport>(storedViewport);
   const [isLoading, setIsLoading] = useState(true);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [showFallback, setShowFallback] = useState(false);
+  const [smartRetryCount, setSmartRetryCount] = useState(0);
+  const [smartRetryCountdown, setSmartRetryCountdown] = useState(0);
 
   const [history, setHistory] = useState<string[]>(() => {
     const d = resolveDefaultUrl(previewUrl, boltDiyUrl);
-    return d ? [storedUrl ?? d] : [];
+    return [storedUrl ?? d].filter(Boolean);
   });
   const [histIdx, setHistIdx] = useState(0);
 
-  const [screenshotOpen, setScreenshotOpen] = useState(false);
+  const [screenshotOpen, setScreenshotOpen] = useState(storedSSOpen);
   const [screenshot, setScreenshot] = useState<Screenshot | null>(null);
   const [takingScreenshot, setTakingScreenshot] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  const [loadingLastSS, setLoadingLastSS] = useState(false);
 
-  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(storedConOpen);
   const [consoleLogs, setConsoleLogs] = useState<ConsoleEntry[]>([]);
   const [capturingConsole, setCapturingConsole] = useState(false);
   const [consoleError, setConsoleError] = useState<string | null>(null);
 
   const [autoRefresh, setAutoRefresh] = useState(false);
 
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fallbackTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const persistUrl = useCallback((u: string) => {
-    sessionStorage.setItem(`${storageKey}-url`, u);
-  }, [storageKey]);
+  const persistUrl      = useCallback((u: string) => sessionStorage.setItem(`${sk}-url`, u), [sk]);
+  const persistViewport = useCallback((v: Viewport) => sessionStorage.setItem(`${sk}-viewport`, v), [sk]);
+  const persistSSOpen   = useCallback((v: boolean) => sessionStorage.setItem(`${sk}-ss-open`, v ? "1" : "0"), [sk]);
+  const persistConOpen  = useCallback((v: boolean) => sessionStorage.setItem(`${sk}-con-open`, v ? "1" : "0"), [sk]);
 
-  const persistViewport = useCallback((v: Viewport) => {
-    sessionStorage.setItem(`${storageKey}-viewport`, v);
-  }, [storageKey]);
+  const clearTimers = useCallback(() => {
+    if (fallbackTimerRef.current)  { clearTimeout(fallbackTimerRef.current);   fallbackTimerRef.current  = null; }
+    if (retryTimerRef.current)     { clearTimeout(retryTimerRef.current);      retryTimerRef.current     = null; }
+    if (countdownTimerRef.current) { clearInterval(countdownTimerRef.current); countdownTimerRef.current = null; }
+  }, []);
+
+  const startLoad = useCallback(() => {
+    clearTimers();
+    setIsLoading(true);
+    setLoadedOnce(false);
+    setShowFallback(false);
+    setSmartRetryCount(0);
+    setSmartRetryCountdown(0);
+    setIframeKey(k => k + 1);
+    fallbackTimerRef.current = setTimeout(() => {
+      setIsLoading(false);
+      setShowFallback(true);
+    }, 8_000);
+  }, [clearTimers]);
 
   const navigate = useCallback((targetUrl: string) => {
     const trimmed = targetUrl.trim();
@@ -114,19 +148,33 @@ export function PreviewTab({
     setUrl(trimmed);
     setInputVal(trimmed);
     persistUrl(trimmed);
-    setIsLoading(true);
-    setLoadedOnce(false);
-    setShowFallback(false);
-    setIframeKey(k => k + 1);
     setHistory(prev => {
       const slice = prev.slice(0, histIdx + 1);
       const next = [...slice, trimmed];
       setHistIdx(next.length - 1);
       return next;
     });
-  }, [histIdx, persistUrl]);
+    startLoad();
+  }, [histIdx, persistUrl, startLoad]);
 
-  const goBack = () => {
+  const reload = useCallback(() => {
+    startLoad();
+  }, [startLoad]);
+
+  const hardReload = useCallback(() => {
+    if (!url) return;
+    try {
+      const u = new URL(url);
+      u.searchParams.set("_r", String(Date.now()));
+      setUrl(u.toString());
+      setInputVal(url);
+    } catch {
+      // fallback: just reload normally
+    }
+    startLoad();
+  }, [url, startLoad]);
+
+  const goBack = useCallback(() => {
     const newIdx = histIdx - 1;
     if (newIdx < 0) return;
     const target = history[newIdx];
@@ -135,13 +183,10 @@ export function PreviewTab({
     setUrl(target);
     setInputVal(target);
     persistUrl(target);
-    setIsLoading(true);
-    setLoadedOnce(false);
-    setShowFallback(false);
-    setIframeKey(k => k + 1);
-  };
+    startLoad();
+  }, [histIdx, history, persistUrl, startLoad]);
 
-  const goForward = () => {
+  const goForward = useCallback(() => {
     const newIdx = histIdx + 1;
     if (newIdx >= history.length) return;
     const target = history[newIdx];
@@ -150,43 +195,51 @@ export function PreviewTab({
     setUrl(target);
     setInputVal(target);
     persistUrl(target);
-    setIsLoading(true);
-    setLoadedOnce(false);
-    setShowFallback(false);
-    setIframeKey(k => k + 1);
-  };
+    startLoad();
+  }, [histIdx, history, persistUrl, startLoad]);
 
-  const reload = () => {
-    setIsLoading(true);
-    setLoadedOnce(false);
-    setShowFallback(false);
-    setIframeKey(k => k + 1);
-  };
-
-  const handleIframeLoad = () => {
+  const handleIframeLoad = useCallback(() => {
+    clearTimers();
     setIsLoading(false);
     setLoadedOnce(true);
     setShowFallback(false);
-    if (fallbackTimerRef.current) {
-      clearTimeout(fallbackTimerRef.current);
-      fallbackTimerRef.current = null;
-    }
-  };
+    setSmartRetryCount(0);
+    setSmartRetryCountdown(0);
+  }, [clearTimers]);
+
+  const startSmartRetry = useCallback((retryCount: number) => {
+    if (retryCount >= SMART_RETRY_MAX) return;
+    clearTimers();
+    setSmartRetryCountdown(Math.round(SMART_RETRY_INTERVAL_MS / 1000));
+    countdownTimerRef.current = setInterval(() => {
+      setSmartRetryCountdown(c => {
+        if (c <= 1) {
+          if (countdownTimerRef.current) { clearInterval(countdownTimerRef.current); countdownTimerRef.current = null; }
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1_000);
+    retryTimerRef.current = setTimeout(() => {
+      const next = retryCount + 1;
+      setSmartRetryCount(next);
+      setIsLoading(true);
+      setLoadedOnce(false);
+      setShowFallback(false);
+      setIframeKey(k => k + 1);
+      fallbackTimerRef.current = setTimeout(() => {
+        setIsLoading(false);
+        setShowFallback(true);
+        startSmartRetry(next);
+      }, 8_000);
+    }, SMART_RETRY_INTERVAL_MS);
+  }, [clearTimers]);
 
   useEffect(() => {
-    if (!url) return;
-    setIsLoading(true);
-    setLoadedOnce(false);
-    setShowFallback(false);
-    if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
-    fallbackTimerRef.current = setTimeout(() => {
-      setIsLoading(false);
-      setShowFallback(true);
-    }, 8000);
-    return () => {
-      if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
-    };
-  }, [iframeKey, url]);
+    if (showFallback && smartRetryCount < SMART_RETRY_MAX) {
+      startSmartRetry(smartRetryCount);
+    }
+  }, [showFallback]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     persistViewport(viewport);
@@ -202,42 +255,77 @@ export function PreviewTab({
         if (obs.toolName && FILE_TOOL_NAMES.has(obs.toolName)) {
           if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
           debounceTimerRef.current = setTimeout(() => {
-            setIsLoading(true);
-            setLoadedOnce(false);
-            setShowFallback(false);
-            setIframeKey(k => k + 1);
-          }, 3000);
+            startLoad();
+          }, 3_000);
         }
-      } catch { /* ignore parse errors */ }
+      } catch { /* ignore */ }
     };
     es.onerror = () => es.close();
     return () => {
       es.close();
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
-  }, [autoRefresh, sessionId]);
+  }, [autoRefresh, sessionId, startLoad]);
+
+  useEffect(() => () => clearTimers(), [clearTimers]);
+
+  const fetchLastScreenshot = useCallback(async () => {
+    setLoadingLastSS(true);
+    try {
+      const res = await fetch(`${BASE_URL}api/sessions/${sessionId}/tools/last-screenshot`);
+      if (res.ok) {
+        const data = await res.json() as Screenshot;
+        setScreenshot(data);
+      }
+    } catch { /* not fatal */ }
+    finally { setLoadingLastSS(false); }
+  }, [sessionId]);
+
+  const openScreenshotStrip = useCallback(() => {
+    setScreenshotOpen(true);
+    persistSSOpen(true);
+    if (!screenshot) fetchLastScreenshot();
+  }, [screenshot, fetchLastScreenshot, persistSSOpen]);
+
+  const closeScreenshotStrip = useCallback(() => {
+    setScreenshotOpen(false);
+    persistSSOpen(false);
+  }, [persistSSOpen]);
+
+  const openConsole = useCallback(() => {
+    setConsoleOpen(true);
+    persistConOpen(true);
+  }, [persistConOpen]);
+
+  const closeConsole = useCallback(() => {
+    setConsoleOpen(false);
+    persistConOpen(false);
+  }, [persistConOpen]);
+
+  useEffect(() => {
+    if (storedSSOpen && !screenshot) {
+      fetchLastScreenshot();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const takeScreenshot = async () => {
     if (!url || takingScreenshot) return;
     setTakingScreenshot(true);
     setScreenshotError(null);
     try {
+      const vp = VIEWPORT_DIMS[viewport];
       const res = await fetch(`${BASE_URL}api/sessions/${sessionId}/tools/screenshot`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url,
-          viewportWidth: VIEWPORT_DIMS[viewport].w,
-          viewportHeight: VIEWPORT_DIMS[viewport].h,
-        }),
+        body: JSON.stringify({ url, viewportWidth: vp.w, viewportHeight: vp.h }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
         setScreenshotError(body.error ?? `HTTP ${res.status}`);
       } else {
-        const data = await res.json() as { imageBase64: string; capturedAt: string };
-        setScreenshot({ imageBase64: data.imageBase64, capturedAt: data.capturedAt, viewport, url });
-        setScreenshotOpen(true);
+        const data = await res.json() as Screenshot;
+        setScreenshot(data);
+        if (!screenshotOpen) openScreenshotStrip();
       }
     } catch (err) {
       setScreenshotError(err instanceof Error ? err.message : "Failed");
@@ -261,11 +349,8 @@ export function PreviewTab({
         setConsoleError(body.error ?? `HTTP ${res.status}`);
       } else {
         const data = await res.json() as { logs: ConsoleEntry[] };
-        setConsoleLogs(prev => [
-          ...prev,
-          ...data.logs.map(l => ({ ...l, timestamp: Date.now() })),
-        ]);
-        setConsoleOpen(true);
+        setConsoleLogs(prev => [...prev, ...data.logs.map(l => ({ ...l, timestamp: l.timestamp ?? Date.now() }))]);
+        if (!consoleOpen) openConsole();
       }
     } catch (err) {
       setConsoleError(err instanceof Error ? err.message : "Failed");
@@ -275,13 +360,14 @@ export function PreviewTab({
   };
 
   const portChips: { label: string; url: string }[] = [
-    ...(previewUrl ? [{ label: "3000", url: previewUrl }] : []),
-    ...(boltDiyUrl  ? [{ label: "5180", url: boltDiyUrl }]  : []),
+    ...(previewUrl    ? [{ label: "3000", url: previewUrl }]    : []),
+    ...(boltDiyUrl    ? [{ label: "5180", url: boltDiyUrl }]    : []),
     ...(codeServerUrl ? [{ label: "8080", url: codeServerUrl }] : []),
   ];
 
   const noUrl = !url;
   const sessionNotReady = !isReady && !loadedOnce;
+  const vw = VIEWPORT_DIMS[viewport].w;
 
   const logLevelClass = (level: string) => {
     if (level === "error") return "text-red-400";
@@ -290,11 +376,14 @@ export function PreviewTab({
     return "text-muted-foreground";
   };
 
+  const ssViewportLabel = screenshot
+    ? `${screenshot.viewport.width}×${screenshot.viewport.height}`
+    : "";
+
   return (
-    <div className="flex flex-col gap-2 h-full">
+    <div className="flex flex-col gap-2">
       {/* ── Toolbar ─────────────────────────────────────────────── */}
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {/* Back / Forward */}
+      <div className="flex items-center gap-1 flex-wrap">
         <button
           onClick={goBack}
           disabled={histIdx <= 0}
@@ -311,8 +400,6 @@ export function PreviewTab({
         >
           <ArrowRight className="w-3.5 h-3.5" />
         </button>
-
-        {/* Refresh */}
         <button
           onClick={reload}
           title="Reload"
@@ -320,8 +407,15 @@ export function PreviewTab({
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isLoading && url ? "animate-spin" : ""}`} />
         </button>
+        <button
+          onClick={hardReload}
+          disabled={!url}
+          title="Hard reload (bypass cache)"
+          className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+        </button>
 
-        {/* URL bar */}
         <Input
           value={inputVal}
           onChange={e => setInputVal(e.target.value)}
@@ -329,9 +423,7 @@ export function PreviewTab({
             if (e.key === "Enter") {
               e.preventDefault();
               let val = inputVal.trim();
-              if (val && !val.startsWith("http://") && !val.startsWith("https://")) {
-                val = `http://${val}`;
-              }
+              if (val && !val.startsWith("http://") && !val.startsWith("https://")) val = `http://${val}`;
               navigate(val);
             }
           }}
@@ -340,7 +432,6 @@ export function PreviewTab({
           spellCheck={false}
         />
 
-        {/* Open in new tab */}
         <button
           onClick={() => url && window.open(url, "_blank", "noopener")}
           disabled={!url}
@@ -353,27 +444,30 @@ export function PreviewTab({
 
       {/* ── Port chips + Viewport + Auto-refresh ─────────────────── */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        {portChips.map(chip => (
-          <button
-            key={chip.label}
-            onClick={() => navigate(chip.url)}
-            title={chip.url}
-            className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border transition-colors ${
-              url === chip.url
-                ? "bg-primary/15 text-primary border-primary/40"
-                : "bg-secondary/40 text-muted-foreground border-border/40 hover:border-primary/30 hover:text-foreground"
-            }`}
-          >
-            :{chip.label}
-          </button>
-        ))}
+        {portChips.map(chip => {
+          const swapped = url ? swapPort(url, chip.url) : chip.url;
+          const active  = url === chip.url || url === swapped;
+          return (
+            <button
+              key={chip.label}
+              onClick={() => navigate(swapped)}
+              title={swapped}
+              className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border transition-colors ${
+                active
+                  ? "bg-primary/15 text-primary border-primary/40"
+                  : "bg-secondary/40 text-muted-foreground border-border/40 hover:border-primary/30 hover:text-foreground"
+              }`}
+            >
+              :{chip.label}
+            </button>
+          );
+        })}
 
         <div className="ml-auto flex items-center gap-1">
-          {/* Viewport toggle */}
           {([
-            { id: "desktop" as Viewport, icon: <Monitor className="w-3 h-3" />, label: "Desktop 1280px" },
-            { id: "tablet"  as Viewport, icon: <Tablet  className="w-3 h-3" />, label: "Tablet 768px" },
-            { id: "mobile"  as Viewport, icon: <Smartphone className="w-3 h-3" />, label: "Mobile 390px" },
+            { id: "desktop" as Viewport, icon: <Monitor    className="w-3 h-3" />, label: "Desktop 1280px" },
+            { id: "tablet"  as Viewport, icon: <Tablet     className="w-3 h-3" />, label: "Tablet 768px"   },
+            { id: "mobile"  as Viewport, icon: <Smartphone className="w-3 h-3" />, label: "Mobile 390px"   },
           ] as const).map(({ id, icon, label }) => (
             <button
               key={id}
@@ -389,10 +483,9 @@ export function PreviewTab({
             </button>
           ))}
 
-          {/* Auto-refresh toggle */}
           <button
             onClick={() => setAutoRefresh(r => !r)}
-            title={autoRefresh ? "Auto-refresh on agent step: ON" : "Auto-refresh on agent step: OFF"}
+            title={autoRefresh ? "Auto-refresh: ON" : "Auto-refresh: OFF"}
             className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors ml-1 ${
               autoRefresh
                 ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
@@ -406,8 +499,14 @@ export function PreviewTab({
       </div>
 
       {/* ── iframe area ─────────────────────────────────────────── */}
-      <div className="relative rounded-lg border border-border/40 overflow-hidden bg-background" style={{ height: "380px" }}>
-        {/* Empty state — no URL */}
+      <div
+        className="relative rounded-lg border border-border/40 overflow-hidden bg-background mx-auto w-full"
+        style={{
+          maxWidth: vw < 520 ? `${vw}px` : "100%",
+          height: `calc(100vh - 240px)`,
+          minHeight: "400px",
+        }}
+      >
         {noUrl && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground">
             <WifiOff className="w-8 h-8 opacity-20" />
@@ -416,7 +515,6 @@ export function PreviewTab({
           </div>
         )}
 
-        {/* Session not ready overlay */}
         {!noUrl && sessionNotReady && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/95 z-10">
             <Loader2 className="w-6 h-6 animate-spin opacity-40" />
@@ -424,27 +522,30 @@ export function PreviewTab({
           </div>
         )}
 
-        {/* Loading overlay */}
         {!noUrl && isReady && isLoading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/90 z-10">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span className="text-xs">Loading preview…</span>
-            </div>
+            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Loading preview…</span>
           </div>
         )}
 
-        {/* Cross-origin / CSP fallback */}
         {!noUrl && isReady && showFallback && !isLoading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/95 z-10 px-6 text-center">
-            <WifiOff className="w-8 h-8 opacity-25" />
-            <p className="text-sm font-medium">This page cannot be embedded.</p>
+            <AlertTriangle className="w-8 h-8 opacity-25" />
+            <p className="text-sm font-medium">Preview not available</p>
             <p className="text-xs text-muted-foreground">
-              The server may not be running, or the page blocks embedding via X-Frame-Options / CSP.
+              {smartRetryCount >= SMART_RETRY_MAX
+                ? "The server did not respond after 60 s. It may still be starting up."
+                : "The server may still be starting up, or it blocks embedding via X-Frame-Options / CSP."}
             </p>
+            {smartRetryCount < SMART_RETRY_MAX && smartRetryCountdown > 0 && (
+              <p className="text-[11px] text-muted-foreground/60">
+                Auto-retrying in {smartRetryCountdown}s ({SMART_RETRY_MAX - smartRetryCount} attempts left)
+              </p>
+            )}
             <div className="flex gap-2">
               <Button size="sm" variant="outline" className="text-xs h-7 gap-1.5" onClick={reload}>
-                <RefreshCw className="w-3 h-3" /> Retry
+                <RefreshCw className="w-3 h-3" /> Retry now
               </Button>
               <Button size="sm" variant="outline" className="text-xs h-7 gap-1.5" onClick={() => window.open(url, "_blank", "noopener")}>
                 <ExternalLink className="w-3 h-3" /> Open in new tab
@@ -453,11 +554,9 @@ export function PreviewTab({
           </div>
         )}
 
-        {/* iframe */}
         {!noUrl && isReady && (
           <iframe
             key={iframeKey}
-            ref={iframeRef}
             src={url}
             onLoad={handleIframeLoad}
             onError={() => { setIsLoading(false); setShowFallback(true); }}
@@ -471,12 +570,13 @@ export function PreviewTab({
       {/* ── Agent screenshot strip ───────────────────────────────── */}
       <div className="rounded-lg border border-border/40 overflow-hidden">
         <button
-          onClick={() => setScreenshotOpen(o => !o)}
+          onClick={() => screenshotOpen ? closeScreenshotStrip() : openScreenshotStrip()}
           className="w-full flex items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:bg-accent/30 transition-colors"
         >
           <span className="flex items-center gap-1.5 font-medium">
             <Camera className="w-3 h-3" />
             Agent screenshot
+            {loadingLastSS && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -504,19 +604,20 @@ export function PreviewTab({
                 <div className="flex items-center justify-between text-[10px] text-muted-foreground">
                   <span className="font-mono truncate max-w-[60%]" title={screenshot.url}>{screenshot.url}</span>
                   <span>
-                    {formatDistanceToNow(new Date(screenshot.capturedAt), { addSuffix: true })} · {VIEWPORT_DIMS[screenshot.viewport].w}×{VIEWPORT_DIMS[screenshot.viewport].h}
+                    {formatDistanceToNow(new Date(screenshot.capturedAt), { addSuffix: true })}
+                    {ssViewportLabel ? ` · ${ssViewportLabel}` : ""}
                   </span>
                 </div>
                 <img
                   src={`data:image/png;base64,${screenshot.imageBase64}`}
                   alt="Agent screenshot"
                   className="w-full rounded border border-border/40 object-contain"
-                  style={{ maxHeight: "200px" }}
+                  style={{ maxHeight: "220px" }}
                 />
               </div>
             ) : (
               <p className="text-xs text-muted-foreground text-center py-3">
-                No screenshot yet. Click <strong>Capture</strong> to take one.
+                {loadingLastSS ? "Loading last screenshot…" : <>No screenshot yet. Click <strong>Capture</strong> to take one.</>}
               </p>
             )}
           </div>
@@ -526,7 +627,7 @@ export function PreviewTab({
       {/* ── Console log drawer ───────────────────────────────────── */}
       <div className="rounded-lg border border-border/40 overflow-hidden">
         <button
-          onClick={() => setConsoleOpen(o => !o)}
+          onClick={() => consoleOpen ? closeConsole() : openConsole()}
           className="w-full flex items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:bg-accent/30 transition-colors"
         >
           <span className="flex items-center gap-1.5 font-medium">
@@ -543,7 +644,7 @@ export function PreviewTab({
               onClick={e => { e.stopPropagation(); captureConsole(); }}
               disabled={capturingConsole || !url}
               className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-border/50 bg-secondary/30 hover:bg-accent disabled:opacity-40 transition-colors"
-              title="Capture 5s of console logs"
+              title="Capture 5s of console output"
             >
               {capturingConsole ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Play className="w-2.5 h-2.5" />}
               {capturingConsole ? "Capturing…" : "Capture 5s"}
@@ -588,12 +689,7 @@ export function PreviewTab({
                       {log.level}
                     </Badge>
                     <span className={`break-all leading-relaxed ${logLevelClass(log.level)}`}>
-                      {log.text}
-                      {log.source && (
-                        <span className="text-muted-foreground/50 ml-1">
-                          ({log.source}{log.lineNumber ? `:${log.lineNumber}` : ""})
-                        </span>
-                      )}
+                      {log.message}
                     </span>
                   </div>
                 ))}
