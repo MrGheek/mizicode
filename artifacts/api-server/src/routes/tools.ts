@@ -399,6 +399,18 @@ router.post(
   }
 );
 
+// ─── In-memory last-screenshot store (ephemeral, per session) ─────────────────
+
+interface StoredScreenshot {
+  imageBase64: string;
+  mimeType: string;
+  capturedAt: string;
+  url: string;
+  viewport: { width: number; height: number };
+}
+
+const lastScreenshotStore = new Map<number, StoredScreenshot>();
+
 // ─── POST /sessions/:id/tools/screenshot ─────────────────────────────────────
 
 router.post(
@@ -445,15 +457,39 @@ router.post(
       const { screenshotUrl: takeSS } = await import("../services/browser-inspector.js");
       const buf = await takeSS(parsedUrl.toString(), viewport);
       logger.info({ sessionId, url: parsedUrl.toString(), viewport }, "tools: screenshot completed");
-      res.json({
+      const payload: StoredScreenshot = {
         imageBase64: buf.toString("base64"),
         mimeType: "image/png",
         capturedAt: new Date().toISOString(),
-      });
+        url: parsedUrl.toString(),
+        viewport,
+      };
+      lastScreenshotStore.set(sessionId, payload);
+      res.json(payload);
     } catch (err) {
       logger.error({ err, sessionId, url }, "tools: screenshot failed");
       res.status(502).json({ error: "Screenshot failed", detail: String(err) });
     }
+  }
+);
+
+// ─── GET /sessions/:id/tools/last-screenshot ──────────────────────────────────
+
+router.get(
+  "/sessions/:id/tools/last-screenshot",
+  requireAgentAuth(["sessions:read"]),
+  (req, res) => {
+    const sessionId = parseInt(String(req.params["id"] ?? ""));
+    if (!Number.isFinite(sessionId)) {
+      res.status(400).json({ error: "Invalid session ID" });
+      return;
+    }
+    const stored = lastScreenshotStore.get(sessionId);
+    if (!stored) {
+      res.status(404).json({ error: "No screenshot available for this session" });
+      return;
+    }
+    res.json(stored);
   }
 );
 
