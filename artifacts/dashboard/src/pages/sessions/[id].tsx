@@ -34,7 +34,7 @@ import { format, formatDistanceToNow } from "date-fns";
 import {
   Terminal, Clock, DollarSign, RefreshCw, StopCircle, HardDrive, ExternalLink, ArrowLeft, Brain, ChevronDown, ChevronRight, Radio, Search, X, AlertTriangle, RotateCcw, Users, Copy, Check, Eye, EyeOff, FolderOpen,
   Wand2, ThumbsUp, ThumbsDown, Wrench, GitBranch, Loader2, CheckCircle2, XCircle, AlertCircle, DatabaseZap, Network, Target, Pencil, Palette, Zap,
-  Bell, BellOff, BellRing, MonitorSmartphone, Plus, History,
+  Bell, BellOff, BellRing, MonitorSmartphone, Plus, History, FolderTree,
   // RotateCcw was used by the legacy disk-full retry button; the new BootTimeline owns that CTA.
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,6 +62,7 @@ import { TeamTab } from "@/components/team-tab";
 import { InferenceTab } from "@/components/inference-tab";
 import { PreviewTab } from "@/components/preview-tab";
 import { SnapshotsPanel } from "@/components/snapshots-panel";
+import { FilesTab } from "@/components/files-tab";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 import { GitHubBranchChip } from "@/components/github-branch-chip";
 import { useOrchestrationStatus } from "@/hooks/use-orchestration-status";
@@ -2602,15 +2603,15 @@ export default function SessionDetail() {
   const { toast } = useToast();
   const { pref: handoffNotifPref, setPref: setHandoffNotifPref, browserPermission } = useHandoffNotificationPref();
   const [notifPopoverOpen, setNotifPopoverOpen] = useState(false);
-  const lastDetailTabRef = useRef<"memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "preview" | "snapshots">("memory");
+  const lastDetailTabRef = useRef<"memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "preview" | "snapshots" | "files">("memory");
   const queryClient = useQueryClient();
-  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm", "inference", "environment", "preview", "snapshots"] as const;
-  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "snapshots" => {
+  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm", "inference", "environment", "preview", "snapshots", "files"] as const;
+  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "snapshots" | "files" => {
     const settled = validTabs.includes(raw as typeof validTabs[number]) ? raw : "overview";
-    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "snapshots";
+    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "snapshots" | "files";
   };
 
-  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "snapshots">(() => {
+  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "snapshots" | "files">(() => {
     const stored = sessionStorage.getItem(`session-tab-${id}`);
     const urlTab = new URLSearchParams(window.location.search).get("tab");
     const validStored = stored && (validTabs as readonly string[]).includes(stored) ? stored : null;
@@ -4190,7 +4191,7 @@ export default function SessionDetail() {
 
       {/* Details Sheet — slides in from the right when a secondary tab is active */}
       <Sheet open={activeTab !== "overview"} onOpenChange={(open) => { if (!open) setActiveTab("overview"); }}>
-        <SheetContent side="right" className="w-[520px] sm:w-[600px] p-0 flex flex-col overflow-hidden">
+        <SheetContent side="right" className={`${activeTab === "files" ? "w-[720px] sm:w-[800px]" : "w-[520px] sm:w-[600px]"} p-0 flex flex-col overflow-hidden`}>
           <SheetHeader className="px-5 pt-4 pb-3 shrink-0 border-b border-border/40">
             <SheetTitle className="sr-only">Session Details</SheetTitle>
             {/* Sub-tab nav */}
@@ -4272,10 +4273,16 @@ export default function SessionDetail() {
               >
                 <History className="w-3 h-3" /> Snapshots
               </button>
+              <button
+                onClick={() => { lastDetailTabRef.current = "files"; setActiveTab("files"); }}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "files" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
+              >
+                <FolderTree className="w-3 h-3" /> Files
+              </button>
             </div>
           </SheetHeader>
 
-          <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className={activeTab === "files" ? "flex-1 overflow-hidden" : "flex-1 overflow-y-auto px-5 py-4"}>
             <div className={activeTab === "memory" ? "" : "hidden"}>
               <MemoryTab
                 sessionId={sessionId}
@@ -4324,6 +4331,17 @@ export default function SessionDetail() {
             )}
             {activeTab === "snapshots" && (
               <SnapshotsPanel sessionId={sessionId} />
+            )}
+            {activeTab === "files" && (
+              <FilesTab
+                sessionId={sessionId}
+                isActive={isActive}
+                ownerToken={
+                  typeof window !== "undefined"
+                    ? (sessionStorage.getItem(`nim-owner-token:${sessionId}`) ?? undefined)
+                    : undefined
+                }
+              />
             )}
             {activeTab === "preview" && session.boltDiyUrl && (
               <PreviewTab

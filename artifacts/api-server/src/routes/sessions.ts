@@ -2,7 +2,7 @@ import { Router, type RequestHandler } from "express";
 import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable, sessionLanesTable, sessionModelSwitchesTable, nimCatalogTable, provisionedResourcesTable, schemaTemplatesTable, projectPlansTable } from "@workspace/db";
 import { eq, desc, inArray, and, isNull, notLike } from "drizzle-orm";
 import * as neonService from "../services/neon";
-import { getBridge } from "../services/bridge-registry";
+import { getBridge, getBridgeForSession, tryAcquireExecLock, releaseExecLock } from "../services/bridge-registry";
 import { getProfileById, getNimWorkspaceProfile } from "../services/profiles";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
@@ -3770,6 +3770,342 @@ router.post("/sessions/:sessionId/provision", permitBearer(["sessions:write"], {
       const message = err instanceof Error ? err.message : "Unknown error";
       res.status(500).json({ error: `Redis provisioning failed: ${message}` });
     }
+  }
+});
+
+// ─── File Tree API ────────────────────────────────────────────────────────────
+//
+// These three endpoints let the dashboard browse and edit files in the session
+// container without a full code-server IDE.  All operations are forwarded to
+// the container via the bridge exec channel.
+//
+// Auth: mirrors swarm-stream / swarm-abort:
+//   - GET endpoints: ?token=<ownerToken> or any valid team-member password
+//   - PUT endpoint:  Authorization: Bearer <ownerToken> (owner-only write gate)
+
+const FILE_SIZE_LIMIT_BYTES = 512 * 1024; // 500 KB read guard
+
+// WORKSPACE_ROOT is the only allowed directory root for file operations.
+// Paths that do not start with this prefix are rejected as out-of-scope.
+const WORKSPACE_ROOT = "/workspace";
+
+/**
+ * Verify a caller-supplied token against the session's ownerToken and, for
+ * read access, team-member passwords.  Returns the authorization level or
+ * throws with code 401/403/404.
+ */
+async function verifyFileToken(
+  sessionId: number,
+  providedToken: string,
+  writeRequired = false,
+): Promise<void> {
+  if (!providedToken) {
+    throw Object.assign(new Error("token query parameter is required"), { code: 401 });
+  }
+
+  const [sessionAuth] = await db
+    .select({ ownerToken: sessionsTable.ownerToken, teamMembers: sessionsTable.teamMembers })
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, sessionId));
+
+  if (!sessionAuth) {
+    throw Object.assign(new Error("Session not found"), { code: 404 });
+  }
+
+  const isOwner = !!sessionAuth.ownerToken && providedToken === sessionAuth.ownerToken;
+  if (writeRequired && !isOwner) {
+    throw Object.assign(new Error("Forbidden: owner token required for write operations"), { code: 403 });
+  }
+
+  const memberPasswords = (sessionAuth.teamMembers as TeamMemberRecord[] | null ?? []).map((m) => m.password).filter(Boolean);
+  const isMember = memberPasswords.some((pw) => pw === providedToken);
+
+  if (!isOwner && !isMember) {
+    throw Object.assign(new Error("Forbidden: valid owner token or member password required"), { code: 403 });
+  }
+}
+
+/**
+ * Validate that a path is safe: no traversal components, absolute, and
+ * strictly within /workspace.
+ */
+function validateWorkspacePath(rawPath: string): void {
+  if (!rawPath || rawPath.includes("..") || !rawPath.startsWith("/")) {
+    throw Object.assign(new Error("Invalid path"), { code: 400 });
+  }
+  const normalized = rawPath.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
+  if (normalized !== WORKSPACE_ROOT && !normalized.startsWith(WORKSPACE_ROOT + "/")) {
+    throw Object.assign(new Error("Path must be within /workspace"), { code: 400 });
+  }
+}
+
+/**
+ * Dispatch a shell command via the first available bridge for the session and
+ * collect the full stdout.  Returns the raw stdout string, or throws with a
+ * human-readable error if the bridge is unavailable or the exec fails.
+ *
+ * Uses the centralized per-lane exec lock from bridge-registry so that
+ * file-tree operations and the bridge exec SSE route are fully serialised on
+ * the same WebSocket — preventing message-frame cross-talk between concurrent
+ * callers on the same lane.
+ *
+ * Timeout defaults to 15 s — long enough for large `ls` trees, short enough
+ * to fail fast when the container is unreachable.
+ */
+async function execViaBridge(
+  sessionId: number,
+  command: string,
+  timeoutMs = 15_000,
+): Promise<string> {
+  const bridge = getBridgeForSession(sessionId);
+  if (!bridge) {
+    throw Object.assign(new Error("Bridge not connected — session container is unreachable"), { code: 503 });
+  }
+
+  const { ws, laneId } = bridge;
+
+  // Acquire the shared per-lane exec lock (also held by the bridge exec SSE
+  // route) to prevent concurrent frame delivery on the same socket.
+  if (!tryAcquireExecLock(sessionId, laneId)) {
+    throw Object.assign(new Error("Another exec is already in progress for this lane — please retry in a moment"), { code: 409 });
+  }
+
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      const chunks: string[] = [];
+      let settled = false;
+
+      const tid = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        ws.off("message", onMessage);
+        reject(Object.assign(new Error("Bridge exec timed out"), { code: 504 }));
+      }, timeoutMs);
+
+      function onMessage(raw: import("ws").RawData) {
+        let frame: { type: string; [k: string]: unknown };
+        try {
+          frame = JSON.parse(raw.toString()) as { type: string; [k: string]: unknown };
+        } catch {
+          return;
+        }
+        if (frame.type === "output" || frame.type === "chunk") {
+          chunks.push(String(frame["text"] ?? frame["content"] ?? ""));
+        }
+        if (frame.type === "done") {
+          if (settled) return;
+          settled = true;
+          clearTimeout(tid);
+          ws.off("message", onMessage);
+          resolve(chunks.join(""));
+        }
+        if (frame.type === "error") {
+          if (settled) return;
+          settled = true;
+          clearTimeout(tid);
+          ws.off("message", onMessage);
+          const msg = String(frame["message"] ?? "Bridge exec error");
+          reject(Object.assign(new Error(msg), { code: 502 }));
+        }
+      }
+
+      ws.on("message", onMessage);
+
+      const execMsg = JSON.stringify({ type: "exec", prompt: command });
+      ws.send(execMsg, (err) => {
+        if (err) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(tid);
+          ws.off("message", onMessage);
+          reject(Object.assign(new Error("Failed to send command to bridge"), { code: 502 }));
+        }
+      });
+    });
+  } finally {
+    releaseExecLock(sessionId, laneId);
+  }
+}
+
+// GET /sessions/:id/files?path=<dir>&token=<ownerToken>
+// Returns a JSON array of { name, type, size } for the directory at <path>.
+// Defaults to /workspace when path is not supplied.
+router.get("/sessions/:id/files", async (req, res) => {
+  const sessionId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
+
+  const providedToken = typeof req.query["token"] === "string" ? req.query["token"].trim() : "";
+  try {
+    await verifyFileToken(sessionId, providedToken, false);
+  } catch (authErr: unknown) {
+    const e = authErr as Error & { code?: number };
+    res.status(e.code ?? 401).json({ error: e.message });
+    return;
+  }
+
+  const rawPath = typeof req.query["path"] === "string" ? req.query["path"].trim() : WORKSPACE_ROOT;
+
+  try {
+    validateWorkspacePath(rawPath);
+  } catch (pathErr: unknown) {
+    const e = pathErr as Error & { code?: number };
+    res.status(e.code ?? 400).json({ error: e.message });
+    return;
+  }
+
+  const escaped = rawPath.replace(/'/g, "'\\''");
+  // realpath resolves symlinks in-container; we re-validate after resolution
+  // so that a symlink pointing outside /workspace is still blocked.
+  const command = [
+    "python3 -c \"",
+    "import os,json,sys;",
+    "p=os.path.realpath(sys.argv[1]);",
+    "assert p=='/workspace' or p.startswith('/workspace/'),'symlink escapes workspace';",
+    "entries=[];",
+    "[entries.append({'name':e.name,'type':'dir' if e.is_dir(follow_symlinks=False) else 'file','size':e.stat(follow_symlinks=False).st_size}) for e in sorted(os.scandir(p),key=lambda x:(x.is_file(),x.name.lower()))];",
+    "print(json.dumps(entries))",
+    `\" '${escaped}'`,
+  ].join("");
+
+  try {
+    const output = await execViaBridge(sessionId, command);
+    const lines = output.trim().split("\n");
+    // Find last non-empty line that looks like JSON (the scandir output)
+    let jsonLine = "";
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const l = lines[i]?.trim() ?? "";
+      if (l.startsWith("[")) { jsonLine = l; break; }
+    }
+    if (!jsonLine) {
+      res.json([]);
+      return;
+    }
+    const entries = JSON.parse(jsonLine) as Array<{ name: string; type: string; size: number }>;
+    res.json(entries);
+  } catch (err: unknown) {
+    const e = err as Error & { code?: number };
+    logger.warn({ err, sessionId, rawPath }, "File tree listing failed");
+    res.status(e.code ?? 500).json({ error: e.message ?? "Listing failed" });
+  }
+});
+
+// GET /sessions/:id/files/content?path=<filepath>&token=<ownerToken>
+// Returns the raw file content as { content: string }.
+// Rejects files over 500 KB.
+router.get("/sessions/:id/files/content", async (req, res) => {
+  const sessionId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
+
+  const providedToken = typeof req.query["token"] === "string" ? req.query["token"].trim() : "";
+  try {
+    await verifyFileToken(sessionId, providedToken, false);
+  } catch (authErr: unknown) {
+    const e = authErr as Error & { code?: number };
+    res.status(e.code ?? 401).json({ error: e.message });
+    return;
+  }
+
+  const rawPath = typeof req.query["path"] === "string" ? req.query["path"].trim() : "";
+  try {
+    validateWorkspacePath(rawPath);
+  } catch (pathErr: unknown) {
+    const e = pathErr as Error & { code?: number };
+    res.status(e.code ?? 400).json({ error: e.message });
+    return;
+  }
+
+  const escaped = rawPath.replace(/'/g, "'\\''");
+
+  // Check size first (realpath canonicalizes symlinks; assertion re-validates
+  // the resolved path is still within /workspace).
+  const sizeCommand = `python3 -c "import os,sys; p=os.path.realpath(sys.argv[1]); assert p.startswith('/workspace/'),'symlink escapes workspace'; s=os.stat(p).st_size; print(s)" '${escaped}'`;
+  try {
+    const sizeOut = await execViaBridge(sessionId, sizeCommand);
+    const size = parseInt(sizeOut.trim().split("\n").pop() ?? "0", 10);
+    if (size > FILE_SIZE_LIMIT_BYTES) {
+      res.status(413).json({ error: `File too large (${size} bytes, limit ${FILE_SIZE_LIMIT_BYTES})` });
+      return;
+    }
+  } catch (err: unknown) {
+    const e = err as Error & { code?: number };
+    res.status(e.code ?? 500).json({ error: e.message ?? "Could not stat file" });
+    return;
+  }
+
+  // Read file as base64 to safely handle arbitrary text encodings.
+  // Realpath re-validated here to cover the gap between stat and read.
+  const readCommand = `python3 -c "import base64,os,sys; p=os.path.realpath(sys.argv[1]); assert p.startswith('/workspace/'),'symlink escapes workspace'; print(base64.b64encode(open(p,'rb').read()).decode())" '${escaped}'`;
+  try {
+    const b64Out = await execViaBridge(sessionId, readCommand);
+    const b64 = b64Out.trim().split("\n").pop() ?? "";
+    const content = Buffer.from(b64, "base64").toString("utf8");
+    res.json({ content });
+  } catch (err: unknown) {
+    const e = err as Error & { code?: number };
+    logger.warn({ err, sessionId, rawPath }, "File read failed");
+    res.status(e.code ?? 500).json({ error: e.message ?? "Read failed" });
+  }
+});
+
+// PUT /sessions/:id/files/content
+// Body: { path: string; content: string }
+// Writes the content back to the file via base64 bridge exec.
+// AUTHORIZATION: requires Authorization: Bearer <ownerToken> (owner-only).
+router.put("/sessions/:id/files/content", async (req, res) => {
+  const sessionId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
+
+  // Write requires the owner token in Authorization header.
+  const authHeader = req.headers["authorization"] ?? "";
+  const providedToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  try {
+    await verifyFileToken(sessionId, providedToken, true);
+  } catch (authErr: unknown) {
+    const e = authErr as Error & { code?: number };
+    res.status(e.code ?? 401).json({ error: e.message });
+    return;
+  }
+
+  const { path: rawPath, content } = req.body as { path?: string; content?: string };
+  try {
+    validateWorkspacePath(rawPath ?? "");
+  } catch (pathErr: unknown) {
+    const e = pathErr as Error & { code?: number };
+    res.status(e.code ?? 400).json({ error: e.message });
+    return;
+  }
+  if (typeof content !== "string") {
+    res.status(400).json({ error: "content must be a string" });
+    return;
+  }
+  if (Buffer.byteLength(content, "utf8") > FILE_SIZE_LIMIT_BYTES) {
+    res.status(413).json({ error: "Content too large" });
+    return;
+  }
+
+  const escaped = (rawPath as string).replace(/'/g, "'\\''");
+  const b64Content = Buffer.from(content, "utf8").toString("base64");
+
+  // Realpath validates resolved canonical path before writing so a symlink
+  // pointing outside /workspace cannot be used to overwrite arbitrary files.
+  const writeCommand = `python3 -c "import base64,os,sys; p=os.path.realpath(sys.argv[1]); assert p.startswith('/workspace/'),'symlink escapes workspace'; open(p,'wb').write(base64.b64decode(sys.argv[2]))" '${escaped}' '${b64Content}'`;
+
+  try {
+    await execViaBridge(sessionId, writeCommand);
+    res.json({ ok: true });
+  } catch (err: unknown) {
+    const e = err as Error & { code?: number };
+    logger.warn({ err, sessionId, rawPath }, "File write failed");
+    res.status(e.code ?? 500).json({ error: e.message ?? "Write failed" });
   }
 });
 
