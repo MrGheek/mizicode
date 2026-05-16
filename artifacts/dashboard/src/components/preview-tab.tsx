@@ -22,6 +22,8 @@ interface ConsoleEntry {
   level: string;
   message: string;
   timestamp: number;
+  source?: string;
+  lineNumber?: number;
 }
 
 interface Screenshot {
@@ -690,6 +692,12 @@ export function PreviewTab({
                     </Badge>
                     <span className={`break-all leading-relaxed ${logLevelClass(log.level)}`}>
                       {log.message}
+                      {(log.source || log.lineNumber) && (
+                        <span className="text-muted-foreground/50 ml-1 text-[9px]">
+                          {log.source}
+                          {log.lineNumber != null ? `:${log.lineNumber}` : ""}
+                        </span>
+                      )}
                     </span>
                   </div>
                 ))}
