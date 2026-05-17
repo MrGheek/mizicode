@@ -145,7 +145,6 @@ export function registerLaneTools(server: McpServer): void {
     }
 
     const [handoff] = await db.insert(laneHandoffsTable).values({
-      sessionId,
       laneId,
       handoffType: handoffType as "blocked" | "needs_review" | "safe_to_merge" | "watch_files" | "related_lane",
       watchFiles: { toLaneIds: toLaneIds ?? [], resourcePaths: resourcePaths ?? [] },

@@ -134,7 +134,6 @@ beforeAll(async () => {
   const [readKey] = await db.insert(apiKeysTable).values({
     label: "mcp-test-read",
     keyHash: hashApiKey(readKeyPlaintext),
-    keyPrefix: readKeyPlaintext.slice(0, 8),
     scopes: ["read"],
     expiresAt: null,
     revokedAt: null,
@@ -144,7 +143,6 @@ beforeAll(async () => {
   const [adminKey] = await db.insert(apiKeysTable).values({
     label: "mcp-test-admin",
     keyHash: hashApiKey(adminKeyPlaintext),
-    keyPrefix: adminKeyPlaintext.slice(0, 8),
     scopes: ["read", "write", "admin"],
     expiresAt: null,
     revokedAt: null,
