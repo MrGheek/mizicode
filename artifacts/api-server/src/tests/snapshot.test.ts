@@ -58,7 +58,6 @@ beforeAll(async () => {
   const [session] = await db
     .insert(sessionsTable)
     .values({
-      name: "Snapshot Test Session",
       profileId: testProfileId,
       status: "running",
     })
