@@ -2,6 +2,11 @@ import { Router } from "express";
 import { and, desc, eq } from "drizzle-orm";
 import { db, paletteIntentsTable } from "@workspace/db";
 import { logger } from "../lib/logger";
+import {
+  renderPaletteIntent,
+  PaletteIntentInputSchema,
+  PALETTE_INTENT_VERSION,
+} from "../prompts/contracts";
 
 const router = Router();
 
@@ -27,57 +32,8 @@ const SESSION_ACTIONS = new Set<PaletteAction>([
   "copy-ssh",
 ]);
 
-const SYSTEM_PROMPT = `You are an AI assistant embedded in the MIZI command palette — a cloud coding platform for managing GPU-backed coding sessions.
-
-Your job is to parse a natural-language command from the user and return a structured JSON action object. The user is currently using the app; use the context provided to resolve ambiguous references like "my session", "the running one", "last night's session", etc.
-
-Available action types:
-- navigate: Navigate to a route in the app
-  Available routes: "/" (dashboard), "/sessions" (sessions list), "/sessions/{id}" (session detail), "/skills", "/memory", "/templates", "/design-intelligence"
-- stop-session: Stop a session. Requires sessionId in payload. Use activeSessionId from context when user says "my session", "the running one", etc. If no active session exists in context, set ok=false.
-- reindex-session: Trigger a repo re-index for a session. Requires sessionId in payload.
-- new-session: Open the new session launch dialog.
-- relaunch-session: Re-launch a stopped session. Requires sessionId in payload.
-- copy-ssh: Copy the SSH command for a session. Requires sessionId in payload.
-
-Respond with ONLY valid JSON matching this schema:
-{
-  "ok": boolean,
-  "action": "<action-type>" | null,
-  "payload": { "route": "<route>" | null, "sessionId": <number> | null } | null,
-  "explanation": "<human-readable description of what will happen, or reason for failure>"
-}
-
-Rules:
-- If the command is clear and actionable, set ok=true and fill in action+payload.
-- If the command references "active session", "running session", or "my session" and there is an activeSessionId in context, use that sessionId.
-- If the command references a session by number (e.g. "session 42" or "#42"), use that ID as sessionId.
-- If context is needed but not available (e.g. user says "stop my session" but there is no active session), set ok=false and explain why.
-- If the command is unrecognizable or outside scope, set ok=false with a friendly explanation.
-- Keep explanation concise (≤ 80 chars). It will be shown in a toast notification.
-- Never include markdown, code fences, or any text outside the JSON object.`;
-
 /** Number of recent successful intents to include as few-shot examples. */
 const FEW_SHOT_LIMIT = 5;
-
-/** Build the few-shot examples block to append to the system prompt. */
-function buildFewShotBlock(
-  examples: Array<{ query: string; action: string | null; payloadJson: unknown; explanation: string }>
-): string {
-  if (examples.length === 0) return "";
-
-  const lines = [
-    "",
-    "Past successful commands from this user (use as few-shot examples):",
-  ];
-  for (const ex of examples) {
-    const payload = ex.payloadJson ?? null;
-    lines.push(
-      `  User: "${ex.query}" → ${JSON.stringify({ ok: true, action: ex.action, payload, explanation: ex.explanation })}`
-    );
-  }
-  return lines.join("\n");
-}
 
 /** Strict server-side validation of the LLM-returned intent payload. */
 function validateParsedIntent(parsed: unknown): {
@@ -177,22 +133,17 @@ router.post("/palette/intent", async (req, res) => {
     ? (context.recentSessionIds as unknown[]).filter((x): x is number => typeof x === "number")
     : [];
 
-  const userMessage = [
-    `User query: "${query}"`,
-    "",
-    "Current context:",
-    `  route: ${route}`,
-    `  activeSessionId: ${activeSessionId ?? "none"}`,
-    `  activeSessionStatus: ${activeSessionStatus ?? "none"}`,
-    `  recentSessionIds: [${recentSessionIds.join(", ")}]`,
-  ].join("\n");
-
   try {
     // Fetch this user's recent successful intents to use as few-shot examples.
     // Filtered by PALETTE_USER_ID so no cross-user data leaks into the prompt.
-    let fewShotBlock = "";
+    let fewShotExamples: Array<{
+      query: string;
+      action: string | null;
+      payloadJson: unknown;
+      explanation: string;
+    }> = [];
     try {
-      const recentSuccessful = await db
+      fewShotExamples = await db
         .select({
           query: paletteIntentsTable.query,
           action: paletteIntentsTable.action,
@@ -206,24 +157,30 @@ router.post("/palette/intent", async (req, res) => {
         ))
         .orderBy(desc(paletteIntentsTable.createdAt))
         .limit(FEW_SHOT_LIMIT);
-
-      fewShotBlock = buildFewShotBlock(recentSuccessful);
     } catch (err) {
       logger.warn({ err }, "palette-intent: failed to load few-shot examples from DB");
     }
 
+    // Build the validated contract input and render messages via contracts.ts.
+    const contractInput = PaletteIntentInputSchema.parse({
+      query,
+      context: { route, activeSessionId, activeSessionStatus, recentSessionIds },
+      fewShotExamples,
+    });
+    const messages = renderPaletteIntent(contractInput);
+
     // Lazy import so missing AI env vars only fail this handler, not server startup.
     const { openai } = await import("@workspace/integrations-openai-ai-server");
 
-    const systemPrompt = fewShotBlock ? SYSTEM_PROMPT + fewShotBlock : SYSTEM_PROMPT;
+    logger.debug(
+      { promptVersion: PALETTE_INTENT_VERSION, userId: PALETTE_USER_ID, fewShotCount: fewShotExamples.length },
+      "palette-intent: calling LLM",
+    );
 
     const response = await openai.chat.completions.create({
       model: "meta/llama-3.1-8b-instruct",
       max_completion_tokens: 512,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
+      messages: messages as Array<{ role: "system" | "user" | "assistant"; content: string }>,
     });
 
     const raw = response.choices[0]?.message?.content?.trim() ?? "";

@@ -732,7 +732,10 @@ export async function compileLaneBundles(
     });
   }
 
-  // Fire-and-forget lane prompt snapshots — persist skill-id hash for observability.
+  // Fire-and-forget lane prompt snapshots — persist skill-id + instruction-content hash
+  // for prompt observability and replay.  Hash covers both skill IDs and the combined
+  // instruction text so any template change produces a new hash automatically.
+  // systemPromptFragment is stored in non-production environments for replay debugging.
   Promise.allSettled(
     laneOverlays
       .filter((o) => o.compiled !== null && o.laneId > 0)
@@ -740,19 +743,38 @@ export async function compileLaneBundles(
         const skillIds = (o.compiled!.skills as Array<{ id?: string }>)
           .map((s) => s.id ?? "")
           .filter(Boolean);
+        const instructionText = (o.compiled!.skills as MiziSkillManifest[])
+          .flatMap((s) => s.instructions?.system ?? [])
+          .join("\n");
+        const instructionFragment = instructionText.slice(0, 512);
         const promptHash = crypto
           .createHash("sha256")
-          .update(JSON.stringify(skillIds))
+          .update(JSON.stringify(skillIds) + "\n" + instructionFragment)
           .digest("hex")
           .slice(0, 16);
+        const systemPromptFragment =
+          process.env["NODE_ENV"] !== "production"
+            ? instructionText.slice(0, 500) || null
+            : null;
         await db.insert(lanePromptSnapshotsTable).values({
           sessionId,
           laneId: o.laneId,
           promptHash,
           skillIdsJson: skillIds as unknown as Record<string, unknown>,
+          systemPromptFragment,
         });
       }),
-  ).catch(() => {});
+  )
+    .then((results) => {
+      for (const r of results) {
+        if (r.status === "rejected") {
+          logger.warn({ err: r.reason }, "[skills-bundler] lane prompt snapshot write failed");
+        }
+      }
+    })
+    .catch((err) => {
+      logger.warn({ err }, "[skills-bundler] lane prompt snapshot allSettled failed");
+    });
 
   return {
     sessionCoreBundleId: sessionCoreBundle?.id ?? null,

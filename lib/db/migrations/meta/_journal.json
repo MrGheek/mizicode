@@ -155,6 +155,13 @@
                         "when": 1747526400000,
                         "tag": "0030_project_tasks_origin",
                         "breakpoints": true
+                },
+                {
+                        "idx": 32,
+                        "version": "7",
+                        "when": 1747612800000,
+                        "tag": "0031_prompt_contracts_lane_snapshots",
+                        "breakpoints": true
                 }
         ]
 }
