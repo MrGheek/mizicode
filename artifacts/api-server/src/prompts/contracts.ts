@@ -8,8 +8,17 @@
  *      versioned in logs and lane-prompt-snapshot records.
  *   3. Exports a render function that accepts validated inputs and returns the
  *      full LlmMessage array ready to pass to callLlm().
- *   4. Is reachable via the generic renderPrompt(contractId, vars) dispatcher
- *      for callers that receive a contract ID at runtime.
+ *   4. Is reachable via the generic renderPrompt(contractId, vars, ctx?) dispatcher
+ *      for callers that receive a contract ID at runtime (eval harnesses, replay).
+ *
+ * Version stamp format: "<contractId>@<major>.<minor>.<patch>"
+ *   e.g. "plan.generate@1.0.0"
+ *   - contractId: namespaced identifier matching the renderPrompt dispatch key.
+ *   - major: incremented on breaking schema or intent changes.
+ *   - minor: incremented on backward-compatible template additions.
+ *   - patch: incremented on wording-only fixes.
+ *   Downstream tools (eval harnesses, buildReproducibilityMetadata) treat these
+ *   as opaque strings; strict semver parsing is NOT required of consumers.
  *
  * Prompt sites covered:
  *   plan.generate        — plan.ts callLlmForPlan
@@ -353,19 +362,36 @@ export function renderPaletteIntent(input: PaletteIntentInput): LlmMessage[] {
 // ─── Generic dispatcher ───────────────────────────────────────────────────────
 
 /**
- * Generic renderPrompt dispatcher — accepts a contract ID and validated input,
- * returns the LlmMessage array for that contract.
+ * Optional session context passed to renderPrompt for eval-harness and offline
+ * replay tooling.  Not used by the render functions themselves — it is forwarded
+ * opaquely so harnesses can attach replay metadata (session ID, lane ID, etc.)
+ * without changing the core render logic.
+ */
+export interface PromptRenderContext {
+  /** Session ID for replay tracing. */
+  sessionId?: number;
+  /** Lane ID for replay tracing. */
+  laneId?: number;
+  /** Task mode override for context-sensitive rendering. */
+  taskMode?: string;
+  /** Token mode override. */
+  tokenMode?: string;
+}
+
+/**
+ * Generic renderPrompt dispatcher — accepts a contract ID, validated input,
+ * and an optional replay context, then returns the LlmMessage array.
  *
  * Use this when the contract ID is determined at runtime (e.g. eval harnesses,
  * prompt-replay tooling).  For statically-typed call sites, prefer calling the
  * specific render* function directly.
  */
-export function renderPrompt(contractId: "plan.generate", vars: PlanGenerateInput): LlmMessage[];
-export function renderPrompt(contractId: "plan.reassess", vars: PlanReassessInput): LlmMessage[];
-export function renderPrompt(contractId: "plan.decompose", vars: PlanDecomposeInput): LlmMessage[];
-export function renderPrompt(contractId: "memory.sidecarVerify", vars: MemorySidecarVerifyInput): LlmMessage[];
-export function renderPrompt(contractId: "palette.intent", vars: PaletteIntentInput): LlmMessage[];
-export function renderPrompt(contractId: string, vars: unknown): LlmMessage[] {
+export function renderPrompt(contractId: "plan.generate", vars: PlanGenerateInput, ctx?: PromptRenderContext): LlmMessage[];
+export function renderPrompt(contractId: "plan.reassess", vars: PlanReassessInput, ctx?: PromptRenderContext): LlmMessage[];
+export function renderPrompt(contractId: "plan.decompose", vars: PlanDecomposeInput, ctx?: PromptRenderContext): LlmMessage[];
+export function renderPrompt(contractId: "memory.sidecarVerify", vars: MemorySidecarVerifyInput, ctx?: PromptRenderContext): LlmMessage[];
+export function renderPrompt(contractId: "palette.intent", vars: PaletteIntentInput, ctx?: PromptRenderContext): LlmMessage[];
+export function renderPrompt(contractId: string, vars: unknown, _ctx?: PromptRenderContext): LlmMessage[] {
   switch (contractId) {
     case "plan.generate":
       return renderPlanGenerate(vars as PlanGenerateInput);

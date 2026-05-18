@@ -758,7 +758,7 @@ export async function compileLaneBundles(
           sessionId,
           laneId: o.laneId,
           promptHash,
-          skillIdsJson: skillIds as unknown as Record<string, unknown>,
+          skillIdsJson: skillIds as string[] as unknown as Record<string, unknown>,
           systemPromptFragment,
         });
       }),
