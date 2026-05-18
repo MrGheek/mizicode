@@ -162,6 +162,13 @@
                         "when": 1747612800000,
                         "tag": "0031_prompt_contracts_lane_snapshots",
                         "breakpoints": true
+                },
+                {
+                        "idx": 33,
+                        "version": "7",
+                        "when": 1747699200000,
+                        "tag": "0032_lane_prompt_snapshots_cascade",
+                        "breakpoints": true
                 }
         ]
 }
