@@ -14,6 +14,7 @@
 
 import crypto from "crypto";
 import {
+  renderPrompt,
   PLAN_GENERATE_VERSION,
   PLAN_REASSESS_VERSION,
   PLAN_DECOMPOSE_VERSION,
@@ -317,12 +318,18 @@ async function buildReproducibilityMetadata(req: EvalRunRequest): Promise<{
     }
   }
 
+  // Render a minimal probe for each contract and hash the output. This ensures
+  // the configVersion changes whenever the prompt template changes, even if the
+  // version stamp is not bumped — enabling exact offline replay comparisons.
+  function probeHash(messages: unknown): string {
+    return crypto.createHash("sha256").update(JSON.stringify(messages)).digest("hex").slice(0, 16);
+  }
   const promptContractVersions: Record<string, string> = {
-    planGenerate: PLAN_GENERATE_VERSION,
-    planReassess: PLAN_REASSESS_VERSION,
-    planDecompose: PLAN_DECOMPOSE_VERSION,
-    memorySidecarVerify: MEMORY_SIDECAR_VERIFY_VERSION,
-    paletteIntent: PALETTE_INTENT_VERSION,
+    planGenerate: `${PLAN_GENERATE_VERSION}+${probeHash(renderPrompt("plan.generate", { intentText: "__eval_probe__" }))}`,
+    planReassess: `${PLAN_REASSESS_VERSION}+${probeHash(renderPrompt("plan.reassess", { tasks: [], observations: [] }))}`,
+    planDecompose: `${PLAN_DECOMPOSE_VERSION}+${probeHash(renderPrompt("plan.decompose", { existingTasks: [], recentObservations: [], activeSkills: [], rationaleContext: "", maxCandidates: 3 }))}`,
+    memorySidecarVerify: `${MEMORY_SIDECAR_VERIFY_VERSION}+${probeHash(renderPrompt("memory.sidecarVerify", { turnContent: "__probe__", candidateContent: "__probe__", candidateId: 0, similarity: 0 }))}`,
+    paletteIntent: `${PALETTE_INTENT_VERSION}+${probeHash(renderPrompt("palette.intent", { query: "probe", context: { route: "/", activeSessionId: null, activeSessionStatus: null, recentSessionIds: [] }, fewShotExamples: [] }))}`,
   };
 
   const configVersion = crypto

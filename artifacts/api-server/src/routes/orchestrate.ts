@@ -28,7 +28,7 @@ import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
 import { compileLaneBundles, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles } from "../services/skills-bundler";
 import type { SessionContext } from "../services/skills-types";
-import { getLanePolicy, VALID_LANE_TYPES, LANE_DEFAULT_TTL_SECONDS } from "../services/lane-policy";
+import { getLanePolicyAsync, resolveValidLaneType, LANE_DEFAULT_TTL_SECONDS } from "../services/lane-policy";
 import { getBridgeStatus } from "../services/bridge-registry";
 import { logger } from "../lib/logger";
 import type { TeamMemberRecord } from "@workspace/db";
@@ -608,10 +608,10 @@ router.post("/sessions/orchestrate", async (req, res) => {
     // prompt-snapshot FK rows (laneId: 0 would be filtered and never written).
     const laneInserts = await Promise.all(
       teamMembers.map(async (member) => {
-        const resolvedLaneType = VALID_LANE_TYPES.includes(member.role as typeof VALID_LANE_TYPES[number])
-          ? member.role as typeof VALID_LANE_TYPES[number]
-          : "general";
-        const policy = getLanePolicy(resolvedLaneType);
+        // resolveValidLaneType checks both built-in LANE_POLICIES and the custom_lane_types
+        // table, so DB-defined lane types (e.g. "security-review") are honoured end-to-end.
+        const resolvedLaneType = await resolveValidLaneType(member.role);
+        const policy = await getLanePolicyAsync(resolvedLaneType);
 
         const [lane] = await db.insert(sessionLanesTable).values({
           sessionId: insertedSessionId!,
@@ -628,19 +628,20 @@ router.post("/sessions/orchestrate", async (req, res) => {
       })
     );
 
-    const laneInputs = laneInserts.map(({ lane, member }) => {
-      const resolvedLaneType = VALID_LANE_TYPES.includes(member.role as typeof VALID_LANE_TYPES[number])
-        ? member.role as typeof VALID_LANE_TYPES[number]
-        : "general";
-      const policy = getLanePolicy(resolvedLaneType);
-      return {
-        laneId: lane.id, // real DB ID — required for snapshot FK
-        memberIdentifier: member.role,
-        laneType: resolvedLaneType,
-        taskMode: policy.defaultTaskMode,
-        tokenMode: policy.defaultTokenMode,
-      };
-    });
+    // Re-use the already-stored laneType from each lane row and fetch its policy
+    // asynchronously — this avoids a second DB lookup for custom lane types.
+    const laneInputs = await Promise.all(
+      laneInserts.map(async ({ lane, member }) => {
+        const policy = await getLanePolicyAsync(lane.laneType);
+        return {
+          laneId: lane.id, // real DB ID — required for snapshot FK
+          memberIdentifier: member.role,
+          laneType: lane.laneType,
+          taskMode: policy.defaultTaskMode,
+          tokenMode: policy.defaultTokenMode,
+        };
+      })
+    );
 
     const bundleResult = await compileLaneBundles(insertedSessionId, sessionCtx, laneInputs);
 

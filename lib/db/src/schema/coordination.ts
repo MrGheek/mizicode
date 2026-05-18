@@ -97,8 +97,8 @@ export const customLaneTypesTable = pgTable("custom_lane_types", {
 
 export const lanePromptSnapshotsTable = pgTable("lane_prompt_snapshots", {
   id: serial("id").primaryKey(),
-  sessionId: integer("session_id").notNull().references(() => sessionsTable.id),
-  laneId: integer("lane_id").notNull().references(() => sessionLanesTable.id),
+  sessionId: integer("session_id").notNull().references(() => sessionsTable.id, { onDelete: "cascade" }),
+  laneId: integer("lane_id").notNull().references(() => sessionLanesTable.id, { onDelete: "cascade" }),
   promptHash: text("prompt_hash").notNull(),
   skillIdsJson: jsonb("skill_ids_json").notNull(),
   systemPromptFragment: text("system_prompt_fragment"),

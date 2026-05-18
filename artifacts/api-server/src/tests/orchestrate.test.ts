@@ -16,7 +16,7 @@ import { describe, it, expect, beforeAll, afterAll, vi, afterEach, beforeEach } 
 import request from "supertest";
 import app from "../app";
 import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, skillBundlesTable, laneEventsTable, provisionedResourcesTable, orchestrationIdempotencyTable, lanePromptSnapshotsTable } from "@workspace/db";
-import { eq, inArray, and, sql } from "drizzle-orm";
+import { eq, inArray, and } from "drizzle-orm";
 
 // ─── Mock Vast.ai ──────────────────────────────────────────────────────────────
 // vastInstanceId is an integer column — new_contract must be numeric.
@@ -82,22 +82,6 @@ async function cleanupSession(sessionId: number) {
 }
 
 beforeAll(async () => {
-  // Drop and recreate so we always have ON DELETE CASCADE on both FKs.
-  // Without CASCADE, any test-file cleanup that deletes session_lanes or
-  // sessions would fail with a FK violation once snapshot rows exist.
-  await db.execute(sql`DROP TABLE IF EXISTS lane_prompt_snapshots`);
-  await db.execute(sql`
-    CREATE TABLE lane_prompt_snapshots (
-      id serial PRIMARY KEY,
-      session_id integer NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      lane_id integer NOT NULL REFERENCES session_lanes(id) ON DELETE CASCADE,
-      prompt_hash text NOT NULL,
-      skill_ids_json jsonb NOT NULL,
-      system_prompt_fragment text,
-      activated_at timestamp NOT NULL DEFAULT now()
-    )
-  `);
-
   const [profile] = await db
     .insert(gpuProfilesTable)
     .values({
