@@ -22,9 +22,20 @@ beforeAll(async () => {
       description text NOT NULL DEFAULT '',
       max_concurrent_claims integer NOT NULL DEFAULT 20,
       heavy_job_slots integer NOT NULL DEFAULT 2,
+      overlay_skill_ids_json jsonb,
+      retrieval_emphasis_json jsonb,
+      policy_token_mode text,
+      design_categories_json jsonb,
       created_at timestamp NOT NULL DEFAULT now(),
       updated_at timestamp NOT NULL DEFAULT now()
     )
+  `);
+  await db.execute(sql`
+    ALTER TABLE custom_lane_types
+      ADD COLUMN IF NOT EXISTS overlay_skill_ids_json jsonb,
+      ADD COLUMN IF NOT EXISTS retrieval_emphasis_json jsonb,
+      ADD COLUMN IF NOT EXISTS policy_token_mode text,
+      ADD COLUMN IF NOT EXISTS design_categories_json jsonb
   `);
 });
 

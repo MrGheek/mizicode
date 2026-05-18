@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { db, skillsTable, skillBundlesTable, skillVersionsTable, skillSourcesTable, sessionSkillsTable, sessionsTable, sessionRepoContextTable, designIntelligenceEntriesTable } from "@workspace/db";
+import { db, skillsTable, skillBundlesTable, skillVersionsTable, skillSourcesTable, sessionSkillsTable, sessionsTable, sessionRepoContextTable, designIntelligenceEntriesTable, lanePromptSnapshotsTable } from "@workspace/db";
 import { eq, and, inArray, desc, asc } from "drizzle-orm";
 import { DEFAULT_SKILLS, DEFAULT_BUNDLES } from "./default-skills";
 import { rankSkills, intentFit, buildRepoIntelligenceContext, getSkillFeedbackScores, buildHistoryScoresMap, getEvalLiftScoresMap } from "./skills-ranker";
@@ -731,6 +731,28 @@ export async function compileLaneBundles(
       compiled,
     });
   }
+
+  // Fire-and-forget lane prompt snapshots — persist skill-id hash for observability.
+  Promise.allSettled(
+    laneOverlays
+      .filter((o) => o.compiled !== null && o.laneId > 0)
+      .map(async (o) => {
+        const skillIds = (o.compiled!.skills as Array<{ id?: string }>)
+          .map((s) => s.id ?? "")
+          .filter(Boolean);
+        const promptHash = crypto
+          .createHash("sha256")
+          .update(JSON.stringify(skillIds))
+          .digest("hex")
+          .slice(0, 16);
+        await db.insert(lanePromptSnapshotsTable).values({
+          sessionId,
+          laneId: o.laneId,
+          promptHash,
+          skillIdsJson: skillIds as unknown as Record<string, unknown>,
+        });
+      }),
+  ).catch(() => {});
 
   return {
     sessionCoreBundleId: sessionCoreBundle?.id ?? null,

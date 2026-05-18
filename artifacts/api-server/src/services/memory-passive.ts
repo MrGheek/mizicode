@@ -19,6 +19,11 @@ import path from "path";
 import os from "os";
 import { logger } from "../lib/logger";
 import { cosineSimilarity, computeSemanticSimilarityBatch, tfidfCosineSimilarity } from "./memory-semantic";
+import {
+  MemorySidecarVerifyInputSchema,
+  renderMemorySidecarVerify,
+  MEMORY_SIDECAR_VERIFY_VERSION,
+} from "../prompts/contracts";
 
 const DATA_DIR = process.env["MEM_DATA_DIR"] || path.join(os.homedir(), "mizi-memory");
 const DB_PATH = path.join(DATA_DIR, "mem.db");
@@ -425,6 +430,16 @@ async function sidecarVerify(
   const { baseUrl, apiKey } = cfg;
 
   try {
+    const contractInput = MemorySidecarVerifyInputSchema.parse({
+      turnContent,
+      candidateContent: candidate.content,
+      candidateId: candidate.id,
+      similarity: candidate.similarity,
+    });
+    logger.debug(
+      { promptVersion: MEMORY_SIDECAR_VERIFY_VERSION, candidateId: candidate.id },
+      "[mem-passive] sidecarVerify LLM path",
+    );
     const model = process.env["MIZI_MEM_RECALL_SIDECAR_MODEL"] || "meta/llama-3.1-8b-instruct";
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
@@ -433,10 +448,7 @@ async function sidecarVerify(
         model,
         temperature: 0,
         max_tokens: 80,
-        messages: [
-          { role: "system", content: "You are a strict relevance judge. Decide if a retrieved memory is genuinely useful for the current conversation turn. Reply ONLY with JSON: {\"relevant\": boolean, \"reason\": string}." },
-          { role: "user", content: `TURN:\n${turnContent.slice(0, 1500)}\n\nMEMORY:\n${candidate.content.slice(0, 1500)}` },
-        ],
+        messages: renderMemorySidecarVerify(contractInput),
       }),
     });
     if (!response.ok) return heuristic;

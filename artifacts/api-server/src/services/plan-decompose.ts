@@ -25,6 +25,7 @@ import { planEvents } from "./plan-events";
 import { computeSemanticSimilarityBatch } from "./memory-semantic";
 import { broadcastPlanTasks } from "./lane-sse-broadcaster";
 import { callLlm } from "./llm-client";
+import { renderPlanDecompose, PLAN_DECOMPOSE_VERSION } from "../prompts/contracts";
 import { scoreModelsForPhase } from "./inference-router";
 import type { Observation } from "./memory";
 
@@ -177,23 +178,6 @@ async function callLlmForDecomposition(params: {
   activeSkills: ActiveSkillSummary[];
   rationaleContext: string;
 }): Promise<CandidateTask[]> {
-  const taskList = params.existingTasks
-    .map((t, i) => `  ${i + 1}. [${t.status}] ${t.text}`)
-    .join("\n");
-
-  const obsList = params.recentObservations
-    .slice(0, 30)
-    .map(o => `  [${o.toolName}] ${o.inputSummary} → ${o.outputSummary}`)
-    .join("\n");
-
-  const skillList = params.activeSkills.length > 0
-    ? params.activeSkills.map(s => `  - ${s.name}${s.tasks.length > 0 ? ` (handles: ${s.tasks.slice(0, 3).join(", ")})` : ""}`).join("\n")
-    : "  (no skill information available)";
-
-  const rationaleSection = params.rationaleContext
-    ? `\nSkill activation rationale (why these skills were chosen for this session):\n${params.rationaleContext}\n`
-    : "";
-
   // Route through the inference-router for the plan phase so model selection
   // is cost/quality-aware. Falls back to the default PLAN_LLM_MODEL env var
   // (via getLlmClientConfig) if no live NIM provider is ranked.
@@ -209,34 +193,17 @@ async function callLlmForDecomposition(params: {
 
   const raw = await callLlm({
     logTag: "plan.decompose",
+    promptVersion: PLAN_DECOMPOSE_VERSION,
     temperature: 0.2,
     max_tokens: 600,
     overrideModel,
-    messages: [
-      {
-        role: "system",
-        content: `You are MIZI, an AI project planner analyzing mid-session swarm activity to discover hidden complexity.
-
-Given the current plan tasks and recent swarm observations, identify NEW tasks that should be added to the plan — tasks that represent unanticipated complexity the swarm has discovered.
-
-Active swarm skills (only suggest tasks these skills can handle):
-${skillList}
-${rationaleSection}
-Rules:
-- Return ONLY valid JSON array of NEW task objects (not existing tasks)
-- Maximum ${MAX_CANDIDATES_PER_PASS} tasks
-- Each task must address real complexity seen in the observations, not speculation
-- Do not duplicate or paraphrase existing tasks
-- Tasks must be within the active skill set
-- Return [] if no new tasks are warranted
-- Format: [{"text": "...", "priority": "high|normal|low", "rationale": "1 sentence: what the swarm observed that triggered this"}, ...]
-- Pure JSON array only, no markdown`,
-      },
-      {
-        role: "user",
-        content: `Current plan tasks:\n${taskList}\n\nRecent swarm observations:\n${obsList}`,
-      },
-    ],
+    messages: renderPlanDecompose({
+      existingTasks: params.existingTasks,
+      recentObservations: params.recentObservations,
+      activeSkills: params.activeSkills,
+      rationaleContext: params.rationaleContext,
+      maxCandidates: MAX_CANDIDATES_PER_PASS,
+    }),
   });
 
   if (!raw) return [];

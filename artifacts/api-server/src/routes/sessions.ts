@@ -1,5 +1,5 @@
 import { Router, type RequestHandler } from "express";
-import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable, sessionLanesTable, sessionModelSwitchesTable, nimCatalogTable, provisionedResourcesTable, schemaTemplatesTable, projectPlansTable } from "@workspace/db";
+import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable, sessionLanesTable, sessionModelSwitchesTable, nimCatalogTable, provisionedResourcesTable, schemaTemplatesTable, projectPlansTable, lanePromptSnapshotsTable } from "@workspace/db";
 import { eq, desc, inArray, and, isNull, notLike } from "drizzle-orm";
 import * as neonService from "../services/neon";
 import { getBridge, getBridgeForSession, tryAcquireExecLock, releaseExecLock } from "../services/bridge-registry";
@@ -4108,5 +4108,39 @@ router.put("/sessions/:id/files/content", async (req, res) => {
     res.status(e.code ?? 500).json({ error: e.message ?? "Write failed" });
   }
 });
+
+router.get(
+  "/sessions/:sessionId/lanes/:laneId/prompt-snapshot",
+  requireAgentAuth(["sessions:read"]),
+  async (req, res) => {
+    const sessionId = Number(req.params["sessionId"]);
+    const laneId = Number(req.params["laneId"]);
+    if (!Number.isFinite(sessionId) || !Number.isFinite(laneId)) {
+      res.status(400).json({ error: "Invalid session or lane ID" });
+      return;
+    }
+    try {
+      const [snapshot] = await db
+        .select()
+        .from(lanePromptSnapshotsTable)
+        .where(
+          and(
+            eq(lanePromptSnapshotsTable.sessionId, sessionId),
+            eq(lanePromptSnapshotsTable.laneId, laneId),
+          ),
+        )
+        .orderBy(desc(lanePromptSnapshotsTable.activatedAt))
+        .limit(1);
+      if (!snapshot) {
+        res.status(404).json({ error: "No prompt snapshot found for this lane" });
+        return;
+      }
+      res.json(snapshot);
+    } catch (err) {
+      logger.warn({ err, sessionId, laneId }, "Failed to fetch prompt snapshot");
+      res.status(500).json({ error: "Internal error" });
+    }
+  },
+);
 
 export default router;

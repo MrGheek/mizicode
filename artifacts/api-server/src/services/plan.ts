@@ -12,6 +12,12 @@ import { callLlm } from "./llm-client";
 import { scoreModelsForPhase } from "./inference-router";
 import type { SessionPhase } from "./inference-router";
 import { computeSemanticSimilarityBatch } from "./memory-semantic";
+import {
+  renderPlanGenerate,
+  PLAN_GENERATE_VERSION,
+  renderPlanReassess,
+  PLAN_REASSESS_VERSION,
+} from "../prompts/contracts";
 
 export type { ProjectPlan, ProjectTask };
 
@@ -200,57 +206,20 @@ async function callLlmForPlan(params: {
   existingTasks?: Array<{ stepIndex: number; text: string; status: string; confirmedByUser: boolean }>;
   skillContext?: string;
 }): Promise<GeneratedPlan | null> {
-  const existingContext = params.existingTasks && params.existingTasks.length > 0
-    ? `\n\nExisting task board state (MUST preserve user-confirmed tasks):\n${params.existingTasks.map(t =>
-        `  [${t.stepIndex + 1}] ${t.text} — status: ${t.status}${t.confirmedByUser ? " (USER CONFIRMED — do not change)" : ""}`
-      ).join("\n")}`
-    : "";
-
-  const skillSection = params.skillContext
-    ? `\n\n${params.skillContext}\nOnly decompose into tasks that fall within the described capabilities. If the goal requires capabilities outside this set, flag it explicitly in the first step.`
-    : "";
-
   const routedModel = await getModelForPhase("plan");
 
   const raw = await callLlm({
     logTag: "plan.generate",
+    promptVersion: PLAN_GENERATE_VERSION,
     temperature: 0.3,
     max_tokens: 2200,
     overrideModel: routedModel,
-    messages: [
-      {
-        role: "system",
-        content: `You are MIZI, an AI project planner. Decompose a software development intent into 3–7 concrete, actionable steps.
-Return ONLY valid JSON in this exact format:
-{
-  "title": "Short project title (max 60 chars)",
-  "steps": [
-    {
-      "stepIndex": 0,
-      "text": "Concrete step description",
-      "priority": "high|normal|low",
-      "doneLooksLike": "2-3 bullet lines (\\n-separated) describing observable outcomes when this step is done",
-      "outOfScope": "1-2 bullet lines (\\n-separated) of what this step does NOT cover",
-      "fileDependencies": "newline-separated list of relevant file paths or sibling task names this step depends on"
-    },
-    ...
-  ]
-}
-Rules:
-- 3 to 7 steps, ordered logically
-- Each step must be a concrete implementation action, not vague
-- Respect user-confirmed tasks from the existing board — preserve their meaning
-- Priority: "high" for critical path, "normal" for standard, "low" for nice-to-have
-- doneLooksLike: 2-3 short bullet lines describing the observable result (not code)
-- outOfScope: 1-2 short bullet lines of explicit exclusions
-- fileDependencies: newline-separated paths/names, or empty string if none
-- No markdown, no extra text — pure JSON only`,
-      },
-      {
-        role: "user",
-        content: `Intent: ${params.intentText}${params.repoUrl ? `\nRepository: ${params.repoUrl}` : ""}${skillSection}${existingContext}`,
-      },
-    ],
+    messages: renderPlanGenerate({
+      intentText: params.intentText,
+      repoUrl: params.repoUrl,
+      existingTasks: params.existingTasks,
+      skillContext: params.skillContext,
+    }),
   });
   if (!raw) return null;
   const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0];
@@ -270,42 +239,19 @@ async function callLlmForReassessment(params: {
   observations: Array<{ toolName: string; inputSummary: string; outputSummary: string }>;
   skillContext?: string;
 }): Promise<Array<{ taskId: number; newStatus: PlanTaskStatus; reason: string }> | null> {
-  const observationSummary = params.observations.slice(0, 40)
-    .map(o => `[${o.toolName}] ${o.inputSummary} → ${o.outputSummary}`)
-    .join("\n");
-
-  const taskList = params.tasks.map(t =>
-    `  taskId=${t.id}: "${t.text}" (current: ${t.status}${t.confirmedByUser ? ", USER CONFIRMED" : ""})`
-  ).join("\n");
-
-  const skillSection = params.skillContext
-    ? `\n\n${params.skillContext}\nUse this to inform your assessment — the swarm can only perform actions within these capabilities.`
-    : "";
-
   const routedModel = await getModelForPhase("review");
 
   const raw = await callLlm({
     logTag: "plan.reassess",
+    promptVersion: PLAN_REASSESS_VERSION,
     temperature: 0,
     max_tokens: 800,
     overrideModel: routedModel,
-    messages: [
-      {
-        role: "system",
-        content: `You are MIZI, an AI code session analyst. Based on what the AI did during a session, assess which tasks were completed.
-Return ONLY valid JSON array:
-[{ "taskId": <number>, "newStatus": "done|partial|in_progress|planned", "reason": "brief reason" }, ...]
-Rules:
-- Skip tasks where confirmedByUser=true — DO NOT change those
-- "done" = clearly completed, "partial" = started but unfinished, "in_progress" = actively being worked, "planned" = untouched
-- Only include entries where status should change from current
-- Pure JSON array only, no markdown`,
-      },
-      {
-        role: "user",
-        content: `Tasks:\n${taskList}${skillSection}\n\nSession observations:\n${observationSummary}`,
-      },
-    ],
+    messages: renderPlanReassess({
+      tasks: params.tasks,
+      observations: params.observations,
+      skillContext: params.skillContext,
+    }),
   });
   if (!raw) return null;
   const jsonStr = raw.match(/\[[\s\S]*\]/)?.[0];
