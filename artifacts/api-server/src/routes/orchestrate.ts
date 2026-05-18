@@ -603,45 +603,15 @@ router.post("/sessions/orchestrate", async (req, res) => {
       intentText: goal,
     };
 
-    const laneInputs = teamMembers.map((m) => {
-      const resolvedLaneType = VALID_LANE_TYPES.includes(m.role as typeof VALID_LANE_TYPES[number])
-        ? m.role as typeof VALID_LANE_TYPES[number]
-        : "general";
-      const policy = getLanePolicy(resolvedLaneType);
-      return {
-        laneId: 0, // placeholder — real IDs assigned after lane insert
-        memberIdentifier: m.role,
-        laneType: resolvedLaneType,
-        taskMode: policy.defaultTaskMode,
-        tokenMode: policy.defaultTokenMode,
-      };
-    });
-
-    const bundleResult = await compileLaneBundles(insertedSessionId, sessionCtx, laneInputs);
-
-    // Build a map: memberIdentifier → overlay bundle ID to use when creating lanes.
-    // Priority: explicit member.skills bundle > compileLaneBundles result > null
-    const laneOverlayBundleIds = new Map<string, number | null>();
-    for (const overlay of bundleResult.laneOverlays) {
-      const memberBundleId = memberBundleIds.get(overlay.memberIdentifier) ?? null;
-      laneOverlayBundleIds.set(overlay.memberIdentifier, memberBundleId ?? overlay.overlayBundleId);
-    }
-    // Ensure every member is covered (compileLaneBundles may not return all if it fails partially)
-    for (const member of teamMembers) {
-      if (!laneOverlayBundleIds.has(member.role)) {
-        laneOverlayBundleIds.set(member.role, memberBundleIds.get(member.role) ?? null);
-      }
-    }
-
-    // ── Create lanes for each team member ────────────────────────────────────
+    // ── Create lanes for each team member (stub — overlayBundleId set after compile) ──
+    // Lanes must exist before compileLaneBundles so real lane IDs are available for
+    // prompt-snapshot FK rows (laneId: 0 would be filtered and never written).
     const laneInserts = await Promise.all(
       teamMembers.map(async (member) => {
         const resolvedLaneType = VALID_LANE_TYPES.includes(member.role as typeof VALID_LANE_TYPES[number])
           ? member.role as typeof VALID_LANE_TYPES[number]
           : "general";
         const policy = getLanePolicy(resolvedLaneType);
-
-        const overlayBundleId = laneOverlayBundleIds.get(member.role) ?? null;
 
         const [lane] = await db.insert(sessionLanesTable).values({
           sessionId: insertedSessionId!,
@@ -651,10 +621,42 @@ router.post("/sessions/orchestrate", async (req, res) => {
           status: "pending",
           tokenMode: policy.defaultTokenMode,
           currentTask: goal.slice(0, 200),
-          overlayBundleId,
+          overlayBundleId: null, // resolved below after compileLaneBundles
         }).returning();
 
         return { lane, member };
+      })
+    );
+
+    const laneInputs = laneInserts.map(({ lane, member }) => {
+      const resolvedLaneType = VALID_LANE_TYPES.includes(member.role as typeof VALID_LANE_TYPES[number])
+        ? member.role as typeof VALID_LANE_TYPES[number]
+        : "general";
+      const policy = getLanePolicy(resolvedLaneType);
+      return {
+        laneId: lane.id, // real DB ID — required for snapshot FK
+        memberIdentifier: member.role,
+        laneType: resolvedLaneType,
+        taskMode: policy.defaultTaskMode,
+        tokenMode: policy.defaultTokenMode,
+      };
+    });
+
+    const bundleResult = await compileLaneBundles(insertedSessionId, sessionCtx, laneInputs);
+
+    // ── Resolve overlay bundle ID per lane and update rows ────────────────────
+    // Priority: explicit member.skills bundle > compileLaneBundles result > null
+    await Promise.all(
+      laneInserts.map(async ({ lane, member }) => {
+        const memberBundleId = memberBundleIds.get(member.role) ?? null;
+        const compiledOverlay = bundleResult.laneOverlays.find(o => o.memberIdentifier === member.role);
+        const overlayBundleId = memberBundleId ?? compiledOverlay?.overlayBundleId ?? null;
+        if (overlayBundleId !== null) {
+          await db.update(sessionLanesTable)
+            .set({ overlayBundleId })
+            .where(eq(sessionLanesTable.id, lane.id));
+          lane.overlayBundleId = overlayBundleId; // keep in-memory object in sync
+        }
       })
     );
 

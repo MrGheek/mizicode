@@ -735,11 +735,12 @@ export async function compileLaneBundles(
     });
   }
 
-  // Fire-and-forget lane prompt snapshots — persist skill-id + instruction-content hash
-  // for prompt observability and replay.  Hash covers both skill IDs and the combined
-  // instruction text so any template change produces a new hash automatically.
+  // Lane prompt snapshots — persist skill-id + assembled system-prompt hash for prompt
+  // observability and replay.  Hash covers both skill IDs and the combined instruction text
+  // (via buildSystemPromptFragment) so any template change produces a new hash automatically.
   // systemPromptFragment is stored in non-production environments for replay debugging.
-  Promise.allSettled(
+  // Awaited so callers can rely on snapshot rows being present immediately after compile.
+  const snapshotResults = await Promise.allSettled(
     laneOverlays
       .filter((o) => o.compiled !== null && o.laneId > 0)
       .map(async (o) => {
@@ -761,17 +762,12 @@ export async function compileLaneBundles(
           systemPromptFragment,
         });
       }),
-  )
-    .then((results) => {
-      for (const r of results) {
-        if (r.status === "rejected") {
-          logger.warn({ err: r.reason }, "[skills-bundler] lane prompt snapshot write failed");
-        }
-      }
-    })
-    .catch((err) => {
-      logger.warn({ err }, "[skills-bundler] lane prompt snapshot allSettled failed");
-    });
+  );
+  for (const r of snapshotResults) {
+    if (r.status === "rejected") {
+      logger.warn({ err: r.reason }, "[skills-bundler] lane prompt snapshot write failed");
+    }
+  }
 
   return {
     sessionCoreBundleId: sessionCoreBundle?.id ?? null,

@@ -15,8 +15,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi, afterEach, beforeEach } from "vitest";
 import request from "supertest";
 import app from "../app";
-import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, skillBundlesTable, laneEventsTable, provisionedResourcesTable, orchestrationIdempotencyTable } from "@workspace/db";
-import { eq, inArray, and } from "drizzle-orm";
+import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, skillBundlesTable, laneEventsTable, provisionedResourcesTable, orchestrationIdempotencyTable, lanePromptSnapshotsTable } from "@workspace/db";
+import { eq, inArray, and, sql } from "drizzle-orm";
 
 // ─── Mock Vast.ai ──────────────────────────────────────────────────────────────
 // vastInstanceId is an integer column — new_contract must be numeric.
@@ -82,6 +82,22 @@ async function cleanupSession(sessionId: number) {
 }
 
 beforeAll(async () => {
+  // Drop and recreate so we always have ON DELETE CASCADE on both FKs.
+  // Without CASCADE, any test-file cleanup that deletes session_lanes or
+  // sessions would fail with a FK violation once snapshot rows exist.
+  await db.execute(sql`DROP TABLE IF EXISTS lane_prompt_snapshots`);
+  await db.execute(sql`
+    CREATE TABLE lane_prompt_snapshots (
+      id serial PRIMARY KEY,
+      session_id integer NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      lane_id integer NOT NULL REFERENCES session_lanes(id) ON DELETE CASCADE,
+      prompt_hash text NOT NULL,
+      skill_ids_json jsonb NOT NULL,
+      system_prompt_fragment text,
+      activated_at timestamp NOT NULL DEFAULT now()
+    )
+  `);
+
   const [profile] = await db
     .insert(gpuProfilesTable)
     .values({
@@ -662,5 +678,49 @@ describe("GET /api/sessions/:id/orchestration-status", () => {
     const res = await request(app).get(`/api/sessions/${pollingSessionId}/orchestration-status`);
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/Failed to fetch orchestration status/i);
+  });
+});
+
+// ─── Lane Prompt Snapshot — compile-path determinism ──────────────────────────
+
+describe("POST /api/sessions/orchestrate — lane prompt snapshot compile-path", () => {
+  it("writes snapshot rows with full SHA-256 hash and fragment after compile", async () => {
+    await setupHappyMocks();
+    // Override the module-level compileLaneBundles mock with the real implementation
+    // so that snapshot DB writes actually happen during this test.
+    const { compileLaneBundles: realCompileLaneBundles } =
+      await vi.importActual<typeof import("../services/skills-bundler")>("../services/skills-bundler");
+    const { compileLaneBundles } = await import("../services/skills-bundler");
+    vi.mocked(compileLaneBundles).mockReset();
+    vi.mocked(compileLaneBundles).mockImplementationOnce(
+      realCompileLaneBundles as typeof compileLaneBundles
+    );
+
+    // Explicit skill IDs ensure a non-null overlayBundleId / compiled bundle,
+    // which is the prerequisite for snapshot rows to be written.
+    const res = await orchestrate(baseBody({
+      goal: `Snapshot compile-path determinism test ${Date.now()}`,
+      teamMembers: [
+        { role: "backend", skills: ["karpathy-doctrine", "flow-router"] },
+        { role: "ux", skills: ["mizi-builder"] },
+      ],
+    }));
+    expect(res.status).toBe(202);
+    const sessionId = res.body.sessionId as number;
+    createdSessionIds.push(sessionId);
+
+    const snapshots = await db
+      .select()
+      .from(lanePromptSnapshotsTable)
+      .where(eq(lanePromptSnapshotsTable.sessionId, sessionId));
+    expect(snapshots.length).toBeGreaterThan(0);
+    for (const snap of snapshots) {
+      // Full 64-char SHA-256 hex (not truncated)
+      expect(snap.promptHash).toMatch(/^[0-9a-f]{64}$/);
+      // systemPromptFragment stored in non-production
+      expect(snap.systemPromptFragment).toBeTruthy();
+      // skill_ids_json is an array
+      expect(Array.isArray(snap.skillIdsJson)).toBe(true);
+    }
   });
 });

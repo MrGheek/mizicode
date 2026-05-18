@@ -14,6 +14,13 @@
 
 import crypto from "crypto";
 import {
+  PLAN_GENERATE_VERSION,
+  PLAN_REASSESS_VERSION,
+  PLAN_DECOMPOSE_VERSION,
+  MEMORY_SIDECAR_VERIFY_VERSION,
+  PALETTE_INTENT_VERSION,
+} from "../prompts/contracts";
+import {
   db,
   skillsTable,
   skillBundlesTable,
@@ -262,6 +269,7 @@ async function buildReproducibilityMetadata(req: EvalRunRequest): Promise<{
   skillVersionIds: Record<string, string>;
   bundleVersionHash: string | null;
   configVersion: string;
+  promptContractVersions: Record<string, string>;
 }> {
   const skillVersionIds: Record<string, string> = {};
 
@@ -309,6 +317,14 @@ async function buildReproducibilityMetadata(req: EvalRunRequest): Promise<{
     }
   }
 
+  const promptContractVersions: Record<string, string> = {
+    planGenerate: PLAN_GENERATE_VERSION,
+    planReassess: PLAN_REASSESS_VERSION,
+    planDecompose: PLAN_DECOMPOSE_VERSION,
+    memorySidecarVerify: MEMORY_SIDECAR_VERIFY_VERSION,
+    paletteIntent: PALETTE_INTENT_VERSION,
+  };
+
   const configVersion = crypto
     .createHash("sha256")
     .update(
@@ -320,12 +336,13 @@ async function buildReproducibilityMetadata(req: EvalRunRequest): Promise<{
         taskMode: req.taskMode ?? "build",
         skillVersionIds,
         bundleVersionHash,
+        promptContractVersions,
       })
     )
     .digest("hex")
     .slice(0, 16);
 
-  return { skillVersionIds, bundleVersionHash, configVersion };
+  return { skillVersionIds, bundleVersionHash, configVersion, promptContractVersions };
 }
 
 // ─── Composite Score Computation ──────────────────────────────────────────────
