@@ -4,30 +4,27 @@
  * Typed Zod input contracts and prompt-version stamps for all inline LLM
  * prompt sites in the API server.  Each contract:
  *   1. Defines a typed Zod schema for the prompt's dynamic inputs.
- *   2. Exports a deterministic version stamp (SHA-256 of the static system
- *      template, truncated to 12 hex chars) so that any template change is
- *      automatically reflected in logs and lane-prompt-snapshot records.
+ *   2. Exports a semver-style version stamp so template changes are explicitly
+ *      versioned in logs and lane-prompt-snapshot records.
  *   3. Exports a render function that accepts validated inputs and returns the
  *      full LlmMessage array ready to pass to callLlm().
+ *   4. Is reachable via the generic renderPrompt(contractId, vars) dispatcher
+ *      for callers that receive a contract ID at runtime.
  *
  * Prompt sites covered:
  *   plan.generate        — plan.ts callLlmForPlan
  *   plan.reassess        — plan.ts callLlmForReassessment
  *   plan.decompose       — plan-decompose.ts callLlmForDecomposition
  *   memory.sidecarVerify — memory-passive.ts sidecarVerify
+ *   palette.intent       — routes/palette-intent.ts POST /palette/intent
  */
 
-import crypto from "crypto";
 import { z } from "zod";
 import type { LlmMessage } from "../services/llm-client";
 
-function sha12(s: string): string {
-  return crypto.createHash("sha256").update(s).digest("hex").slice(0, 12);
-}
-
 // ─── plan.generate ────────────────────────────────────────────────────────────
 
-const PLAN_GENERATE_SYSTEM = `You are MIZI, an AI project planner. Decompose a software development intent into 3–7 concrete, actionable steps.
+export const PLAN_GENERATE_SYSTEM = `You are MIZI, an AI project planner. Decompose a software development intent into 3–7 concrete, actionable steps.
 Return ONLY valid JSON in this exact format:
 {
   "title": "Short project title (max 60 chars)",
@@ -53,7 +50,8 @@ Rules:
 - fileDependencies: newline-separated paths/names, or empty string if none
 - No markdown, no extra text — pure JSON only`;
 
-export const PLAN_GENERATE_VERSION = `plan.generate@${sha12(PLAN_GENERATE_SYSTEM)}`;
+/** Semver-style version stamp. Bump manually when the system template above changes. */
+export const PLAN_GENERATE_VERSION = "plan.generate@1.0.0";
 
 export const PlanGenerateInputSchema = z.object({
   intentText: z.string(),
@@ -98,7 +96,7 @@ export function renderPlanGenerate(input: PlanGenerateInput): LlmMessage[] {
 
 // ─── plan.reassess ────────────────────────────────────────────────────────────
 
-const PLAN_REASSESS_SYSTEM = `You are MIZI, an AI code session analyst. Based on what the AI did during a session, assess which tasks were completed.
+export const PLAN_REASSESS_SYSTEM = `You are MIZI, an AI code session analyst. Based on what the AI did during a session, assess which tasks were completed.
 Return ONLY valid JSON array:
 [{ "taskId": <number>, "newStatus": "done|partial|in_progress|planned", "reason": "brief reason" }, ...]
 Rules:
@@ -107,7 +105,8 @@ Rules:
 - Only include entries where status should change from current
 - Pure JSON array only, no markdown`;
 
-export const PLAN_REASSESS_VERSION = `plan.reassess@${sha12(PLAN_REASSESS_SYSTEM)}`;
+/** Semver-style version stamp. Bump manually when the system template above changes. */
+export const PLAN_REASSESS_VERSION = "plan.reassess@1.0.0";
 
 export const PlanReassessInputSchema = z.object({
   tasks: z.array(
@@ -169,7 +168,8 @@ const PLAN_DECOMPOSE_STATIC_RULES = `Rules:
 - Format: [{"text": "...", "priority": "high|normal|low", "rationale": "1 sentence: what the swarm observed that triggered this"}, ...]
 - Pure JSON array only, no markdown`;
 
-export const PLAN_DECOMPOSE_VERSION = `plan.decompose@${sha12(PLAN_DECOMPOSE_STATIC_PREAMBLE + PLAN_DECOMPOSE_STATIC_RULES)}`;
+/** Semver-style version stamp. Bump manually when the preamble or rules above change. */
+export const PLAN_DECOMPOSE_VERSION = "plan.decompose@1.0.0";
 
 export const PlanDecomposeInputSchema = z.object({
   existingTasks: z.array(z.object({ text: z.string(), status: z.string() })),
@@ -231,9 +231,10 @@ ${PLAN_DECOMPOSE_STATIC_RULES}`;
 
 // ─── memory.sidecarVerify ────────────────────────────────────────────────────
 
-const MEMORY_SIDECAR_VERIFY_SYSTEM = `You are a strict relevance judge. Decide if a retrieved memory is genuinely useful for the current conversation turn. Reply ONLY with JSON: {"relevant": boolean, "reason": string}.`;
+export const MEMORY_SIDECAR_VERIFY_SYSTEM = `You are a strict relevance judge. Decide if a retrieved memory is genuinely useful for the current conversation turn. Reply ONLY with JSON: {"relevant": boolean, "reason": string}.`;
 
-export const MEMORY_SIDECAR_VERIFY_VERSION = `memory.sidecarVerify@${sha12(MEMORY_SIDECAR_VERIFY_SYSTEM)}`;
+/** Semver-style version stamp. Bump manually when the system template above changes. */
+export const MEMORY_SIDECAR_VERIFY_VERSION = "memory.sidecarVerify@1.0.0";
 
 export const MemorySidecarVerifyInputSchema = z.object({
   turnContent: z.string(),
@@ -253,4 +254,130 @@ export function renderMemorySidecarVerify(input: MemorySidecarVerifyInput): LlmM
       content: `TURN:\n${validated.turnContent.slice(0, 1500)}\n\nMEMORY:\n${validated.candidateContent.slice(0, 1500)}`,
     },
   ];
+}
+
+// ─── palette.intent ───────────────────────────────────────────────────────────
+
+export const PALETTE_INTENT_SYSTEM = `You are an AI assistant embedded in the MIZI command palette — a cloud coding platform for managing GPU-backed coding sessions.
+
+Your job is to parse a natural-language command from the user and return a structured JSON action object. The user is currently using the app; use the context provided to resolve ambiguous references like "my session", "the running one", "last night's session", etc.
+
+Available action types:
+- navigate: Navigate to a route in the app
+  Available routes: "/" (dashboard), "/sessions" (sessions list), "/sessions/{id}" (session detail), "/skills", "/memory", "/templates", "/design-intelligence"
+- stop-session: Stop a session. Requires sessionId in payload. Use activeSessionId from context when user says "my session", "the running one", etc. If no active session exists in context, set ok=false.
+- reindex-session: Trigger a repo re-index for a session. Requires sessionId in payload.
+- new-session: Open the new session launch dialog.
+- relaunch-session: Re-launch a stopped session. Requires sessionId in payload.
+- copy-ssh: Copy the SSH command for a session. Requires sessionId in payload.
+
+Respond with ONLY valid JSON matching this schema:
+{
+  "ok": boolean,
+  "action": "<action-type>" | null,
+  "payload": { "route": "<route>" | null, "sessionId": <number> | null } | null,
+  "explanation": "<human-readable description of what will happen, or reason for failure>"
+}
+
+Rules:
+- If the command is clear and actionable, set ok=true and fill in action+payload.
+- If the command references "active session", "running session", or "my session" and there is an activeSessionId in context, use that sessionId.
+- If the command references a session by number (e.g. "session 42" or "#42"), use that ID as sessionId.
+- If context is needed but not available (e.g. user says "stop my session" but there is no active session), set ok=false and explain why.
+- If the command is unrecognizable or outside scope, set ok=false with a friendly explanation.
+- Keep explanation concise (≤ 80 chars). It will be shown in a toast notification.
+- Never include markdown, code fences, or any text outside the JSON object.`;
+
+/** Semver-style version stamp. Bump manually when the system template above changes. */
+export const PALETTE_INTENT_VERSION = "palette.intent@1.0.0";
+
+export const PaletteIntentFewShotExampleSchema = z.object({
+  query: z.string(),
+  action: z.string().nullable(),
+  payloadJson: z.unknown().nullable(),
+  explanation: z.string(),
+});
+
+export const PaletteIntentInputSchema = z.object({
+  query: z.string().min(1).max(500),
+  context: z.object({
+    route: z.string().default("/"),
+    activeSessionId: z.number().nullable().default(null),
+    activeSessionStatus: z.string().nullable().default(null),
+    recentSessionIds: z.array(z.number()).default([]),
+  }),
+  fewShotExamples: z.array(PaletteIntentFewShotExampleSchema).default([]),
+});
+
+export type PaletteIntentInput = z.infer<typeof PaletteIntentInputSchema>;
+
+function buildPaletteFewShotBlock(
+  examples: PaletteIntentInput["fewShotExamples"],
+): string {
+  if (examples.length === 0) return "";
+  const lines = [
+    "",
+    "Past successful commands from this user (use as few-shot examples):",
+  ];
+  for (const ex of examples) {
+    const payload = ex.payloadJson ?? null;
+    lines.push(
+      `  User: "${ex.query}" → ${JSON.stringify({ ok: true, action: ex.action, payload, explanation: ex.explanation })}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+export function renderPaletteIntent(input: PaletteIntentInput): LlmMessage[] {
+  const validated = PaletteIntentInputSchema.parse(input);
+  const ctx = validated.context;
+  const fewShotBlock = buildPaletteFewShotBlock(validated.fewShotExamples);
+  const systemContent = fewShotBlock
+    ? PALETTE_INTENT_SYSTEM + fewShotBlock
+    : PALETTE_INTENT_SYSTEM;
+  const userContent = [
+    `User query: "${validated.query}"`,
+    "",
+    "Current context:",
+    `  route: ${ctx.route}`,
+    `  activeSessionId: ${ctx.activeSessionId ?? "none"}`,
+    `  activeSessionStatus: ${ctx.activeSessionStatus ?? "none"}`,
+    `  recentSessionIds: [${ctx.recentSessionIds.join(", ")}]`,
+  ].join("\n");
+  return [
+    { role: "system", content: systemContent },
+    { role: "user", content: userContent },
+  ];
+}
+
+// ─── Generic dispatcher ───────────────────────────────────────────────────────
+
+/**
+ * Generic renderPrompt dispatcher — accepts a contract ID and validated input,
+ * returns the LlmMessage array for that contract.
+ *
+ * Use this when the contract ID is determined at runtime (e.g. eval harnesses,
+ * prompt-replay tooling).  For statically-typed call sites, prefer calling the
+ * specific render* function directly.
+ */
+export function renderPrompt(contractId: "plan.generate", vars: PlanGenerateInput): LlmMessage[];
+export function renderPrompt(contractId: "plan.reassess", vars: PlanReassessInput): LlmMessage[];
+export function renderPrompt(contractId: "plan.decompose", vars: PlanDecomposeInput): LlmMessage[];
+export function renderPrompt(contractId: "memory.sidecarVerify", vars: MemorySidecarVerifyInput): LlmMessage[];
+export function renderPrompt(contractId: "palette.intent", vars: PaletteIntentInput): LlmMessage[];
+export function renderPrompt(contractId: string, vars: unknown): LlmMessage[] {
+  switch (contractId) {
+    case "plan.generate":
+      return renderPlanGenerate(vars as PlanGenerateInput);
+    case "plan.reassess":
+      return renderPlanReassess(vars as PlanReassessInput);
+    case "plan.decompose":
+      return renderPlanDecompose(vars as PlanDecomposeInput);
+    case "memory.sidecarVerify":
+      return renderMemorySidecarVerify(vars as MemorySidecarVerifyInput);
+    case "palette.intent":
+      return renderPaletteIntent(vars as PaletteIntentInput);
+    default:
+      throw new Error(`Unknown prompt contract: ${contractId}`);
+  }
 }

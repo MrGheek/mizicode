@@ -101,6 +101,7 @@ export const lanePromptSnapshotsTable = pgTable("lane_prompt_snapshots", {
   laneId: integer("lane_id").notNull().references(() => sessionLanesTable.id),
   promptHash: text("prompt_hash").notNull(),
   skillIdsJson: jsonb("skill_ids_json").notNull(),
+  systemPromptFragment: text("system_prompt_fragment"),
   activatedAt: timestamp("activated_at").notNull().defaultNow(),
 });
 
