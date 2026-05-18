@@ -87,8 +87,21 @@ export const customLaneTypesTable = pgTable("custom_lane_types", {
   description: text("description").notNull().default(""),
   maxConcurrentClaims: integer("max_concurrent_claims").notNull().default(20),
   heavyJobSlots: integer("heavy_job_slots").notNull().default(2),
+  overlaySkillIdsJson: jsonb("overlay_skill_ids_json"),
+  retrievalEmphasisJson: jsonb("retrieval_emphasis_json"),
+  policyTokenMode: text("policy_token_mode"),
+  designCategoriesJson: jsonb("design_categories_json"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const lanePromptSnapshotsTable = pgTable("lane_prompt_snapshots", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").notNull().references(() => sessionsTable.id),
+  laneId: integer("lane_id").notNull().references(() => sessionLanesTable.id),
+  promptHash: text("prompt_hash").notNull(),
+  skillIdsJson: jsonb("skill_ids_json").notNull(),
+  activatedAt: timestamp("activated_at").notNull().defaultNow(),
 });
 
 export type LaneEventType =
@@ -118,3 +131,4 @@ export type LaneHeavyJob = typeof laneHeavyJobsTable.$inferSelect;
 export type ClaimPurgeLog = typeof claimPurgeLogsTable.$inferSelect;
 export type CustomLaneType = typeof customLaneTypesTable.$inferSelect;
 export type LaneEvent = typeof laneEventsTable.$inferSelect;
+export type LanePromptSnapshot = typeof lanePromptSnapshotsTable.$inferSelect;

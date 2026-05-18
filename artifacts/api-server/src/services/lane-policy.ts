@@ -163,10 +163,27 @@ export async function getLanePolicyAsync(laneType: string): Promise<LaneOverlayP
 
     if (custom) {
       const base = { ...LANE_POLICIES.general };
+      const overlaySkillIds = Array.isArray(custom.overlaySkillIdsJson)
+        ? (custom.overlaySkillIdsJson as string[])
+        : base.defaultOverlaySkillIds;
+      const retrievalEmphasis = Array.isArray(custom.retrievalEmphasisJson)
+        ? (custom.retrievalEmphasisJson as string[])
+        : base.retrievalEmphasis;
+      const designCategories = Array.isArray(custom.designCategoriesJson)
+        ? (custom.designCategoriesJson as string[])
+        : base.designCategories;
+      const defaultTokenMode =
+        typeof custom.policyTokenMode === "string"
+          ? custom.policyTokenMode
+          : base.defaultTokenMode;
       return {
         ...base,
         laneType: laneType as LaneType,
         description: custom.description || `Custom lane type: ${custom.name}`,
+        defaultTokenMode,
+        defaultOverlaySkillIds: overlaySkillIds,
+        retrievalEmphasis,
+        designCategories,
         limits: {
           ...base.limits,
           maxConcurrentClaims: custom.maxConcurrentClaims,

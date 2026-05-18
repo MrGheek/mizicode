@@ -47,12 +47,13 @@ export interface LlmCallOptions {
   timeoutMs?: number;
   overrideModel?: string;
   logTag?: string;
+  promptVersion?: string;
 }
 
 export async function callLlm(opts: LlmCallOptions): Promise<string | null> {
   const cfg = getLlmClientConfig(opts.overrideModel);
   if (!cfg) {
-    logger.warn({ tag: opts.logTag }, "[llm-client] No LLM provider configured");
+    logger.warn({ tag: opts.logTag, promptVersion: opts.promptVersion }, "[llm-client] No LLM provider configured");
     return null;
   }
 
@@ -73,14 +74,14 @@ export async function callLlm(opts: LlmCallOptions): Promise<string | null> {
     });
 
     if (!resp.ok) {
-      logger.warn({ status: resp.status, tag: opts.logTag }, "[llm-client] LLM request failed");
+      logger.warn({ status: resp.status, tag: opts.logTag, promptVersion: opts.promptVersion }, "[llm-client] LLM request failed");
       return null;
     }
 
     const data = await resp.json() as { choices?: Array<{ message?: { content?: string } }> };
     return data.choices?.[0]?.message?.content?.trim() ?? null;
   } catch (err) {
-    logger.warn({ err, tag: opts.logTag }, "[llm-client] LLM call threw");
+    logger.warn({ err, tag: opts.logTag, promptVersion: opts.promptVersion }, "[llm-client] LLM call threw");
     return null;
   }
 }
