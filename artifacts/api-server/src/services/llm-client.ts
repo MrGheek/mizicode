@@ -79,7 +79,9 @@ export async function callLlm(opts: LlmCallOptions): Promise<string | null> {
     }
 
     const data = await resp.json() as { choices?: Array<{ message?: { content?: string } }> };
-    return data.choices?.[0]?.message?.content?.trim() ?? null;
+    const content = data.choices?.[0]?.message?.content?.trim() ?? null;
+    logger.debug({ tag: opts.logTag, promptVersion: opts.promptVersion, hasContent: content !== null }, "[llm-client] LLM call succeeded");
+    return content;
   } catch (err) {
     logger.warn({ err, tag: opts.logTag, promptVersion: opts.promptVersion }, "[llm-client] LLM call threw");
     return null;
