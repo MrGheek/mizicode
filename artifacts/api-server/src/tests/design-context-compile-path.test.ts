@@ -159,6 +159,20 @@ vi.mock("../services/lane-policy", () => {
       conflictEscalation: "warn",
       description: "",
     })),
+    getLanePolicyAsync: vi.fn(async (laneType: string) => ({
+      laneType,
+      defaultTaskMode: "build",
+      defaultTokenMode: "core",
+      designCategories: designCategoriesMap[laneType] ?? [],
+      allowedClaimTypes: [],
+      limits: { maxConcurrentClaims: 10, heavyJobSlots: 2, maxBlastRadiusFiles: 50, claimTtlSeconds: 3600 },
+      sharedMemoryScopes: [],
+      privateMemoryScopes: [],
+      defaultOverlaySkillIds: [],
+      retrievalEmphasis: [],
+      conflictEscalation: "warn",
+      description: "",
+    })),
   };
 });
 

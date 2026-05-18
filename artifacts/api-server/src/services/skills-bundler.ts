@@ -586,6 +586,8 @@ export interface LaneBundleCompileResult {
     laneType: string;
     overlayBundleId: number | null;
     compiled: CompiledBundle | null;
+    /** Effective token mode for this lane — needed for snapshot fragment assembly. */
+    tokenMode: string;
   }>;
 }
 
@@ -594,7 +596,7 @@ export async function compileLaneBundles(
   ctx: SessionContext,
   lanes: Array<{ laneId: number; memberIdentifier: string; laneType: string; taskMode?: string; tokenMode?: string }>,
 ): Promise<LaneBundleCompileResult> {
-  const { getLanePolicy } = await import("./lane-policy");
+  const { getLanePolicyAsync } = await import("./lane-policy");
 
   // Ensure bundles are seeded
   await seedDefaultBundles();
@@ -631,7 +633,7 @@ export async function compileLaneBundles(
   const laneOverlays: LaneBundleCompileResult["laneOverlays"] = [];
 
   for (const lane of lanes) {
-    const policy = getLanePolicy(lane.laneType);
+    const policy = await getLanePolicyAsync(lane.laneType);
     const laneTokenMode = (lane.tokenMode ?? policy.defaultTokenMode) as SessionContext["tokenMode"];
     const laneTaskMode = (lane.taskMode ?? policy.defaultTaskMode) as SessionContext["taskMode"];
 
@@ -729,6 +731,7 @@ export async function compileLaneBundles(
       laneType: lane.laneType,
       overlayBundleId: overlayBundle?.id ?? null,
       compiled,
+      tokenMode: laneTokenMode,
     });
   }
 
@@ -743,19 +746,13 @@ export async function compileLaneBundles(
         const skillIds = (o.compiled!.skills as Array<{ id?: string }>)
           .map((s) => s.id ?? "")
           .filter(Boolean);
-        const instructionText = (o.compiled!.skills as MiziSkillManifest[])
-          .flatMap((s) => s.instructions?.system ?? [])
-          .join("\n");
-        const instructionFragment = instructionText.slice(0, 512);
+        const fragment = buildSystemPromptFragment(o.compiled!, o.tokenMode as TokenMode);
         const promptHash = crypto
           .createHash("sha256")
-          .update(JSON.stringify(skillIds) + "\n" + instructionFragment)
-          .digest("hex")
-          .slice(0, 16);
+          .update(JSON.stringify(skillIds) + "\n" + fragment)
+          .digest("hex");
         const systemPromptFragment =
-          process.env["NODE_ENV"] !== "production"
-            ? instructionText.slice(0, 500) || null
-            : null;
+          process.env["NODE_ENV"] !== "production" ? fragment || null : null;
         await db.insert(lanePromptSnapshotsTable).values({
           sessionId,
           laneId: o.laneId,
