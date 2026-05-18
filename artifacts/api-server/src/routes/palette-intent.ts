@@ -7,6 +7,7 @@ import {
   PaletteIntentInputSchema,
   PALETTE_INTENT_VERSION,
 } from "../prompts/contracts";
+import { callLlm } from "../services/llm-client";
 
 const router = Router();
 
@@ -169,21 +170,23 @@ router.post("/palette/intent", async (req, res) => {
     });
     const messages = renderPaletteIntent(contractInput);
 
-    // Lazy import so missing AI env vars only fail this handler, not server startup.
-    const { openai } = await import("@workspace/integrations-openai-ai-server");
-
+    // Route through the shared callLlm client so promptVersion is recorded
+    // uniformly alongside every LLM call (success, failure, and no-provider paths).
     logger.debug(
       { promptVersion: PALETTE_INTENT_VERSION, userId: PALETTE_USER_ID, fewShotCount: fewShotExamples.length },
       "palette-intent: calling LLM",
     );
 
-    const response = await openai.chat.completions.create({
-      model: "meta/llama-3.1-8b-instruct",
-      max_completion_tokens: 512,
-      messages: messages as Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    const rawOrNull = await callLlm({
+      messages,
+      max_tokens: 512,
+      temperature: 0,
+      overrideModel: "meta/llama-3.1-8b-instruct",
+      promptVersion: PALETTE_INTENT_VERSION,
+      logTag: "palette.intent",
     });
 
-    const raw = response.choices[0]?.message?.content?.trim() ?? "";
+    const raw = rawOrNull?.trim() ?? "";
 
     let rawParsed: unknown;
     try {

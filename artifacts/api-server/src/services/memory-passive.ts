@@ -24,6 +24,7 @@ import {
   renderMemorySidecarVerify,
   MEMORY_SIDECAR_VERIFY_VERSION,
 } from "../prompts/contracts";
+import { callLlm } from "./llm-client";
 
 const DATA_DIR = process.env["MEM_DATA_DIR"] || path.join(os.homedir(), "mizi-memory");
 const DB_PATH = path.join(DATA_DIR, "mem.db");
@@ -425,9 +426,6 @@ async function sidecarVerify(
   if (process.env["MIZI_MEM_RECALL_SIDECAR_LLM"] !== "1") {
     return heuristic;
   }
-  const cfg = getAiConfig();
-  if (!cfg) return heuristic;
-  const { baseUrl, apiKey } = cfg;
 
   try {
     const contractInput = MemorySidecarVerifyInputSchema.parse({
@@ -440,20 +438,18 @@ async function sidecarVerify(
       { promptVersion: MEMORY_SIDECAR_VERIFY_VERSION, candidateId: candidate.id },
       "[mem-passive] sidecarVerify LLM path",
     );
+    // Route through the shared callLlm client so promptVersion is recorded
+    // uniformly via the [llm-client] log contract on every call.
     const model = process.env["MIZI_MEM_RECALL_SIDECAR_MODEL"] || "meta/llama-3.1-8b-instruct";
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        temperature: 0,
-        max_tokens: 80,
-        messages: renderMemorySidecarVerify(contractInput),
-      }),
+    const text = await callLlm({
+      messages: renderMemorySidecarVerify(contractInput),
+      max_tokens: 80,
+      temperature: 0,
+      overrideModel: model,
+      promptVersion: MEMORY_SIDECAR_VERIFY_VERSION,
+      logTag: "memory.sidecarVerify",
     });
-    if (!response.ok) return heuristic;
-    const data = await response.json() as { choices: Array<{ message?: { content?: string } }> };
-    const text = data.choices?.[0]?.message?.content?.trim() ?? "";
+    if (!text) return heuristic;
     const json = text.match(/\{[\s\S]*\}/)?.[0];
     if (!json) return heuristic;
     const parsed = JSON.parse(json) as { relevant?: boolean; reason?: string };
