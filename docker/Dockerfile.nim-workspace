@@ -1,0 +1,86 @@
+# ── NIM Workspace Dockerfile ───────────────────────────────────────────────────
+# Lightweight coding environment for NIM / hosted-inference sessions.
+# No GPU, no vLLM, no CUDA — inference routes to the NVIDIA NIM API via LiteLLM.
+# Target: well under 8 GB uncompressed (Fly.io runner hard limit).
+#
+# Services started by onstart.sh in NIM mode:
+#   code-server   — browser IDE on port 8080
+#   claw-runner   — Claw Runner agent loop (Node.js, port 5181)
+#   claw-bridge   — real-time bridge to the API server (WebSocket)
+#   bolt.diy      — AI web IDE frontend (port 5180)
+#   nginx         — reverse proxy and auth gate
+#   litellm       — OpenAI/Anthropic proxy → NIM API (port 11434)
+#
+# Build strategy: extract the pre-built claw binary from the existing full image
+# (cached by Depot after the first pull) to skip the Rust compilation step.
+
+ARG UBUNTU_VERSION=22.04
+
+# Stage 1: pull claw binary from the existing image (no Rust compile needed)
+FROM gheeklabs/coding-env:latest AS claw-source
+
+# Stage 2: slim runtime — ubuntu only, no CUDA, no GPU stack
+FROM ubuntu:${UBUNTU_VERSION}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    git \
+    nginx \
+    openssh-server \
+    apache2-utils \
+    python3 \
+    python3-pip \
+    build-essential \
+    ca-certificates \
+    vim \
+    nano \
+    htop \
+    tmux \
+    jq \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# LiteLLM: proxies claw-code's Anthropic/OpenAI calls to the NIM API.
+# Much lighter than vLLM — no CUDA kernels, no PyTorch.
+RUN pip3 install --no-cache-dir litellm
+
+# Node.js 20 + pnpm (required by claw-runner.js, claw-bridge.mjs, and bolt.diy)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g pnpm@9 && \
+    rm -rf /var/lib/apt/lists/*
+
+# code-server (VS Code in the browser)
+RUN curl -fsSL https://code-server.dev/install.sh | sh
+
+# bolt.diy (AI web IDE frontend served on port 5180)
+RUN git clone --depth 1 https://github.com/stackblitz-labs/bolt.diy /opt/bolt-diy && \
+    cd /opt/bolt-diy && \
+    pnpm install --frozen-lockfile || pnpm install
+
+# Claw binary — extracted from the existing full image (no Rust compile)
+COPY --from=claw-source /usr/local/bin/claw /usr/local/bin/claw
+
+# Claw source tree (referenced by claw-runner.js tooling)
+COPY claw-code-src/claw-code-main /opt/claw-code
+
+RUN mkdir -p /run/sshd /workspace/models /workspace/projects /var/log && \
+    git config --global --add safe.directory /workspace/projects && \
+    git config --global --add safe.directory '*'
+
+COPY onstart.sh /opt/onstart.sh
+COPY claw-bridge.mjs /opt/claw-bridge.mjs
+COPY claw-runner.js /opt/claw-runner.js
+COPY scripts/ /opt/repo-intelligence/
+RUN cd /opt/repo-intelligence && npm install --production --prefer-offline && \
+    node -e "require('better-sqlite3'); console.log('[repo-intelligence] better-sqlite3 OK')" 2>/dev/null || \
+    echo "[repo-intelligence] WARN: native modules may be missing — indexer will use fallback mode"
+RUN chmod +x /opt/onstart.sh
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -sf http://localhost:8081/health || exit 1
+
+EXPOSE 5180 5181 8080 8081 3000 22
+
+CMD ["/opt/onstart.sh"]
