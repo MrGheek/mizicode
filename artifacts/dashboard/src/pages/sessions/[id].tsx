@@ -4189,6 +4189,24 @@ export default function SessionDetail() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Quick links — always visible for non-stopped sessions so users can reach Files/Snapshots without discovering the sheet */}
+          {session.status !== "stopped" && session.status !== "error" && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => { lastDetailTabRef.current = "files"; setActiveTab("files"); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border/50 bg-secondary/40 text-muted-foreground hover:text-foreground hover:bg-secondary/70 transition-colors"
+              >
+                <FolderTree className="w-3.5 h-3.5" /> Browse Files
+              </button>
+              <button
+                onClick={() => { lastDetailTabRef.current = "snapshots"; setActiveTab("snapshots"); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border/50 bg-secondary/40 text-muted-foreground hover:text-foreground hover:bg-secondary/70 transition-colors"
+              >
+                <History className="w-3.5 h-3.5" /> Snapshots
+              </button>
+            </div>
+          )}
         </>
       )}
 
