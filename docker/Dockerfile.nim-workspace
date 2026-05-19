@@ -56,6 +56,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # LiteLLM: proxies claw-code calls to the NIM API (no GPU/CUDA needed)
 RUN pip3 install --no-cache-dir litellm
+# websockets is required by litellm's proxy server but is NOT included in the
+# base litellm package (it is part of litellm[proxy]). Without it litellm
+# crashes immediately on every start with ModuleNotFoundError: 'websockets'.
+RUN pip3 install --no-cache-dir websockets
 
 # Node.js 20 + pnpm (claw-runner.js, claw-bridge.mjs, bolt.diy)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
