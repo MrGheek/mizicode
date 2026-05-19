@@ -3,6 +3,9 @@
 # No GPU, no vLLM, no CUDA — inference routes to the NVIDIA NIM API via LiteLLM.
 # Target: well under 8 GB uncompressed (Fly.io runner hard limit).
 #
+# Build context: workspace root (not docker/)
+# All COPY paths are prefixed with docker/
+#
 # Services started by onstart.sh in NIM mode:
 #   code-server   — browser IDE on port 8080
 #   claw-runner   — Claw Runner agent loop (Node.js, port 5181)
@@ -10,16 +13,27 @@
 #   bolt.diy      — AI web IDE frontend (port 5180)
 #   nginx         — reverse proxy and auth gate
 #   litellm       — OpenAI/Anthropic proxy → NIM API (port 11434)
-#
-# Build strategy: extract the pre-built claw binary from the existing full image
-# (cached by Depot after the first pull) to skip the Rust compilation step.
 
 ARG UBUNTU_VERSION=22.04
 
-# Stage 1: pull claw binary from the existing image (no Rust compile needed)
-FROM gheeklabs/coding-env:latest AS claw-source
+# ── Stage 1: build claw binary from bundled Rust source ───────────────────────
+FROM ubuntu:${UBUNTU_VERSION} AS claw-builder
 
-# Stage 2: slim runtime — ubuntu only, no CUDA, no GPU stack
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl pkg-config libssl-dev ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+COPY docker/claw-code-src/claw-code-main /opt/claw-code-src
+RUN cd /opt/claw-code-src/rust && \
+    CARGO_PROFILE_RELEASE_OPT_LEVEL=0 \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256 \
+    cargo build --release && \
+    cp target/release/claw /usr/local/bin/claw
+
+# ── Stage 2: slim runtime — ubuntu only, no CUDA, no GPU stack ────────────────
 FROM ubuntu:${UBUNTU_VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -31,7 +45,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apache2-utils \
     python3 \
     python3-pip \
-    build-essential \
     ca-certificates \
     vim \
     nano \
@@ -41,11 +54,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# LiteLLM: proxies claw-code's Anthropic/OpenAI calls to the NIM API.
-# Much lighter than vLLM — no CUDA kernels, no PyTorch.
+# LiteLLM: proxies claw-code calls to the NIM API (no GPU/CUDA needed)
 RUN pip3 install --no-cache-dir litellm
 
-# Node.js 20 + pnpm (required by claw-runner.js, claw-bridge.mjs, and bolt.diy)
+# Node.js 20 + pnpm (claw-runner.js, claw-bridge.mjs, bolt.diy)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g pnpm@9 && \
@@ -59,23 +71,23 @@ RUN git clone --depth 1 https://github.com/stackblitz-labs/bolt.diy /opt/bolt-di
     cd /opt/bolt-diy && \
     pnpm install --frozen-lockfile || pnpm install
 
-# Claw binary — extracted from the existing full image (no Rust compile)
-COPY --from=claw-source /usr/local/bin/claw /usr/local/bin/claw
+# Claw binary from stage 1
+COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw
 
-# Claw source tree (referenced by claw-runner.js tooling)
-COPY claw-code-src/claw-code-main /opt/claw-code
+# Claw source tree (claw-runner.js tooling reference)
+COPY docker/claw-code-src/claw-code-main /opt/claw-code
 
 RUN mkdir -p /run/sshd /workspace/models /workspace/projects /var/log && \
     git config --global --add safe.directory /workspace/projects && \
     git config --global --add safe.directory '*'
 
-COPY onstart.sh /opt/onstart.sh
-COPY claw-bridge.mjs /opt/claw-bridge.mjs
-COPY claw-runner.js /opt/claw-runner.js
-COPY scripts/ /opt/repo-intelligence/
+COPY docker/onstart.sh /opt/onstart.sh
+COPY docker/claw-bridge.mjs /opt/claw-bridge.mjs
+COPY docker/claw-runner.js /opt/claw-runner.js
+COPY docker/scripts/ /opt/repo-intelligence/
 RUN cd /opt/repo-intelligence && npm install --production --prefer-offline && \
     node -e "require('better-sqlite3'); console.log('[repo-intelligence] better-sqlite3 OK')" 2>/dev/null || \
-    echo "[repo-intelligence] WARN: native modules may be missing — indexer will use fallback mode"
+    echo "[repo-intelligence] WARN: native modules may be missing — fallback mode"
 RUN chmod +x /opt/onstart.sh
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \

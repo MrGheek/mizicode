@@ -40,7 +40,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "CPU",
     numGpus: 0,
     totalVram: 0,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "registry.fly.io/mizi-api:nim-workspace",
     defaultQuant: "nim-hosted",
     quantSizeGb: 0,
     diskSizeGb: 50,
