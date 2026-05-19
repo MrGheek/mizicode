@@ -960,7 +960,15 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
 
     const memUserId = process.env["MIZI_MEM_USER_ID"] || "operator";
 
-    const callbackBaseUrl = memProxyUrl; // same base URL the instance can already reach
+    // In production on Fly.io, FLY_APP_NAME is always present (injected by the
+    // platform into every machine in the app). We use it as the final fallback so
+    // NIM sessions — which run on Fly Machines — can reach the callback endpoint
+    // at https://<app>.fly.dev/api/sessions/:id/status even when MIZI_MEM_PROXY_URL
+    // and REPLIT_DEV_DOMAIN are both absent.
+    const callbackBaseUrl = memProxyUrl
+      || (process.env["FLY_APP_NAME"]
+        ? `https://${process.env["FLY_APP_NAME"]}.fly.dev`
+        : undefined);
 
     // ── Smart Skills: compile the active bundle and encode it for the onstart script ──
     let activeBundleB64: string | undefined;
