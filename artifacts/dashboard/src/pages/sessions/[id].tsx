@@ -2355,7 +2355,7 @@ function EnvironmentTab({ sessionId }: { sessionId: number }) {
   const queryClient = useQueryClient();
   const [revealedStrings, setRevealedStrings] = useState<Record<number, string | null>>({});
   const [provisionOpen, setProvisionOpen] = useState(false);
-  const [provType, setProvType] = useState<"postgres" | "redis">("postgres");
+  const [provType, setProvType] = useState<"postgres" | "redis" | "storage">("postgres");
   const [provTmpl, setProvTmpl] = useState<string>("");
 
   const { data: resources, isLoading } = useQuery<ProvisionedResource[]>({
@@ -2402,6 +2402,7 @@ function EnvironmentTab({ sessionId }: { sessionId: number }) {
 
   const typeIcon = (type: string) => {
     if (type === "redis") return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(239,68,68,0.15)", color: "#f87171" }}>Redis</span>;
+    if (type === "storage") return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(168,85,247,0.15)", color: "#c084fc" }}>S3</span>;
     return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: "rgba(6,182,212,0.15)", color: "var(--accent-cyan)" }}>PG</span>;
   };
 
@@ -2460,7 +2461,7 @@ function EnvironmentTab({ sessionId }: { sessionId: number }) {
             No active resources.
           </p>
           <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-            Click <strong>Provision</strong> to create a test database or Redis.
+            Click <strong>Provision</strong> to create a test database, Redis, or storage bucket.
           </p>
         </div>
       )}
@@ -2551,13 +2552,13 @@ function EnvironmentTab({ sessionId }: { sessionId: number }) {
                 Type
               </label>
               <div className="flex gap-2">
-                {(["postgres", "redis"] as const).map((t) => (
+                {(["postgres", "redis", "storage"] as const).map((t) => (
                   <button
                     key={t}
                     onClick={() => setProvType(t)}
                     className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${provType === t ? "ring-1 ring-primary bg-primary/10 text-foreground" : "bg-secondary/30 text-muted-foreground hover:text-foreground"}`}
                   >
-                    {t === "postgres" ? "Postgres" : "Redis"}
+                    {t === "postgres" ? "Postgres" : t === "redis" ? "Redis" : "Storage (Tigris)"}
                   </button>
                 ))}
               </div>

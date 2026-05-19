@@ -961,7 +961,7 @@ export const DEFAULT_SKILLS: MiziSkillManifest[] = [
     name: "Test Environment Provisioning",
     class: "workflow",
     source: MIZI_NATIVE_SOURCE,
-    summary: "Provision isolated Postgres branches (Neon) and Redis instances for agent test sessions via the provision_test_db claw tool.",
+    summary: "Provision isolated Postgres branches (Neon), Redis instances, and S3-compatible object storage buckets (Tigris) for agent test sessions via the provision_test_db claw tool.",
     triggers: {
       tasks: ["build", "debug"],
       repoKinds: ["any"],
@@ -972,10 +972,11 @@ export const DEFAULT_SKILLS: MiziSkillManifest[] = [
       system: [
         "To provision an isolated Postgres database branch for a test session, call: POST /mizi/provision_test_db with body { \"type\": \"postgres\" } (or \"postgres-branch\" for a Neon branch). The response includes { resourceId, connectionString }; the connection string is automatically injected into the session environment as DATABASE_URL.",
         "To provision an isolated Redis instance, call: POST /mizi/provision_test_db with body { \"type\": \"redis\" }. The response includes { resourceId, connectionString }; the connection string is automatically injected into the session environment as REDIS_URL.",
+        "To provision an S3-compatible object storage bucket (Tigris), call: POST /mizi/provision_test_db with body { \"type\": \"storage\" }. The response includes { resourceId, bucketName, endpoint, region }; the following env vars are automatically injected into the session environment: BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_ENDPOINT_URL_S3, and AWS_REGION. Any S3 SDK will pick these up without additional configuration. Use this when a task requires file storage, artifact uploads, or any blob/object persistence.",
         "To apply a schema template during provisioning, include \"schemaTemplate\": <id> in the request body. Templates define the DDL to seed the database branch.",
         "Provisioned resources are scoped to the session and are automatically cleaned up when the session transitions to stopped or error status.",
         "List existing provisioned resources by calling GET /api/sessions/:sessionId/resources. Connection strings are masked by default; use GET /api/sessions/:sessionId/resources/:resourceId/connection-string to retrieve the full value.",
-        "Only provision test resources when a task explicitly requires database isolation — do not provision speculatively.",
+        "Only provision test resources when a task explicitly requires database isolation or file storage — do not provision speculatively.",
       ],
     },
     install: { type: "virtual", outputs: ["system_prompt_fragment"] },

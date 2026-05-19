@@ -2,6 +2,7 @@ import { Router, type RequestHandler } from "express";
 import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable, sessionLanesTable, sessionModelSwitchesTable, nimCatalogTable, provisionedResourcesTable, schemaTemplatesTable, projectPlansTable, lanePromptSnapshotsTable } from "@workspace/db";
 import { eq, desc, inArray, and, isNull, notLike } from "drizzle-orm";
 import * as neonService from "../services/neon";
+import * as tigrisService from "../services/tigris";
 import { getBridge, getBridgeForSession, tryAcquireExecLock, releaseExecLock } from "../services/bridge-registry";
 import { getProfileById, getNimWorkspaceProfile } from "../services/profiles";
 import * as vastai from "../services/vastai";
@@ -3332,6 +3333,12 @@ export async function cleanupSessionResources(sessionId: number): Promise<void> 
             }
           }
         }
+      } else if (resource.type === "storage") {
+        if (resource.resourceId) {
+          tigrisService.deleteBucket(resource.resourceId).catch((err: unknown) => {
+            logger.warn({ err, resourceId: resource.resourceId, sessionId }, "Failed to delete Tigris bucket (non-fatal)");
+          });
+        }
       }
     }
 
@@ -3519,8 +3526,8 @@ router.post("/sessions/:sessionId/provision", permitBearer(["sessions:write"], {
     schemaTemplate?: string | number;
   };
 
-  if (!type || !["postgres", "postgres-branch", "redis"].includes(type)) {
-    res.status(400).json({ error: "type must be 'postgres', 'postgres-branch', or 'redis'" });
+  if (!type || !["postgres", "postgres-branch", "redis", "storage"].includes(type)) {
+    res.status(400).json({ error: "type must be 'postgres', 'postgres-branch', 'redis', or 'storage'" });
     return;
   }
 
@@ -3786,6 +3793,58 @@ router.post("/sessions/:sessionId/provision", permitBearer(["sessions:write"], {
       const message = err instanceof Error ? err.message : "Unknown error";
       res.status(500).json({ error: `Redis provisioning failed: ${message}` });
     }
+    return;
+  }
+
+  if (type === "storage") {
+    if (!tigrisService.isTigrisConfigured()) {
+      res.status(503).json({
+        error: "Tigris storage is not configured. Set TIGRIS_TOKEN or FLY_API_TOKEN to enable storage provisioning.",
+      });
+      return;
+    }
+
+    try {
+      const result = await tigrisService.createBucket(sessionId);
+
+      const [resource] = await db
+        .insert(provisionedResourcesTable)
+        .values({
+          sessionId,
+          type: "storage",
+          resourceId: result.bucketName,
+          connectionString: encryptConnectionString(result.endpoint),
+          expiresAt,
+        })
+        .returning();
+
+      injectEnvVars(session, {
+        BUCKET_NAME: result.bucketName,
+        AWS_ACCESS_KEY_ID: result.accessKeyId,
+        AWS_SECRET_ACCESS_KEY: result.secretAccessKey,
+        AWS_ENDPOINT_URL_S3: result.endpoint,
+        AWS_REGION: result.region,
+      }).catch(() => {});
+
+      logger.info({ sessionId, bucketName: result.bucketName }, "Tigris storage bucket provisioned");
+
+      res.status(201).json({
+        id: resource.id,
+        sessionId: resource.sessionId,
+        type: resource.type,
+        resourceId: resource.resourceId,
+        bucketName: result.bucketName,
+        endpoint: result.endpoint,
+        region: result.region,
+        createdAt: resource.createdAt,
+        expiresAt: resource.expiresAt,
+      });
+    } catch (err: unknown) {
+      logger.error({ err, sessionId }, "Failed to provision Tigris storage bucket");
+      const message = err instanceof Error ? err.message : "Unknown error";
+      res.status(500).json({ error: `Storage provisioning failed: ${message}` });
+    }
+    return;
   }
 });
 
