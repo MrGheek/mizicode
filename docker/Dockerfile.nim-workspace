@@ -90,8 +90,8 @@ RUN cd /opt/repo-intelligence && npm install --production --prefer-offline && \
     echo "[repo-intelligence] WARN: native modules may be missing — fallback mode"
 RUN chmod +x /opt/onstart.sh
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -sf http://localhost:8081/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -sf http://localhost:8081/health/liveliness || exit 1
 
 EXPOSE 5180 5181 8080 8081 3000 22
 

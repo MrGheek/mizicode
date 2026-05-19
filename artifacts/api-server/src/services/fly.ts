@@ -2,10 +2,11 @@ import { logger } from "../lib/logger";
 
 const FLY_MACHINES_BASE = "https://api.machines.dev/v1";
 
-// Fly.io shared-CPU-1x: 1 vCPU, 256 MB RAM — sufficient for workspace containers
-// (code-server + litellm proxy + claw-runner + claw-bridge; no local GPU/vLLM).
+// Fly.io shared-CPU-1x: 1 vCPU — sufficient for workspace containers.
+// 1024 MB: LiteLLM (Python) imports ~400 MB of dependencies on cold start;
+// 512 MB was causing OOM or extremely slow startup, preventing llm_ready.
 const FLY_MACHINE_SIZE = "shared-cpu-1x";
-const FLY_MACHINE_MEMORY_MB = 512;
+const FLY_MACHINE_MEMORY_MB = 1024;
 
 function getConfig(): { token: string; app: string } {
   const token = process.env.FLY_API_TOKEN;
