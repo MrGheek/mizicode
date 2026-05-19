@@ -56,10 +56,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # LiteLLM: proxies claw-code calls to the NIM API (no GPU/CUDA needed)
 RUN pip3 install --no-cache-dir litellm
-# websockets is required by litellm's proxy server but is NOT included in the
-# base litellm package (it is part of litellm[proxy]). Without it litellm
-# crashes immediately on every start with ModuleNotFoundError: 'websockets'.
-RUN pip3 install --no-cache-dir websockets
 
 # Node.js 20 + pnpm (claw-runner.js, claw-bridge.mjs, bolt.diy)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
@@ -74,6 +70,12 @@ RUN curl -fsSL https://code-server.dev/install.sh | sh
 RUN git clone --depth 1 https://github.com/stackblitz-labs/bolt.diy /opt/bolt-diy && \
     cd /opt/bolt-diy && \
     pnpm install --frozen-lockfile || pnpm install
+
+# websockets is required by litellm's proxy server but NOT included in the base
+# litellm package. Without it litellm crashes with ModuleNotFoundError on every
+# start. Installed here (after the heavy Node/code-server/bolt layers) so those
+# expensive layers stay cached when this layer needs to change.
+RUN pip3 install --no-cache-dir websockets
 
 # Claw binary from stage 1
 COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw
