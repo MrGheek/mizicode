@@ -2189,12 +2189,14 @@ function GlassBootBar({
   rawStatusMessage,
   bootLog,
   diskFullAction,
+  provider,
 }: {
   phases: BootPhase[];
   startedAt: Date | null;
   rawStatusMessage: string | null;
   bootLog: string[];
   diskFullAction?: { onRetry: () => void; isRetrying: boolean };
+  provider?: string | null;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const [logOpen, setLogOpen] = useState(false);
@@ -2284,7 +2286,7 @@ function GlassBootBar({
           </span>
           {!isError && (
             <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-              Usually 25–45 min total
+              {provider === "nim" ? "~2 min total" : "Usually 25–45 min total"}
             </span>
           )}
         </div>
@@ -3792,6 +3794,7 @@ export default function SessionDetail() {
               rawStatusMessage={session.statusMessage ?? null}
               bootLog={bootLog}
               diskFullAction={{ onRetry: handleDestroyAndRetry, isRetrying }}
+              provider={session.nimModelId ? "nim" : "vastai"}
             />
           )}
 

@@ -220,10 +220,10 @@ function buildFailureStatusMessage(cause: string, suppliedMessage: string | unde
 const INSTANCE_STATUS_MAP: Record<string, { status: typeof sessionsTable.$inferSelect["status"]; statusMessage: string }> = {
   services_ready:   { status: "starting",    statusMessage: "Tools ready — LLM model loading in background..." },
   downloading:      { status: "downloading", statusMessage: "Downloading model weights..." },
-  starting_llm:     { status: "starting",    statusMessage: "Loading model into GPU memory..." },
+  starting_llm:     { status: "starting",    statusMessage: "Starting NIM proxy..." },
   skills_compiling: { status: "starting",    statusMessage: "Compiling Smart Skills bundle..." },
   skills_ready:     { status: "starting",    statusMessage: "Smart Skills loaded — LLM loading in background..." },
-  llm_ready:        { status: "ready",       statusMessage: "Session is ready — vLLM online" },
+  llm_ready:        { status: "ready",       statusMessage: "Session is ready" },
   // Failure phases — all map to status "error". The persisted statusMessage
   // is built per-request to preserve the structured cause marker.
   ...Object.fromEntries(
@@ -252,7 +252,7 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
     }
   }
 
-  const { status: instanceStatus, message } = req.body as { status?: string; message?: string };
+  const { status: instanceStatus, message, boltUrl } = req.body as { status?: string; message?: string; boltUrl?: string };
   if (!instanceStatus) {
     res.status(400).json({ error: "Missing status field" });
     return;
@@ -280,7 +280,12 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
 
   await db
     .update(sessionsTable)
-    .set({ status: mapped.status, statusMessage, updatedAt: new Date() })
+    .set({
+      status: mapped.status,
+      statusMessage,
+      ...(boltUrl ? { boltDiyUrl: boltUrl } : {}),
+      updatedAt: new Date(),
+    })
     .where(eq(sessionsTable.id, sessionId));
 
   if (mapped.status === "ready" && prevSession?.status !== "ready") {
@@ -1088,6 +1093,9 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
           VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
           VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
           NUM_GPUS: String(profile.numGpus),
+          // Fly.io exposes internal port 5180 as an HTTP service (fly.ts services config).
+          // Override the onstart.sh default (5173) so bolt.diy binds on the exposed port.
+          BOLT_PORT: "5180",
         },
         startCmd: onstart,
       });
