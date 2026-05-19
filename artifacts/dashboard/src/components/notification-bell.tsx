@@ -116,6 +116,17 @@ export function NotificationBell() {
   const { notifications, unreadCount, markAllRead, clearAll } = useNotifications();
   const [pulse, setPulse] = useState(false);
   const lastUnreadRef = useRef(unreadCount);
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported">(
+    typeof window !== "undefined" && "Notification" in window
+      ? Notification.permission
+      : "unsupported"
+  );
+
+  const requestNotifPermission = async () => {
+    if (!("Notification" in window)) return;
+    const result = await Notification.requestPermission();
+    setNotifPermission(result);
+  };
 
   // Pulse the bell when a new unread notification arrives, and keep the
   // ref synced when the count drops (e.g. mark-all-read).
@@ -182,6 +193,21 @@ export function NotificationBell() {
             )}
           </div>
         </div>
+        {notifPermission === "default" && (
+          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border/40 bg-secondary/30">
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              Get desktop alerts when a session goes live
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 text-[10px] px-2 shrink-0"
+              onClick={requestNotifPermission}
+            >
+              Enable
+            </Button>
+          </div>
+        )}
         <div className="max-h-[400px] overflow-y-auto py-1 px-1">
           {notifications.length === 0 ? (
             <div className="text-center py-10 text-muted-foreground">
