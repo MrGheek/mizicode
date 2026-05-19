@@ -14,6 +14,55 @@ import { addNotification } from "@/lib/notification-store";
 import { API_BASE_URL } from "@/lib/api-url";
 import { useSwarmStatus } from "@/components/swarm-activity-panel";
 
+function playReadyChime() {
+  try {
+    const AudioCtx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const play = () => {
+      const notes = [523.25, 659.25, 783.99];
+      notes.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        const t = ctx.currentTime + i * 0.16;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(0.14, t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+        osc.start(t);
+        osc.stop(t + 0.5);
+      });
+      setTimeout(() => ctx.close(), 2000);
+    };
+    if (ctx.state === "suspended") {
+      ctx.resume().then(play).catch(() => ctx.close());
+    } else {
+      play();
+    }
+  } catch {
+    // AudioContext unavailable (test env, sandboxed iframe, etc.)
+  }
+}
+
+async function sendBrowserNotification(title: string, body: string, href?: string) {
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (Notification.permission === "denied") return;
+  if (document.visibilityState === "visible") return;
+  if (Notification.permission !== "granted") {
+    const granted = await Notification.requestPermission();
+    if (granted !== "granted") return;
+  }
+  const n = new Notification(title, { body, icon: "/favicon.ico", tag: href });
+  n.onclick = () => {
+    window.focus();
+    if (href) window.location.href = href;
+    n.close();
+  };
+}
+
 /**
  * Watches the global session list and emits notifications for status
  * transitions (running/starting → ready, anything → error). Mounted once
@@ -60,14 +109,18 @@ export function SessionStatusWatcher() {
 }
 
 function emitSessionReady(s: Session) {
+  const title = `${s.profileName} session is ready`;
+  const subtitle = s.gpuName ? `${s.gpuName} × ${s.numGpus} · session #${s.id}` : `Session #${s.id}`;
   addNotification({
     id: `session-ready:${s.id}`,
     type: "session_ready",
-    title: `${s.profileName} session is ready`,
-    subtitle: s.gpuName ? `${s.gpuName} × ${s.numGpus} · session #${s.id}` : `Session #${s.id}`,
+    title,
+    subtitle,
     href: `/sessions/${s.id}`,
     sessionId: s.id,
   });
+  playReadyChime();
+  void sendBrowserNotification(title, subtitle, `/sessions/${s.id}`);
 }
 
 function emitSessionError(s: Session) {
