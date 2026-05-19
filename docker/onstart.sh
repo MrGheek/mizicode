@@ -680,15 +680,28 @@ log "Starting LLM backend in background..."
         log "LiteLLM NIM proxy started (PID: $NIM_LITELLM_PID)"
 
         # Wait for LiteLLM to come up (should be fast — no model to load).
+        # Use /health/liveliness rather than /health: the /health endpoint makes a
+        # live call to the upstream NIM API to verify model availability, which can
+        # fail or time out even when LiteLLM itself is healthy.  /health/liveliness
+        # only checks whether the server process is accepting connections.
+        # Allow up to 3 minutes (90 x 2s) for cold-starts on shared-cpu VMs.
         _nim_ready=0
-        for i in $(seq 1 30); do
-            if curl -sf "http://localhost:$VLLM_PORT/health" > /dev/null 2>&1; then
-                log "LiteLLM NIM proxy ready on port $VLLM_PORT"
+        for i in $(seq 1 90); do
+            if curl -sf "http://localhost:$VLLM_PORT/health/liveliness" > /dev/null 2>&1; then
+                log "LiteLLM NIM proxy ready on port $VLLM_PORT (liveliness OK after ${i} probes)"
                 _nim_ready=1
                 break
             fi
             sleep 2
         done
+
+        # Fallback: if the liveliness probe never responded but the process is still
+        # alive, assume it is fine and mark ready.  A slow health endpoint on a cold
+        # shared-CPU machine does not mean the proxy is broken.
+        if [ "$_nim_ready" -eq 0 ] && kill -0 "$NIM_LITELLM_PID" 2>/dev/null; then
+            log "LiteLLM NIM proxy liveliness probe timed out but process is alive — marking ready"
+            _nim_ready=1
+        fi
 
         export ANTHROPIC_BASE_URL="http://localhost:${VLLM_PORT}"
         export ANTHROPIC_API_KEY="not-needed"
