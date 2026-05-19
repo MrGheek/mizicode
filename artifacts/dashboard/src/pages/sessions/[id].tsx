@@ -3794,7 +3794,7 @@ export default function SessionDetail() {
               rawStatusMessage={session.statusMessage ?? null}
               bootLog={bootLog}
               diskFullAction={{ onRetry: handleDestroyAndRetry, isRetrying }}
-              provider={session.nimModelId ? "nim" : "vastai"}
+              provider={(session as typeof session & { provider?: string }).provider === "nim" ? "nim" : "vastai"}
             />
           )}
 
