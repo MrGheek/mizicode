@@ -313,10 +313,14 @@ export function buildOnStartScript(profileConfig: {
 
   // Callback: instance posts phase transitions to the API server so the dashboard
   // can track boot progress without needing to probe the instance (firewall blocks it).
+  // MIZI_MEM_AUTH_TOKEN must be included here (not just in memLines) because NIM
+  // sessions never set memProxyUrl, so memLines is empty — but the API server still
+  // enforces MIZI_MEM_TOKEN on the /status callback endpoint in production.
   const callbackLines = profileConfig.callbackBaseUrl && profileConfig.sessionId != null
     ? [
         `export MIZI_SESSION_ID="${profileConfig.sessionId}"`,
         `export MIZI_CALLBACK_URL="${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/status"`,
+        `export MIZI_MEM_AUTH_TOKEN="${profileConfig.memAuthToken || ""}"`,
       ].join("\n")
     : "";
 
