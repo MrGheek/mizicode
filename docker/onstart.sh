@@ -1,4 +1,5 @@
 #!/bin/bash
+# v2 — litellm[proxy] deps + 90-iteration liveliness loop
 set -e
 
 LOG_FILE="/var/log/onstart.log"
