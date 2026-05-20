@@ -646,38 +646,10 @@ log "Starting LLM backend in background..."
         NIM_LITELLM_CONFIG="/opt/mizi/litellm_config.yaml"
         mkdir -p /opt/mizi
 
-        # Build LiteLLM config with dual-model support:
-        # - "default"  → orchestrator model (NIM_MODEL_ID) — used by claw-code
-        # - "swarm"    → economy model (SWARM_MODEL_ID) — used by swarm workers
-        # Having both in the same proxy means workers can call the swarm endpoint
-        # independently, preventing contention with the orchestrator's quality model.
-        {
-          echo "model_list:"
-          echo "  - model_name: default"
-          echo "    litellm_params:"
-          echo "      model: \"openai/${NIM_MODEL_ID}\""
-          echo "      api_base: \"${NIM_API_BASE:-https://integrate.api.nvidia.com/v1}\""
-          echo "      api_key: \"${NIM_API_KEY:-not-needed}\""
-          if [ -n "${SWARM_MODEL_ID:-}" ]; then
-            echo "  - model_name: swarm"
-            echo "    litellm_params:"
-            echo "      model: \"openai/${SWARM_MODEL_ID}\""
-            echo "      api_base: \"${SWARM_API_BASE:-${NIM_API_BASE:-https://integrate.api.nvidia.com/v1}}\""
-            echo "      api_key: \"${SWARM_API_KEY:-${NIM_API_KEY:-not-needed}}\""
-          fi
-          echo "general_settings:"
-          echo "  num_router_workers: 1"
-        } > "$NIM_LITELLM_CONFIG"
-        log "LiteLLM config written to $NIM_LITELLM_CONFIG"
-
-        log "Starting LiteLLM NIM proxy on port $VLLM_PORT (config-file mode)..."
-        litellm \
-            --config "$NIM_LITELLM_CONFIG" \
-            --host 0.0.0.0 \
-            --port "$VLLM_PORT" \
-            > /var/log/litellm.log 2>&1 &
+        log "Starting NIM proxy on port $VLLM_PORT..."
+        python3 /opt/nim-proxy.py > /var/log/litellm.log 2>&1 &
         NIM_LITELLM_PID=$!
-        log "LiteLLM NIM proxy started (PID: $NIM_LITELLM_PID)"
+        log "NIM proxy started (PID: $NIM_LITELLM_PID)"
 
         # Wait for LiteLLM to come up (should be fast — no model to load).
         # Use /health/liveliness rather than /health: the /health endpoint makes a
@@ -716,9 +688,8 @@ log "Starting LLM backend in background..."
             report_status "llm_ready"
         fi
         log "=== NIM Mode: Proxy ready — NIM_MODEL_ID=${NIM_MODEL_ID} ==="
-        log "  LLM Proxy:   http://localhost:$VLLM_PORT (OpenAI + Anthropic via litellm → NIM)"
+        log "  LLM Proxy:   http://localhost:$VLLM_PORT (OpenAI-compatible → NIM)"
         log "  Upstream:    ${NIM_API_BASE}"
-        log "  Config:      $NIM_LITELLM_CONFIG (hot-reload on SIGHUP)"
 
         # Keep LiteLLM alive with auto-restart.
         # IMPORTANT: restart from the config file, not from original CLI flags —
@@ -726,14 +697,10 @@ log "Starting LLM backend in background..."
         # by /opt/mizi/reload-model.sh rather than reverting to the launch-time model.
         while true; do
             if ! kill -0 "$NIM_LITELLM_PID" 2>/dev/null; then
-                log "LiteLLM NIM proxy died — restarting from config ($NIM_LITELLM_CONFIG)..."
-                litellm \
-                    --config "$NIM_LITELLM_CONFIG" \
-                    --host 0.0.0.0 \
-                    --port "$VLLM_PORT" \
-                    >> /var/log/litellm.log 2>&1 &
+                log "NIM proxy died — restarting..."
+                python3 /opt/nim-proxy.py >> /var/log/litellm.log 2>&1 &
                 NIM_LITELLM_PID=$!
-                log "LiteLLM NIM proxy restarted (PID: $NIM_LITELLM_PID)"
+                log "NIM proxy restarted (PID: $NIM_LITELLM_PID)"
             fi
             sleep 30
         done
