@@ -664,7 +664,6 @@ log "Starting LLM backend in background..."
             echo "      model: \"openai/${SWARM_MODEL_ID}\""
             echo "      api_base: \"${SWARM_API_BASE:-${NIM_API_BASE:-https://integrate.api.nvidia.com/v1}}\""
             echo "      api_key: \"${SWARM_API_KEY:-${NIM_API_KEY:-not-needed}}\""
-            log "LiteLLM: dual-model config (orchestrator=${NIM_MODEL_ID}, swarm=${SWARM_MODEL_ID})"
           fi
           echo "general_settings:"
           echo "  num_router_workers: 1"
