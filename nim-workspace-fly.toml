@@ -1,5 +1,0 @@
-app = "mizi-api"
-primary_region = "ord"
-
-[build]
-  dockerfile = "docker/Dockerfile.nim-workspace"
