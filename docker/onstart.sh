@@ -229,6 +229,27 @@ OPENAI_LIKE_API_KEY=not-needed
 DEFAULT_NUM_CTX=${VLLM_MAX_MODEL_LEN}
 EOF
 
+log "Patching bolt.diy vite.config.ts to allow all hosts (allowedHosts: true)..."
+node -e "
+const fs = require('fs');
+const p = '/opt/bolt-diy/vite.config.ts';
+let c = fs.readFileSync(p, 'utf8');
+if (c.includes('allowedHosts')) {
+  console.log('[onstart] vite.config.ts already has allowedHosts, skipping');
+} else {
+  const idx = c.indexOf('  return {');
+  if (idx === -1) {
+    console.error('[onstart] ERROR: could not find return { in vite.config.ts');
+  } else {
+    const NL = String.fromCharCode(10);
+    const PATCH = '    server: { host: true, allowedHosts: true },';
+    c = c.slice(0, idx + 10) + NL + PATCH + c.slice(idx + 10);
+    fs.writeFileSync(p, c);
+    console.log('[onstart] vite.config.ts patched: host:true, allowedHosts:true');
+  }
+}
+"
+
 log "Starting Bolt.diy on internal port 5173 (nginx proxies to external port ${BOLT_PORT:-5180})..."
 PORT=5173 pnpm run dev > /var/log/bolt-diy.log 2>&1 &
 log "Bolt.diy started"
