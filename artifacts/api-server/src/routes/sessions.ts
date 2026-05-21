@@ -1109,7 +1109,7 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
         startCmd: onstart,
       });
       provisionedFlyMachineId = flyResult.machineId;
-      provisionedCostPerHour = 0.08; // fixed estimate: Fly shared-CPU-1x (~$3–6/mo)
+      // NIM inference is free (NVIDIA hosted APIs) or per-token (Vultr) — no hourly rate.
       logger.info({ sessionId: insertedSessionId, flyMachineId: provisionedFlyMachineId }, "NIM session provisioned on Fly.io");
     } else {
       const result = await vastai.createInstance({

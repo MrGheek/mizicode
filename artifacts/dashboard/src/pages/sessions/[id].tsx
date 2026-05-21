@@ -4179,14 +4179,20 @@ export default function SessionDetail() {
                 </div>
                 <div className="flex justify-between border-t border-border/40 pt-3">
                   <span className="text-muted-foreground">Rate</span>
-                  <span className="font-mono">${session.costPerHour?.toFixed(3) || "0.000"}/hr</span>
+                  {session.costPerHour ? (
+                    <span className="font-mono">${session.costPerHour.toFixed(3)}/hr</span>
+                  ) : (
+                    <span className="text-xs text-emerald-400/80 font-medium">Free (hosted inference)</span>
+                  )}
                 </div>
-                <div className="flex justify-between border-t border-border/40 pt-3">
-                  <span className="text-muted-foreground">Total spend</span>
-                  <span className="font-mono text-primary font-semibold">
-                    ${session.totalCost?.toFixed(3) || "0.000"}
-                  </span>
-                </div>
+                {!!session.costPerHour && (
+                  <div className="flex justify-between border-t border-border/40 pt-3">
+                    <span className="text-muted-foreground">Total spend</span>
+                    <span className="font-mono text-primary font-semibold">
+                      ${session.totalCost?.toFixed(3) || "0.000"}
+                    </span>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
