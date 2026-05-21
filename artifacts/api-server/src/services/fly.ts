@@ -96,15 +96,16 @@ export async function createMachine(params: CreateMachineParams): Promise<Create
       },
       // Expose all required workspace ports as TCP services.
       // Port 22 (SSH) uses a plain TCP handler so the SSH daemon can negotiate
-      // the protocol directly. Ports 3000/5180/5181/8080/8081 use http handlers
-      // so Fly's edge proxy can route HTTP traffic to the right service.
+      // the protocol directly. Ports 3000/5180/5181/8080/8081 use ["tls","http"]
+      // so Fly's edge terminates TLS and forwards plain HTTP to the machine —
+      // this allows https:// URLs (e.g. boltDiyUrl, codeServerUrl) to work correctly.
       services: [
-        { ports: [{ port: 22,    handlers: []        }], protocol: "tcp", internal_port: 22   },
-        { ports: [{ port: 3000,  handlers: ["http"] }], protocol: "tcp", internal_port: 3000  },
-        { ports: [{ port: 5180,  handlers: ["http"] }], protocol: "tcp", internal_port: 5180  },
-        { ports: [{ port: 5181,  handlers: ["http"] }], protocol: "tcp", internal_port: 5181  },
-        { ports: [{ port: 8080,  handlers: ["http"] }], protocol: "tcp", internal_port: 8080  },
-        { ports: [{ port: 8081,  handlers: ["http"] }], protocol: "tcp", internal_port: 8081  },
+        { ports: [{ port: 22,    handlers: []                 }], protocol: "tcp", internal_port: 22   },
+        { ports: [{ port: 3000,  handlers: ["tls", "http"] }], protocol: "tcp", internal_port: 3000  },
+        { ports: [{ port: 5180,  handlers: ["tls", "http"] }], protocol: "tcp", internal_port: 5180  },
+        { ports: [{ port: 5181,  handlers: ["tls", "http"] }], protocol: "tcp", internal_port: 5181  },
+        { ports: [{ port: 8080,  handlers: ["tls", "http"] }], protocol: "tcp", internal_port: 8080  },
+        { ports: [{ port: 8081,  handlers: ["tls", "http"] }], protocol: "tcp", internal_port: 8081  },
       ],
       restart: { policy: "no" },
     },

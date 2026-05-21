@@ -2,4 +2,6 @@ FROM registry.fly.io/mizi-api@sha256:7c40f2b27a0aaa86a64d1238b2b70d63c2736134862
 RUN pip3 install --no-cache-dir httpx fastapi uvicorn
 COPY docker/onstart.sh /opt/onstart.sh
 COPY docker/nim-proxy.py /opt/nim-proxy.py
+# claw-bridge.mjs: updated for Node 20 compat (ws polyfill) + MIZI_BRIDGE_URL support
+COPY docker/claw-bridge.mjs /opt/claw-bridge.mjs
 RUN chmod +x /opt/onstart.sh /opt/nim-proxy.py
