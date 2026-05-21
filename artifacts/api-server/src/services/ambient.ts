@@ -1,6 +1,7 @@
 import { logger } from "../lib/logger";
 import { db, sessionsTable, sessionLanesTable, laneHandoffsTable, laneHeavyJobsTable } from "@workspace/db";
-import { inArray, eq, and, gt, lt, sql } from "drizzle-orm";
+import { inArray, eq, and, gt, lt, sql, isNotNull } from "drizzle-orm";
+import { getMachineState } from "./fly";
 import {
   _internalGetDb,
   requestPermission,
@@ -52,6 +53,64 @@ const GARDEN_CAP_PER_CYCLE = parseInt(process.env["AMBIENT_GARDEN_CAP"] || "20",
 const TICK_INTERVAL_MS = 15 * 1000;
 
 let timer: NodeJS.Timeout | null = null;
+let reconcileTimer: NodeJS.Timeout | null = null;
+
+const RECONCILE_INTERVAL_MS = 2 * 60 * 1000;
+const NIM_ACTIVE_STATUSES = ["pending", "provisioning", "downloading", "starting", "ready"] as const;
+
+/**
+ * Periodically checks every "active" NIM session to see if its Fly machine
+ * still exists. If the machine was destroyed externally (e.g. via the Fly
+ * dashboard or CLI), the session is automatically marked as "error" so it
+ * stops being polled and doesn't stall the API's DB connection pool.
+ */
+async function reconcileFlyMachines(): Promise<void> {
+  let sessions: Array<{ id: number; flyMachineId: string | null }>;
+  try {
+    sessions = await db
+      .select({ id: sessionsTable.id, flyMachineId: sessionsTable.flyMachineId })
+      .from(sessionsTable)
+      .where(
+        and(
+          eq(sessionsTable.provider, "nim"),
+          inArray(sessionsTable.status, [...NIM_ACTIVE_STATUSES]),
+          isNotNull(sessionsTable.flyMachineId),
+        )
+      );
+  } catch (err) {
+    logger.warn({ err }, "[reconcile] failed to query active NIM sessions");
+    return;
+  }
+
+  if (sessions.length === 0) return;
+
+  logger.info({ count: sessions.length }, "[reconcile] checking Fly machine liveness");
+
+  for (const session of sessions) {
+    if (!session.flyMachineId) continue;
+    try {
+      const state = await getMachineState(session.flyMachineId);
+      if (state === "destroyed") {
+        await db
+          .update(sessionsTable)
+          .set({
+            status: "error",
+            statusMessage: "Fly.io workspace machine was destroyed unexpectedly",
+            flyMachineId: null,
+            stoppedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(sessionsTable.id, session.id));
+        logger.warn(
+          { sessionId: session.id, flyMachineId: session.flyMachineId },
+          "[reconcile] session marked error — machine destroyed externally"
+        );
+      }
+    } catch (err) {
+      logger.warn({ err, sessionId: session.id }, "[reconcile] machine state check failed (non-fatal)");
+    }
+  }
+}
 const accountErrorCounts = new Map<string, number>();
 const inProgressAccounts = new Set<string>();
 
@@ -990,14 +1049,20 @@ export function startAmbientRunner(): void {
   }
 
   timer = setInterval(() => { void runnerTick(); }, TICK_INTERVAL_MS);
-  // Don't keep the event loop alive solely for ambient.
   if (typeof timer.unref === "function") timer.unref();
-  logger.info({ holder: RUNNER_HOLDER, tickMs: TICK_INTERVAL_MS }, "[ambient] runner started");
+
+  reconcileTimer = setInterval(() => { void reconcileFlyMachines(); }, RECONCILE_INTERVAL_MS);
+  if (typeof reconcileTimer.unref === "function") reconcileTimer.unref();
+  void reconcileFlyMachines();
+
+  logger.info({ holder: RUNNER_HOLDER, tickMs: TICK_INTERVAL_MS, reconcileMs: RECONCILE_INTERVAL_MS }, "[ambient] runner started");
 }
 
 export function stopAmbientRunner(): void {
   if (timer) clearInterval(timer);
   timer = null;
+  if (reconcileTimer) clearInterval(reconcileTimer);
+  reconcileTimer = null;
   // Best-effort: release every lock we currently hold.
   const sdb = _internalGetDb();
   sdb.prepare(`DELETE FROM ambient_lock WHERE holder = ?`).run(RUNNER_HOLDER);
