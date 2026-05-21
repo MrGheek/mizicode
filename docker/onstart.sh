@@ -229,6 +229,20 @@ OPENAI_LIKE_API_KEY=not-needed
 DEFAULT_NUM_CTX=${VLLM_MAX_MODEL_LEN}
 EOF
 
+log "Patching Bolt.diy vite config to allow all hosts..."
+node -e "
+  const fs = require('fs');
+  const p = '/opt/bolt-diy/vite.config.ts';
+  let c = fs.readFileSync(p, 'utf8');
+  if (!c.includes('allowedHosts')) {
+    c = c.replace(/server\s*:\s*\{/, 'server: {\n    allowedHosts: true,');
+    fs.writeFileSync(p, c);
+    console.log('vite.config.ts patched: allowedHosts: true added');
+  } else {
+    console.log('vite.config.ts already has allowedHosts');
+  }
+" 2>&1 || log "Warning: could not patch vite.config.ts"
+
 log "Starting Bolt.diy on port $BOLT_PORT..."
 PORT=$BOLT_PORT pnpm run dev > /var/log/bolt-diy.log 2>&1 &
 log "Bolt.diy started"
