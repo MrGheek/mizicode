@@ -192,6 +192,10 @@ export interface Session {
   repoUrl?: string | null;
   /** Whether a GitHub PAT was provided at launch (token itself is not stored). */
   hasGithubToken?: boolean | null;
+  /** nginx basic-auth username for bolt.diy / code-server (NIM sessions only). */
+  workspaceUser?: string | null;
+  /** nginx basic-auth password for bolt.diy / code-server (NIM sessions only). */
+  workspacePassword?: string | null;
   createdAt: string;
   updatedAt: string;
 }

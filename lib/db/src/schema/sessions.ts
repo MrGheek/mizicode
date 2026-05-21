@@ -69,6 +69,11 @@ export const sessionsTable = pgTable("sessions", {
   // Fly.io Machine ID for NIM sessions provisioned on Fly.io instead of Vast.ai.
   // Null for all Vast.ai GPU sessions.
   flyMachineId: text("fly_machine_id"),
+  // nginx basic-auth credentials for bolt.diy / code-server on NIM sessions.
+  // Generated at provisioning time and passed as NGINX_AUTH_USER / NGINX_AUTH_PASS
+  // env vars into the Fly machine so the dashboard can display them.
+  workspaceUser: text("workspace_user"),
+  workspacePassword: text("workspace_password"),
   // Phase-aware inference routing (Task #300).
   // currentPhase: the active reasoning phase used for model selection scoring.
   // Valid values: explore | plan | implement | swarm | synthesise | review

@@ -1091,8 +1091,20 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
     let provisionedFlyMachineId: string | undefined;
     let provisionedVastInstanceId: number | undefined;
     let provisionedCostPerHour: number | undefined;
+    let provisionedWorkspaceUser: string | undefined;
+    let provisionedWorkspacePassword: string | undefined;
 
     if (nimModelId) {
+      // Generate nginx basic-auth credentials so the dashboard can display them.
+      // Username is fixed; password is a random 16-char alphanumeric string.
+      const nimWorkspaceUser = "mizi";
+      const nimWorkspacePassword = Array.from(
+        { length: 16 },
+        () => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[
+          Math.floor(Math.random() * 62)
+        ]
+      ).join("");
+
       const flyResult = await fly.createMachine({
         image: profile.dockerImageTag,
         env: {
@@ -1105,10 +1117,16 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
           // Fly.io exposes internal port 5180 as an HTTP service (fly.ts services config).
           // Override the onstart.sh default (5173) so bolt.diy binds on the exposed port.
           BOLT_PORT: "5180",
+          // nginx basic-auth credentials — onstart.sh picks these up via
+          // NGINX_AUTH_USER / NGINX_AUTH_PASS env vars.
+          NGINX_AUTH_USER: nimWorkspaceUser,
+          NGINX_AUTH_PASS: nimWorkspacePassword,
         },
         startCmd: onstart,
       });
       provisionedFlyMachineId = flyResult.machineId;
+      provisionedWorkspaceUser = nimWorkspaceUser;
+      provisionedWorkspacePassword = nimWorkspacePassword;
       // NIM inference is free (NVIDIA hosted APIs) or per-token (Vultr) — no hourly rate.
       logger.info({ sessionId: insertedSessionId, flyMachineId: provisionedFlyMachineId }, "NIM session provisioned on Fly.io");
     } else {
@@ -1151,6 +1169,8 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
           : "Instance created — waiting for startup and model download...",
         startedAt: new Date(),
         costPerHour: provisionedCostPerHour ?? null,
+        workspaceUser: provisionedWorkspaceUser ?? null,
+        workspacePassword: provisionedWorkspacePassword ?? null,
         updatedAt: new Date(),
       })
       .where(eq(sessionsTable.id, session.id))

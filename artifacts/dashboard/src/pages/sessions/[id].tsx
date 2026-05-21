@@ -4123,6 +4123,34 @@ export default function SessionDetail() {
                   <span className="text-muted-foreground">Public IP</span>
                   <span className="font-mono">{session.publicIp || "Pending"}</span>
                 </div>
+                {session.workspaceUser && (
+                  <div className="border-t border-border/40 pt-3 space-y-2">
+                    <span className="text-muted-foreground block text-xs font-medium uppercase tracking-wide mb-1">Access credentials</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Username</span>
+                      <span className="font-mono text-xs bg-secondary/50 px-2 py-0.5 rounded">{session.workspaceUser}</span>
+                    </div>
+                    {session.workspacePassword && (
+                      <div className="flex justify-between items-center gap-2">
+                        <span className="text-muted-foreground shrink-0">Password</span>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="font-mono text-xs bg-secondary/50 px-2 py-0.5 rounded truncate">
+                            {session.workspacePassword}
+                          </span>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6 shrink-0"
+                            onClick={() => navigator.clipboard.writeText(session.workspacePassword!)}
+                            title="Copy password"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {session.sshHost && (
                   <div className="border-t border-border/40 pt-3">
                     <span className="text-muted-foreground block mb-1">SSH</span>
