@@ -15,8 +15,8 @@
  * socket drops.  A single exec runs at a time; concurrent exec frames are queued
  * rather than dropped (queue length = 1, extras are rejected with an error frame).
  *
- * Uses Node 22's built-in global WebSocket (no external dependencies).
- * Requires Node >= 22.4.0 (WebSocket unflagged in that release).
+ * Prefers Node 22's built-in global WebSocket; falls back to the `ws` npm package
+ * (bundled inside bolt.diy on MIZI images) for Node 20 compatibility.
  *
  * Required env vars:
  *   MIZI_BRIDGE_URL    wss://…/api/bridge/:sessionId/:laneId
@@ -31,6 +31,35 @@
 import { createWriteStream } from "fs";
 import { spawn } from "child_process";
 import { URL } from "url";
+
+// ─── Node 20 compat ──────────────────────────────────────────────────────────
+// Built-in global WebSocket was added in Node 22.4.0.  On Node 20 (the base
+// image used in MIZI nim-workspace) we fall back to the `ws` package which is
+// bundled inside bolt.diy's pnpm store on every workspace image.
+if (typeof WebSocket === "undefined") {
+  const { createRequire } = await import("module");
+  const require = createRequire(import.meta.url);
+  // Probe pnpm virtual-store locations first (exact version may differ across
+  // image builds), then fall back to a bare require in case ws is hoisted.
+  const candidates = [
+    "/opt/bolt-diy/node_modules/.pnpm/ws@8.18.0/node_modules/ws/index.js",
+    "/opt/bolt-diy/node_modules/.pnpm/ws@8.18.3/node_modules/ws/index.js",
+    "/opt/bolt-diy/node_modules/.pnpm/ws@7.5.10/node_modules/ws/index.js",
+    "/opt/bolt-diy/node_modules/ws",
+    "ws",
+  ];
+  let WS;
+  for (const c of candidates) {
+    try { WS = require(c); break; } catch { /* try next */ }
+  }
+  if (!WS) {
+    process.stderr.write(
+      "claw-bridge: WebSocket polyfill unavailable (need Node ≥ 22 or ws package)\n"
+    );
+    process.exit(1);
+  }
+  globalThis.WebSocket = WS.WebSocket || WS;
+}
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 

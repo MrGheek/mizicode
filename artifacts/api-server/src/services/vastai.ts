@@ -428,6 +428,18 @@ export function buildOnStartScript(profileConfig: {
     ? `export GITHUB_LANE_BRANCHES_ENABLED=1`
     : "";
 
+  // Bridge: outbound WebSocket from the machine to the MIZI API server.
+  // Allows the dashboard to deliver prompts to claw-runner without inbound firewall access.
+  // MIZI_BRIDGE_URL is the full wss:// URL (session + lane embedded).
+  // laneId=0 is the primary lane; getBridgeForSession falls back to lowest laneId,
+  // so laneId=0 is always reachable even when the registry checks laneId=1 first.
+  const bridgeLines = profileConfig.callbackBaseUrl && profileConfig.sessionId != null
+    ? [
+        `export MIZI_BRIDGE_URL="${profileConfig.callbackBaseUrl.replace(/^https/, "wss")}/api/bridge/${profileConfig.sessionId}/0?token=${profileConfig.memAuthToken || ""}"`,
+        `export MIZI_LANE_ID="0"`,
+      ].join("\n")
+    : "";
+
   const githubLines = profileConfig.githubToken && profileConfig.sessionId != null
     ? `export GITHUB_TOKEN="${profileConfig.githubToken}"
 ${laneBranchExport}
@@ -483,6 +495,7 @@ export SWARM_MAX_WORKERS="${profileConfig.swarmWorkerCap ?? 0}"
 ${nimLines}
 ${memLines}
 ${callbackLines}
+${bridgeLines}
 ${teamLine}
 ${skillsLine}
 ${githubLines}
