@@ -2232,15 +2232,15 @@ function GlassBootBar({
         border: `1px solid ${isError ? "rgba(244,63,94,0.3)" : "rgba(0,200,255,0.15)"}`,
       }}
     >
-      <div className="px-5 pt-4 pb-3">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2.5">
+      <div className="px-4 py-3">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
             {isError ? (
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: "#f43f5e" }} />
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#f43f5e" }} />
             ) : (
-              <span className="w-2 h-2 rounded-full shrink-0 animate-pulse" style={{ background: "var(--accent-cyan)" }} />
+              <span className="w-1.5 h-1.5 rounded-full shrink-0 animate-pulse" style={{ background: "var(--accent-cyan)" }} />
             )}
-            <span className="text-sm font-medium" style={{ color: isError ? "#f43f5e" : "var(--text-primary)" }}>
+            <span className="text-sm" style={{ color: isError ? "#f43f5e" : "var(--text-primary)" }}>
               {humanLabel}
             </span>
           </div>
@@ -2251,23 +2251,16 @@ function GlassBootBar({
             {bootLog.length > 0 && (
               <button
                 onClick={() => setLogOpen(v => !v)}
-                className="text-[10px] transition-colors"
+                className="text-[11px] transition-colors"
                 style={{ color: "var(--text-muted)" }}
               >
-                {logOpen ? "Hide log" : "Show log"}
+                {logOpen ? "Hide log" : "Log"}
               </button>
             )}
           </div>
         </div>
 
-        {rawStatusMessage && !isError && (
-          <p className="text-[11px] font-mono mb-3 truncate" style={{ color: "var(--text-muted)" }}>
-            › {rawStatusMessage}
-          </p>
-        )}
-
-        {/* Fluid progress bar */}
-        <div className="h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+        <div className="h-0.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
           <div
             className="h-full rounded-full transition-all duration-700"
             style={{
@@ -2275,20 +2268,9 @@ function GlassBootBar({
               background: isError
                 ? "#f43f5e"
                 : "linear-gradient(90deg, var(--accent-cyan), var(--accent-violet))",
-              boxShadow: isError ? "none" : "0 0 8px rgba(0,200,255,0.4)",
+              boxShadow: isError ? "none" : "0 0 6px rgba(0,200,255,0.4)",
             }}
           />
-        </div>
-
-        <div className="flex items-center justify-between mt-2">
-          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-            {done} of {total} steps complete
-          </span>
-          {!isError && (
-            <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-              {provider === "nim" ? "~2 min total" : "Usually 25–45 min total"}
-            </span>
-          )}
         </div>
       </div>
 
@@ -3860,20 +3842,6 @@ export default function SessionDetail() {
                   <ExternalLink className="w-4 h-4" />
                   Open Coding Environment
                 </Button>
-              </CardContent>
-            </Card>
-          ) : isActive ? (
-            <Card className="border-border/50 bg-card/50">
-              <CardContent className="pt-6 pb-6 flex flex-col items-center gap-3 text-center text-muted-foreground">
-                <div className="w-12 h-12 rounded-full bg-secondary flex items-center justify-center">
-                  <Terminal className="w-6 h-6 animate-pulse" />
-                </div>
-                <p className="text-sm">
-                  {(session as typeof session & { provider?: string }).provider === "nim"
-                    ? "Waiting for environment to start — NIM workspace boots in ~2 minutes (no model download needed)."
-                    : "Waiting for environment to start — this takes ~25 minutes on first launch while the model downloads."
-                  }
-                </p>
               </CardContent>
             </Card>
           ) : null}
