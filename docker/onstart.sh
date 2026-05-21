@@ -229,22 +229,8 @@ OPENAI_LIKE_API_KEY=not-needed
 DEFAULT_NUM_CTX=${VLLM_MAX_MODEL_LEN}
 EOF
 
-log "Patching Bolt.diy vite config to allow all hosts..."
-node -e "
-  const fs = require('fs');
-  const p = '/opt/bolt-diy/vite.config.ts';
-  let c = fs.readFileSync(p, 'utf8');
-  if (!c.includes('allowedHosts')) {
-    c = c.replace(/server\s*:\s*\{/, 'server: {\n    allowedHosts: true,');
-    fs.writeFileSync(p, c);
-    console.log('vite.config.ts patched: allowedHosts: true added');
-  } else {
-    console.log('vite.config.ts already has allowedHosts');
-  }
-" 2>&1 || log "Warning: could not patch vite.config.ts"
-
-log "Starting Bolt.diy on port $BOLT_PORT..."
-PORT=$BOLT_PORT pnpm run dev > /var/log/bolt-diy.log 2>&1 &
+log "Starting Bolt.diy on internal port 5173 (nginx proxies to external port ${BOLT_PORT:-5180})..."
+PORT=5173 pnpm run dev -- --host > /var/log/bolt-diy.log 2>&1 &
 log "Bolt.diy started"
 
 log "Configuring nginx with basic auth for exposed services..."
@@ -265,7 +251,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
+        proxy_set_header Host localhost;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_read_timeout 86400;
