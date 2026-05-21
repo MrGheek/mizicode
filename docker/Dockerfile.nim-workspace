@@ -67,8 +67,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 
 # bolt.diy (AI web IDE frontend served on port 5180)
-RUN git clone --depth 1 https://github.com/stackblitz-labs/bolt.diy /opt/bolt-diy && \
+# Pinned to a known-good commit to keep builds deterministic.
+# Verified: 2026-05-21 — commit 2e254ac passes the vite.config.ts patch assertion.
+# To upgrade: update the SHA below, rebuild, confirm the grep -q 'allowedHosts' check
+# still passes, and update this comment with the new date/SHA.
+RUN git clone https://github.com/stackblitz-labs/bolt.diy /opt/bolt-diy && \
     cd /opt/bolt-diy && \
+    git checkout 2e254ac19a696394030601bc602f54945b12bfc4 && \
     pnpm install --frozen-lockfile || pnpm install
 
 # Patch vite.config.ts at build time so Vite always allows .fly.dev hosts.
