@@ -230,7 +230,7 @@ DEFAULT_NUM_CTX=${VLLM_MAX_MODEL_LEN}
 EOF
 
 log "Starting Bolt.diy on internal port 5173 (nginx proxies to external port ${BOLT_PORT:-5180})..."
-PORT=5173 pnpm run dev -- --host > /var/log/bolt-diy.log 2>&1 &
+PORT=5173 pnpm run dev > /var/log/bolt-diy.log 2>&1 &
 log "Bolt.diy started"
 
 log "Configuring nginx with basic auth for exposed services..."

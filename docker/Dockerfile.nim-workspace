@@ -71,6 +71,23 @@ RUN git clone --depth 1 https://github.com/stackblitz-labs/bolt.diy /opt/bolt-di
     cd /opt/bolt-diy && \
     pnpm install --frozen-lockfile || pnpm install
 
+# Patch vite.config.ts at build time so Vite always allows .fly.dev hosts.
+# Runtime workarounds (--host flag, nginx Host header) are unreliable; this is
+# the only deterministic fix. bolt.diy uses defineConfig((config) => { return {
+# ... } }) so we inject server: after the "return {" line.
+RUN node -e " \
+  const fs = require('fs'); \
+  const p = '/opt/bolt-diy/vite.config.ts'; \
+  let c = fs.readFileSync(p, 'utf8'); \
+  c = c.replace( \
+    /^(\\s*return \\{)/m, \
+    \"\\\$1\\n    server: { host: true, allowedHosts: ['.fly.dev', 'localhost', '127.0.0.1'] },\" \
+  ); \
+  fs.writeFileSync(p, c); \
+  console.log('[bolt-patch] vite.config.ts patched'); \
+" && grep -q 'allowedHosts' /opt/bolt-diy/vite.config.ts \
+  || (echo 'ERROR: vite.config.ts patch failed — allowedHosts not found' && exit 1)
+
 # litellm[proxy] extras: the base litellm package is missing several deps
 # required by the proxy server (websockets, backoff, and others). Installing
 # litellm[proxy] here (after the heavy cached layers) adds only the missing
