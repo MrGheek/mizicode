@@ -238,6 +238,7 @@ async function callLlmForReassessment(params: {
   tasks: Array<{ id: number; text: string; status: string; confirmedByUser: boolean }>;
   observations: Array<{ toolName: string; inputSummary: string; outputSummary: string }>;
   skillContext?: string;
+  sessionId?: number | null;
 }): Promise<Array<{ taskId: number; newStatus: PlanTaskStatus; reason: string }> | null> {
   const routedModel = await getModelForPhase("review");
 
@@ -247,6 +248,7 @@ async function callLlmForReassessment(params: {
     temperature: 0,
     max_tokens: 800,
     overrideModel: routedModel,
+    sessionId: params.sessionId,
     messages: renderPlanReassess({
       tasks: params.tasks,
       observations: params.observations,
@@ -792,6 +794,7 @@ export async function reassessSession(params: {
       outputSummary: o.outputSummary,
     })),
     skillContext: reassessSkillContext || undefined,
+    sessionId: params.sessionId,
   });
 
   if (!reassessments) {

@@ -16,6 +16,7 @@ vi.mock("../services/nim-catalog", () => ({
   PROVIDER_CONFIG: {
     nvidia: { apiBase: "https://api.nim.test/v1", envKey: "NIM_TEST_API_KEY_UNIT" },
   },
+  PROVIDER_TOKEN_RATES: {},
 }));
 
 // ── Capture logger calls using vi.hoisted so the variable is available inside ──

@@ -87,6 +87,11 @@ export const sessionsTable = pgTable("sessions", {
   modelRoutingMode: text("model_routing_mode").default("auto"),
   // Project plan linked to this session (nullable — not all sessions have a plan).
   planId: integer("plan_id").references(() => projectPlansTable.id, { onDelete: "set null" }),
+  // Cumulative token usage for NIM sessions billed per-token (e.g. Vultr).
+  // Null for NVIDIA-hosted (free) sessions and Vast.ai GPU sessions.
+  // Updated incrementally by POST /sessions/:id/token-usage callbacks.
+  nimTokensIn: integer("nim_tokens_in"),
+  nimTokensOut: integer("nim_tokens_out"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
