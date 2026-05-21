@@ -273,6 +273,18 @@ export const CreateSessionBody = zod.object({
     .describe(
       "GitHub Personal Access Token — injected as GITHUB_TOKEN and used to force-push to mizi/session-{id} branch. Never stored in the database.",
     ),
+  workspaceUser: zod
+    .string()
+    .nullish()
+    .describe(
+      "nginx basic-auth username for the NIM workspace (bolt.diy on port 5180). Only set for NIM sessions.",
+    ),
+  workspacePassword: zod
+    .string()
+    .nullish()
+    .describe(
+      "nginx basic-auth password for the NIM workspace. Generated at session creation and stored in the database.",
+    ),
 });
 
 /**
