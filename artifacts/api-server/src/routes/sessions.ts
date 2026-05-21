@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from "express";
 import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable, sessionLanesTable, sessionModelSwitchesTable, nimCatalogTable, provisionedResourcesTable, schemaTemplatesTable, projectPlansTable, lanePromptSnapshotsTable } from "@workspace/db";
-import { eq, desc, inArray, and, isNull, notLike } from "drizzle-orm";
+import { eq, desc, inArray, and, isNull, notLike, sql } from "drizzle-orm";
 import * as neonService from "../services/neon";
 import * as tigrisService from "../services/tigris";
 import { getBridge, getBridgeForSession, tryAcquireExecLock, releaseExecLock } from "../services/bridge-registry";
@@ -1889,6 +1889,66 @@ router.get("/sessions/:sessionId/routing-stats", async (req, res) => {
   } catch (err) {
     logger.error(err, "Failed to fetch routing stats");
     res.status(500).json({ error: "Failed to fetch routing stats" });
+  }
+});
+
+// ── Token-usage callback ──────────────────────────────────────────────────────
+// POST /sessions/:sessionId/token-usage
+// Called by the Fly.io session machine after each inference round-trip to
+// accumulate prompt/completion token counts for per-token billing providers
+// (currently Vultr).  The body carries delta counts; the handler adds them to
+// the running totals on the sessions row so the dashboard can derive spend.
+router.post("/sessions/:sessionId/token-usage", async (req, res) => {
+  const sessionId = parseInt(String(req.params["sessionId"] ?? ""), 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid sessionId" });
+    return;
+  }
+
+  if (CALLBACK_TOKEN) {
+    const auth = req.headers["authorization"] || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    if (token !== CALLBACK_TOKEN) {
+      logger.warn({ sessionId }, "Token-usage callback: invalid token");
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+  }
+
+  const safeInt = (v: unknown) => {
+    const n = Number(v ?? 0);
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+  };
+
+  const deltaIn  = safeInt((req.body as Record<string, unknown>)["promptTokens"]);
+  const deltaOut = safeInt((req.body as Record<string, unknown>)["completionTokens"]);
+
+  if (deltaIn === 0 && deltaOut === 0) {
+    res.json({ ok: true, skipped: true });
+    return;
+  }
+
+  try {
+    const [updated] = await db
+      .update(sessionsTable)
+      .set({
+        nimTokensIn:  sql`COALESCE(${sessionsTable.nimTokensIn},  0) + ${deltaIn}`,
+        nimTokensOut: sql`COALESCE(${sessionsTable.nimTokensOut}, 0) + ${deltaOut}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(sessionsTable.id, sessionId))
+      .returning({ nimTokensIn: sessionsTable.nimTokensIn, nimTokensOut: sessionsTable.nimTokensOut, nimProvider: sessionsTable.nimProvider });
+
+    if (!updated) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    logger.info({ sessionId, deltaIn, deltaOut, nimTokensIn: updated.nimTokensIn, nimTokensOut: updated.nimTokensOut, provider: updated.nimProvider }, "Token usage recorded");
+    res.json({ ok: true, nimTokensIn: updated.nimTokensIn, nimTokensOut: updated.nimTokensOut });
+  } catch (err) {
+    logger.error(err, "Failed to record token usage");
+    res.status(500).json({ error: "Failed to record token usage" });
   }
 });
 

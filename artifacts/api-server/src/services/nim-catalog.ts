@@ -431,6 +431,17 @@ export function getConfiguredProviders(): Record<string, boolean> {
   };
 }
 
+/**
+ * Per-token pricing for inference providers billed by token consumption rather
+ * than by the hour.  Rates are in USD per token (combined prompt + completion).
+ * NVIDIA NIM endpoints are free — they have no entry here.
+ */
+export const PROVIDER_TOKEN_RATES: Record<string, number> = {
+  // Vultr Cloud Inference: $1.40 / 1M tokens → $0.0000014 / token
+  // Source: https://www.vultr.com/products/cloud-inference/
+  vultr: 0.0000014,
+};
+
 export const PROVIDER_CONFIG: Record<string, { apiBase: string; envKey: string; displayName: string; pricingUrl: string }> = {
   nvidia: {
     apiBase: "https://integrate.api.nvidia.com/v1",

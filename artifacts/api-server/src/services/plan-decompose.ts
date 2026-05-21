@@ -177,6 +177,7 @@ async function callLlmForDecomposition(params: {
   recentObservations: Array<{ toolName: string; inputSummary: string; outputSummary: string }>;
   activeSkills: ActiveSkillSummary[];
   rationaleContext: string;
+  sessionId?: number | null;
 }): Promise<CandidateTask[]> {
   // Route through the inference-router for the plan phase so model selection
   // is cost/quality-aware. Falls back to the default PLAN_LLM_MODEL env var
@@ -197,6 +198,7 @@ async function callLlmForDecomposition(params: {
     temperature: 0.2,
     max_tokens: 600,
     overrideModel,
+    sessionId: params.sessionId,
     messages: renderPlanDecompose({
       existingTasks: params.existingTasks,
       recentObservations: params.recentObservations,
@@ -313,6 +315,7 @@ export async function runDecompositionPass(sessionId: string): Promise<number> {
     })),
     activeSkills,
     rationaleContext,
+    sessionId: numericSessionIdOrNull,
   });
 
   if (candidates.length === 0) return 0;

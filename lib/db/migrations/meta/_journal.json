@@ -169,6 +169,20 @@
                         "when": 1747699200000,
                         "tag": "0032_lane_prompt_snapshots_cascade",
                         "breakpoints": true
+                },
+                {
+                        "idx": 34,
+                        "version": "7",
+                        "when": 1748476800000,
+                        "tag": "0033_nim_token_usage",
+                        "breakpoints": true
+                },
+                {
+                        "idx": 35,
+                        "version": "7",
+                        "when": 1748476801000,
+                        "tag": "0033_workspace_credentials",
+                        "breakpoints": true
                 }
         ]
 }

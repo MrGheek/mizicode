@@ -4199,28 +4199,59 @@ export default function SessionDetail() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Started</span>
-                  <span className="font-mono">
-                    {session.startedAt ? format(new Date(session.startedAt), "MMM d, HH:mm") : "—"}
-                  </span>
-                </div>
-                <div className="flex justify-between border-t border-border/40 pt-3">
-                  <span className="text-muted-foreground">Rate</span>
-                  {session.costPerHour ? (
-                    <span className="font-mono">${session.costPerHour.toFixed(3)}/hr</span>
-                  ) : (
-                    <span className="text-xs text-emerald-400/80 font-medium">Free (hosted inference)</span>
-                  )}
-                </div>
-                {!!session.costPerHour && (
-                  <div className="flex justify-between border-t border-border/40 pt-3">
-                    <span className="text-muted-foreground">Total spend</span>
-                    <span className="font-mono text-primary font-semibold">
-                      ${session.totalCost?.toFixed(3) || "0.000"}
-                    </span>
-                  </div>
-                )}
+                {(() => {
+                  const nim = session as typeof session & {
+                    nimProvider?: string | null;
+                    nimTokensIn?: number | null;
+                    nimTokensOut?: number | null;
+                  };
+                  const VULTR_TOKEN_RATE = 0.0000014;
+                  const isVultr = nim.nimProvider === "vultr";
+                  const totalTokens = (nim.nimTokensIn ?? 0) + (nim.nimTokensOut ?? 0);
+                  const tokenSpend = isVultr ? totalTokens * VULTR_TOKEN_RATE : 0;
+
+                  return (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Started</span>
+                        <span className="font-mono">
+                          {session.startedAt ? format(new Date(session.startedAt), "MMM d, HH:mm") : "—"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between border-t border-border/40 pt-3">
+                        <span className="text-muted-foreground">Rate</span>
+                        {session.costPerHour ? (
+                          <span className="font-mono">${session.costPerHour.toFixed(3)}/hr</span>
+                        ) : isVultr ? (
+                          <span className="font-mono text-xs">${VULTR_TOKEN_RATE.toFixed(7)} / token</span>
+                        ) : (
+                          <span className="text-xs text-emerald-400/80 font-medium">Free (hosted inference)</span>
+                        )}
+                      </div>
+                      {!!session.costPerHour && (
+                        <div className="flex justify-between border-t border-border/40 pt-3">
+                          <span className="text-muted-foreground">Total spend</span>
+                          <span className="font-mono text-primary font-semibold">
+                            ${session.totalCost?.toFixed(3) || "0.000"}
+                          </span>
+                        </div>
+                      )}
+                      {isVultr && (
+                        <div className="flex justify-between border-t border-border/40 pt-3">
+                          <span className="text-muted-foreground">Token spend</span>
+                          <span className="font-mono text-primary font-semibold">
+                            ${tokenSpend.toFixed(4)}
+                            {totalTokens > 0 && (
+                              <span className="text-muted-foreground font-normal text-xs ml-1.5">
+                                ({totalTokens.toLocaleString()} tokens)
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </CardContent>
             </Card>
           </div>
