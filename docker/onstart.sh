@@ -255,7 +255,15 @@ if (c.includes('allowedHosts')) {
 "
 
 log "Starting Bolt.diy on internal port 5173 (nginx proxies to external port ${BOLT_PORT:-5180})..."
-PORT=5173 pnpm run dev > /var/log/bolt-diy.log 2>&1 &
+# Use pre-built production server if the image was compiled with `pnpm run build`
+# (Dockerfile.nim-workspace build step). Falls back to Vite dev mode for older images.
+if [ -d /opt/bolt-diy/build/server ]; then
+    log "Bolt.diy: production mode (pre-built assets found — fast startup)"
+    (cd /opt/bolt-diy && PORT=5173 pnpm run start) > /var/log/bolt-diy.log 2>&1 &
+else
+    log "Bolt.diy: dev mode (no pre-built assets — expect slow first-load)"
+    (cd /opt/bolt-diy && PORT=5173 pnpm run dev) > /var/log/bolt-diy.log 2>&1 &
+fi
 log "Bolt.diy started"
 
 log "Configuring nginx with basic auth for exposed services..."

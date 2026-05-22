@@ -498,6 +498,31 @@ MIZI_GIT_WRAPPER
 chmod +x /usr/local/bin/git`
     : "";
 
+  // Bolt.diy Vite pre-warm: fire the first HTTP request to localhost:5173 shortly
+  // after session start so Vite's on-demand TypeScript compilation finishes
+  // BEFORE the user opens the browser.
+  //
+  // Timeline on shared-cpu-1x:
+  //   t=0   — generated script starts, this background timer is spawned
+  //   t=30  — onstart.sh Phase 1 completes, bolt.diy pnpm-dev server starts
+  //   t=60  — NIM proxy ready, llm_ready callback fires (user sees READY)
+  //   t=90  — this curl fires → Vite begins on-demand compilation (~2-4 min)
+  //   t=150-210 — Vite done; subsequent browser loads are instant
+  //
+  // Without this, the user opens the browser RIGHT after llm_ready and sees a
+  // blank black page for 2-4 minutes while Vite compiles.  With this warmup
+  // the compilation is already underway (or done) before they click the link.
+  const nimBoltWarmupLines = profileConfig.nimModelId
+    ? `# Bolt.diy Vite pre-warm — trigger first compilation before user opens browser.
+(
+  sleep 90
+  echo "[nim-warmup] Pre-warming bolt.diy Vite dev server (first compile)..." >> /var/log/onstart.log
+  curl -sf --max-time 360 http://localhost:5173 > /dev/null 2>&1 \\
+    && echo "[nim-warmup] bolt.diy Vite warm-up complete" >> /var/log/onstart.log \\
+    || echo "[nim-warmup] bolt.diy Vite warm-up timed out or failed (non-fatal)" >> /var/log/onstart.log
+) &`
+    : "";
+
   // NIM-session watchdog: if /opt/onstart.sh's Phase 2 never fires llm_ready
   // (e.g. nim-proxy.py crashes and the kill-0 fallback misses it), this
   // background timer force-calls the callback after 5 minutes so the session
@@ -534,6 +559,7 @@ ${bridgeLines}
 ${teamLine}
 ${skillsLine}
 ${githubLines}
+${nimBoltWarmupLines}
 ${nimWatchdogLines}
 /opt/onstart.sh
 `;
