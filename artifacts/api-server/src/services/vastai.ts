@@ -351,50 +351,6 @@ export function buildOnStartScript(profileConfig: {
         // NIM sessions don't need external SSH — users connect via bolt.diy (5180).
         `sed -i '/^#*Port /d' /etc/ssh/sshd_config 2>/dev/null || true`,
         `echo "Port 2222" >> /etc/ssh/sshd_config 2>/dev/null || true`,
-        // bolt.diy's Vite dev server rejects requests whose Host header is not in
-        // allowedHosts. Vite serves the HTML shell (white screen, 15s) then when the
-        // browser requests JS bundles, Vite blocks them -> React never hydrates -> black.
-        //
-        // TWO-LAYER FIX (background subprocess, runs after onstart.sh configures nginx):
-        //
-        //  Layer 1 — nginx: patch every nginx conf to force "proxy_set_header Host
-        //            localhost" on the :5173 proxy block. Vite always trusts localhost.
-        //            Also adds WebSocket upgrade headers so Vite HMR works through nginx.
-        //            Runs with nginx -s reload so no restart needed.
-        //
-        //  Layer 2 — vite.config.ts: search common bolt.diy install paths and rewrite
-        //            allowedHosts to true. Defense-in-depth in case the nginx patch
-        //            is not sufficient (e.g. Vite checks SNI/authority header separately).
-        //
-        // We run this in background at t+45s (AFTER onstart.sh finishes generating the
-        // nginx config from its template) instead of before onstart.sh (which was too
-        // early — onstart.sh overwrites any pre-patched config when it runs).
-        `(
-  sleep 45
-  echo "[nim-fix] Applying nginx+vite allowedHosts patches..." >> /var/log/onstart.log
-  # Layer 1: patch nginx to force Host:localhost for the Vite proxy
-  NGINX_PATCHED=0
-  for NGINX_CFG in /etc/nginx/nginx.conf /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/bolt.conf /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default; do
-    [ -f "$NGINX_CFG" ] || continue
-    if grep -q 'proxy_pass http://localhost:5173' "$NGINX_CFG" 2>/dev/null && ! grep -q 'proxy_set_header Host localhost' "$NGINX_CFG" 2>/dev/null; then
-      sed -i 's|proxy_pass http://localhost:5173;|proxy_pass http://localhost:5173;\\n            proxy_set_header Host localhost;\\n            proxy_set_header Upgrade $http_upgrade;\\n            proxy_set_header Connection "upgrade";|g' "$NGINX_CFG" 2>/dev/null && NGINX_PATCHED=1
-      echo "[nim-fix] Patched nginx: $NGINX_CFG" >> /var/log/onstart.log
-    fi
-  done
-  [ $NGINX_PATCHED -eq 1 ] && nginx -s reload >> /var/log/onstart.log 2>&1 || true
-  # Layer 2: patch vite.config.ts allowedHosts (search common install paths)
-  for BOLT_DIR in /opt/bolt-diy /workspace/bolt-diy /workspace /app/bolt-diy /home/user/bolt-diy /root/bolt-diy; do
-    VITE_CFG="$BOLT_DIR/vite.config.ts"
-    [ -f "$VITE_CFG" ] || continue
-    # Replace any existing allowedHosts value with true (handles array, string, bool)
-    sed -i 's/allowedHosts[[:space:]]*:[[:space:]]*.*/allowedHosts: true,/g' "$VITE_CFG" 2>/dev/null || true
-    # If no allowedHosts found, inject it into the server: { block
-    grep -q 'allowedHosts' "$VITE_CFG" 2>/dev/null || sed -i 's/server:[[:space:]]*{/server: {\\n    allowedHosts: true,/g' "$VITE_CFG" 2>/dev/null || true
-    echo "[nim-fix] Patched vite.config.ts: $VITE_CFG" >> /var/log/onstart.log
-    break
-  done
-  echo "[nim-fix] Done (nginx_patched=$NGINX_PATCHED)" >> /var/log/onstart.log
-) &`,
         // Swarm-specific model override for economy/throughput-optimised workers.
         // Includes provider-specific API credentials so the LiteLLM "swarm" route
         // uses the correct upstream even when swarm uses a different provider than
@@ -555,25 +511,16 @@ chmod +x /usr/local/bin/git`
   // Progress pings every 60 s keep the boot log alive so the user sees
   // compilation is in progress rather than a stale "compiling" message.
   const nimBoltWarmupLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
-    ? `# Bolt.diy gate: validates the FULL stack (nginx on :5180 + Vite on :5173).
+    ? `# Bolt.diy gate: polls Vite directly on :5173 until 200/302, then fires bolt_ready.
 #
-# Why we check :5180 (nginx) not :5173 (Vite) directly:
-#   - Vite's dev server serves an HTML SHELL immediately on :5173/ even before
-#     TypeScript compilation finishes. Checking :5173/ gives a false 200 at ~44s.
-#   - The browser then requests JS bundles -> Vite compilation spikes RAM -> OOM
-#     kills nginx -> port hangs -> blank page / no auth prompt for the user.
-#   - Checking :5180 with real nginx credentials validates that:
-#       1. Nginx is running (not OOM-killed)
-#       2. Nginx can proxy to Vite (Vite is up)
-#       3. Auth is configured (password file exists)
-#   - Nginx has a proxy_read_timeout (typically 60s) so if Vite is busy it will
-#     respond with 504, which we treat as "not ready yet" and retry.
+# Why :5173 (Vite) not :5180 (nginx with auth):
+#   - The nginx htpasswd is derived from the NGINX_AUTH_PASS provisioning env var.
+#   - onstart.sh generates a DIFFERENT random password into /workspace/.code-server-password.
+#   - Reading the file and sending it to nginx always produces 401 (password mismatch).
+#   - Polling Vite directly on the internal port bypasses auth entirely.
 #
-# Gate phases:
-#   Phase 1 (fast poll): wait for /workspace/.code-server-password to appear
-#                        (written by onstart.sh when nginx auth is configured)
-#   Phase 2 (slow poll): curl -u mizi:<pass> http://localhost:5180/ every 5s
-#                        until 200/302 or 720s deadline
+# On 4096 MB machines esbuild does not OOM-kill nginx, so a brief white screen
+# while JS bundles compile is acceptable (typically < 5 min on performance-1x:4096MB).
 (
   sleep 15
   START_TIME=\$(date +%s)
@@ -581,19 +528,13 @@ chmod +x /usr/local/bin/git`
   LAST_PING=\$START_TIME
   ATTEMPT=0
   EXIT_CODE=1
-  PASS_FILE="/workspace/.code-server-password"
-  echo "[nim-gate] Starting full-stack poll (nginx :5180 with auth, deadline 720s)..." >> /var/log/onstart.log
-  # Phase 1: wait for password file (signals nginx auth is configured)
-  until [ -f "\$PASS_FILE" ] || [ \$(date +%s) -gt \$DEADLINE ]; do sleep 2; done
-  WORKSPACE_PASS=\$(tr -d '\\n\\r' < "\$PASS_FILE" 2>/dev/null || echo "")
-  echo "[nim-gate] Password file ready (len=\${#WORKSPACE_PASS}), beginning nginx poll..." >> /var/log/onstart.log
-  # Phase 2: poll nginx :5180 with auth until 200/302 or deadline
+  echo "[nim-gate] Starting Vite poll (:5173 direct, deadline 720s)..." >> /var/log/onstart.log
   while [ \$(date +%s) -lt \$DEADLINE ]; do
     ATTEMPT=\$((ATTEMPT + 1))
     NOW=\$(date +%s)
     ELAPSED=\$((NOW - START_TIME + 15))
-    HTTP_CODE=\$(curl -s -o /tmp/nim-gate-result -w "%{http_code}" --max-time 30 \\
-      -u "mizi:\${WORKSPACE_PASS}" "http://localhost:5180/" 2>/dev/null)
+    HTTP_CODE=\$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \\
+      "http://localhost:5173/" 2>/dev/null)
     CURL_EXIT=\$?
     echo "[nim-gate] Attempt \${ATTEMPT} (\${ELAPSED}s): http=\${HTTP_CODE} exit=\${CURL_EXIT}" >> /var/log/onstart.log
     if [ "\$HTTP_CODE" = "200" ] || [ "\$HTTP_CODE" = "302" ]; then
