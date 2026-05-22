@@ -1,0 +1,22 @@
+# Incremental patch: starts from the existing nim-workspace image and layers
+# a pre-compiled bolt.diy production build on top.
+# Building only these two new layers is much faster than rebuilding the full
+# ubuntu-based image from scratch.
+#
+# Base image: registry.fly.io/mizi-api:deployment-01KS78VJXP5R3405VGD7TARBDT
+# (bolt.diy installed at /opt/bolt-diy, pnpm installed, all deps present)
+FROM registry.fly.io/mizi-api:deployment-01KS78VJXP5R3405VGD7TARBDT
+
+# Re-copy the patched onstart.sh so the machine uses production mode
+# (pnpm run start) when /opt/bolt-diy/build/server exists.
+COPY docker/onstart.sh /opt/onstart.sh
+RUN chmod +x /opt/onstart.sh
+
+# Pre-build bolt.diy for instant startup in production mode.
+# Without this, pnpm run dev compiles the entire TypeScript codebase on-demand
+# on the first browser request, which takes 2-4 minutes on shared-cpu-1x and
+# shows a blank black screen throughout.
+# SKIP_ENV_VALIDATION=1 suppresses the LLM-API liveness check (runtime only).
+# NODE_ENV=production lets Vite optimise the output bundle.
+WORKDIR /opt/bolt-diy
+RUN NODE_ENV=production SKIP_ENV_VALIDATION=1 pnpm run build

@@ -1,4 +1,4 @@
 app = "mizi-api"
 
 [build]
-  dockerfile = "docker/Dockerfile.nim-workspace"
+  dockerfile = "docker/Dockerfile.nim-bolt-patch"

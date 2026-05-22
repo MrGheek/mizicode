@@ -83,6 +83,13 @@ RUN node /opt/bolt-vite-patch.mjs && \
     grep -q 'allowedHosts' /opt/bolt-diy/vite.config.ts || \
     (echo 'ERROR: bolt-vite-patch.mjs did not write allowedHosts — build aborted' && exit 1)
 
+# Pre-build bolt.diy for fast production startup.
+# Without this, pnpm run dev compiles the entire TypeScript codebase on-demand on the
+# first browser request — taking 2-4 min on shared-cpu-1x and showing a blank black screen.
+# Building here means the production server starts instantly and serves pre-compiled assets.
+# SKIP_ENV_VALIDATION=1 suppresses the LLM API check at build time (those are runtime vars).
+RUN cd /opt/bolt-diy && NODE_ENV=production SKIP_ENV_VALIDATION=1 pnpm run build
+
 # litellm[proxy] extras: the base litellm package is missing several deps
 # required by the proxy server (websockets, backoff, and others). Installing
 # litellm[proxy] here (after the heavy cached layers) adds only the missing
