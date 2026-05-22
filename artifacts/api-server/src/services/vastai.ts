@@ -498,46 +498,77 @@ MIZI_GIT_WRAPPER
 chmod +x /usr/local/bin/git`
     : "";
 
-  // Bolt.diy Vite pre-warm: fire the first HTTP request to localhost:5173 shortly
-  // after session start so Vite's on-demand TypeScript compilation finishes
-  // BEFORE the user opens the browser.
+  // Bolt.diy gate + pre-warm: polls localhost:5173 until Vite responds, then
+  // sends bolt_ready to unlock "Open Coding Environment" in the dashboard.
+  //
+  // The API server intercepts the llm_ready callback (sent by onstart.sh when
+  // the NIM proxy comes up) and keeps the session in "starting" state for NIM
+  // sessions.  This gate is the only thing that can move it to "ready", so the
+  // button stays locked until bolt.diy has actually finished its first compile.
   //
   // Timeline on shared-cpu-1x:
-  //   t=0   — generated script starts, this background timer is spawned
-  //   t=30  — onstart.sh Phase 1 completes, bolt.diy pnpm-dev server starts
-  //   t=60  — NIM proxy ready, llm_ready callback fires (user sees READY)
-  //   t=90  — this curl fires → Vite begins on-demand compilation (~2-4 min)
-  //   t=150-210 — Vite done; subsequent browser loads are instant
+  //   t=0   — gate background job starts
+  //   t=30  — bolt.diy pnpm-dev server starts (Phase 1 of onstart.sh)
+  //   t=60  — NIM proxy ready → llm_ready → intercepted → "starting/compiling"
+  //   t=?   — Vite responds to first HTTP request (2-4 min compile)
+  //   t=?   — bolt_ready sent → session moves to "ready" → button unlocks
   //
-  // Without this, the user opens the browser RIGHT after llm_ready and sees a
-  // blank black page for 2-4 minutes while Vite compiles.  With this warmup
-  // the compilation is already underway (or done) before they click the link.
-  const nimBoltWarmupLines = profileConfig.nimModelId
-    ? `# Bolt.diy Vite pre-warm — trigger first compilation before user opens browser.
+  // Progress pings every 60 s keep the boot log alive so the user sees
+  // compilation is in progress rather than a stale "compiling" message.
+  const nimBoltWarmupLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
+    ? `# Bolt.diy gate: poll Vite, send bolt_ready when it responds.
 (
-  sleep 90
-  echo "[nim-warmup] Pre-warming bolt.diy Vite dev server (first compile)..." >> /var/log/onstart.log
-  curl -sf --max-time 360 http://localhost:5173 > /dev/null 2>&1 \\
-    && echo "[nim-warmup] bolt.diy Vite warm-up complete" >> /var/log/onstart.log \\
-    || echo "[nim-warmup] bolt.diy Vite warm-up timed out or failed (non-fatal)" >> /var/log/onstart.log
+  ELAPSED=0
+  INTERVAL=15
+  MAX_WAIT=480
+  LAST_PING=0
+  echo "[nim-gate] Waiting for bolt.diy Vite to finish first compile..." >> /var/log/onstart.log
+  while [ $ELAPSED -lt $MAX_WAIT ]; do
+    sleep $INTERVAL
+    ELAPSED=$((ELAPSED + INTERVAL))
+    if curl -sf --max-time 10 http://localhost:5173 > /dev/null 2>&1; then
+      echo "[nim-gate] bolt.diy Vite responded after \${ELAPSED}s — sending bolt_ready" >> /var/log/onstart.log
+      touch /tmp/nim-bolt-ready
+      curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
+        -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
+        -H "Content-Type: application/json" \\
+        -d "{\\\"status\\\":\\\"bolt_ready\\\",\\\"message\\\":\\\"Bolt.diy ready (\${ELAPSED}s) — open your coding environment!\\\"}" \\
+        --max-time 10 >> /var/log/onstart.log 2>&1 || true
+      exit 0
+    fi
+    if [ $((ELAPSED - LAST_PING)) -ge 60 ]; then
+      LAST_PING=$ELAPSED
+      curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
+        -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
+        -H "Content-Type: application/json" \\
+        -d "{\\\"status\\\":\\\"starting_llm\\\",\\\"message\\\":\\\"Bolt.diy compiling... (\${ELAPSED}s elapsed)\\\"}" \\
+        --max-time 10 >> /var/log/onstart.log 2>&1 || true
+    fi
+  done
+  echo "[nim-gate] Timed out after \${MAX_WAIT}s — force bolt_ready" >> /var/log/onstart.log
+  touch /tmp/nim-bolt-ready
+  curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
+    -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
+    -H "Content-Type: application/json" \\
+    -d '{"status":"bolt_ready","message":"Bolt.diy warmup timed out — opening anyway (may take a moment to load)"}' \\
+    --max-time 10 >> /var/log/onstart.log 2>&1 || true
 ) &`
     : "";
 
-  // NIM-session watchdog: if /opt/onstart.sh's Phase 2 never fires llm_ready
-  // (e.g. nim-proxy.py crashes and the kill-0 fallback misses it), this
-  // background timer force-calls the callback after 5 minutes so the session
-  // never hangs forever.  Harmless if llm_ready was already reported.
+  // NIM-session watchdog: if the bolt.diy gate never fires bolt_ready within
+  // 8 minutes (e.g. gate process crashed), force-send bolt_ready so the user
+  // is never stuck on the boot screen forever.  Harmless if gate already fired.
   const nimWatchdogLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
-    ? `# NIM watchdog: force llm_ready callback after 5 min if not already done
+    ? `# NIM watchdog: force bolt_ready after 8 min if the gate never fired
 (
-  sleep 300
-  STATUS_FILE="/tmp/instance-status"
-  if [ "$(cat "$STATUS_FILE" 2>/dev/null)" != "llm_ready" ]; then
-    echo "llm_ready" > "$STATUS_FILE"
+  sleep 480
+  if [ ! -f "/tmp/nim-bolt-ready" ]; then
+    echo "[nim-watchdog] Gate never fired — force bolt_ready after 8 min" >> /var/log/onstart.log
+    touch /tmp/nim-bolt-ready
     curl -sf -X POST "${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/status" \\
       -H "Authorization: Bearer ${profileConfig.memAuthToken || ""}" \\
       -H "Content-Type: application/json" \\
-      -d '{"status":"llm_ready","message":"NIM watchdog: force-marking ready after 5 min"}' \\
+      -d '{"status":"bolt_ready","message":"NIM watchdog: force-marking ready after 8 min"}' \\
       --max-time 10 >> /var/log/onstart.log 2>&1 || true
   fi
 ) &`
