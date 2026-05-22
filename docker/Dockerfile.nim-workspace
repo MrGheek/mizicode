@@ -54,8 +54,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# LiteLLM: proxies claw-code calls to the NIM API (no GPU/CUDA needed)
-RUN pip3 install --no-cache-dir litellm
+# nim-proxy.py runtime deps (fastapi, uvicorn, httpx) + LiteLLM base
+RUN pip3 install --no-cache-dir fastapi uvicorn httpx litellm
 
 # Node.js 20 + pnpm (claw-runner.js, claw-bridge.mjs, bolt.diy)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \

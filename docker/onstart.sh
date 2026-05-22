@@ -688,11 +688,20 @@ log "Starting LLM backend in background..."
             sleep 2
         done
 
-        # Fallback: if the liveliness probe never responded but the process is still
-        # alive, assume it is fine and mark ready.  A slow health endpoint on a cold
-        # shared-CPU machine does not mean the proxy is broken.
-        if [ "$_nim_ready" -eq 0 ] && kill -0 "$NIM_LITELLM_PID" 2>/dev/null; then
-            log "LiteLLM NIM proxy liveliness probe timed out but process is alive — marking ready"
+        # Fallback: NIM proxy is just a pass-through to the hosted API — mark the session
+        # ready unconditionally after the probe window.  If the proxy crashed it will be
+        # restarted by the while-loop below; the session should not stay stuck forever
+        # just because the local proxy process had a cold-start problem.
+        if [ "$_nim_ready" -eq 0 ]; then
+            if kill -0 "$NIM_LITELLM_PID" 2>/dev/null; then
+                log "LiteLLM NIM proxy liveliness probe timed out but process is alive — marking ready"
+            else
+                log "LiteLLM NIM proxy crashed — marking session ready anyway (auto-restart loop will recover)"
+                # Restart immediately so the while-loop has a fresh PID to watch.
+                python3 /opt/nim-proxy.py >> /var/log/litellm.log 2>&1 &
+                NIM_LITELLM_PID=$!
+                log "NIM proxy restarted before ready callback (PID: $NIM_LITELLM_PID)"
+            fi
             _nim_ready=1
         fi
 
