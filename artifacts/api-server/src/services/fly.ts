@@ -3,10 +3,13 @@ import { logger } from "../lib/logger";
 const FLY_MACHINES_BASE = "https://api.machines.dev/v1";
 
 // Fly.io shared-CPU-1x: 1 vCPU — sufficient for workspace containers.
-// 1024 MB: LiteLLM (Python) imports ~400 MB of dependencies on cold start;
-// 512 MB was causing OOM or extremely slow startup, preventing llm_ready.
+// 2048 MB required: LiteLLM Python (~400 MB) + Vite dev server compilation peak
+// (~600 MB TypeScript + lazy JS bundling when browser first loads the page) +
+// code-server (~200 MB) + nginx/claw (~150 MB) = ~1350 MB peak.
+// 1024 MB was causing OOM kills of nginx/Vite during the first browser page load,
+// resulting in a blank page and port 5180 hanging with 0 bytes received.
 const FLY_MACHINE_SIZE = "shared-cpu-1x";
-const FLY_MACHINE_MEMORY_MB = 1024;
+const FLY_MACHINE_MEMORY_MB = 2048;
 
 function getConfig(): { token: string; app: string } {
   const token = process.env.FLY_API_TOKEN;

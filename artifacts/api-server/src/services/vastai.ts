@@ -516,14 +516,25 @@ chmod +x /usr/local/bin/git`
   // Progress pings every 60 s keep the boot log alive so the user sees
   // compilation is in progress rather than a stale "compiling" message.
   const nimBoltWarmupLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
-    ? `# Bolt.diy gate: poll localhost:5173 until Vite returns 200/302, then fire bolt_ready.
-# The single-curl approach failed because curl fires at t+15s when Vite is not yet
-# listening (pnpm still resolving deps) -> ECONNREFUSED -> exits immediately.
-# This loop retries on ALL errors until 200/302 (Vite ready) or 420s deadline.
-#   exit 7  = ECONNREFUSED: Vite not up yet   -> retry in 3s
-#   exit 28 = curl timeout: Vite blocking req  -> retry in 3s (compilation in progress)
-#   exit 22 = HTTP error (4xx/5xx)             -> retry in 5s
-#   http 200/302                               -> success, fire bolt_ready
+    ? `# Bolt.diy gate: validates the FULL stack (nginx on :5180 + Vite on :5173).
+#
+# Why we check :5180 (nginx) not :5173 (Vite) directly:
+#   - Vite's dev server serves an HTML SHELL immediately on :5173/ even before
+#     TypeScript compilation finishes. Checking :5173/ gives a false 200 at ~44s.
+#   - The browser then requests JS bundles -> Vite compilation spikes RAM -> OOM
+#     kills nginx -> port hangs -> blank page / no auth prompt for the user.
+#   - Checking :5180 with real nginx credentials validates that:
+#       1. Nginx is running (not OOM-killed)
+#       2. Nginx can proxy to Vite (Vite is up)
+#       3. Auth is configured (password file exists)
+#   - Nginx has a proxy_read_timeout (typically 60s) so if Vite is busy it will
+#     respond with 504, which we treat as "not ready yet" and retry.
+#
+# Gate phases:
+#   Phase 1 (fast poll): wait for /workspace/.code-server-password to appear
+#                        (written by onstart.sh when nginx auth is configured)
+#   Phase 2 (slow poll): curl -u mizi:<pass> http://localhost:5180/ every 5s
+#                        until 200/302 or 420s deadline
 (
   sleep 15
   START_TIME=\$(date +%s)
@@ -531,12 +542,19 @@ chmod +x /usr/local/bin/git`
   LAST_PING=\$START_TIME
   ATTEMPT=0
   EXIT_CODE=1
-  echo "[nim-gate] Starting Vite poll loop (deadline in 420s)..." >> /var/log/onstart.log
+  PASS_FILE="/workspace/.code-server-password"
+  echo "[nim-gate] Starting full-stack poll (nginx :5180 with auth, deadline 420s)..." >> /var/log/onstart.log
+  # Phase 1: wait for password file (signals nginx auth is configured)
+  until [ -f "\$PASS_FILE" ] || [ \$(date +%s) -gt \$DEADLINE ]; do sleep 2; done
+  WORKSPACE_PASS=\$(cat "\$PASS_FILE" 2>/dev/null || echo "")
+  echo "[nim-gate] Password file ready, beginning nginx poll..." >> /var/log/onstart.log
+  # Phase 2: poll nginx :5180 with auth until 200/302 or deadline
   while [ \$(date +%s) -lt \$DEADLINE ]; do
     ATTEMPT=\$((ATTEMPT + 1))
     NOW=\$(date +%s)
     ELAPSED=\$((NOW - START_TIME + 15))
-    HTTP_CODE=\$(curl -s -o /tmp/nim-gate-result -w "%{http_code}" --max-time 30 "http://localhost:5173/" 2>/dev/null)
+    HTTP_CODE=\$(curl -s -o /tmp/nim-gate-result -w "%{http_code}" --max-time 30 \\
+      -u "mizi:\${WORKSPACE_PASS}" "http://localhost:5180/" 2>/dev/null)
     CURL_EXIT=\$?
     echo "[nim-gate] Attempt \${ATTEMPT} (\${ELAPSED}s): http=\${HTTP_CODE} exit=\${CURL_EXIT}" >> /var/log/onstart.log
     if [ "\$HTTP_CODE" = "200" ] || [ "\$HTTP_CODE" = "302" ]; then
@@ -552,12 +570,7 @@ chmod +x /usr/local/bin/git`
         -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy compiling... (\${ELAPSED}s elapsed)\\"}" \\
         --max-time 10 >> /var/log/onstart.log 2>&1 || true
     fi
-    # ECONNREFUSED: Vite not listening yet — retry quickly
-    if [ "\$CURL_EXIT" = "7" ]; then
-      sleep 3
-    else
-      sleep 3
-    fi
+    sleep 5
   done
   ELAPSED=\$(( \$(date +%s) - START_TIME + 15 ))
   touch /tmp/nim-bolt-ready
