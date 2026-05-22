@@ -1185,7 +1185,7 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
         flyMachineId: provisionedFlyMachineId ?? null,
         status: "provisioning",
         statusMessage: nimModelId
-          ? "Fly.io workspace machine started — NIM fast-boot running..."
+          ? "Fly.io workspace machine started — NIM fast-boot running (~60s)"
           : "Instance created — waiting for startup and model download...",
         startedAt: new Date(),
         costPerHour: provisionedCostPerHour ?? null,
