@@ -344,6 +344,13 @@ export function buildOnStartScript(profileConfig: {
         // VLLM_PORT must be exported so onstart.sh probes the right port.
         // nim-proxy.py defaults to 8081 — keep in sync with Fly services config.
         `export VLLM_PORT="8081"`,
+        // Fly's hallpass SSH proxy always tries to bind port 22 inside the microVM.
+        // The container's sshd also starts on port 22 (onstart.sh line ~172), causing
+        // hallpass to crash-loop and eventually panic the entire machine.
+        // Fix: move sshd to port 2222 BEFORE onstart.sh starts it so hallpass wins port 22.
+        // NIM sessions don't need external SSH — users connect via bolt.diy (5180).
+        `sed -i '/^#*Port /d' /etc/ssh/sshd_config 2>/dev/null || true`,
+        `echo "Port 2222" >> /etc/ssh/sshd_config 2>/dev/null || true`,
         // Swarm-specific model override for economy/throughput-optimised workers.
         // Includes provider-specific API credentials so the LiteLLM "swarm" route
         // uses the correct upstream even when swarm uses a different provider than
