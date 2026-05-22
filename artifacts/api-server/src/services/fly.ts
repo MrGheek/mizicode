@@ -3,13 +3,18 @@ import { logger } from "../lib/logger";
 const FLY_MACHINES_BASE = "https://api.machines.dev/v1";
 
 // Fly.io shared-CPU-1x: 1 vCPU — sufficient for workspace containers.
-// 2048 MB required: LiteLLM Python (~400 MB) + Vite dev server compilation peak
-// (~600 MB TypeScript + lazy JS bundling when browser first loads the page) +
-// code-server (~200 MB) + nginx/claw (~150 MB) = ~1350 MB peak.
-// 1024 MB was causing OOM kills of nginx/Vite during the first browser page load,
-// resulting in a blank page and port 5180 hanging with 0 bytes received.
-const FLY_MACHINE_SIZE = "shared-cpu-1x";
-const FLY_MACHINE_MEMORY_MB = 2048;
+// performance-1x + 4096 MB: esbuild (bolt.diy's dep bundler) peaks at 800 MB–1.2 GB
+// while bundling the bolt.diy node_modules on first page load. When that runs
+// alongside LiteLLM Python (~400 MB) + code-server (~200 MB) + nginx/claw (~150 MB),
+// the total can reach 2.0–2.5 GB — beyond the 2048 MB shared-cpu-1x limit.
+// The OOM kernel-kills the esbuild Go binary mid-bundle → Vite throws
+// "Error: The service was stopped" → React SSR stream aborts → black screen.
+//
+// performance-1x gives dedicated CPU (3–5× faster TS compilation, so esbuild
+// finishes before other services spike) and supports up to 8192 MB RAM.
+// 4096 MB leaves ~1.5 GB headroom even at peak, definitively eliminating OOM.
+const FLY_MACHINE_SIZE = "performance-1x";
+const FLY_MACHINE_MEMORY_MB = 4096;
 
 function getConfig(): { token: string; app: string } {
   const token = process.env.FLY_API_TOKEN;
