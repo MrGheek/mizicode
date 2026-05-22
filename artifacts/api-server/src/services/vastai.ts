@@ -351,11 +351,50 @@ export function buildOnStartScript(profileConfig: {
         // NIM sessions don't need external SSH — users connect via bolt.diy (5180).
         `sed -i '/^#*Port /d' /etc/ssh/sshd_config 2>/dev/null || true`,
         `echo "Port 2222" >> /etc/ssh/sshd_config 2>/dev/null || true`,
-        // bolt.diy's vite.config.ts ships with a restrictive allowedHosts value.
-        // The patch scripts in bolt-vite-patch.mjs and onstart.sh both had a bug:
-        // they checked if 'allowedHosts' existed and skipped if so — never checking
-        // whether the value was actually `true`. Force it here before onstart.sh runs.
-        `node -e "const fs=require('fs'),p='/opt/bolt-diy/vite.config.ts';try{let c=fs.readFileSync(p,'utf8');const f=c.replace(/allowedHosts\\s*:\\s*[^,}\\n]+/g,'allowedHosts: true');fs.writeFileSync(p,f);console.log('[nim-fix] bolt-diy vite allowedHosts forced to true')}catch(e){console.error('[nim-fix] warn:',e.message)}" 2>/dev/null || true`,
+        // bolt.diy's Vite dev server rejects requests whose Host header is not in
+        // allowedHosts. Vite serves the HTML shell (white screen, 15s) then when the
+        // browser requests JS bundles, Vite blocks them -> React never hydrates -> black.
+        //
+        // TWO-LAYER FIX (background subprocess, runs after onstart.sh configures nginx):
+        //
+        //  Layer 1 — nginx: patch every nginx conf to force "proxy_set_header Host
+        //            localhost" on the :5173 proxy block. Vite always trusts localhost.
+        //            Also adds WebSocket upgrade headers so Vite HMR works through nginx.
+        //            Runs with nginx -s reload so no restart needed.
+        //
+        //  Layer 2 — vite.config.ts: search common bolt.diy install paths and rewrite
+        //            allowedHosts to true. Defense-in-depth in case the nginx patch
+        //            is not sufficient (e.g. Vite checks SNI/authority header separately).
+        //
+        // We run this in background at t+45s (AFTER onstart.sh finishes generating the
+        // nginx config from its template) instead of before onstart.sh (which was too
+        // early — onstart.sh overwrites any pre-patched config when it runs).
+        `(
+  sleep 45
+  echo "[nim-fix] Applying nginx+vite allowedHosts patches..." >> /var/log/onstart.log
+  # Layer 1: patch nginx to force Host:localhost for the Vite proxy
+  NGINX_PATCHED=0
+  for NGINX_CFG in /etc/nginx/nginx.conf /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/bolt.conf /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default; do
+    [ -f "$NGINX_CFG" ] || continue
+    if grep -q 'proxy_pass http://localhost:5173' "$NGINX_CFG" 2>/dev/null && ! grep -q 'proxy_set_header Host localhost' "$NGINX_CFG" 2>/dev/null; then
+      sed -i 's|proxy_pass http://localhost:5173;|proxy_pass http://localhost:5173;\\n            proxy_set_header Host localhost;\\n            proxy_set_header Upgrade $http_upgrade;\\n            proxy_set_header Connection "upgrade";|g' "$NGINX_CFG" 2>/dev/null && NGINX_PATCHED=1
+      echo "[nim-fix] Patched nginx: $NGINX_CFG" >> /var/log/onstart.log
+    fi
+  done
+  [ $NGINX_PATCHED -eq 1 ] && nginx -s reload >> /var/log/onstart.log 2>&1 || true
+  # Layer 2: patch vite.config.ts allowedHosts (search common install paths)
+  for BOLT_DIR in /opt/bolt-diy /workspace/bolt-diy /workspace /app/bolt-diy /home/user/bolt-diy /root/bolt-diy; do
+    VITE_CFG="$BOLT_DIR/vite.config.ts"
+    [ -f "$VITE_CFG" ] || continue
+    # Replace any existing allowedHosts value with true (handles array, string, bool)
+    sed -i 's/allowedHosts[[:space:]]*:[[:space:]]*.*/allowedHosts: true,/g' "$VITE_CFG" 2>/dev/null || true
+    # If no allowedHosts found, inject it into the server: { block
+    grep -q 'allowedHosts' "$VITE_CFG" 2>/dev/null || sed -i 's/server:[[:space:]]*{/server: {\\n    allowedHosts: true,/g' "$VITE_CFG" 2>/dev/null || true
+    echo "[nim-fix] Patched vite.config.ts: $VITE_CFG" >> /var/log/onstart.log
+    break
+  done
+  echo "[nim-fix] Done (nginx_patched=$NGINX_PATCHED)" >> /var/log/onstart.log
+) &`,
         // Swarm-specific model override for economy/throughput-optimised workers.
         // Includes provider-specific API credentials so the LiteLLM "swarm" route
         // uses the correct upstream even when swarm uses a different provider than
