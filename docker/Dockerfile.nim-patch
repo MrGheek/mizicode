@@ -1,4 +1,4 @@
-FROM registry.fly.io/mizi-api@sha256:7c40f2b27a0aaa86a64d1238b2b70d63c27361348622317ef24a44e854436a42
+FROM registry.fly.io/mizi-api:deployment-01KS5M5WVX4V24YNN0D6VMFPVM
 RUN pip3 install --no-cache-dir httpx fastapi uvicorn
 COPY docker/onstart.sh /opt/onstart.sh
 COPY docker/nim-proxy.py /opt/nim-proxy.py
