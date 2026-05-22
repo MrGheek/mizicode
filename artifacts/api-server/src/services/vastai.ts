@@ -573,16 +573,16 @@ chmod +x /usr/local/bin/git`
 #   Phase 1 (fast poll): wait for /workspace/.code-server-password to appear
 #                        (written by onstart.sh when nginx auth is configured)
 #   Phase 2 (slow poll): curl -u mizi:<pass> http://localhost:5180/ every 5s
-#                        until 200/302 or 420s deadline
+#                        until 200/302 or 720s deadline
 (
   sleep 15
   START_TIME=\$(date +%s)
-  DEADLINE=\$((START_TIME + 420))
+  DEADLINE=\$((START_TIME + 720))
   LAST_PING=\$START_TIME
   ATTEMPT=0
   EXIT_CODE=1
   PASS_FILE="/workspace/.code-server-password"
-  echo "[nim-gate] Starting full-stack poll (nginx :5180 with auth, deadline 420s)..." >> /var/log/onstart.log
+  echo "[nim-gate] Starting full-stack poll (nginx :5180 with auth, deadline 720s)..." >> /var/log/onstart.log
   # Phase 1: wait for password file (signals nginx auth is configured)
   until [ -f "\$PASS_FILE" ] || [ \$(date +%s) -gt \$DEADLINE ]; do sleep 2; done
   WORKSPACE_PASS=\$(tr -d '\\n\\r' < "\$PASS_FILE" 2>/dev/null || echo "")
@@ -634,16 +634,16 @@ chmod +x /usr/local/bin/git`
   // 8 minutes (e.g. gate process crashed), force-send bolt_ready so the user
   // is never stuck on the boot screen forever.  Harmless if gate already fired.
   const nimWatchdogLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
-    ? `# NIM watchdog: force bolt_ready after 8 min if the gate never fired
+    ? `# NIM watchdog: force bolt_ready after 15 min if the gate never fired
 (
-  sleep 480
+  sleep 900
   if [ ! -f "/tmp/nim-bolt-ready" ]; then
-    echo "[nim-watchdog] Gate never fired — force bolt_ready after 8 min" >> /var/log/onstart.log
+    echo "[nim-watchdog] Gate never fired — force bolt_ready after 15 min" >> /var/log/onstart.log
     touch /tmp/nim-bolt-ready
     curl -sf -X POST "${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/status" \\
       -H "Authorization: Bearer ${profileConfig.memAuthToken || ""}" \\
       -H "Content-Type: application/json" \\
-      -d '{"status":"bolt_ready","message":"NIM watchdog: force-marking ready after 8 min"}' \\
+      -d '{"status":"bolt_ready","message":"NIM watchdog: force-marking ready after 15 min"}' \\
       --max-time 10 >> /var/log/onstart.log 2>&1 || true
   fi
 ) &`

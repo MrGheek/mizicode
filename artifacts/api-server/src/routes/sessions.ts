@@ -281,7 +281,7 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
   // the bolt.diy gate script sends `bolt_ready` (once curl to :5173 succeeds).
   const effectiveMapped =
     instanceStatus === "llm_ready" && prevSession?.provider === "nim"
-      ? { status: "starting" as const, statusMessage: "Bolt.diy compiling — first Vite build (~2 min)..." }
+      ? { status: "starting" as const, statusMessage: "Bolt.diy compiling — first Vite build (~8 min)..." }
       : mapped;
 
   // For failure phases, ALWAYS rebuild the message so the
