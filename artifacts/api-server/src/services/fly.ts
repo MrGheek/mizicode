@@ -98,7 +98,11 @@ export async function createMachine(params: CreateMachineParams): Promise<Create
       },
       env: params.env,
       guest: {
-        cpu_kind: "shared",
+        // cpu_kind must match FLY_MACHINE_SIZE:
+        //   "shared-cpu-1x" → "shared"  (max 2048 MB)
+        //   "performance-1x" → "performance" (up to 8192 MB)
+        // Sending cpu_kind: "shared" with memory_mb > 2048 returns HTTP 400.
+        cpu_kind: FLY_MACHINE_SIZE.startsWith("performance") ? "performance" : "shared",
         cpus: 1,
         memory_mb: FLY_MACHINE_MEMORY_MB,
       },
