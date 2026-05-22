@@ -234,8 +234,12 @@ node -e "
 const fs = require('fs');
 const p = '/opt/bolt-diy/vite.config.ts';
 let c = fs.readFileSync(p, 'utf8');
+// Always force allowedHosts: true — do NOT skip if the key already exists.
+// bolt.diy ships with a restrictive allowedHosts value; skipping would leave it blocked.
 if (c.includes('allowedHosts')) {
-  console.log('[onstart] vite.config.ts already has allowedHosts, skipping');
+  const fixed = c.replace(/allowedHosts\s*:\s*[^,}\n]+/g, 'allowedHosts: true');
+  fs.writeFileSync(p, fixed);
+  console.log('[onstart] vite.config.ts: forced existing allowedHosts to true');
 } else {
   const idx = c.indexOf('  return {');
   if (idx === -1) {

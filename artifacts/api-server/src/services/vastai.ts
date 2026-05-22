@@ -351,6 +351,11 @@ export function buildOnStartScript(profileConfig: {
         // NIM sessions don't need external SSH — users connect via bolt.diy (5180).
         `sed -i '/^#*Port /d' /etc/ssh/sshd_config 2>/dev/null || true`,
         `echo "Port 2222" >> /etc/ssh/sshd_config 2>/dev/null || true`,
+        // bolt.diy's vite.config.ts ships with a restrictive allowedHosts value.
+        // The patch scripts in bolt-vite-patch.mjs and onstart.sh both had a bug:
+        // they checked if 'allowedHosts' existed and skipped if so — never checking
+        // whether the value was actually `true`. Force it here before onstart.sh runs.
+        `node -e "const fs=require('fs'),p='/opt/bolt-diy/vite.config.ts';try{let c=fs.readFileSync(p,'utf8');const f=c.replace(/allowedHosts\\s*:\\s*[^,}\\n]+/g,'allowedHosts: true');fs.writeFileSync(p,f);console.log('[nim-fix] bolt-diy vite allowedHosts forced to true')}catch(e){console.error('[nim-fix] warn:',e.message)}" 2>/dev/null || true`,
         // Swarm-specific model override for economy/throughput-optimised workers.
         // Includes provider-specific API credentials so the LiteLLM "swarm" route
         // uses the correct upstream even when swarm uses a different provider than
