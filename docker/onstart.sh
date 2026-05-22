@@ -649,6 +649,10 @@ log "Starting LLM backend in background..."
     # LLM API instead of a locally-downloaded model. LiteLLM proxies the API so
     # claw-code still sees the standard Anthropic/OpenAI interface on localhost.
     if [ -n "${NIM_MODEL_ID:-}" ]; then
+        # Default VLLM_PORT to 8081 — nim-proxy.py binds here and the probe uses it.
+        # The generated onstart script also exports this, but guard here so the
+        # probe and proxy always agree even when launched independently.
+        VLLM_PORT="${VLLM_PORT:-8081}"
         log "=== NIM Mode: Using hosted inference (${NIM_MODEL_ID}) via ${NIM_API_BASE} ==="
         echo "starting_llm" > "$STATUS_FILE"
         # Build the bolt.diy public URL so the dashboard can surface the Preview tab.

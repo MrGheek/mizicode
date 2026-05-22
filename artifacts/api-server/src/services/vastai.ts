@@ -341,6 +341,9 @@ export function buildOnStartScript(profileConfig: {
         `export NIM_MODEL_ID="${profileConfig.nimModelId}"`,
         `export NIM_API_BASE="${profileConfig.nimApiBase || "https://integrate.api.nvidia.com/v1"}"`,
         `export NIM_API_KEY="${profileConfig.nimApiKey || ""}"`,
+        // VLLM_PORT must be exported so onstart.sh probes the right port.
+        // nim-proxy.py defaults to 8081 — keep in sync with Fly services config.
+        `export VLLM_PORT="8081"`,
         // Swarm-specific model override for economy/throughput-optimised workers.
         // Includes provider-specific API credentials so the LiteLLM "swarm" route
         // uses the correct upstream even when swarm uses a different provider than

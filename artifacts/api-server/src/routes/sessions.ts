@@ -1114,6 +1114,9 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
           VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
           VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
           NUM_GPUS: String(profile.numGpus),
+          // nim-proxy.py listens on VLLM_PORT (default 8081). Must be set here AND
+          // exported by the generated onstart script so onstart.sh probes the right port.
+          VLLM_PORT: "8081",
           // Fly.io exposes internal port 5180 as an HTTP service (fly.ts services config).
           // Override the onstart.sh default (5173) so bolt.diy binds on the exposed port.
           BOLT_PORT: "5180",
