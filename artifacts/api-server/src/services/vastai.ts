@@ -483,6 +483,26 @@ MIZI_GIT_WRAPPER
 chmod +x /usr/local/bin/git`
     : "";
 
+  // NIM-session watchdog: if /opt/onstart.sh's Phase 2 never fires llm_ready
+  // (e.g. nim-proxy.py crashes and the kill-0 fallback misses it), this
+  // background timer force-calls the callback after 5 minutes so the session
+  // never hangs forever.  Harmless if llm_ready was already reported.
+  const nimWatchdogLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
+    ? `# NIM watchdog: force llm_ready callback after 5 min if not already done
+(
+  sleep 300
+  STATUS_FILE="/tmp/instance-status"
+  if [ "$(cat "$STATUS_FILE" 2>/dev/null)" != "llm_ready" ]; then
+    echo "llm_ready" > "$STATUS_FILE"
+    curl -sf -X POST "${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/status" \\
+      -H "Authorization: Bearer ${profileConfig.memAuthToken || ""}" \\
+      -H "Content-Type: application/json" \\
+      -d '{"status":"llm_ready","message":"NIM watchdog: force-marking ready after 5 min"}' \\
+      --max-time 10 >> /var/log/onstart.log 2>&1 || true
+  fi
+) &`
+    : "";
+
   return `#!/bin/bash
 export MODEL_REPO="${profileConfig.modelRepo}"
 export MODEL_QUANT="${profileConfig.modelQuant}"
@@ -499,6 +519,7 @@ ${bridgeLines}
 ${teamLine}
 ${skillsLine}
 ${githubLines}
+${nimWatchdogLines}
 /opt/onstart.sh
 `;
 }
