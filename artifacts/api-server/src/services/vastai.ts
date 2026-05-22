@@ -585,8 +585,8 @@ chmod +x /usr/local/bin/git`
   echo "[nim-gate] Starting full-stack poll (nginx :5180 with auth, deadline 420s)..." >> /var/log/onstart.log
   # Phase 1: wait for password file (signals nginx auth is configured)
   until [ -f "\$PASS_FILE" ] || [ \$(date +%s) -gt \$DEADLINE ]; do sleep 2; done
-  WORKSPACE_PASS=\$(cat "\$PASS_FILE" 2>/dev/null || echo "")
-  echo "[nim-gate] Password file ready, beginning nginx poll..." >> /var/log/onstart.log
+  WORKSPACE_PASS=\$(tr -d '\\n\\r' < "\$PASS_FILE" 2>/dev/null || echo "")
+  echo "[nim-gate] Password file ready (len=\${#WORKSPACE_PASS}), beginning nginx poll..." >> /var/log/onstart.log
   # Phase 2: poll nginx :5180 with auth until 200/302 or deadline
   while [ \$(date +%s) -lt \$DEADLINE ]; do
     ATTEMPT=\$((ATTEMPT + 1))
