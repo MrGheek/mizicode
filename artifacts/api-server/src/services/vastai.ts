@@ -516,30 +516,52 @@ chmod +x /usr/local/bin/git`
   // Progress pings every 60 s keep the boot log alive so the user sees
   // compilation is in progress rather than a stale "compiling" message.
   const nimBoltWarmupLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
-    ? `# Bolt.diy gate: one long-blocking curl triggers Vite compilation, bolt_ready fires on completion.
-# Vite's dev server accepts connections immediately but BLOCKS the first HTTP response
-# until TypeScript compilation finishes (2-5 min on shared-cpu-1x).  We exploit this:
-# curl --max-time 420 http://localhost:5173 returns only once compiled (or times out).
-# A parallel ping loop sends starting_llm every 60 s so the boot log stays alive.
+    ? `# Bolt.diy gate: poll localhost:5173 until Vite returns 200/302, then fire bolt_ready.
+# The single-curl approach failed because curl fires at t+15s when Vite is not yet
+# listening (pnpm still resolving deps) -> ECONNREFUSED -> exits immediately.
+# This loop retries on ALL errors until 200/302 (Vite ready) or 420s deadline.
+#   exit 7  = ECONNREFUSED: Vite not up yet   -> retry in 3s
+#   exit 28 = curl timeout: Vite blocking req  -> retry in 3s (compilation in progress)
+#   exit 22 = HTTP error (4xx/5xx)             -> retry in 5s
+#   http 200/302                               -> success, fire bolt_ready
 (
   sleep 15
-  echo "[nim-gate] Firing Vite compile-trigger request (blocks until first build done)..." >> /var/log/onstart.log
-  curl -sf --max-time 420 http://localhost:5173 > /tmp/nim-gate-result 2>&1 &
-  GATE_PID=\$!
-  ELAPSED=15
-  while kill -0 \$GATE_PID 2>/dev/null; do
-    sleep 60
-    ELAPSED=\$((ELAPSED + 60))
-    curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
-      -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
-      -H "Content-Type: application/json" \\
-      -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy compiling... (\${ELAPSED}s elapsed)\\"}" \\
-      --max-time 10 >> /var/log/onstart.log 2>&1 || true
+  START_TIME=\$(date +%s)
+  DEADLINE=\$((START_TIME + 420))
+  LAST_PING=\$START_TIME
+  ATTEMPT=0
+  EXIT_CODE=1
+  echo "[nim-gate] Starting Vite poll loop (deadline in 420s)..." >> /var/log/onstart.log
+  while [ \$(date +%s) -lt \$DEADLINE ]; do
+    ATTEMPT=\$((ATTEMPT + 1))
+    NOW=\$(date +%s)
+    ELAPSED=\$((NOW - START_TIME + 15))
+    HTTP_CODE=\$(curl -s -o /tmp/nim-gate-result -w "%{http_code}" --max-time 30 "http://localhost:5173/" 2>/dev/null)
+    CURL_EXIT=\$?
+    echo "[nim-gate] Attempt \${ATTEMPT} (\${ELAPSED}s): http=\${HTTP_CODE} exit=\${CURL_EXIT}" >> /var/log/onstart.log
+    if [ "\$HTTP_CODE" = "200" ] || [ "\$HTTP_CODE" = "302" ]; then
+      EXIT_CODE=0
+      break
+    fi
+    # Send a progress ping every 60s to keep the boot log alive
+    if [ \$((NOW - LAST_PING)) -ge 60 ]; then
+      LAST_PING=\$NOW
+      curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
+        -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
+        -H "Content-Type: application/json" \\
+        -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy compiling... (\${ELAPSED}s elapsed)\\"}" \\
+        --max-time 10 >> /var/log/onstart.log 2>&1 || true
+    fi
+    # ECONNREFUSED: Vite not listening yet — retry quickly
+    if [ "\$CURL_EXIT" = "7" ]; then
+      sleep 3
+    else
+      sleep 3
+    fi
   done
-  wait \$GATE_PID
-  EXIT_CODE=\$?
+  ELAPSED=\$(( \$(date +%s) - START_TIME + 15 ))
   touch /tmp/nim-bolt-ready
-  echo "[nim-gate] Vite gate exit=\${EXIT_CODE} at \${ELAPSED}s" >> /var/log/onstart.log
+  echo "[nim-gate] Gate done: exit=\${EXIT_CODE} elapsed=\${ELAPSED}s attempts=\${ATTEMPT}" >> /var/log/onstart.log
   if [ \$EXIT_CODE -eq 0 ]; then
     curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
       -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
