@@ -3591,8 +3591,8 @@ export default function SessionDetail() {
         </div>
       </div>
 
-      {/* Glass cockpit bar — calm single strip: intent context left, Details + notif right */}
-      <div
+      {/* Glass cockpit bar — hidden while booting; shown once ready */}
+      {!isBooting && <div
         className="flex items-center justify-between px-4 py-2.5 rounded-xl"
         style={{ background: "var(--bg-glass)", border: "1px solid var(--border-glass)" }}
       >
@@ -3765,7 +3765,7 @@ export default function SessionDetail() {
             </PopoverContent>
           </Popover>
         </div>
-      </div>
+      </div>}
 
       {activeTab === "overview" && (
         <>
@@ -3846,16 +3846,16 @@ export default function SessionDetail() {
             </Card>
           ) : null}
 
-          {/* Soft-interrupt chat panel — shown for all active sessions */}
-          {isActive && (
+          {/* Soft-interrupt chat panel — hidden while booting (agent isn't ready yet) */}
+          {isActive && !isBooting && (
             <ChatPanel sessionId={sessionId} isActive={isActive} />
           )}
 
           {/* Plan progress — shows MIZI's current task, plan checkpoint, active files */}
-          <PlanProgressPanel sessionId={sessionId} isActive={isActive} />
+          {!isBooting && <PlanProgressPanel sessionId={sessionId} isActive={isActive} />}
 
-          {/* Team Activity — compact summary card for team sessions */}
-          {hasNamedTeamMembers && (() => {
+          {/* Team Activity — compact summary card for team sessions (hidden while booting) */}
+          {!isBooting && hasNamedTeamMembers && (() => {
             const activeLaneCount = (bgCoordData?.lanes ?? []).filter(
               (ls) => ls.lane.status === "active"
             ).length;
@@ -3902,8 +3902,8 @@ export default function SessionDetail() {
             );
           })()}
 
-          {/* Team Access — shown when session has non-shared team members */}
-          {(() => {
+          {/* Team Access — hidden while booting */}
+          {!isBooting && (() => {
             type TM = { name: string; password?: string | null; path: string; ideUrl?: string | null };
             const allMembers = (session.teamMembers as TM[] | null) ?? [];
             const namedMembers = allMembers.filter((m) => m.name !== "__shared__");
@@ -4042,8 +4042,8 @@ export default function SessionDetail() {
             );
           })()}
 
-          {/* Details */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Details — hidden while booting */}
+          {!isBooting && <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card className="bg-card/50 border-border/50">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground font-medium uppercase tracking-wide">
@@ -4222,10 +4222,10 @@ export default function SessionDetail() {
                 })()}
               </CardContent>
             </Card>
-          </div>
+          </div>}
 
-          {/* Quick links — always visible for non-stopped sessions so users can reach Files/Snapshots without discovering the sheet */}
-          {session.status !== "stopped" && session.status !== "error" && (
+          {/* Quick links — hidden while booting */}
+          {!isBooting && session.status !== "stopped" && session.status !== "error" && (
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => { lastDetailTabRef.current = "files"; setActiveTab("files"); }}
