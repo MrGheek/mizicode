@@ -225,6 +225,9 @@ const INSTANCE_STATUS_MAP: Record<string, { status: typeof sessionsTable.$inferS
   skills_compiling: { status: "starting",    statusMessage: "Compiling Smart Skills bundle..." },
   skills_ready:     { status: "starting",    statusMessage: "Smart Skills loaded — LLM loading in background..." },
   llm_ready:        { status: "ready",       statusMessage: "Session is ready" },
+  // NIM-specific: sent by the bolt.diy gate once Vite responds to the first request.
+  // This is the signal that unlocks "Open Coding Environment" for NIM sessions.
+  bolt_ready:       { status: "ready",       statusMessage: "Bolt.diy is ready — open your coding environment!" },
   // Failure phases — all map to status "error". The persisted statusMessage
   // is built per-request to preserve the structured cause marker.
   ...Object.fromEntries(
@@ -265,6 +268,22 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
     return;
   }
 
+  // Fetch the current session early — needed for both the NIM llm_ready
+  // override below and the post-ready side-effects further down.
+  const [prevSession] = await db
+    .select({ status: sessionsTable.status, provider: sessionsTable.provider })
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, sessionId));
+
+  // For NIM sessions, `llm_ready` means "NIM proxy is up" but bolt.diy's Vite
+  // dev server hasn't finished its first TypeScript compilation yet — the UI
+  // would show a blank black page. Keep the session in "starting" state until
+  // the bolt.diy gate script sends `bolt_ready` (once curl to :5173 succeeds).
+  const effectiveMapped =
+    instanceStatus === "llm_ready" && prevSession?.provider === "nim"
+      ? { status: "starting" as const, statusMessage: "Bolt.diy compiling — first Vite build (~2 min)..." }
+      : mapped;
+
   // For failure phases, ALWAYS rebuild the message so the
   // `boot_failure:<cause>: ` marker survives even when onstart.sh supplies
   // its own human-readable message text. Without this, the dashboard's
@@ -273,23 +292,21 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
   const isFailurePhase = instanceStatus in FAILURE_DEFAULT_MESSAGES;
   const statusMessage = isFailurePhase
     ? buildFailureStatusMessage(instanceStatus, message)
-    : ((message?.trim()) || mapped.statusMessage);
+    : ((message?.trim()) || effectiveMapped.statusMessage);
 
-  logger.info({ sessionId, instanceStatus, dbStatus: mapped.status, statusMessage }, "Instance status callback received");
-
-  const [prevSession] = await db.select({ status: sessionsTable.status }).from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+  logger.info({ sessionId, instanceStatus, dbStatus: effectiveMapped.status, statusMessage }, "Instance status callback received");
 
   await db
     .update(sessionsTable)
     .set({
-      status: mapped.status,
+      status: effectiveMapped.status,
       statusMessage,
       ...(boltUrl ? { boltDiyUrl: boltUrl } : {}),
       updatedAt: new Date(),
     })
     .where(eq(sessionsTable.id, sessionId));
 
-  if (mapped.status === "ready" && prevSession?.status !== "ready") {
+  if (effectiveMapped.status === "ready" && prevSession?.status !== "ready") {
     autoEnqueueRepoIndexIfNeeded(sessionId).catch(() => {});
 
     // Activate lanes provisioned by POST /sessions/orchestrate.
@@ -304,8 +321,8 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
   }
 
   if (
-    (mapped.status === "error" && prevSession?.status !== "error") ||
-    (mapped.status === "stopped" && prevSession?.status !== "stopped")
+    (effectiveMapped.status === "error" && prevSession?.status !== "error") ||
+    (effectiveMapped.status === "stopped" && prevSession?.status !== "stopped")
   ) {
     cleanupSessionResources(sessionId).catch(() => {});
   }
@@ -313,7 +330,7 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
   // Post-session plan reassessment: fire-and-forget when a session stops.
   // Retrieves the session's linked plan_id and re-evaluates task statuses
   // against memory observations. Skips user-confirmed tasks.
-  if (mapped.status === "stopped" && prevSession?.status !== "stopped") {
+  if (effectiveMapped.status === "stopped" && prevSession?.status !== "stopped") {
     (async () => {
       try {
         const [stoppedSession] = await db.select({ planId: sessionsTable.planId, id: sessionsTable.id }).from(sessionsTable).where(eq(sessionsTable.id, sessionId));
