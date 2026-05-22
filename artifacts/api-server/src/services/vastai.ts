@@ -516,42 +516,43 @@ chmod +x /usr/local/bin/git`
   // Progress pings every 60 s keep the boot log alive so the user sees
   // compilation is in progress rather than a stale "compiling" message.
   const nimBoltWarmupLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
-    ? `# Bolt.diy gate: poll Vite, send bolt_ready when it responds.
+    ? `# Bolt.diy gate: one long-blocking curl triggers Vite compilation, bolt_ready fires on completion.
+# Vite's dev server accepts connections immediately but BLOCKS the first HTTP response
+# until TypeScript compilation finishes (2-5 min on shared-cpu-1x).  We exploit this:
+# curl --max-time 420 http://localhost:5173 returns only once compiled (or times out).
+# A parallel ping loop sends starting_llm every 60 s so the boot log stays alive.
 (
-  ELAPSED=0
-  INTERVAL=15
-  MAX_WAIT=480
-  LAST_PING=0
-  echo "[nim-gate] Waiting for bolt.diy Vite to finish first compile..." >> /var/log/onstart.log
-  while [ $ELAPSED -lt $MAX_WAIT ]; do
-    sleep $INTERVAL
-    ELAPSED=$((ELAPSED + INTERVAL))
-    if curl -sf --max-time 10 http://localhost:5173 > /dev/null 2>&1; then
-      echo "[nim-gate] bolt.diy Vite responded after \${ELAPSED}s — sending bolt_ready" >> /var/log/onstart.log
-      touch /tmp/nim-bolt-ready
-      curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
-        -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
-        -H "Content-Type: application/json" \\
-        -d "{\\\"status\\\":\\\"bolt_ready\\\",\\\"message\\\":\\\"Bolt.diy ready (\${ELAPSED}s) — open your coding environment!\\\"}" \\
-        --max-time 10 >> /var/log/onstart.log 2>&1 || true
-      exit 0
-    fi
-    if [ $((ELAPSED - LAST_PING)) -ge 60 ]; then
-      LAST_PING=$ELAPSED
-      curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
-        -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
-        -H "Content-Type: application/json" \\
-        -d "{\\\"status\\\":\\\"starting_llm\\\",\\\"message\\\":\\\"Bolt.diy compiling... (\${ELAPSED}s elapsed)\\\"}" \\
-        --max-time 10 >> /var/log/onstart.log 2>&1 || true
-    fi
+  sleep 15
+  echo "[nim-gate] Firing Vite compile-trigger request (blocks until first build done)..." >> /var/log/onstart.log
+  curl -sf --max-time 420 http://localhost:5173 > /tmp/nim-gate-result 2>&1 &
+  GATE_PID=\$!
+  ELAPSED=15
+  while kill -0 \$GATE_PID 2>/dev/null; do
+    sleep 60
+    ELAPSED=\$((ELAPSED + 60))
+    curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
+      -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
+      -H "Content-Type: application/json" \\
+      -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy compiling... (\${ELAPSED}s elapsed)\\"}" \\
+      --max-time 10 >> /var/log/onstart.log 2>&1 || true
   done
-  echo "[nim-gate] Timed out after \${MAX_WAIT}s — force bolt_ready" >> /var/log/onstart.log
+  wait \$GATE_PID
+  EXIT_CODE=\$?
   touch /tmp/nim-bolt-ready
-  curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
-    -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
-    -H "Content-Type: application/json" \\
-    -d '{"status":"bolt_ready","message":"Bolt.diy warmup timed out — opening anyway (may take a moment to load)"}' \\
-    --max-time 10 >> /var/log/onstart.log 2>&1 || true
+  echo "[nim-gate] Vite gate exit=\${EXIT_CODE} at \${ELAPSED}s" >> /var/log/onstart.log
+  if [ \$EXIT_CODE -eq 0 ]; then
+    curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
+      -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
+      -H "Content-Type: application/json" \\
+      -d "{\\"status\\":\\"bolt_ready\\",\\"message\\":\\"Bolt.diy ready (\${ELAPSED}s) -- open your coding environment!\\"}" \\
+      --max-time 10 >> /var/log/onstart.log 2>&1 || true
+  else
+    curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
+      -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
+      -H "Content-Type: application/json" \\
+      -d '{"status":"bolt_ready","message":"Bolt.diy warmup timed out -- opening anyway (may take a moment to load)"}' \\
+      --max-time 10 >> /var/log/onstart.log 2>&1 || true
+  fi
 ) &`
     : "";
 

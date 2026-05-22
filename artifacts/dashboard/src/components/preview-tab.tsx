@@ -361,10 +361,10 @@ export function PreviewTab({
     }
   };
 
-  const portChips: { label: string; url: string }[] = [
-    ...(previewUrl    ? [{ label: "3000", url: previewUrl }]    : []),
-    ...(boltDiyUrl    ? [{ label: "5180", url: boltDiyUrl }]    : []),
-    ...(codeServerUrl ? [{ label: "8080", url: codeServerUrl }] : []),
+  const portChips: { label: string; url: string; newTab?: boolean }[] = [
+    ...(previewUrl    ? [{ label: "3000", url: previewUrl }]                         : []),
+    ...(boltDiyUrl    ? [{ label: "5180", url: boltDiyUrl,    newTab: true }]        : []),
+    ...(codeServerUrl ? [{ label: "8080", url: codeServerUrl, newTab: true }]        : []),
   ];
 
   const noUrl = !url;
@@ -448,19 +448,23 @@ export function PreviewTab({
       <div className="flex items-center gap-1.5 flex-wrap">
         {portChips.map(chip => {
           const swapped = url ? swapPort(url, chip.url) : chip.url;
-          const active  = url === chip.url || url === swapped;
+          const active  = !chip.newTab && (url === chip.url || url === swapped);
           return (
             <button
               key={chip.label}
-              onClick={() => navigate(swapped)}
-              title={swapped}
-              className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border transition-colors ${
+              onClick={() => chip.newTab
+                ? window.open(swapped, "_blank", "noopener,noreferrer")
+                : navigate(swapped)
+              }
+              title={chip.newTab ? `Open ${swapped} in new tab` : swapped}
+              className={`flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border transition-colors ${
                 active
                   ? "bg-primary/15 text-primary border-primary/40"
                   : "bg-secondary/40 text-muted-foreground border-border/40 hover:border-primary/30 hover:text-foreground"
               }`}
             >
               :{chip.label}
+              {chip.newTab && <ExternalLink className="w-2.5 h-2.5 ml-0.5 opacity-60" />}
             </button>
           );
         })}
