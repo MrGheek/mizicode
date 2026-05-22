@@ -3834,14 +3834,36 @@ export default function SessionDetail() {
                     Bolt.diy with Kimi K2.6 AI — editor, terminal, and live preview all in one.
                   </p>
                 </div>
-                <Button
-                  size="lg"
-                  className="gap-2 px-8"
-                  onClick={() => window.open(session.boltDiyUrl || "", "_blank")}
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  Open Coding Environment
+                <Button size="lg" className="gap-2 px-8" asChild>
+                  <a href={session.boltDiyUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="w-4 h-4" />
+                    Open Coding Environment
+                  </a>
                 </Button>
+                {session.workspaceUser && session.workspacePassword && (
+                  <div className="w-full rounded-lg border border-border/60 bg-background/60 px-4 py-3 text-left space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Login credentials</p>
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span className="text-muted-foreground shrink-0">Username</span>
+                      <span className="font-mono text-xs bg-secondary/60 px-2 py-0.5 rounded">{session.workspaceUser}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span className="text-muted-foreground shrink-0">Password</span>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="font-mono text-xs bg-secondary/60 px-2 py-0.5 rounded truncate">{session.workspacePassword}</span>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() => navigator.clipboard.writeText(session.workspacePassword!)}
+                          title="Copy password"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ) : null}
