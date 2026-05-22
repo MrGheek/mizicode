@@ -95,12 +95,15 @@ export async function createMachine(params: CreateMachineParams): Promise<Create
         memory_mb: FLY_MACHINE_MEMORY_MB,
       },
       // Expose all required workspace ports as TCP services.
-      // Port 22 (SSH) uses a plain TCP handler so the SSH daemon can negotiate
-      // the protocol directly. Ports 3000/5180/5181/8080/8081 use ["tls","http"]
-      // so Fly's edge terminates TLS and forwards plain HTTP to the machine —
-      // this allows https:// URLs (e.g. boltDiyUrl, codeServerUrl) to work correctly.
+      // Ports 3000/5180/5181/8080/8081 use ["tls","http"] so Fly's edge
+      // terminates TLS and forwards plain HTTP to the machine — this allows
+      // https:// URLs (e.g. boltDiyUrl, codeServerUrl) to work correctly.
+      // NOTE: Port 22 (SSH) is intentionally omitted. Fly's hallpass SSH proxy
+      // always tries to bind port 22 inside the microVM; if we also declare port 22
+      // as a service, hallpass and the container's sshd both try to bind it, hallpass
+      // loses, crashes in a restart loop, and the machine panics. NIM sessions don't
+      // need external SSH access — users connect via bolt.diy (5180) instead.
       services: [
-        { ports: [{ port: 22,    handlers: []                 }], protocol: "tcp", internal_port: 22   },
         { ports: [{ port: 3000,  handlers: ["tls", "http"] }], protocol: "tcp", internal_port: 3000  },
         { ports: [{ port: 5180,  handlers: ["tls", "http"] }], protocol: "tcp", internal_port: 5180  },
         { ports: [{ port: 5181,  handlers: ["tls", "http"] }], protocol: "tcp", internal_port: 5181  },
