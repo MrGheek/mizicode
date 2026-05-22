@@ -8,8 +8,16 @@ import { readFileSync, writeFileSync } from 'fs';
 const p = '/opt/bolt-diy/vite.config.ts';
 let c = readFileSync(p, 'utf8');
 
+// If allowedHosts already exists in the file, force its value to `true`.
+// Do NOT skip — the existing value might be a restrictive array like ['localhost'].
 if (c.includes('allowedHosts')) {
-  console.log('[bolt-patch] vite.config.ts already has allowedHosts, skipping');
+  const patched = c.replace(/allowedHosts\s*:\s*[^,}\n]+/g, 'allowedHosts: true');
+  if (!patched.includes('allowedHosts: true')) {
+    console.error('[bolt-patch] ERROR: failed to force allowedHosts: true — check vite.config.ts');
+    process.exit(1);
+  }
+  writeFileSync(p, patched);
+  console.log('[bolt-patch] vite.config.ts: forced existing allowedHosts to true');
   process.exit(0);
 }
 
