@@ -511,16 +511,16 @@ chmod +x /usr/local/bin/git`
   // Progress pings every 60 s keep the boot log alive so the user sees
   // compilation is in progress rather than a stale "compiling" message.
   const nimBoltWarmupLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
-    ? `# Bolt.diy gate: polls Vite directly on :5173 until 200/302, then fires bolt_ready.
+    ? `# Bolt.diy gate — two phases:
+#   Phase 1: poll :5173 until Vite is up (first 200).
+#   Phase 2: wait for /opt/bolt-diy/node_modules/.vite/deps/_metadata.json —
+#            Vite writes this file only when dep optimisation is fully complete.
+#            Before this file exists the page loads HTML but JS bundles are still
+#            being compiled; the user sees a black screen until Vite auto-reloads.
 #
-# Why :5173 (Vite) not :5180 (nginx with auth):
-#   - The nginx htpasswd is derived from the NGINX_AUTH_PASS provisioning env var.
-#   - onstart.sh generates a DIFFERENT random password into /workspace/.code-server-password.
-#   - Reading the file and sending it to nginx always produces 401 (password mismatch).
-#   - Polling Vite directly on the internal port bypasses auth entirely.
-#
-# On 4096 MB machines esbuild does not OOM-kill nginx, so a brief white screen
-# while JS bundles compile is acceptable (typically < 5 min on performance-1x:4096MB).
+# Why :5173 not :5180: nginx htpasswd is derived from the NGINX_AUTH_PASS
+# provisioning env var while the password file on disk is a fresh random value
+# written at runtime — they never match, producing 401 on every attempt.
 (
   sleep 15
   START_TIME=\$(date +%s)
@@ -528,7 +528,9 @@ chmod +x /usr/local/bin/git`
   LAST_PING=\$START_TIME
   ATTEMPT=0
   EXIT_CODE=1
-  echo "[nim-gate] Starting Vite poll (:5173 direct, deadline 720s)..." >> /var/log/onstart.log
+  DEPS_META="/opt/bolt-diy/node_modules/.vite/deps/_metadata.json"
+  echo "[nim-gate] Phase 1: polling Vite :5173 (deadline 720s)..." >> /var/log/onstart.log
+  # Phase 1 — wait for Vite to respond at all
   while [ \$(date +%s) -lt \$DEADLINE ]; do
     ATTEMPT=\$((ATTEMPT + 1))
     NOW=\$(date +%s)
@@ -541,17 +543,41 @@ chmod +x /usr/local/bin/git`
       EXIT_CODE=0
       break
     fi
-    # Send a progress ping every 60s to keep the boot log alive
     if [ \$((NOW - LAST_PING)) -ge 60 ]; then
       LAST_PING=\$NOW
       curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
         -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
         -H "Content-Type: application/json" \\
-        -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy compiling... (\${ELAPSED}s elapsed)\\"}" \\
+        -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy starting... (\${ELAPSED}s elapsed)\\"}" \\
         --max-time 10 >> /var/log/onstart.log 2>&1 || true
     fi
     sleep 5
   done
+  # Phase 2 — wait for dep optimisation to complete (metadata.json is written
+  # by Vite at the very end of esbuild dep bundling; before it exists the browser
+  # gets the HTML shell but JS bundles are still compiling → black screen)
+  if [ \$EXIT_CODE -eq 0 ] && [ ! -f "\$DEPS_META" ]; then
+    echo "[nim-gate] Phase 2: waiting for dep optimisation (_metadata.json)..." >> /var/log/onstart.log
+    while [ ! -f "\$DEPS_META" ] && [ \$(date +%s) -lt \$DEADLINE ]; do
+      NOW=\$(date +%s)
+      ELAPSED=\$((NOW - START_TIME + 15))
+      if [ \$((NOW - LAST_PING)) -ge 60 ]; then
+        LAST_PING=\$NOW
+        echo "[nim-gate] Still compiling JS deps (\${ELAPSED}s)..." >> /var/log/onstart.log
+        curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
+          -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
+          -H "Content-Type: application/json" \\
+          -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy bundling JS deps... (\${ELAPSED}s)\\"}" \\
+          --max-time 10 >> /var/log/onstart.log 2>&1 || true
+      fi
+      sleep 5
+    done
+    if [ -f "\$DEPS_META" ]; then
+      echo "[nim-gate] Dep optimisation complete (_metadata.json found)" >> /var/log/onstart.log
+    else
+      echo "[nim-gate] Deadline reached before dep optimisation finished — opening anyway" >> /var/log/onstart.log
+    fi
+  fi
   ELAPSED=\$(( \$(date +%s) - START_TIME + 15 ))
   touch /tmp/nim-bolt-ready
   echo "[nim-gate] Gate done: exit=\${EXIT_CODE} elapsed=\${ELAPSED}s attempts=\${ATTEMPT}" >> /var/log/onstart.log
@@ -559,13 +585,13 @@ chmod +x /usr/local/bin/git`
     curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
       -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
       -H "Content-Type: application/json" \\
-      -d "{\\"status\\":\\"bolt_ready\\",\\"message\\":\\"Bolt.diy ready (\${ELAPSED}s) -- open your coding environment!\\"}" \\
+      -d "{\\"status\\":\\"bolt_ready\\",\\"message\\":\\"Bolt.diy ready (\${ELAPSED}s) — open your coding environment!\\"}" \\
       --max-time 10 >> /var/log/onstart.log 2>&1 || true
   else
     curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
       -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
       -H "Content-Type: application/json" \\
-      -d '{"status":"bolt_ready","message":"Bolt.diy warmup timed out -- opening anyway (may take a moment to load)"}' \\
+      -d '{"status":"bolt_ready","message":"Bolt.diy warmup timed out — opening anyway (may take a moment to load)"}' \\
       --max-time 10 >> /var/log/onstart.log 2>&1 || true
   fi
 ) &`
