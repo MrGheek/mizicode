@@ -529,6 +529,10 @@ chmod +x /usr/local/bin/git`
   ATTEMPT=0
   EXIT_CODE=1
   DEPS_META="/opt/bolt-diy/node_modules/.vite/deps/_metadata.json"
+  # Remove any stale _metadata.json from a previous session on this machine.
+  # Without this, Phase 2 would be skipped on warm machines (file already exists)
+  # even though Vite is re-running dep optimisation — causing a black screen.
+  rm -f "\$DEPS_META"
   echo "[nim-gate] Phase 1: polling Vite :5173 (deadline 720s)..." >> /var/log/onstart.log
   # Phase 1 — wait for Vite to respond at all
   while [ \$(date +%s) -lt \$DEADLINE ]; do
