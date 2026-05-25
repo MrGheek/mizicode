@@ -19,7 +19,7 @@
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
     "@workspace/integrations-openai-ai-server": "workspace:*",
-    "better-sqlite3": "^12.9.0",
+    "better-sqlite3": "^12.10.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2",
     "drizzle-orm": "catalog:",
@@ -27,7 +27,7 @@
     "pino": "^9",
     "pino-http": "^10",
     "playwright": "^1.60.0",
-    "ws": "^8.20.0",
+    "ws": "^8.21.0",
     "zod": "catalog:"
   },
   "devDependencies": {
