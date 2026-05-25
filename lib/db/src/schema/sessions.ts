@@ -1,6 +1,6 @@
 import { pgTable, serial, text, integer, real, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
-import { z } from "zod/v4";
+import { z } from "zod";
 import { gpuProfilesTable } from "./gpu-profiles";
 import { skillBundlesTable } from "./skills";
 import { projectPlansTable } from "./project-plan";

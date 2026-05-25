@@ -1,6 +1,6 @@
 import { pgTable, serial, text, integer, boolean, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
-import { z } from "zod/v4";
+import { z } from "zod";
 import { gpuProfilesTable } from "./gpu-profiles";
 
 export const templatesTable = pgTable("templates", {

@@ -1,6 +1,6 @@
 import { pgTable, serial, text, integer, boolean, timestamp, jsonb, uniqueIndex, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
-import { z } from "zod/v4";
+import { z } from "zod";
 
 export const skillSourcesTable = pgTable("skill_sources", {
   id: serial("id").primaryKey(),
