@@ -23,11 +23,12 @@ import { LaunchSessionDialog } from "@/components/launch-session-dialog";
 import type { LaunchOptions } from "@/components/launch-session-dialog";
 import {
   Sparkles, Loader2, Terminal, ArrowRight,
-  GitBranch, Eye, EyeOff, Zap, Cpu, Github,
+  GitBranch, Eye, EyeOff, Zap, Cpu,
   ChevronDown, ChevronRight, RotateCcw, X, Globe,
   ClipboardList, Plus, Trash2, GripVertical,
   Check, AlertTriangle,
 } from "lucide-react";
+import { FaGithub as Github } from "react-icons/fa";
 import { SwarmPill } from "@/components/swarm-activity-panel";
 import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { GitHubConnectionWidget } from "@/components/github-connection-widget";

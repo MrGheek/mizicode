@@ -18,8 +18,9 @@ import {
 } from "@/components/ui/command";
 import {
   Loader2, ChevronDown, ChevronRight, Wand2, Info,
-  Users, Plus, X, Play, Eye, EyeOff, KeyRound, Github, ChevronsUpDown, Check, Lock,
+  Users, Plus, X, Play, Eye, EyeOff, KeyRound, ChevronsUpDown, Check, Lock,
 } from "lucide-react";
+import { FaGithub as Github } from "react-icons/fa";
 import { SkillClassBadge } from "@/components/skill-badges";
 import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { useGitHubRepos } from "@/hooks/use-github-repos";

@@ -100,7 +100,7 @@ export function registerMemoryTools(server: McpServer): void {
       memoryType: z.enum(VALID_MEMORY_TYPES as unknown as [string, ...string[]]).optional().describe("Type of memory (default: observation)"),
       scope: z.enum(SCOPE_PRIORITY as unknown as [string, ...string[]]).optional().describe("Memory scope"),
       symbolRef: z.string().optional().describe("Symbol reference (e.g. file path or function name)"),
-      metadata: z.record(z.unknown()).optional().describe("Additional metadata"),
+      metadata: z.record(z.string(), z.unknown()).optional().describe("Additional metadata"),
     }),
   }, async ({ userId, content, sessionId, memoryType, scope, symbolRef, metadata }) => {
     const result = await saveMemoryItem({
