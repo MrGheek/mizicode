@@ -2199,7 +2199,7 @@ function GlassBootBar({
   provider?: string | null;
 }) {
   const [now, setNow] = useState(() => Date.now());
-  const [logOpen, setLogOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(true);
 
   useEffect(() => {
     if (!startedAt) return;
