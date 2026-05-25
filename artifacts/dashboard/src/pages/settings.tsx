@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import {
   Globe, CheckCircle2, XCircle, Loader2, ExternalLink, WifiOff, Activity,
-  ChevronDown, ChevronRight, Layers, Github,
+  ChevronDown, ChevronRight, Layers,
 } from "lucide-react";
+import { FaGithub as Github } from "react-icons/fa";
 import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
 import { useGetSchedulerConfig, useUpdateSchedulerConfig, useListProfiles } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";

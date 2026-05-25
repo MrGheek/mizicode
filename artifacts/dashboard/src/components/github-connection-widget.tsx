@@ -1,6 +1,7 @@
 import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { API_BASE_URL } from "@/lib/api-url";
-import { Github, Loader2, LogOut } from "lucide-react";
+import { Loader2, LogOut } from "lucide-react";
+import { FaGithub as Github } from "react-icons/fa";
 import { Button } from "@/components/ui/button";
 
 function buildOAuthUrl(): string {

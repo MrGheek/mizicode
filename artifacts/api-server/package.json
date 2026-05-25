@@ -19,15 +19,15 @@
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
     "@workspace/integrations-openai-ai-server": "workspace:*",
-    "better-sqlite3": "^12.9.0",
+    "better-sqlite3": "^12.10.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2",
     "drizzle-orm": "catalog:",
     "express": "^5",
-    "pino": "^9",
-    "pino-http": "^10",
+    "pino": "^10",
+    "pino-http": "^11",
     "playwright": "^1.60.0",
-    "ws": "^8.20.0",
+    "ws": "^8.21.0",
     "zod": "catalog:"
   },
   "devDependencies": {
@@ -36,12 +36,12 @@
     "@types/express": "^5.0.6",
     "@types/node": "catalog:",
     "@types/supertest": "^7.2.0",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.7",
     "esbuild": "^0.28.0",
     "esbuild-plugin-pino": "^2.3.3",
     "pino-pretty": "^13",
     "supertest": "^7.2.2",
-    "thread-stream": "3.1.0",
-    "vitest": "^4.1.6"
+    "thread-stream": "^4.2.0",
+    "vitest": "^4.1.7"
   }
 }

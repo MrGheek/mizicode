@@ -137,7 +137,7 @@ export function registerSafetyTools(server: McpServer, getApiKey: () => ApiKeyRe
     description: "[Admin] Update a behavioral guardrail policy for a skill bundle. Requires an API key with the 'admin' scope or the operator token.",
     inputSchema: z.object({
       bundle: z.string().describe("Bundle identifier to update policy for"),
-      rules: z.record(z.unknown()).describe("Policy rules object"),
+      rules: z.record(z.string(), z.unknown()).describe("Policy rules object"),
       description: z.string().optional().describe("Human-readable policy description"),
     }),
   }, async ({ bundle, rules, description }) => {

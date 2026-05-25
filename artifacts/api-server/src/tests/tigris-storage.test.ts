@@ -186,10 +186,9 @@ describe("POST /api/sessions/:id/provision — storage type", () => {
     profileId = profile!.id;
 
     const [session] = await db.insert(sessionsTable).values({
-      name: `storage-prov-test-${Date.now()}`,
       status: "ready",
       profileId,
-      providerKind: "nim",
+      provider: "nim",
     }).returning();
     sessionId = session!.id;
   });

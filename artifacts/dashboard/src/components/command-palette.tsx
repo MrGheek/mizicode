@@ -19,7 +19,6 @@ import {
 import type { CloneSessionResponse, PaletteIntentResponse } from "@workspace/api-client-react";
 import { LaunchSessionDialog, type LaunchOptions, type LaunchPrefill } from "@/components/launch-session-dialog";
 import {
-  Github,
   LayoutDashboard,
   Terminal,
   Wand2,
@@ -38,6 +37,7 @@ import {
   Sparkles,
   Loader2,
 } from "lucide-react";
+import { FaGithub as Github } from "react-icons/fa";
 import {
   Dialog,
   DialogContent,

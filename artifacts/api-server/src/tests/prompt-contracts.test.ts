@@ -320,6 +320,7 @@ describe("renderPrompt generic dispatcher", () => {
       recentObservations: [],
       activeSkills: [],
       rationaleContext: "",
+      maxCandidates: 3,
     });
     expect(msgs).toHaveLength(2);
   });
@@ -338,7 +339,7 @@ describe("renderPrompt generic dispatcher", () => {
   it("routes palette.intent correctly", () => {
     const msgs = renderPrompt("palette.intent", {
       query: "open skills",
-      context: {},
+      context: { route: "/", activeSessionId: null, activeSessionStatus: null, recentSessionIds: [] },
       fewShotExamples: [],
     });
     expect(msgs).toHaveLength(2);
@@ -346,7 +347,7 @@ describe("renderPrompt generic dispatcher", () => {
   });
 
   it("throws for unknown contract ID", () => {
-    expect(() => renderPrompt("unknown.contract", {})).toThrow(
+    expect(() => (renderPrompt as unknown as (id: string, v: unknown) => unknown)("unknown.contract", {})).toThrow(
       "Unknown prompt contract: unknown.contract",
     );
   });
