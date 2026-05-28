@@ -585,17 +585,21 @@ chmod +x /usr/local/bin/git`
   ELAPSED=\$(( \$(date +%s) - START_TIME + 15 ))
   touch /tmp/nim-bolt-ready
   echo "[nim-gate] Gate done: exit=\${EXIT_CODE} elapsed=\${ELAPSED}s attempts=\${ATTEMPT}" >> /var/log/onstart.log
+  # FLY_APP_NAME is injected by Fly.io into every machine — use it to build
+  # the public bolt.diy URL so the dashboard "Open Coding Environment" button
+  # has a URL to link to.
+  BOLT_URL="https://\${FLY_APP_NAME}.fly.dev:5180"
   if [ \$EXIT_CODE -eq 0 ]; then
     curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
       -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
       -H "Content-Type: application/json" \\
-      -d "{\\"status\\":\\"bolt_ready\\",\\"message\\":\\"Bolt.diy ready (\${ELAPSED}s) — open your coding environment!\\"}" \\
+      -d "{\\"status\\":\\"bolt_ready\\",\\"message\\":\\"Bolt.diy ready (\${ELAPSED}s) — open your coding environment!\\",\\"boltUrl\\":\\"\${BOLT_URL}\\"}" \\
       --max-time 10 >> /var/log/onstart.log 2>&1 || true
   else
     curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
       -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
       -H "Content-Type: application/json" \\
-      -d '{"status":"bolt_ready","message":"Bolt.diy warmup timed out — opening anyway (may take a moment to load)"}' \\
+      -d "{\\"status\\":\\"bolt_ready\\",\\"message\\":\\"Bolt.diy warmup timed out — opening anyway (may take a moment to load)\\",\\"boltUrl\\":\\"\${BOLT_URL}\\"}" \\
       --max-time 10 >> /var/log/onstart.log 2>&1 || true
   fi
 ) &`
@@ -614,9 +618,67 @@ chmod +x /usr/local/bin/git`
     curl -sf -X POST "${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/status" \\
       -H "Authorization: Bearer ${profileConfig.memAuthToken || ""}" \\
       -H "Content-Type: application/json" \\
-      -d '{"status":"bolt_ready","message":"NIM watchdog: force-marking ready after 15 min"}' \\
+      -d "{\\"status\\":\\"bolt_ready\\",\\"message\\":\\"NIM watchdog: force-marking ready after 15 min\\",\\"boltUrl\\":\\"https://\${FLY_APP_NAME}.fly.dev:5180\\"}" \\
       --max-time 10 >> /var/log/onstart.log 2>&1 || true
   fi
+) &`
+    : "";
+
+  // Nginx WebSocket proxy + htpasswd fix — runs in background ~60 s after boot.
+  //
+  // Problem 1 (black screen): Vite's HMR client is injected into every HTML page
+  // it serves. By default it tries to open a WebSocket back to the same
+  // host:port the page was loaded from — e.g. wss://mizicode.fly.dev:5180.
+  // nginx proxies that port to Vite on localhost:5173 but, without the
+  // `proxy_http_version 1.1` + Upgrade/Connection headers, nginx drops the
+  // WebSocket upgrade → the HMR connection fails → Vite refuses to serve JS
+  // bundles → the page stays black.
+  //
+  // Problem 2 (wrong credentials): onstart.sh writes a FRESH random htpasswd at
+  // container start, ignoring the NGINX_AUTH_PASS env var that the API server
+  // set.  The dashboard shows the API-server password; nginx rejects it with 401.
+  //
+  // Fix: wait for nginx to start, patch the nginx site config to add WS headers,
+  // rewrite htpasswd from env vars, then send SIGHUP to reload.
+  const nimNginxPatchLines = profileConfig.nimModelId
+    ? `# Nginx WebSocket + htpasswd patch — runs in background after boot
+(
+  LOGF=/var/log/onstart.log
+  echo "[bolt-patch] Waiting for nginx to start..." >> "\$LOGF"
+  # Wait up to 120 s for nginx to be running
+  for i in \$(seq 1 24); do
+    pgrep -x nginx > /dev/null 2>&1 && break
+    sleep 5
+  done
+  if ! pgrep -x nginx > /dev/null 2>&1; then
+    echo "[bolt-patch] Nginx not running after 120 s — skipping" >> "\$LOGF"
+    exit 0
+  fi
+  # Find the nginx site config that proxies to bolt.diy (port 5173)
+  CONF=\$(grep -rl "5173" /etc/nginx/ 2>/dev/null | head -1)
+  if [ -z "\$CONF" ]; then
+    echo "[bolt-patch] No nginx config referencing 5173 — skipping" >> "\$LOGF"
+    exit 0
+  fi
+  echo "[bolt-patch] Patching \$CONF" >> "\$LOGF"
+  # Fix 1: Add WebSocket upgrade headers so Vite HMR works through nginx
+  if ! grep -q "proxy_http_version" "\$CONF"; then
+    sed -i 's|proxy_pass http://localhost:5173;|proxy_pass http://localhost:5173;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;|' "\$CONF"
+    echo "[bolt-patch] Added WebSocket proxy headers" >> "\$LOGF"
+  fi
+  # Fix 2: Replace htpasswd with the dashboard-displayed credentials so users
+  # can actually authenticate with the password shown on the session page.
+  if [ -n "\${NGINX_AUTH_PASS:-}" ] && [ -n "\${NGINX_AUTH_USER:-}" ]; then
+    HTPASSWD=\$(grep -o 'auth_basic_user_file [^;]*;' "\$CONF" 2>/dev/null | awk '{print \$2}' | tr -d ';')
+    if [ -n "\$HTPASSWD" ]; then
+      HASHED=\$(openssl passwd -apr1 "\${NGINX_AUTH_PASS}" 2>/dev/null)
+      if [ -n "\$HASHED" ]; then
+        printf '%s:%s\\n' "\${NGINX_AUTH_USER}" "\${HASHED}" > "\${HTPASSWD}"
+        echo "[bolt-patch] Fixed htpasswd at \${HTPASSWD}" >> "\$LOGF"
+      fi
+    fi
+  fi
+  nginx -s reload 2>>"\$LOGF" && echo "[bolt-patch] Nginx reloaded OK" >> "\$LOGF"
 ) &`
     : "";
 
@@ -638,6 +700,7 @@ ${skillsLine}
 ${githubLines}
 ${nimBoltWarmupLines}
 ${nimWatchdogLines}
+${nimNginxPatchLines}
 /opt/onstart.sh
 `;
 }
