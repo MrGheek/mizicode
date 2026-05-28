@@ -9,6 +9,9 @@ WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@10.26.1 --activate
 
+# Native modules (better-sqlite3) require Python + C++ build tools
+RUN apk add --no-cache python3 make g++
+
 # Copy workspace manifests first so layer caching works well
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY tsconfig.base.json tsconfig.json ./
