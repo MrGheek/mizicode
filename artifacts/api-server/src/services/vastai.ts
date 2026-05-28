@@ -624,62 +624,43 @@ chmod +x /usr/local/bin/git`
 ) &`
     : "";
 
-  // Nginx WebSocket proxy + htpasswd fix — runs in background ~60 s after boot.
+  // Vite HMR fix for Fly.io reverse-proxy — runs inline, before /opt/onstart.sh.
   //
-  // Problem 1 (black screen): Vite's HMR client is injected into every HTML page
-  // it serves. By default it tries to open a WebSocket back to the same
-  // host:port the page was loaded from — e.g. wss://mizicode.fly.dev:5180.
-  // nginx proxies that port to Vite on localhost:5173 but, without the
-  // `proxy_http_version 1.1` + Upgrade/Connection headers, nginx drops the
-  // WebSocket upgrade → the HMR connection fails → Vite refuses to serve JS
-  // bundles → the page stays black.
+  // Why this is needed:
+  //   Users open bolt.diy at https://<app>.fly.dev:5180 (Fly TLS → nginx → Vite:5173).
+  //   Vite's HMR client is injected into every HTML page it serves and, by default,
+  //   tries to open a WebSocket back to the same host:port the page was loaded from.
+  //   If the page was served via the nginx reverse proxy at :5180, the HMR client
+  //   will try wss://<host>:5180 — which nginx can then forward to Vite's internal
+  //   WS port (:5173).  This works IF nginx has the WS upgrade headers (which
+  //   onstart.sh already sets) AND if Vite is told that the *client-side* port is
+  //   5180 (not 5173, which Vite assumes by default in some configs).
   //
-  // Problem 2 (wrong credentials): onstart.sh writes a FRESH random htpasswd at
-  // container start, ignoring the NGINX_AUTH_PASS env var that the API server
-  // set.  The dashboard shows the API-server password; nginx rejects it with 401.
+  //   Setting `server.hmr.clientPort = 5180` in vite.config.ts explicitly tells
+  //   Vite: "emit HMR client code that connects to port 5180" — so the injected
+  //   script always targets the correct public nginx port regardless of Vite's
+  //   internal server port.
   //
-  // Fix: wait for nginx to start, patch the nginx site config to add WS headers,
-  // rewrite htpasswd from env vars, then send SIGHUP to reload.
-  const nimNginxPatchLines = profileConfig.nimModelId
-    ? `# Nginx WebSocket + htpasswd patch — runs in background after boot
-(
-  LOGF=/var/log/onstart.log
-  echo "[bolt-patch] Waiting for nginx to start..." >> "\$LOGF"
-  # Wait up to 120 s for nginx to be running
-  for i in \$(seq 1 24); do
-    pgrep -x nginx > /dev/null 2>&1 && break
-    sleep 5
-  done
-  if ! pgrep -x nginx > /dev/null 2>&1; then
-    echo "[bolt-patch] Nginx not running after 120 s — skipping" >> "\$LOGF"
-    exit 0
-  fi
-  # Find the nginx site config that proxies to bolt.diy (port 5173)
-  CONF=\$(grep -rl "5173" /etc/nginx/ 2>/dev/null | head -1)
-  if [ -z "\$CONF" ]; then
-    echo "[bolt-patch] No nginx config referencing 5173 — skipping" >> "\$LOGF"
-    exit 0
-  fi
-  echo "[bolt-patch] Patching \$CONF" >> "\$LOGF"
-  # Fix 1: Add WebSocket upgrade headers so Vite HMR works through nginx
-  if ! grep -q "proxy_http_version" "\$CONF"; then
-    sed -i 's|proxy_pass http://localhost:5173;|proxy_pass http://localhost:5173;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;|' "\$CONF"
-    echo "[bolt-patch] Added WebSocket proxy headers" >> "\$LOGF"
-  fi
-  # Fix 2: Replace htpasswd with the dashboard-displayed credentials so users
-  # can actually authenticate with the password shown on the session page.
-  if [ -n "\${NGINX_AUTH_PASS:-}" ] && [ -n "\${NGINX_AUTH_USER:-}" ]; then
-    HTPASSWD=\$(grep -o 'auth_basic_user_file [^;]*;' "\$CONF" 2>/dev/null | awk '{print \$2}' | tr -d ';')
-    if [ -n "\$HTPASSWD" ]; then
-      HASHED=\$(openssl passwd -apr1 "\${NGINX_AUTH_PASS}" 2>/dev/null)
-      if [ -n "\$HASHED" ]; then
-        printf '%s:%s\\n' "\${NGINX_AUTH_USER}" "\${HASHED}" > "\${HTPASSWD}"
-        echo "[bolt-patch] Fixed htpasswd at \${HTPASSWD}" >> "\$LOGF"
-      fi
-    fi
-  fi
-  nginx -s reload 2>>"\$LOGF" && echo "[bolt-patch] Nginx reloaded OK" >> "\$LOGF"
-) &`
+  //   NOTE: NGINX_AUTH_USER/NGINX_AUTH_PASS and WebSocket proxy headers are already
+  //   handled correctly by onstart.sh in the Docker image.
+  //
+  //   SINGLE-TENANT NOTE: boltUrl uses ${FLY_APP_NAME}.fly.dev:5180, which is the
+  //   shared app hostname. This is correct for single-user deployments (one active
+  //   NIM machine at a time). For multi-tenant deployments where multiple users may
+  //   have concurrent NIM sessions, per-machine routing would be required (e.g. a
+  //   proxy endpoint using fly-force-instance-id header).
+  const nimViteHmrPatchLines = profileConfig.nimModelId
+    ? `# ── Vite HMR clientPort fix (inline, runs before onstart.sh starts Vite) ──
+# Tells Vite's HMR client to connect to the public nginx proxy port (5180)
+# rather than Vite's internal port (5173), so WebSocket upgrades are routed
+# correctly through Fly's TLS terminator and nginx reverse proxy.
+BOLT_CONF="/opt/bolt-diy/vite.config.ts"
+[ -f "\$BOLT_CONF" ] || BOLT_CONF="/opt/bolt-diy/vite.config.js"
+if [ -f "\$BOLT_CONF" ] && ! grep -q "clientPort" "\$BOLT_CONF"; then
+  sed -i "s|server: {|server: { hmr: { protocol: 'wss', clientPort: 5180 },|" "\$BOLT_CONF" \\
+    && echo "[vite-hmr] Patched \$BOLT_CONF: hmr.clientPort=5180" >> /var/log/onstart.log \\
+    || echo "[vite-hmr] Failed to patch \$BOLT_CONF (continuing)" >> /var/log/onstart.log
+fi`
     : "";
 
   return `#!/bin/bash
@@ -700,7 +681,7 @@ ${skillsLine}
 ${githubLines}
 ${nimBoltWarmupLines}
 ${nimWatchdogLines}
-${nimNginxPatchLines}
+${nimViteHmrPatchLines}
 /opt/onstart.sh
 `;
 }
