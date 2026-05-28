@@ -1,1 +1,3 @@
 - [Dockerfile Python build tools](dockerfile-python-build-tools.md) — both Dockerfiles need python3+make+g++ before pnpm install or better-sqlite3 fails to compile
+- [Bolt.diy iframe fix](bolt-diy-iframe.md) — boltDiyUrl can't be embedded in iframe (X-Frame-Options); show "Open in new tab" card instead
+- [Fly.io deploy method](fly-deploy.md) — build image first with nohup, then deploy prebuilt image with --image + --strategy immediate to avoid sandbox timeout
