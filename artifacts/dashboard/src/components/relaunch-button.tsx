@@ -7,11 +7,13 @@ import {
   useCreateSession,
   getGetActiveSessionQueryKey,
   getGetDashboardSummaryQueryKey,
+  getListProfilesQueryKey,
 } from "@workspace/api-client-react";
 import type { CloneSessionResponse } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { IS_LOCAL_BUILD } from "@/lib/distribution";
 import { LaunchSessionDialog, type LaunchOptions, type LaunchPrefill } from "@/components/launch-session-dialog";
 
 interface RelaunchButtonProps {
@@ -42,7 +44,7 @@ export function RelaunchButton({
     mutationFn: (id: number) => cloneSession(id),
   });
   const createSession = useCreateSession();
-  const { data: profiles } = useListProfiles();
+  const { data: profiles } = useListProfiles({ query: { enabled: !IS_LOCAL_BUILD, queryKey: getListProfilesQueryKey() } });
 
   const [prefill, setPrefill] = useState<LaunchPrefill | null>(null);
   const [profileId, setProfileId] = useState<number | null>(null);

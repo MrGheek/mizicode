@@ -74,6 +74,10 @@ function resetSwarmState() {
 let currentTaskId      = null;
 let compactionPending  = false; // Set by /mizi/compact — cleared after restore injection
 
+// ACP task registry: maps taskId → { taskId, phase, submittedAt, completedAt }
+// Kept in-memory for the lifetime of the process (single-task runner, ~100 entries max).
+const acpTaskRegistry  = new Map();
+
 // ── Tmux helpers ──────────────────────────────────────────────────────────────
 
 function isRunning() {
@@ -1879,6 +1883,98 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       return sendJson(res, 500, { ok: false, error: String(err?.message || err) });
     }
+  }
+
+  // ── ACP (Agent Communication Protocol) routes ────────────────────────────
+  // Used by local sessions: the API server submits tasks through these
+  // endpoints instead of the legacy WebSocket bridge used in cloud sessions.
+  // Enable with ACP_MODE=true (or ACP_MODE=1) environment variable.
+
+  if (method === 'GET' && url === '/acp/health') {
+    return sendJson(res, 200, {
+      ok:      true,
+      running: isRunning(),
+      taskId:  currentTaskId || null,
+      version: '1.0',
+    });
+  }
+
+  if (method === 'POST' && url === '/acp/run') {
+    let body;
+    try { body = await parseBody(req); }
+    catch { return sendJson(res, 400, { error: 'invalid json' }); }
+
+    if (!body.prompt || typeof body.prompt !== 'string') {
+      return sendJson(res, 400, { error: 'prompt string required' });
+    }
+    if (isRunning()) {
+      return sendJson(res, 409, {
+        error:  'runner busy — a task is already running',
+        taskId: currentTaskId || null,
+      });
+    }
+
+    runTask(body.prompt.trim(), { restoreContext: body.restoreContext !== false });
+    const taskId = currentTaskId;
+
+    // Track this task in the ACP registry so status polls work.
+    acpTaskRegistry.set(taskId, {
+      taskId,
+      phase:       'running',
+      submittedAt: new Date().toISOString(),
+      completedAt: null,
+    });
+
+    appendEvent({
+      actor_type: 'claw-runner',
+      task_id:    taskId,
+      event_type: 'acp_task_started',
+      payload:    { model: body.model || '', templateSlug: body.templateSlug || '' },
+    });
+
+    return sendJson(res, 200, { taskId });
+  }
+
+  if (method === 'GET' && url.startsWith('/acp/status/')) {
+    const taskId = url.slice('/acp/status/'.length);
+    if (!taskId) return sendJson(res, 400, { error: 'taskId required' });
+
+    const entry = acpTaskRegistry.get(taskId);
+    if (!entry) return sendJson(res, 404, { error: 'task not found', taskId });
+
+    // Determine phase: running if this is the current active task and tmux
+    // session is live; otherwise done (single-task runner).
+    const active = currentTaskId === taskId && isRunning();
+    const phase  = active ? 'running' : (entry.phase === 'aborted' ? 'aborted' : 'done');
+
+    if (phase === 'done' && !entry.completedAt) {
+      entry.completedAt = new Date().toISOString();
+      acpTaskRegistry.set(taskId, entry);
+    }
+
+    return sendJson(res, 200, {
+      taskId,
+      phase,
+      output:      getOutput(),
+      startedAt:   entry.submittedAt,
+      completedAt: entry.completedAt || undefined,
+    });
+  }
+
+  if (method === 'POST' && url.startsWith('/acp/abort/')) {
+    const taskId = url.slice('/acp/abort/'.length);
+    stopTask();
+    if (acpTaskRegistry.has(taskId)) {
+      const entry = acpTaskRegistry.get(taskId);
+      acpTaskRegistry.set(taskId, { ...entry, phase: 'aborted', completedAt: new Date().toISOString() });
+    }
+    appendEvent({
+      actor_type: 'claw-runner',
+      task_id:    taskId || currentTaskId || '',
+      event_type: 'acp_task_aborted',
+      payload:    {},
+    });
+    return sendJson(res, 200, { ok: true, taskId });
   }
 
   res.writeHead(404);

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mizi.api</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/node</string>
+    <string>{{MIZI_INSTALL_DIR}}/artifacts/api-server/dist/index.mjs</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MIZI_DISTRIBUTION</key>
+    <string>local</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>MIZI_HOME</key>
+    <string>{{MIZI_HOME}}</string>
+    <key>MIZI_LOCAL_DB_PATH</key>
+    <string>{{MIZI_HOME}}/local.db</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>{{MIZI_HOME}}</string>
+
+  <key>StandardOutPath</key>
+  <string>{{MIZI_HOME}}/mizi-api.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>{{MIZI_HOME}}/mizi-api.log</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+</dict>
+</plist>

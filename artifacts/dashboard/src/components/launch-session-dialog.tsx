@@ -4,6 +4,9 @@ import {
   useListSkillBundles,
 } from "@workspace/api-client-react";
 import type { GpuProfile, CompiledBundleResult } from "@workspace/api-client-react";
+import { IS_LOCAL_BUILD } from "@/lib/distribution";
+import { LocalModelPicker } from "@/components/local-model-picker";
+import { LocalTemplateSelector } from "@/components/local-template-selector";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -77,6 +80,8 @@ export interface LaunchOptions {
   githubToken?: string | null;
   planId?: number | null;
   userId?: string | null;
+  localModelId?: string | null;
+  templateSlug?: string | null;
 }
 
 export interface LaunchPrefill {
@@ -187,6 +192,9 @@ export function LaunchSessionDialog({
     savePat(repoUrl, githubToken);
   }, [repoUrl, githubToken]);
 
+  const [localModelId, setLocalModelId] = useState<string | null>(null);
+  const [localTemplateSlug, setLocalTemplateSlug] = useState<string | null>(null);
+
   const [bundleOverride, setBundleOverride] = useState<number | null | "none">(
     () => (prefill?.bundleId != null ? prefill.bundleId : null)
   );
@@ -241,6 +249,8 @@ export function LaunchSessionDialog({
       intentText: intentText.trim() || null,
       teamMembers: validTeam.length > 0 ? validTeam : undefined,
       githubToken: ghStatus.connected ? null : (githubToken.trim() || null),
+      localModelId: IS_LOCAL_BUILD ? (localModelId ?? null) : null,
+      templateSlug: IS_LOCAL_BUILD ? (localTemplateSlug ?? null) : null,
     });
   };
 
@@ -281,6 +291,33 @@ export function LaunchSessionDialog({
         )}
 
         <div className="space-y-5 py-2">
+          {/* Local distribution: model + template selection */}
+          {IS_LOCAL_BUILD && (
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                  Local Model
+                </p>
+                <LocalModelPicker onModelSelected={(id) => setLocalModelId(id)} />
+                {localModelId && (
+                  <p className="text-[10px] text-green-400 mt-1 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
+                    Selected: {localModelId}
+                  </p>
+                )}
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+                  Workspace Template
+                </p>
+                <LocalTemplateSelector
+                  value={localTemplateSlug}
+                  onTemplateSelected={(slug) => setLocalTemplateSlug(slug)}
+                />
+              </div>
+            </div>
+          )}
+
           {/* Repo URL — comes first because it auto-suggests session intent. */}
           <div className="space-y-1.5">
             <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">

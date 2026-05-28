@@ -1,7 +1,6 @@
 import { logger } from "../lib/logger";
 import { db, sessionsTable, sessionLanesTable, laneHandoffsTable, laneHeavyJobsTable } from "@workspace/db";
 import { inArray, eq, and, gt, lt, sql, isNotNull } from "drizzle-orm";
-import { getMachineState } from "./fly";
 import {
   _internalGetDb,
   requestPermission,
@@ -65,49 +64,55 @@ const NIM_ACTIVE_STATUSES = ["pending", "provisioning", "downloading", "starting
  * stops being polled and doesn't stall the API's DB connection pool.
  */
 async function reconcileFlyMachines(): Promise<void> {
-  let sessions: Array<{ id: number; flyMachineId: string | null }>;
-  try {
-    sessions = await db
-      .select({ id: sessionsTable.id, flyMachineId: sessionsTable.flyMachineId })
-      .from(sessionsTable)
-      .where(
-        and(
-          eq(sessionsTable.provider, "nim"),
-          inArray(sessionsTable.status, [...NIM_ACTIVE_STATUSES]),
-          isNotNull(sessionsTable.flyMachineId),
-        )
-      );
-  } catch (err) {
-    logger.warn({ err }, "[reconcile] failed to query active NIM sessions");
-    return;
-  }
-
-  if (sessions.length === 0) return;
-
-  logger.info({ count: sessions.length }, "[reconcile] checking Fly machine liveness");
-
-  for (const session of sessions) {
-    if (!session.flyMachineId) continue;
+  // esbuild constant-folds process.env.MIZI_DISTRIBUTION → "local" in local builds,
+  // so `if (false) { ... }` dead-code eliminates this entire block including the
+  // dynamic import — preventing fly.ts content from appearing in local bundles.
+  if (process.env.MIZI_DISTRIBUTION !== "local") {
+    const { getMachineState } = await import("./fly.js");
+    let sessions: Array<{ id: number; flyMachineId: string | null }>;
     try {
-      const state = await getMachineState(session.flyMachineId);
-      if (state === "destroyed") {
-        await db
-          .update(sessionsTable)
-          .set({
-            status: "error",
-            statusMessage: "Fly.io workspace machine was destroyed unexpectedly",
-            flyMachineId: null,
-            stoppedAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(eq(sessionsTable.id, session.id));
-        logger.warn(
-          { sessionId: session.id, flyMachineId: session.flyMachineId },
-          "[reconcile] session marked error — machine destroyed externally"
+      sessions = await db
+        .select({ id: sessionsTable.id, flyMachineId: sessionsTable.flyMachineId })
+        .from(sessionsTable)
+        .where(
+          and(
+            eq(sessionsTable.provider, "nim"),
+            inArray(sessionsTable.status, [...NIM_ACTIVE_STATUSES]),
+            isNotNull(sessionsTable.flyMachineId),
+          )
         );
-      }
     } catch (err) {
-      logger.warn({ err, sessionId: session.id }, "[reconcile] machine state check failed (non-fatal)");
+      logger.warn({ err }, "[reconcile] failed to query active NIM sessions");
+      return;
+    }
+
+    if (sessions.length === 0) return;
+
+    logger.info({ count: sessions.length }, "[reconcile] checking Fly machine liveness");
+
+    for (const session of sessions) {
+      if (!session.flyMachineId) continue;
+      try {
+        const state = await getMachineState(session.flyMachineId);
+        if (state === "destroyed") {
+          await db
+            .update(sessionsTable)
+            .set({
+              status: "error",
+              statusMessage: "Fly.io workspace machine was destroyed unexpectedly",
+              flyMachineId: null,
+              stoppedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(sessionsTable.id, session.id));
+          logger.warn(
+            { sessionId: session.id, flyMachineId: session.flyMachineId },
+            "[reconcile] session marked error — machine destroyed externally"
+          );
+        }
+      } catch (err) {
+        logger.warn({ err, sessionId: session.id }, "[reconcile] machine state check failed (non-fatal)");
+      }
     }
   }
 }

@@ -172,9 +172,56 @@ export function setPassiveRecallForSession(sessionId: string, enabled: boolean):
   `).run(sessionId, enabled ? 1 : 0);
 }
 
+const IS_LOCAL_DISTRIBUTION = process.env["MIZI_DISTRIBUTION"] === "local";
+
+/**
+ * Local embedding path: Hailo-16L hardware accelerator → Ollama CPU fallback.
+ * Only called when MIZI_DISTRIBUTION=local. Returns null if neither is available.
+ */
+async function embedTextLocal(text: string): Promise<{ vector: number[]; model: string } | null> {
+  // 1. Try Hailo hardware accelerator (Raspberry Pi 5 + Hailo-16L)
+  try {
+    const { isHailoAvailable, embedViaHailo } = await import("./hailo-backend.js");
+    if (isHailoAvailable()) {
+      const vectors = await embedViaHailo([text]);
+      if (vectors && vectors[0] && vectors[0].length > 0) {
+        return { vector: vectors[0], model: "hailo-sentence-transformer" };
+      }
+    }
+  } catch {
+    // HailoRT not installed or no device — fall through to Ollama
+  }
+
+  // 2. Try Ollama embeddings (CPU/GPU on Mac Mini, PC, home server)
+  const ollamaBase = process.env["OLLAMA_BASE_URL"] || "http://localhost:11434";
+  const ollamaModel = process.env["OLLAMA_EMBEDDING_MODEL"] || "nomic-embed-text";
+  try {
+    const resp = await fetch(`${ollamaBase}/api/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: ollamaModel, prompt: text }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (resp.ok) {
+      const data = (await resp.json()) as { embedding?: number[] };
+      if (data.embedding && data.embedding.length > 0) {
+        return { vector: data.embedding, model: `ollama:${ollamaModel}` };
+      }
+    }
+  } catch {
+    // Ollama not running — local embedding unavailable
+  }
+
+  return null;
+}
+
 /**
  * Embed text via the OpenAI embeddings API (or compatible AI Integrations
  * proxy). Returns null on any failure so callers can fall back gracefully.
+ *
+ * In local distribution mode, tries Hailo → Ollama first; cloud NIM/AI
+ * Integrations is used only if a key is explicitly configured (e.g. for
+ * users who have their own NIM endpoint alongside local hardware).
  */
 function getAiConfig(): { baseUrl: string; apiKey: string } | null {
   const nimKey = process.env["NVIDIA_NIM_API_KEY"];
@@ -186,6 +233,13 @@ function getAiConfig(): { baseUrl: string; apiKey: string } | null {
 }
 
 export async function embedText(text: string): Promise<{ vector: number[]; model: string } | null> {
+  // In local distribution, try on-device providers first (Hailo → Ollama).
+  if (IS_LOCAL_DISTRIBUTION) {
+    const local = await embedTextLocal(text);
+    if (local) return local;
+    // Fall through: allow cloud NIM if an explicit key is set (optional hybrid use).
+  }
+
   const cfg = getAiConfig();
   if (!cfg) return null;
   const { baseUrl, apiKey } = cfg;

@@ -9,6 +9,7 @@ import {
   useGetSchedulerConfig,
   getGetDashboardSummaryQueryKey,
   getGetActiveSessionQueryKey,
+  getListProfilesQueryKey,
 } from "@workspace/api-client-react";
 import type { Session, GpuProfile } from "@workspace/api-client-react";
 import { formatDistanceToNow } from "date-fns";
@@ -34,6 +35,8 @@ import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { GitHubConnectionWidget } from "@/components/github-connection-widget";
 import { ProjectPlanBoard } from "@/components/project-plan-board";
 import { TaskDetailDrawer, type TaskDetail } from "@/components/task-detail-drawer";
+import { IS_LOCAL_BUILD } from "@/lib/distribution";
+import { LocalHardwareCard } from "@/components/local-hardware-card";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -560,7 +563,7 @@ function IntentBar({ onGpuLaunch, onNimLaunch, nimCatalog, nimConfigured, nimHea
   const [skillBundle, setSkillBundle] = useState<string>("auto");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { data: profiles } = useListProfiles();
+  const { data: profiles } = useListProfiles({ query: { enabled: !IS_LOCAL_BUILD, queryKey: getListProfilesQueryKey() } });
 
   // Plan-it state
   const [planning, setPlanning] = useState(false);
@@ -1433,7 +1436,9 @@ export default function Dashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary();
+  const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary({
+    query: { enabled: !IS_LOCAL_BUILD, queryKey: getGetDashboardSummaryQueryKey() },
+  });
 
   // repoUrl is lifted here so both IntentBar and the plan board can read it reactively.
   const [repoUrl, setRepoUrl] = useState(() => loadSavedRepoUrl());
@@ -1456,7 +1461,7 @@ export default function Dashboard() {
   });
   const { data: allSessions } = useListSessions();
   const { data: schedulerConfig } = useGetSchedulerConfig();
-  const { data: profilesData } = useListProfiles();
+  const { data: profilesData } = useListProfiles({ query: { enabled: !IS_LOCAL_BUILD, queryKey: getListProfilesQueryKey() } });
   const createSession = useCreateSession();
 
   // Re-open the launch dialog when the user returns from GitHub OAuth.
@@ -1475,11 +1480,14 @@ export default function Dashboard() {
     return () => window.removeEventListener("mizi:open-launch-dialog", onOpen);
   }, []);
 
-  // NIM catalog — fetched once at page level, passed down to IntentBar for the "More models…" picker
+  // NIM catalog — fetched once at page level, passed down to IntentBar for the "More models…" picker.
+  // In local distribution mode there are no cloud NIM providers — skip all fetches so that the
+  // NIM launch UI is hidden (it checks nimCatalog.length > 0 before rendering).
   const [nimCatalog, setNimCatalog] = useState<NimCatalogModel[]>([]);
   const [nimConfigured, setNimConfigured] = useState<Record<string, boolean>>({});
   const [nimHealth, setNimHealth] = useState<Record<string, NimProviderHealth>>({});
   useEffect(() => {
+    if (IS_LOCAL_BUILD) return; // no cloud NIM providers in local distribution
     function fetchNimCatalog() {
       fetch(`${BASE_URL}api/nim/catalog`)
         .then((r) => r.ok ? r.json() as Promise<{ models: NimCatalogModel[]; configured?: Record<string, boolean> }> : null)
@@ -1544,14 +1552,24 @@ export default function Dashboard() {
         githubToken: opts?.githubToken ?? null,
         planId: (opts as LaunchOptions | undefined)?.planId ?? null,
         userId: (opts as LaunchOptions | undefined)?.userId ?? null,
+        localModelId: (opts as LaunchOptions | undefined)?.localModelId ?? null,
+        templateSlug: (opts as LaunchOptions | undefined)?.templateSlug ?? null,
       } as Parameters<typeof createSession.mutate>[0]["data"],
     }, {
       onSuccess: (session) => {
         const token = (session as typeof session & { ownerToken?: string | null }).ownerToken;
         if (token) sessionStorage.setItem(`nim-owner-token:${session.id}`, token);
-        toast({ title: "Session launched", description: "Provisioning GPU…" });
         queryClient.invalidateQueries({ queryKey: getGetActiveSessionQueryKey() });
         queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+
+        const localChatUrl = (session as typeof session & { localChatUrl?: string | null }).localChatUrl;
+        if (IS_LOCAL_BUILD && localChatUrl) {
+          toast({ title: "Local session started", description: "Opening claw interface…" });
+          window.open(localChatUrl, "_blank", "noopener,noreferrer");
+        } else {
+          toast({ title: "Session launched", description: "Provisioning GPU…" });
+        }
+
         setLocation(`/sessions/${session.id}`);
       },
       onError: (err: Error) => {
@@ -1659,6 +1677,13 @@ export default function Dashboard() {
             onRepoUrlChange={v => { setRepoUrl(v); saveRepoUrl(v); }}
           />
         </div>
+
+        {/* Local distribution: hardware summary */}
+        {IS_LOCAL_BUILD && (
+          <div className="glass-emerge" style={{ animationDelay: "35ms" }}>
+            <LocalHardwareCard />
+          </div>
+        )}
 
         {/* Recent sessions — compact list */}
         {recentSessions.length > 0 && (

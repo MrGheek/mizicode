@@ -50,6 +50,13 @@ import crypto from "crypto";
 import { createPool } from "@workspace/db";
 import { withReadWrite, withFlyLeaderPort } from "./migrate-helpers.js";
 
+/** Minimal pg PoolClient shape used for raw SQL diagnostics in this file. */
+type PgPoolClient = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  query<T = Record<string, any>>(sql: string, values?: unknown[]): Promise<{ rows: T[] }>;
+  release(err?: Error | boolean): void;
+};
+
 // MIGRATE_DATABASE_URL takes priority over DATABASE_URL.
 // Use it to provide a URL that explicitly targets the primary, e.g. the
 // Fly.io HAProxy leader port (5433) rather than the direct machine port (5432).
@@ -82,7 +89,7 @@ async function waitForPrimary(maxWaitMs = 90_000): Promise<void> {
 
   while (true) {
     attempt++;
-    const client = await pool.connect();
+    const client = await pool.connect() as PgPoolClient;
     try {
       // Diagnostic only — do not gate on this value.
       let recoveryState = "unknown";
@@ -162,7 +169,7 @@ async function waitForPrimary(maxWaitMs = 90_000): Promise<void> {
  *   0029_project_tasks_detail    → depends on 0028; no extra sentinel needed
  */
 async function repairZombieMigrations(migrationsFolder: string): Promise<void> {
-  const client = await pool.connect();
+  const client = await pool.connect() as PgPoolClient;
   try {
     // 1. Check sentinel columns/tables to decide which migrations are zombies.
     const sentinelCheck = await client.query<{ pp: string | null; psj: string | null }>(`
@@ -297,7 +304,7 @@ async function runIncrementalMigrations(migrationsFolder: string): Promise<void>
   // This phase works on replicas too, so it never blocks deploys.
   const unapplied: Array<{ tag: string; content: string; when: number }> = [];
   {
-    const client = await pool.connect();
+    const client = await pool.connect() as PgPoolClient;
     try {
       // Check if the tracking table even exists.
       const tableExists = await client.query<{ exists: boolean }>(`
@@ -312,7 +319,7 @@ async function runIncrementalMigrations(migrationsFolder: string): Promise<void>
         const { rows } = await client.query<{ hash: string }>(
           `SELECT hash FROM drizzle.__drizzle_migrations`
         );
-        appliedHashes = new Set(rows.map((r) => r.hash));
+        appliedHashes = new Set(rows.map((r: { hash: string }) => r.hash));
       }
 
       for (const entry of journal.entries) {
@@ -339,7 +346,7 @@ async function runIncrementalMigrations(migrationsFolder: string): Promise<void>
 
   // --- Phase 2: write phase — requires a writable (primary) connection ---
   // This will fail cleanly if the pool is connected to a replica.
-  const client = await pool.connect();
+  const client = await pool.connect() as PgPoolClient;
   try {
     // Ensure the Drizzle tracking schema and table exist (idempotent).
     await client.query("BEGIN READ WRITE");
@@ -379,7 +386,7 @@ async function runIncrementalMigrations(migrationsFolder: string): Promise<void>
 
 /** True when the public schema has no user tables (completely fresh DB). */
 async function isDatabaseEmpty(): Promise<boolean> {
-  const client = await pool.connect();
+  const client = await pool.connect() as PgPoolClient;
   try {
     const res = await client.query(
       `SELECT tablename FROM pg_tables
@@ -409,7 +416,7 @@ async function bootstrapFreshDatabase(migrationsFolder: string): Promise<void> {
   console.log("[migrate] Fresh database detected — running bootstrap SQL…");
   const bootstrapSql = fs.readFileSync(bootstrapPath, "utf-8");
 
-  const client = await pool.connect();
+  const client = await pool.connect() as PgPoolClient;
   try {
     // BEGIN READ WRITE overrides default_transaction_read_only unconditionally.
     // Only safe to call AFTER waitForPrimary() confirms we're not in recovery.

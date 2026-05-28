@@ -1,25 +1,17 @@
 import http from "http";
 import path from "path";
 import { WebSocketServer } from "ws";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
 import app from "./app";
 import { logger } from "./lib/logger";
-import { seedProfiles } from "./services/profiles";
-import { registerDefaultTemplate } from "./services/templates";
-import { startScheduler, markDesignSyncComplete } from "./services/scheduler";
-import { seedDefaultBundles } from "./services/skills-bundler";
-import { seedCuratedSources } from "./services/curated-sources";
-import { startEvalScheduler } from "./services/skills-evals";
-import { validateMemoryDataDir, startMemoryDiskMonitor, runPassiveRecallBackfill } from "./services/memory";
-import { startPlanAutoAdvance } from "./services/plan-auto-advance";
-import { startPlanDecompose } from "./services/plan-decompose";
-import { initSafetySubsystem, drainApprovedActions } from "./services/safety";
-import { startAmbientRunner, registerAmbientExecutors } from "./services/ambient";
-import { startClaimSweeper, sweepExpiredClaims, recordExternalSweep } from "./services/claim-sweeper";
-import { syncNimCatalog } from "./services/nim-catalog";
-import { handleBridgeUpgrade } from "./routes/bridge";
 import { db, pool, laneClaimsTable, claimPurgeLogsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
+
+// ─── Distribution mode ────────────────────────────────────────────────────────
+// Resolved first so every conditional below can use it.
+// esbuild constant-folds this when the local packaging script passes
+// --define:'process.env.MIZI_DISTRIBUTION="local"', eliminating all
+// cloud-only dynamic import() branches from the local bundle.
+const IS_LOCAL_DISTRIBUTION = process.env.MIZI_DISTRIBUTION === "local";
 
 const CLAIM_RETENTION_DAYS = parseInt(process.env["CLAIM_RETENTION_DAYS"] ?? "7", 10);
 const CLAIM_CLEANUP_INTERVAL_MS = parseInt(process.env["CLAIM_CLEANUP_INTERVAL_MS"] ?? String(60 * 60 * 1000), 10);
@@ -36,6 +28,7 @@ logger.info({ CLAIM_RETENTION_DAYS, CLAIM_CLEANUP_INTERVAL_MS }, "Claim purge co
 /**
  * Permanently delete inactive claims older than the retention window.
  * Runs hourly to keep the table lean without impacting in-flight operations.
+ * Only called in cloud distribution mode (never in MIZI_DISTRIBUTION=local).
  */
 async function purgeOldInactiveClaims(): Promise<void> {
   try {
@@ -80,19 +73,29 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-// Validate memory data directory before accepting requests.
-// Throws (and exits) if the directory is missing or not writable so that
-// operators can detect a misconfigured volume mount immediately at deploy time.
-try {
-  validateMemoryDataDir();
-} catch (err) {
-  logger.error({ err }, "Memory data directory validation failed — aborting startup");
-  process.exit(1);
+// ─── Memory data directory validation — cloud/Fly.io only ─────────────────────
+// In local distribution the workspace directory is user-managed and is created
+// by the setup script; skipping here avoids false-positive startup failures on
+// devices that haven't run the install yet.
+if (!IS_LOCAL_DISTRIBUTION) {
+  const { validateMemoryDataDir } = await import("./services/memory.js");
+  try {
+    validateMemoryDataDir();
+  } catch (err) {
+    logger.error({ err }, "Memory data directory validation failed — aborting startup");
+    process.exit(1);
+  }
 }
+
+// Local distribution skips cloud-specific secrets checks entirely.
+// MIZI_ENCRYPTION_KEY, MIZI_MEM_TOKEN, and DASHBOARD_URL are cloud/Fly.io
+// concerns — they are not required (and cannot be reasonably expected) when
+// running on a user's home server or Raspberry Pi.
 
 // Production guard: MIZI_ENCRYPTION_KEY must be set when NODE_ENV=production
 // to ensure provisioned connection strings are encrypted at rest.
-if (process.env["NODE_ENV"] === "production" && !process.env["MIZI_ENCRYPTION_KEY"]) {
+// Skipped in local distribution mode — there are no provisioned cloud instances.
+if (!IS_LOCAL_DISTRIBUTION && process.env["NODE_ENV"] === "production" && !process.env["MIZI_ENCRYPTION_KEY"]) {
   logger.error("MIZI_ENCRYPTION_KEY is required in production — provisioned connection strings would be stored in plaintext. Set a 64-hex-char key and restart.");
   process.exit(1);
 }
@@ -100,32 +103,44 @@ if (process.env["NODE_ENV"] === "production" && !process.env["MIZI_ENCRYPTION_KE
 // Production guard: MIZI_MEM_TOKEN must be set when NODE_ENV=production.
 // Without it, deriveEncryptionKey() throws mid-OAuth-callback, causing the
 // GitHub token to never be stored and the user to see ?github_oauth=error.
-if (process.env["NODE_ENV"] === "production" && !process.env["MIZI_MEM_TOKEN"]) {
+// Skipped in local distribution — OAuth token encryption is not required on-device.
+if (!IS_LOCAL_DISTRIBUTION && process.env["NODE_ENV"] === "production" && !process.env["MIZI_MEM_TOKEN"]) {
   logger.error("MIZI_MEM_TOKEN is required in production — GitHub OAuth token encryption will crash at runtime without it. Generate one with: openssl rand -hex 32");
   process.exit(1);
 }
 
 // Production warning: DASHBOARD_URL should be set when the dashboard and API
 // are on different origins (the typical Fly.io deployment: mizicode.fly.dev +
-// mizi-api.fly.dev). Without it, post-OAuth redirects fall back to the API
-// server root instead of the dashboard — the token IS stored but the dashboard
-// never sees the ?github_oauth=connected signal, so it shows as disconnected.
-if (process.env["NODE_ENV"] === "production" && !process.env["DASHBOARD_URL"]) {
-  logger.warn("DASHBOARD_URL is not set. GitHub OAuth redirects will fall back to the API server origin after sign-in. Set DASHBOARD_URL=https://<your-dashboard-hostname> on the mizi-api Fly.io app.");
+// mizi-api.fly.dev).  Without it, OAuth redirects use a placeholder value.
+// Not applicable to local distribution — the dashboard is served from the same
+// process via a static file handler or local dev server.
+if (!IS_LOCAL_DISTRIBUTION && process.env["NODE_ENV"] === "production" && !process.env["DASHBOARD_URL"]) {
+  logger.warn("DASHBOARD_URL is not set — GitHub OAuth redirects will use a placeholder. Set DASHBOARD_URL to the production dashboard origin.");
 }
 
-// ─── Database migrations ──────────────────────────────────────────────────────
-// In production, migrations are applied by the Fly.io release command
+// ─── Local SQLite migration ───────────────────────────────────────────────────
+if (IS_LOCAL_DISTRIBUTION) {
+  try {
+    const { runLocalMigrations } = await import("./services/local-migrate.js");
+    runLocalMigrations();
+    logger.info("Local SQLite migrations complete");
+  } catch (err) {
+    logger.warn({ err }, "Local SQLite migration failed (non-fatal) — DB may be incomplete");
+  }
+}
+
+// In production (cloud), migrations are applied by the Fly.io release command
 // (dist/migrate.mjs) before any instances start, so we skip them here.
 //
 // In development, run migrations at startup with a pg advisory lock so
 // concurrent processes (e.g. dev server + test runner) don't deadlock.
 // Migration failures are non-fatal in dev — the server still starts so
 // developers can iterate without a fully-seeded local DB.
-if (process.env.DATABASE_URL && process.env["NODE_ENV"] !== "production") {
+if (!IS_LOCAL_DISTRIBUTION && process.env.DATABASE_URL && process.env["NODE_ENV"] !== "production") {
   const MIGRATION_LOCK_KEY = 1297044553; // 0x4d495a49 — "MIZI"
   let migClient;
   try {
+    const { migrate } = await import("drizzle-orm/node-postgres/migrator");
     migClient = await pool.connect();
     await migClient.query(`SELECT pg_advisory_lock($1::bigint)`, [MIGRATION_LOCK_KEY]);
     const migrationsFolder = path.join(__dirname, "migrations");
@@ -135,11 +150,11 @@ if (process.env.DATABASE_URL && process.env["NODE_ENV"] !== "production") {
     logger.warn({ err }, "Database migration failed in dev (non-fatal) — run: pnpm --filter @workspace/db migrate");
   } finally {
     if (migClient) {
-      try { await migClient.query(`SELECT pg_advisory_unlock($1::bigint)`, [MIGRATION_LOCK_KEY]); } catch (_) { /* ignore */ }
+      try { await migClient.query(`SELECT pg_advisory_unlock($1::bigint)`, [MIGRATION_LOCK_KEY]); } catch (_) { }
       migClient.release();
     }
   }
-} else if (!process.env.DATABASE_URL) {
+} else if (!IS_LOCAL_DISTRIBUTION && !process.env.DATABASE_URL) {
   logger.warn("DATABASE_URL not set — skipping migrations");
 }
 
@@ -149,34 +164,44 @@ if (process.env.DATABASE_URL && process.env["NODE_ENV"] !== "production") {
 
 const server = http.createServer(app);
 
-// A single no-listen WebSocketServer is used purely to parse upgrade requests.
-// We do NOT call wss.handleUpgrade for requests that don't match the bridge
-// path — those are passed through to Express as normal HTTP 400s.
-const wss = new WebSocketServer({ noServer: true });
-
 // Bridge URL pattern: /api/bridge/:sessionId/:laneId
 const BRIDGE_PATH_RE = /^\/api\/bridge\/(\d+)\/(\d+)(\/|\?.*)?$/;
 
-server.on("upgrade", (req, socket, head) => {
-  const url = req.url ?? "";
-  const match = BRIDGE_PATH_RE.exec(url);
-  if (!match) {
-    // Not a bridge path — reject the upgrade
-    socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-    socket.destroy();
-    return;
-  }
-  const sessionId = parseInt(match[1], 10);
-  const laneId    = parseInt(match[2], 10);
-  if (!Number.isFinite(sessionId) || !Number.isFinite(laneId)) {
-    socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
-    socket.destroy();
-    return;
-  }
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    handleBridgeUpgrade(ws, req, sessionId, laneId);
+if (!IS_LOCAL_DISTRIBUTION) {
+  // Cloud distribution: WebSocket bridge for claw runner sessions.
+  // handleBridgeUpgrade is imported dynamically so esbuild can eliminate it
+  // (and the entire bridge module) from local distribution bundles.
+  const { handleBridgeUpgrade } = await import("./routes/bridge.js");
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on("upgrade", (req, socket, head) => {
+    const url = req.url ?? "";
+    const match = BRIDGE_PATH_RE.exec(url);
+    if (!match) {
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    const sessionId = parseInt(match[1], 10);
+    const laneId    = parseInt(match[2], 10);
+    if (!Number.isFinite(sessionId) || !Number.isFinite(laneId)) {
+      socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      handleBridgeUpgrade(ws, req, sessionId, laneId);
+    });
   });
-});
+} else {
+  // Local distribution: no legacy WebSocket bridge — claw sessions use ACP (HTTP).
+  // Reject all WS upgrade attempts with 404 so clients get a clear error rather
+  // than a silent hang.
+  server.on("upgrade", (_req, socket) => {
+    socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+  });
+}
 
 server.listen(port, async (err?: Error) => {
   if (err) {
@@ -186,86 +211,118 @@ server.listen(port, async (err?: Error) => {
 
   logger.info({ port }, "Server listening");
 
-  try {
-    await seedProfiles();
-    logger.info("GPU profiles seeded");
-  } catch (e) {
-    logger.error(e, "Failed to seed profiles");
-  }
-
-  try {
-    await registerDefaultTemplate();
-  } catch (e) {
-    logger.error(e, "Failed to register default template");
-  }
-
-  try {
-    await seedDefaultBundles();
-    logger.info("Default skill bundles seeded");
-  } catch (e) {
-    logger.error(e, "Failed to seed default skill bundles");
-  }
-
-  try {
-    const seedResult = await seedCuratedSources();
-    if (seedResult.success) {
-      markDesignSyncComplete();
-      logger.info({ reason: seedResult.reason, updated: seedResult.updated }, "Curated design intelligence sources seeded");
-    } else {
-      logger.warn({ reason: seedResult.reason }, "Curated design intelligence seed completed with non-success status");
-    }
-  } catch (e) {
-    logger.error(e, "Failed to seed curated design intelligence sources");
-  }
-
-  startScheduler();
-
-  try {
-    const bootSweep = await sweepExpiredClaims();
-    recordExternalSweep(bootSweep);
-    logger.info({ deleted: bootSweep.deleted }, "Startup claim sweep complete");
-  } catch (err) {
-    logger.error({ err }, "Startup claim sweep failed");
-  }
-
-  startClaimSweeper();
-  startClaimPurger();
-  startEvalScheduler(60);
-  startMemoryDiskMonitor();
-  startPlanAutoAdvance();
-  startPlanDecompose();
-
-  try {
-    await syncNimCatalog();
-    logger.info("NIM catalog synced");
-    // Re-sync every 6 hours to pick up new partner models.
-    setInterval(() => {
-      syncNimCatalog().catch((e) => logger.warn({ err: e }, "NIM catalog re-sync failed"));
-    }, 6 * 60 * 60 * 1000);
-  } catch (e) {
-    logger.warn({ err: e }, "NIM catalog initial sync failed (non-fatal)");
-  }
-
-  try {
-    initSafetySubsystem();
-    registerAmbientExecutors();
-    drainApprovedActions();
-    startAmbientRunner();
-    logger.info("Ambient mode runner started");
-  } catch (e) {
-    logger.error(e, "Failed to start ambient runner");
-  }
-
-  // Passive memory recall (Task #225): embedding backfill for legacy items.
-  // Runs in the background so startup is never blocked on embedding API calls.
-  void (async () => {
+  // ── Cloud distribution startup jobs ───────────────────────────────────────
+  // All of the following depend on PostgreSQL (db) or cloud-only services
+  // (Vast.ai GPU profiles, NIM catalog, claim sweep, design intelligence, etc.).
+  // In local distribution mode these jobs must not run: they will error against
+  // SQLite and produce misleading log noise.  Local startup is handled by the
+  // local-migrate block above and the /api/local/* routes.
+  //
+  // All cloud service imports are dynamic so esbuild can eliminate them from
+  // local distribution bundles when MIZI_DISTRIBUTION is defined as "local".
+  if (!IS_LOCAL_DISTRIBUTION) {
     try {
-      const embedded = await runPassiveRecallBackfill(500);
-      if (embedded > 0) {
-        logger.info({ embedded }, "Passive recall: legacy item embeddings backfilled");
-      }
-    } catch (err) {
-      logger.warn({ err }, "Passive recall backfill failed (non-fatal)");
+      const { seedProfiles } = await import("./services/profiles.js");
+      await seedProfiles();
+      logger.info("GPU profiles seeded");
+    } catch (e) {
+      logger.error(e, "Failed to seed profiles");
     }
-  })();
+
+    try {
+      const { registerDefaultTemplate } = await import("./services/templates.js");
+      await registerDefaultTemplate();
+    } catch (e) {
+      logger.error(e, "Failed to register default template");
+    }
+
+    try {
+      const { seedDefaultBundles } = await import("./services/skills-bundler.js");
+      await seedDefaultBundles();
+      logger.info("Default skill bundles seeded");
+    } catch (e) {
+      logger.error(e, "Failed to seed default skill bundles");
+    }
+
+    try {
+      const { seedCuratedSources } = await import("./services/curated-sources.js");
+      const { markDesignSyncComplete } = await import("./services/scheduler.js");
+      const seedResult = await seedCuratedSources();
+      if (seedResult.success) {
+        markDesignSyncComplete();
+        logger.info({ reason: seedResult.reason, updated: seedResult.updated }, "Curated design intelligence sources seeded");
+      } else {
+        logger.warn({ reason: seedResult.reason }, "Curated design intelligence seed completed with non-success status");
+      }
+    } catch (e) {
+      logger.error(e, "Failed to seed curated design intelligence sources");
+    }
+
+    const { startScheduler } = await import("./services/scheduler.js");
+    startScheduler();
+
+    try {
+      const { sweepExpiredClaims, recordExternalSweep, startClaimSweeper } = await import("./services/claim-sweeper.js");
+      const bootSweep = await sweepExpiredClaims();
+      recordExternalSweep(bootSweep);
+      logger.info({ deleted: bootSweep.deleted }, "Startup claim sweep complete");
+      startClaimSweeper();
+    } catch (err) {
+      logger.error({ err }, "Startup claim sweep failed");
+    }
+
+    startClaimPurger();
+
+    const { startEvalScheduler } = await import("./services/skills-evals.js");
+    startEvalScheduler(60);
+
+    const { startMemoryDiskMonitor, runPassiveRecallBackfill } = await import("./services/memory.js");
+    startMemoryDiskMonitor();
+
+    const { startPlanAutoAdvance } = await import("./services/plan-auto-advance.js");
+    startPlanAutoAdvance();
+
+    const { startPlanDecompose } = await import("./services/plan-decompose.js");
+    startPlanDecompose();
+
+    try {
+      const { syncNimCatalog } = await import("./services/nim-catalog.js");
+      await syncNimCatalog();
+      logger.info("NIM catalog synced");
+      setInterval(() => {
+        import("./services/nim-catalog.js").then(({ syncNimCatalog: sync }) => {
+          sync().catch((e) => logger.warn({ err: e }, "NIM catalog re-sync failed"));
+        });
+      }, 6 * 60 * 60 * 1000);
+    } catch (e) {
+      logger.warn({ err: e }, "NIM catalog initial sync failed (non-fatal)");
+    }
+
+    try {
+      const { initSafetySubsystem, drainApprovedActions } = await import("./services/safety.js");
+      const { registerAmbientExecutors, startAmbientRunner } = await import("./services/ambient.js");
+      initSafetySubsystem();
+      registerAmbientExecutors();
+      drainApprovedActions();
+      startAmbientRunner();
+      logger.info("Ambient mode runner started");
+    } catch (e) {
+      logger.error(e, "Failed to start ambient runner");
+    }
+
+    // Passive memory recall: embedding backfill for legacy items.
+    // Runs in the background so startup is never blocked on embedding API calls.
+    void (async () => {
+      try {
+        const embedded = await runPassiveRecallBackfill(500);
+        if (embedded > 0) {
+          logger.info({ embedded }, "Passive recall: legacy item embeddings backfilled");
+        }
+      } catch (err) {
+        logger.warn({ err }, "Passive recall backfill failed (non-fatal)");
+      }
+    })();
+  } else {
+    logger.info("Local distribution mode — cloud startup jobs skipped (GPU seeding, NIM catalog, claim sweep, scheduler, etc.)");
+  }
 });

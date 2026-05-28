@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mizi.ollama</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/ollama</string>
+    <string>serve</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OLLAMA_HOST</key>
+    <string>0.0.0.0:11434</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>{{MIZI_HOME}}</string>
+
+  <key>StandardOutPath</key>
+  <string>{{MIZI_HOME}}/mizi-ollama.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>{{MIZI_HOME}}/mizi-ollama.log</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+</dict>
+</plist>

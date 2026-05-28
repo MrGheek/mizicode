@@ -1,0 +1,21 @@
+[Unit]
+Description=Mizi-Local Dashboard
+Documentation=https://github.com/democra-ai/mizi
+After=network.target mizi-api.service
+Wants=mizi-api.service
+
+[Service]
+Type=simple
+User={{USER}}
+WorkingDirectory={{MIZI_HOME}}
+EnvironmentFile={{MIZI_HOME}}/config.env
+Environment=NODE_ENV=production
+Environment=MIZI_DISTRIBUTION=local
+ExecStart=/usr/bin/node {{MIZI_INSTALL_DIR}}/artifacts/dashboard/serve.mjs
+Restart=on-failure
+RestartSec=5s
+StandardOutput=append:{{MIZI_HOME}}/mizi-dashboard.log
+StandardError=append:{{MIZI_HOME}}/mizi-dashboard.log
+
+[Install]
+WantedBy=multi-user.target

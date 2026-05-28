@@ -2,7 +2,6 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { listNimModels, getConfiguredProviders, PROVIDER_CONFIG } from "../../services/nim-catalog.js";
 import { getAllProfiles } from "../../services/profiles.js";
-import * as vastai from "../../services/vastai.js";
 import { logger } from "../../lib/logger.js";
 
 export function registerModelCatalogTools(server: McpServer): void {
@@ -56,42 +55,49 @@ export function registerModelCatalogTools(server: McpServer): void {
       limit: z.number().int().min(1).max(50).optional().describe("Max offers (default 10)"),
     }),
   }, async ({ profileId, gpuName, numGpus, maxPrice, limit }) => {
-    try {
-      let searchParams: vastai.VastSearchParams = { limit: limit ?? 10 };
+    // esbuild constant-folds process.env.MIZI_DISTRIBUTION → "local" in local builds,
+    // so `if (false) { ... }` dead-code eliminates this entire block including the
+    // dynamic import — preventing vastai.ts content from appearing in local bundles.
+    if (process.env.MIZI_DISTRIBUTION !== "local") {
+      const vastai = await import("../../services/vastai.js");
+      try {
+        let searchParams: Record<string, unknown> = { limit: limit ?? 10 };
 
-      if (profileId) {
-        const { getProfileById } = await import("../../services/profiles.js");
-        const profile = await getProfileById(profileId);
-        if (profile) {
-          const ps = (profile.searchParams as Record<string, unknown>) || {};
-          searchParams = {
-            ...searchParams,
-            gpu_name: ps.gpu_name as string,
-            num_gpus: ps.num_gpus as number,
-            min_gpu_ram: ps.min_gpu_ram as number,
-            disk_space: profile.diskSizeGb,
-          };
+        if (profileId) {
+          const { getProfileById } = await import("../../services/profiles.js");
+          const profile = await getProfileById(profileId);
+          if (profile) {
+            const ps = (profile.searchParams as Record<string, unknown>) || {};
+            searchParams = {
+              ...searchParams,
+              gpu_name: ps.gpu_name as string,
+              num_gpus: ps.num_gpus as number,
+              min_gpu_ram: ps.min_gpu_ram as number,
+              disk_space: profile.diskSizeGb,
+            };
+          }
         }
+
+        if (gpuName) searchParams.gpu_name = gpuName;
+        if (numGpus) searchParams.num_gpus = numGpus;
+        if (maxPrice) searchParams.extra = { ...(searchParams.extra as Record<string, unknown>), dph_total: { lte: maxPrice } };
+
+        const offers = await vastai.searchOffers(searchParams);
+        const mapped = (offers || []).map((o: Record<string, unknown>) => ({
+          id: o.id,
+          gpuName: o.gpu_name,
+          numGpus: o.num_gpus,
+          gpuRamGb: Math.round(((o.gpu_ram as number) || 0) / 1024),
+          dphTotal: o.dph_total,
+          diskSpace: o.disk_space,
+        }));
+        return { content: [{ type: "text", text: JSON.stringify({ offers: mapped, count: mapped.length }, null, 2) }] };
+      } catch (err) {
+        logger.warn({ err }, "[MCP] list_gpu_offers failed");
+        return { content: [{ type: "text", text: JSON.stringify({ error: "Failed to fetch GPU offers" }) }] };
       }
-
-      if (gpuName) searchParams.gpu_name = gpuName;
-      if (numGpus) searchParams.num_gpus = numGpus;
-      if (maxPrice) searchParams.extra = { ...searchParams.extra, dph_total: { lte: maxPrice } };
-
-      const offers = await vastai.searchOffers(searchParams);
-      const mapped = (offers || []).map((o: Record<string, unknown>) => ({
-        id: o.id,
-        gpuName: o.gpu_name,
-        numGpus: o.num_gpus,
-        gpuRamGb: Math.round(((o.gpu_ram as number) || 0) / 1024),
-        dphTotal: o.dph_total,
-        diskSpace: o.disk_space,
-      }));
-      return { content: [{ type: "text", text: JSON.stringify({ offers: mapped, count: mapped.length }, null, 2) }] };
-    } catch (err) {
-      logger.warn({ err }, "[MCP] list_gpu_offers failed");
-      return { content: [{ type: "text", text: JSON.stringify({ error: "Failed to fetch GPU offers" }) }] };
     }
+    return { content: [{ type: "text", text: JSON.stringify({ error: "list_gpu_offers not available in local distribution." }) }] };
   });
 
   server.registerTool("list_profiles", {
