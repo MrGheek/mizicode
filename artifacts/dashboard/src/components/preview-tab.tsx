@@ -67,8 +67,8 @@ function swapPort(currentUrl: string, targetUrl: string): string {
   }
 }
 
-function resolveDefaultUrl(previewUrl: string | null, boltDiyUrl: string | null): string {
-  return previewUrl ?? boltDiyUrl ?? "";
+function resolveDefaultUrl(previewUrl: string | null): string {
+  return previewUrl ?? "";
 }
 
 export function PreviewTab({
@@ -85,8 +85,8 @@ export function PreviewTab({
   const storedSSOpen   = sessionStorage.getItem(`${sk}-ss-open`) === "1";
   const storedConOpen  = sessionStorage.getItem(`${sk}-con-open`) === "1";
 
-  const [url, setUrl]           = useState(() => storedUrl ?? resolveDefaultUrl(previewUrl, boltDiyUrl));
-  const [inputVal, setInputVal] = useState(() => storedUrl ?? resolveDefaultUrl(previewUrl, boltDiyUrl));
+  const [url, setUrl]           = useState(() => storedUrl ?? resolveDefaultUrl(previewUrl));
+  const [inputVal, setInputVal] = useState(() => storedUrl ?? resolveDefaultUrl(previewUrl));
   const [iframeKey, setIframeKey] = useState(0);
   const [viewport, setViewport] = useState<Viewport>(storedViewport);
   const [isLoading, setIsLoading] = useState(true);
@@ -96,7 +96,7 @@ export function PreviewTab({
   const [smartRetryCountdown, setSmartRetryCountdown] = useState(0);
 
   const [history, setHistory] = useState<string[]>(() => {
-    const d = resolveDefaultUrl(previewUrl, boltDiyUrl);
+    const d = resolveDefaultUrl(previewUrl);
     return [storedUrl ?? d].filter(Boolean);
   });
   const [histIdx, setHistIdx] = useState(0);
@@ -513,7 +513,34 @@ export function PreviewTab({
           minHeight: "400px",
         }}
       >
-        {noUrl && (
+        {noUrl && boltDiyUrl && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
+            <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ background: "rgba(99,102,241,0.15)" }}>
+              <Terminal className="w-6 h-6" style={{ color: "#818cf8" }} />
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-sm font-semibold">Bolt.diy can't be embedded here</p>
+              <p className="text-xs text-muted-foreground max-w-xs">
+                The coding environment blocks iframe embedding for security. Open it in a new tab to start coding.
+              </p>
+            </div>
+            <a
+              href={boltDiyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              style={{ background: "rgba(99,102,241,0.15)", color: "#818cf8", border: "1px solid rgba(99,102,241,0.3)" }}
+            >
+              <ExternalLink className="w-4 h-4" />
+              Open Bolt.diy
+            </a>
+            <p className="text-[11px] text-muted-foreground opacity-60">
+              App preview (port 3000) will appear here once your app is running.
+            </p>
+          </div>
+        )}
+
+        {noUrl && !boltDiyUrl && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground">
             <WifiOff className="w-8 h-8 opacity-20" />
             <p className="text-xs">No preview URL available yet.</p>
