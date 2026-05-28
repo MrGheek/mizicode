@@ -1,0 +1,1 @@
+- [Dockerfile Python build tools](dockerfile-python-build-tools.md) — both Dockerfiles need python3+make+g++ before pnpm install or better-sqlite3 fails to compile

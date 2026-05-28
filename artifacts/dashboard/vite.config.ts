@@ -37,7 +37,15 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    runtimeErrorOverlay(),
+    // runtimeErrorOverlay is a Replit-specific dev tool that injects a WebSocket
+    // client pointing at Replit's internal overlay service.  On Fly.io (or any
+    // non-Replit host) that service does not exist and the injected runtime code
+    // throws before React mounts — causing the black screen on production deploys.
+    // Gate it the same way as cartographer/devBanner: Replit dev only.
+    ...(process.env.NODE_ENV !== "production" &&
+    process.env.REPL_ID !== undefined
+      ? [runtimeErrorOverlay()]
+      : []),
     ...(process.env.NODE_ENV !== "production" &&
     process.env.REPL_ID !== undefined
       ? [
