@@ -5,8 +5,9 @@ import {
 } from "lucide-react";
 import { FaGithub as Github } from "react-icons/fa";
 import { API_BASE_URL as BASE_URL } from "@/lib/api-url";
-import { useGetSchedulerConfig, useUpdateSchedulerConfig, useListProfiles } from "@workspace/api-client-react";
+import { useGetSchedulerConfig, useUpdateSchedulerConfig, useListProfiles, getListProfilesQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { IS_LOCAL_BUILD } from "@/lib/distribution";
 import { SchedulerConfigCard } from "@/components/scheduler-config-card";
 import { LaneTypesPanel } from "@/components/lane-types-panel";
 import { useToast } from "@/hooks/use-toast";
@@ -166,9 +167,10 @@ export default function SettingsPage() {
     query: { queryKey: getGetSchedulerConfigQueryKey() }
   });
   const updateScheduler = useUpdateSchedulerConfig();
-  const { data: profiles } = useListProfiles();
+  const { data: profiles } = useListProfiles({ query: { enabled: !IS_LOCAL_BUILD, queryKey: getListProfilesQueryKey() } });
 
   const fetchHealth = () => {
+    if (IS_LOCAL_BUILD) { setLoading(false); return; }
     setLoading(true);
     fetch(`${BASE_URL}api/nim/health`)
       .then((r) => r.ok ? r.json() as Promise<NimHealthResponse> : null)
@@ -179,6 +181,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetchHealth();
+    if (IS_LOCAL_BUILD) return;
     const id = setInterval(fetchHealth, 60_000);
     return () => clearInterval(id);
   }, []);

@@ -54,7 +54,8 @@ import { useHandoffNotificationPref } from "@/hooks/use-handoff-notification-pre
 import { useVisibilityReconnect } from "@/hooks/use-visibility-reconnect";
 import { SkillClassBadge, TrustBadge, TokenCostBadge, InstallRiskBadge } from "@/components/skill-badges";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useListProfiles } from "@workspace/api-client-react";
+import { useListProfiles, getListProfilesQueryKey } from "@workspace/api-client-react";
+import { IS_LOCAL_BUILD } from "@/lib/distribution";
 import { inferBootPhase, type BootPhase } from "@/lib/boot-phases";
 import { RelaunchButton } from "@/components/relaunch-button";
 import { isTypingTarget } from "@/lib/shortcuts";
@@ -2822,7 +2823,7 @@ export default function SessionDetail() {
   const createSession = useCreateSession();
   const updateSession = useUpdateSession();
   // Profiles power the "Usually ~N min" hint in the BootTimeline footer.
-  const { data: profiles } = useListProfiles();
+  const { data: profiles } = useListProfiles({ query: { enabled: !IS_LOCAL_BUILD, queryKey: getListProfilesQueryKey() } });
   const [isRetrying, setIsRetrying] = useState(false);
   const [stopRatingOpen, setStopRatingOpen] = useState(false);
   const [goalEditOpen, setGoalEditOpen] = useState(false);

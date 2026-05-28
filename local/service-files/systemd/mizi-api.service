@@ -1,0 +1,21 @@
+[Unit]
+Description=Mizi-Local API Server
+Documentation=https://github.com/democra-ai/mizi
+After=network.target mizi-ollama.service
+Wants=mizi-ollama.service
+
+[Service]
+Type=simple
+User={{USER}}
+WorkingDirectory={{MIZI_HOME}}
+EnvironmentFile={{MIZI_HOME}}/config.env
+Environment=NODE_ENV=production
+Environment=MIZI_DISTRIBUTION=local
+ExecStart=/usr/bin/node {{MIZI_INSTALL_DIR}}/artifacts/api-server/dist/index.mjs
+Restart=on-failure
+RestartSec=5s
+StandardOutput=append:{{MIZI_HOME}}/mizi-api.log
+StandardError=append:{{MIZI_HOME}}/mizi-api.log
+
+[Install]
+WantedBy=multi-user.target

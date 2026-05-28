@@ -700,6 +700,39 @@ router.patch("/sessions/:sessionId", async (req, res) => {
 });
 
 router.post("/sessions", permitBearer([], { optional: true }), async (req, res) => {
+  // ── Local distribution provider path ──────────────────────────────────────
+  // When MIZI_DISTRIBUTION=local, ALL sessions use the local SQLite provider.
+  // localModelId is optional — if absent we fall back to a sensible default
+  // model (qwen2.5-coder:7b or whatever was last pulled into Ollama).
+  // Cloud-specific body params (profileId, nimModelId, offerId) are ignored.
+  if (process.env.MIZI_DISTRIBUTION === "local") {
+    const rawModelId = typeof req.body.localModelId === "string" && req.body.localModelId.trim()
+      ? req.body.localModelId.trim()
+      : typeof req.body.nimModelId === "string" && req.body.nimModelId.trim()
+        ? req.body.nimModelId.trim()  // allow nimModelId as a fallback for compatibility
+        : "qwen2.5-coder:7b";        // sensible default if nothing is specified
+    try {
+      const { createLocalSessionRecord, startLocalSession } = await import("../services/local.js");
+      const record = await createLocalSessionRecord({
+        modelId: rawModelId,
+        intentText: typeof req.body.intentText === "string" ? req.body.intentText.trim().slice(0, 500) : null,
+        templateSlug: typeof req.body.templateSlug === "string" ? req.body.templateSlug : null,
+        repoUrl: typeof req.body.repoUrl === "string" ? req.body.repoUrl.trim() : null,
+      });
+      await startLocalSession({ sessionId: record.id, modelId: rawModelId });
+      res.status(201).json({
+        id: record.id,
+        provider: "local",
+        status: record.status,
+        ollamaEndpoint: record.ollamaEndpoint,
+        localChatUrl: record.localChatUrl,
+      });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to create local session", detail: String(err) });
+    }
+    return;
+  }
+
   const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider, githubToken: rawGithubToken, modelRoutingMode: rawModelRoutingMode, enableLaneBranches: rawEnableLaneBranches, planId: requestedPlanId } = req.body;
   const modelRoutingMode: "auto" | "pinned" = rawModelRoutingMode === "pinned" ? "pinned" : "auto";
 

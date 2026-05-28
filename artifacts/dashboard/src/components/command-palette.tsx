@@ -15,9 +15,11 @@ import {
   getCloneSessionQueryKey,
   getGetActiveSessionQueryKey,
   getGetDashboardSummaryQueryKey,
+  getListProfilesQueryKey,
 } from "@workspace/api-client-react";
 import type { CloneSessionResponse, PaletteIntentResponse } from "@workspace/api-client-react";
 import { LaunchSessionDialog, type LaunchOptions, type LaunchPrefill } from "@/components/launch-session-dialog";
+import { IS_LOCAL_BUILD } from "@/lib/distribution";
 import {
   LayoutDashboard,
   Terminal,
@@ -87,7 +89,7 @@ export function CommandPalette() {
   const activeSession = activeSessionResp?.session ?? null;
 
   const enqueueRepoIndex = useEnqueueRepoIndex();
-  const { data: profiles } = useListProfiles();
+  const { data: profiles } = useListProfiles({ query: { enabled: !IS_LOCAL_BUILD, queryKey: getListProfilesQueryKey() } });
   const createSession = useCreateSession();
   const cloneMutation = useMutation<CloneSessionResponse, Error, number>({
     mutationFn: (id: number) => cloneSession(id),

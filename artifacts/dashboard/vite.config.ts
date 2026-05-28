@@ -10,9 +10,16 @@ import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 // ensures misconfiguration is caught in Replit dev.
 const isCI = process.env.CI === "true";
 
+// Distribution mode for the dashboard build.
+// MIZI_DISTRIBUTION=local → strips cloud-specific UI via dead-code elimination.
+const DISTRIBUTION = process.env.MIZI_DISTRIBUTION || "cloud";
+const IS_LOCAL = DISTRIBUTION === "local";
+
 const rawPort = process.env.PORT;
 
-if (!rawPort && !isCI) {
+// Local-distribution builds (MIZI_DISTRIBUTION=local) are offline package
+// builds — no dev server is started, so PORT is not required.
+if (!rawPort && !isCI && !IS_LOCAL) {
   throw new Error(
     "PORT environment variable is required but was not provided.",
   );
@@ -24,7 +31,9 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-const basePath = process.env.BASE_PATH ?? (isCI ? "/" : undefined);
+// Local-distribution builds use "/" as the base path (standalone app, not
+// proxied via Replit's path-based routing).
+const basePath = process.env.BASE_PATH ?? (isCI || IS_LOCAL ? "/" : undefined);
 
 if (!basePath) {
   throw new Error(
@@ -60,6 +69,15 @@ export default defineConfig({
         ]
       : []),
   ],
+  define: {
+    // Expose distribution mode to the React app so components can gate
+    // cloud-specific UI (Vast.ai offers, Fly.io config, GPU profiles) behind
+    // __IS_LOCAL_BUILD__. esbuild dead-code elimination strips the branch that
+    // evaluates to false at build time.
+    __IS_LOCAL_BUILD__: String(IS_LOCAL),
+    __IS_CLOUD_BUILD__: String(!IS_LOCAL),
+    __MIZI_DISTRIBUTION__: JSON.stringify(DISTRIBUTION),
+  },
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "src"),

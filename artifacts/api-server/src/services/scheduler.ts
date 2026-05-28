@@ -3,9 +3,7 @@ import type { TeamMemberRecord } from "@workspace/db";
 import { inArray, desc, eq } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { logger } from "../lib/logger";
-import * as vastai from "./vastai";
 import { getProfileById } from "./profiles";
-import type { VastOffer } from "./vastai";
 import { seedCuratedSources, fetchCurrentHeadSha, getStoredCommitSha, isShaRateLimited } from "./curated-sources";
 import { compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext, seedDefaultBundles } from "./skills-bundler";
 import type { SessionContext } from "./skills-types";
@@ -294,244 +292,253 @@ async function deriveRepoFingerprint(repoUrl: string): Promise<{ langs: string[]
 }
 
 async function launchScheduledSession(profileId: number, teamMemberNames: string[] = [], repoUrl?: string | null): Promise<void> {
-  const profile = await getProfileById(profileId);
-  if (!profile) {
-    logger.warn({ profileId }, "Scheduler: profile not found, skipping launch");
-    return;
-  }
-
-  const searchParams = (profile.searchParams as Record<string, unknown>) || {};
-
-  const [defaultTemplate] = await db
-    .select()
-    .from(templatesTable)
-    .where(eq(templatesTable.isDefault, true))
-    .limit(1);
-
-  const templateHash = defaultTemplate?.templateHash || undefined;
-
-  const offers = await vastai.searchOffers({
-    gpu_name: searchParams.gpu_name as string,
-    num_gpus: searchParams.num_gpus as number,
-    min_gpu_ram: searchParams.min_gpu_ram as number,
-    disk_space: profile.diskSizeGb,
-    limit: 1,
-  });
-
-  if (!offers || offers.length === 0) {
-    logger.warn({ profileId }, "Scheduler: no GPU offers available, skipping launch");
-    return;
-  }
-
-  const selectedOfferId = (offers[0] as VastOffer).id;
-
-  // Build team member records from the scheduler-configured names (max 4)
-  const teamMemberRecords = buildTeamMemberRecords(teamMemberNames);
-
-  // Create the session row before launching so we have a sessionId for the boot script
-  const [session] = await db
-    .insert(sessionsTable)
-    .values({
-      profileId: profile.id,
-      vastOfferId: selectedOfferId,
-      templateHash: templateHash || null,
-      status: "provisioning",
-      statusMessage: "Auto-launched by scheduler — model download will begin.",
-      gpuName: profile.gpuName,
-      numGpus: profile.numGpus,
-      teamMembers: teamMemberRecords.length > 0 ? teamMemberRecords : null,
-      taskMode: teamMemberRecords.length > 0 ? "team" : "build",
-      tokenMode: "core",
-      ownerToken: generatePassword(32),
-    })
-    .returning();
-
-  const insertedSessionId = session.id;
-
-  try {
-    const MODEL_REPO = profile.modelRepo;
-    const MODEL_QUANT = profile.defaultQuant;
-    const SERVED_MODEL_NAME = profile.servedModelName;
-
-    // Resolve memory proxy and callback credentials (same logic as manual launch)
-    const memProxyUrl = process.env["MIZI_MEM_PROXY_URL"]
-      || (process.env["REPLIT_DEV_DOMAIN"]
-        ? `https://${process.env["REPLIT_DEV_DOMAIN"]}`
-        : undefined);
-
-    const memUserId = process.env["MIZI_MEM_USER_ID"] || "operator";
-    // Support both MIZI_MEM_AUTH_TOKEN (task contract) and MIZI_MEM_TOKEN (current manual launch name)
-    const memAuthToken = process.env["MIZI_MEM_AUTH_TOKEN"] || process.env["MIZI_MEM_TOKEN"];
-    const callbackBaseUrl = memProxyUrl;
-
-    // Derive repo fingerprint from repoUrl (mirrors manual session launch logic)
-    let repoFingerprintJson: Record<string, unknown> | null = null;
-    let repoLangs: string[] = [];
-    if (repoUrl && typeof repoUrl === "string" && repoUrl.trim()) {
-      try {
-        const { langs, frameworks, urlHash } = await deriveRepoFingerprint(repoUrl);
-        repoLangs = langs;
-        repoFingerprintJson = {
-          url: repoUrl.trim(),
-          urlHash,
-          langs,
-          frameworks,
-          derivedAt: new Date().toISOString(),
-          langSource: langs.length > 0 ? "github_api" : "none",
-        };
-        logger.info(
-          { sessionId: insertedSessionId, repoUrl: repoUrl.trim(), langs, frameworks },
-          "Scheduler: repo fingerprint derived for Smart Skills bundle selection",
-        );
-      } catch (fingerprintErr) {
-        logger.warn({ err: fingerprintErr, repoUrl }, "Scheduler: failed to derive repo fingerprint — will use default bundle");
-      }
+  // esbuild constant-folds process.env.MIZI_DISTRIBUTION → "local" in local builds,
+  // so `if (false) { ... }` dead-code eliminates this entire block including the
+  // dynamic import — preventing vastai.ts content from appearing in local bundles.
+  if (process.env.MIZI_DISTRIBUTION !== "local") {
+    const vastai = await import("./vastai.js");
+    const profile = await getProfileById(profileId);
+    if (!profile) {
+      logger.warn({ profileId }, "Scheduler: profile not found, skipping launch");
+      return;
     }
 
-    // Persist repo fingerprint to session row
-    if (repoFingerprintJson) {
-      await db.update(sessionsTable).set({ repoFingerprintJson, updatedAt: new Date() }).where(eq(sessionsTable.id, insertedSessionId));
-    }
+    const searchParams = (profile.searchParams as Record<string, unknown>) || {};
 
-    // Compile the active skills bundle (same logic as manual launch)
-    let activeBundleB64: string | undefined;
-    let resolvedBundleId: number | undefined;
-    let pendingCompiled: Awaited<ReturnType<typeof compileBundle>> | undefined;
-    try {
-      await seedDefaultBundles();
-      const sessionCtx: SessionContext = {
-        sessionType: teamMemberRecords.length > 0 ? "team" : "solo",
-        taskMode: teamMemberRecords.length > 0 ? "team" : "build",
-        modelProfile: profile.servedModelName || "kimi",
-        repoLangs,
-        tokenMode: "core",
-        repoIntelligence: undefined,
-      };
+    const [defaultTemplate] = await db
+      .select()
+      .from(templatesTable)
+      .where(eq(templatesTable.isDefault, true))
+      .limit(1);
 
-      const bundle = await getDefaultBundleForContext(sessionCtx, !!(repoUrl && typeof repoUrl === "string" && repoUrl.trim()));
-      if (bundle) {
-        resolvedBundleId = bundle.id;
-        const compiled = await compileBundle(bundle.id, sessionCtx);
-        activeBundleB64 = buildActiveBundleEnvPayload(compiled, "core");
-        pendingCompiled = compiled;
-        logger.info(
-          { sessionId: insertedSessionId, bundleId: bundle.id, bundleSlug: bundle.slug, repoLangs, repoFrameworks: repoFingerprintJson?.frameworks ?? [] },
-          "Scheduler: Smart Skills bundle compiled for session",
-        );
-      }
-    } catch (skillsErr) {
-      logger.warn({ err: skillsErr, sessionId: insertedSessionId }, "Scheduler: Smart Skills compilation failed — session will launch without skills bundle");
-    }
+    const templateHash = defaultTemplate?.templateHash || undefined;
 
-    if (resolvedBundleId) {
-      await db.update(sessionsTable).set({ activeBundleId: resolvedBundleId, updatedAt: new Date() }).where(eq(sessionsTable.id, insertedSessionId));
-    }
-
-    const onstart = vastai.buildOnStartScript({
-      modelRepo: MODEL_REPO,
-      modelQuant: MODEL_QUANT,
-      servedModelName: SERVED_MODEL_NAME,
-      llamaCtxSize: profile.llamaCtxSize,
-      llamaBatchSize: profile.llamaBatchSize,
-      llamaExtraArgs: profile.llamaExtraArgs || "",
-      numGpus: profile.numGpus,
-      swarmWorkerCap: profile.swarmWorkerCap,
-      memProxyUrl,
-      memAuthToken,
-      memUserId,
-      teamMembers: teamMemberRecords,
-      sessionId: insertedSessionId,
-      callbackBaseUrl,
-      activeBundleB64,
+    const offers = await vastai.searchOffers({
+      gpu_name: searchParams.gpu_name as string,
+      num_gpus: searchParams.num_gpus as number,
+      min_gpu_ram: searchParams.min_gpu_ram as number,
+      disk_space: profile.diskSizeGb,
+      limit: 1,
     });
 
-    const result = await vastai.createInstance({
-      offerId: selectedOfferId,
-      image: profile.dockerImageTag,
-      onstart,
-      disk: profile.diskSizeGb,
-      templateHashId: templateHash,
-      env: {
-        MODEL_REPO,
-        MODEL_QUANT,
-        SERVED_MODEL_NAME,
-        VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
-        VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
-        NUM_GPUS: String(profile.numGpus),
-      },
-    });
-
-    // Record Skills activation now that instance creation succeeded
-    if (pendingCompiled) {
-      try {
-        await recordSessionActivation(insertedSessionId, pendingCompiled, "core");
-      } catch (activationErr) {
-        logger.warn({ err: activationErr, sessionId: insertedSessionId }, "Scheduler: failed to record session activation (non-fatal)");
-      }
+    if (!offers || offers.length === 0) {
+      logger.warn({ profileId }, "Scheduler: no GPU offers available, skipping launch");
+      return;
     }
 
-    await db
-      .update(sessionsTable)
-      .set({
-        vastInstanceId: result.new_contract,
+    const selectedOfferId = (offers[0] as { id: number }).id;
+
+    // Build team member records from the scheduler-configured names (max 4)
+    const teamMemberRecords = buildTeamMemberRecords(teamMemberNames);
+
+    // Create the session row before launching so we have a sessionId for the boot script
+    const [session] = await db
+      .insert(sessionsTable)
+      .values({
+        profileId: profile.id,
+        vastOfferId: selectedOfferId,
+        templateHash: templateHash || null,
         status: "provisioning",
-        statusMessage: "Scheduler-launched — waiting for startup and model download...",
-        startedAt: new Date(),
-        costPerHour: result.expected_price || null,
-        updatedAt: new Date(),
+        statusMessage: "Auto-launched by scheduler — model download will begin.",
+        gpuName: profile.gpuName,
+        numGpus: profile.numGpus,
+        teamMembers: teamMemberRecords.length > 0 ? teamMemberRecords : null,
+        taskMode: teamMemberRecords.length > 0 ? "team" : "build",
+        tokenMode: "core",
+        ownerToken: generatePassword(32),
       })
-      .where(eq(sessionsTable.id, insertedSessionId));
+      .returning();
 
-    logger.info(
-      { sessionId: insertedSessionId, vastInstanceId: result.new_contract },
-      "Scheduler: session launched successfully"
-    );
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.error({ err, sessionId: insertedSessionId }, "Scheduler: failed to provision instance — marking session as error");
-    await db
-      .update(sessionsTable)
-      .set({
-        status: "error",
-        statusMessage: `Scheduler provisioning failed: ${message}`,
-        updatedAt: new Date(),
-      })
-      .where(eq(sessionsTable.id, insertedSessionId))
-      .catch((e) => logger.warn(e, "Scheduler: failed to mark session as error after provisioning failure"));
+    const insertedSessionId = session.id;
+
+    try {
+      const MODEL_REPO = profile.modelRepo;
+      const MODEL_QUANT = profile.defaultQuant;
+      const SERVED_MODEL_NAME = profile.servedModelName;
+
+      // Resolve memory proxy and callback credentials (same logic as manual launch)
+      const memProxyUrl = process.env["MIZI_MEM_PROXY_URL"]
+        || (process.env["REPLIT_DEV_DOMAIN"]
+          ? `https://${process.env["REPLIT_DEV_DOMAIN"]}`
+          : undefined);
+
+      const memUserId = process.env["MIZI_MEM_USER_ID"] || "operator";
+      // Support both MIZI_MEM_AUTH_TOKEN (task contract) and MIZI_MEM_TOKEN (current manual launch name)
+      const memAuthToken = process.env["MIZI_MEM_AUTH_TOKEN"] || process.env["MIZI_MEM_TOKEN"];
+      const callbackBaseUrl = memProxyUrl;
+
+      // Derive repo fingerprint from repoUrl (mirrors manual session launch logic)
+      let repoFingerprintJson: Record<string, unknown> | null = null;
+      let repoLangs: string[] = [];
+      if (repoUrl && typeof repoUrl === "string" && repoUrl.trim()) {
+        try {
+          const { langs, frameworks, urlHash } = await deriveRepoFingerprint(repoUrl);
+          repoLangs = langs;
+          repoFingerprintJson = {
+            url: repoUrl.trim(),
+            urlHash,
+            langs,
+            frameworks,
+            derivedAt: new Date().toISOString(),
+            langSource: langs.length > 0 ? "github_api" : "none",
+          };
+          logger.info(
+            { sessionId: insertedSessionId, repoUrl: repoUrl.trim(), langs, frameworks },
+            "Scheduler: repo fingerprint derived for Smart Skills bundle selection",
+          );
+        } catch (fingerprintErr) {
+          logger.warn({ err: fingerprintErr, repoUrl }, "Scheduler: failed to derive repo fingerprint — will use default bundle");
+        }
+      }
+
+      // Persist repo fingerprint to session row
+      if (repoFingerprintJson) {
+        await db.update(sessionsTable).set({ repoFingerprintJson, updatedAt: new Date() }).where(eq(sessionsTable.id, insertedSessionId));
+      }
+
+      // Compile the active skills bundle (same logic as manual launch)
+      let activeBundleB64: string | undefined;
+      let resolvedBundleId: number | undefined;
+      let pendingCompiled: Awaited<ReturnType<typeof compileBundle>> | undefined;
+      try {
+        await seedDefaultBundles();
+        const sessionCtx: SessionContext = {
+          sessionType: teamMemberRecords.length > 0 ? "team" : "solo",
+          taskMode: teamMemberRecords.length > 0 ? "team" : "build",
+          modelProfile: profile.servedModelName || "kimi",
+          repoLangs,
+          tokenMode: "core",
+          repoIntelligence: undefined,
+        };
+
+        const bundle = await getDefaultBundleForContext(sessionCtx, !!(repoUrl && typeof repoUrl === "string" && repoUrl.trim()));
+        if (bundle) {
+          resolvedBundleId = bundle.id;
+          const compiled = await compileBundle(bundle.id, sessionCtx);
+          activeBundleB64 = buildActiveBundleEnvPayload(compiled, "core");
+          pendingCompiled = compiled;
+          logger.info(
+            { sessionId: insertedSessionId, bundleId: bundle.id, bundleSlug: bundle.slug, repoLangs, repoFrameworks: repoFingerprintJson?.frameworks ?? [] },
+            "Scheduler: Smart Skills bundle compiled for session",
+          );
+        }
+      } catch (skillsErr) {
+        logger.warn({ err: skillsErr, sessionId: insertedSessionId }, "Scheduler: Smart Skills compilation failed — session will launch without skills bundle");
+      }
+
+      if (resolvedBundleId) {
+        await db.update(sessionsTable).set({ activeBundleId: resolvedBundleId, updatedAt: new Date() }).where(eq(sessionsTable.id, insertedSessionId));
+      }
+
+      const onstart = vastai.buildOnStartScript({
+        modelRepo: MODEL_REPO,
+        modelQuant: MODEL_QUANT,
+        servedModelName: SERVED_MODEL_NAME,
+        llamaCtxSize: profile.llamaCtxSize,
+        llamaBatchSize: profile.llamaBatchSize,
+        llamaExtraArgs: profile.llamaExtraArgs || "",
+        numGpus: profile.numGpus,
+        swarmWorkerCap: profile.swarmWorkerCap,
+        memProxyUrl,
+        memAuthToken,
+        memUserId,
+        teamMembers: teamMemberRecords,
+        sessionId: insertedSessionId,
+        callbackBaseUrl,
+        activeBundleB64,
+      });
+
+      const result = await vastai.createInstance({
+        offerId: selectedOfferId,
+        image: profile.dockerImageTag,
+        onstart,
+        disk: profile.diskSizeGb,
+        templateHashId: templateHash,
+        env: {
+          MODEL_REPO,
+          MODEL_QUANT,
+          SERVED_MODEL_NAME,
+          VLLM_MAX_MODEL_LEN: String(profile.llamaCtxSize),
+          VLLM_MAX_NUM_SEQS: String(profile.llamaBatchSize),
+          NUM_GPUS: String(profile.numGpus),
+        },
+      });
+
+      // Record Skills activation now that instance creation succeeded
+      if (pendingCompiled) {
+        try {
+          await recordSessionActivation(insertedSessionId, pendingCompiled, "core");
+        } catch (activationErr) {
+          logger.warn({ err: activationErr, sessionId: insertedSessionId }, "Scheduler: failed to record session activation (non-fatal)");
+        }
+      }
+
+      await db
+        .update(sessionsTable)
+        .set({
+          vastInstanceId: result.new_contract,
+          status: "provisioning",
+          statusMessage: "Scheduler-launched — waiting for startup and model download...",
+          startedAt: new Date(),
+          costPerHour: result.expected_price || null,
+          updatedAt: new Date(),
+        })
+        .where(eq(sessionsTable.id, insertedSessionId));
+
+      logger.info(
+        { sessionId: insertedSessionId, vastInstanceId: result.new_contract },
+        "Scheduler: session launched successfully"
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error({ err, sessionId: insertedSessionId }, "Scheduler: failed to provision instance — marking session as error");
+      await db
+        .update(sessionsTable)
+        .set({
+          status: "error",
+          statusMessage: `Scheduler provisioning failed: ${message}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(sessionsTable.id, insertedSessionId))
+        .catch((e) => logger.warn(e, "Scheduler: failed to mark session as error after provisioning failure"));
+    }
   }
 }
 
 async function stopActiveSession(): Promise<void> {
-  const session = await getActiveSession();
-  if (!session) return;
+  if (process.env.MIZI_DISTRIBUTION !== "local") {
+    const vastai = await import("./vastai.js");
+    const session = await getActiveSession();
+    if (!session) return;
 
-  logger.info({ sessionId: session.id }, "Scheduler: safety net stop triggered");
+    logger.info({ sessionId: session.id }, "Scheduler: safety net stop triggered");
 
-  if (session.vastInstanceId) {
-    try {
-      await vastai.destroyInstance(session.vastInstanceId);
-    } catch (err) {
-      logger.warn({ err, sessionId: session.id }, "Scheduler: failed to destroy Vast.ai instance");
+    if (session.vastInstanceId) {
+      try {
+        await vastai.destroyInstance(session.vastInstanceId);
+      } catch (err) {
+        logger.warn({ err, sessionId: session.id }, "Scheduler: failed to destroy Vast.ai instance");
+      }
     }
+
+    const hoursRunning = session.startedAt
+      ? (Date.now() - session.startedAt.getTime()) / (1000 * 60 * 60)
+      : 0;
+    const totalCost = session.costPerHour ? session.costPerHour * hoursRunning : 0;
+
+    await db
+      .update(sessionsTable)
+      .set({
+        status: "stopped",
+        statusMessage: "Auto-stopped by scheduler (safety net)",
+        stoppedAt: new Date(),
+        totalCost: Math.round(totalCost * 100) / 100,
+        updatedAt: new Date(),
+      })
+      .where(eq(sessionsTable.id, session.id));
+
+    logger.info({ sessionId: session.id }, "Scheduler: session stopped");
   }
-
-  const hoursRunning = session.startedAt
-    ? (Date.now() - session.startedAt.getTime()) / (1000 * 60 * 60)
-    : 0;
-  const totalCost = session.costPerHour ? session.costPerHour * hoursRunning : 0;
-
-  await db
-    .update(sessionsTable)
-    .set({
-      status: "stopped",
-      statusMessage: "Auto-stopped by scheduler (safety net)",
-      stoppedAt: new Date(),
-      totalCost: Math.round(totalCost * 100) / 100,
-      updatedAt: new Date(),
-    })
-    .where(eq(sessionsTable.id, session.id));
-
-  logger.info({ sessionId: session.id }, "Scheduler: session stopped");
 }
 
 // Track recent actions to prevent double-firing across 30-second interval ticks
