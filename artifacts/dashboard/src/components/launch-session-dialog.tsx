@@ -48,6 +48,10 @@ function buildOAuthUrl(profileId?: number): string {
 
 const LS_PAT_PREFIX = "mizi:github_pat:";
 
+const BUNDLE_DESCRIPTIONS: Record<string, string> = {
+  "ecc-essentials": "Best-of-ECC methodology skills — TDD, security, API design, refactoring, and more. MIT licensed, virtual-install only.",
+};
+
 function loadSavedPat(repoUrl: string): string {
   if (!repoUrl.trim()) return "";
   try {
@@ -681,6 +685,18 @@ export function LaunchSessionDialog({
                 ))}
               </select>
             </div>
+            {(() => {
+              const selectedSlug = typeof bundleOverride === "number"
+                ? bundles.find(b => b.id === bundleOverride)?.slug ?? null
+                : null;
+              const desc = selectedSlug ? BUNDLE_DESCRIPTIONS[selectedSlug] : null;
+              return desc ? (
+                <p className="text-[10px] text-amber-400/80 flex items-start gap-1">
+                  <span className="shrink-0 mt-px">✦</span>
+                  {desc}
+                </p>
+              ) : null;
+            })()}
           </div>
 
           {/* Team members */}

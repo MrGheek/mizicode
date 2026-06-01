@@ -7,6 +7,7 @@ import { db, skillsTable, skillBundlesTable, skillSourcesTable, skillVersionsTab
 import { eq, and, desc, or, like, sql, inArray } from "drizzle-orm";
 import { importSkillFromUrl } from "../services/skills-import";
 import { seedDefaultBundles, compileBundle, buildActiveBundleEnvPayload, recordSessionActivation, getDefaultBundleForContext } from "../services/skills-bundler";
+import { seedEccEssentials, getEccSource, ECC_REPO_URL } from "../services/ecc-catalog";
 import { DEFAULT_SKILLS } from "../services/default-skills";
 import { getSkillFeedbackScores, getSkillFeedbackScoreById, invalidateFeedbackScoresCache } from "../services/skills-ranker";
 import {
@@ -124,6 +125,21 @@ router.get("/skills", async (req, res) => {
     builtins: DEFAULT_SKILLS.map(s => ({ id: s.id, name: s.name, class: s.class, summary: s.summary })),
     pagination: { limit, offset, count: skills.length },
   });
+});
+
+router.get("/skills/sources", async (_req, res) => {
+  const sources = await db
+    .select({
+      id: skillSourcesTable.id,
+      repoUrl: skillSourcesTable.repoUrl,
+      pinnedCommitSha: skillSourcesTable.pinnedCommitSha,
+      license: skillSourcesTable.license,
+      trustLevel: skillSourcesTable.trustLevel,
+      importedAt: skillSourcesTable.importedAt,
+    })
+    .from(skillSourcesTable)
+    .orderBy(desc(skillSourcesTable.importedAt));
+  res.json({ sources });
 });
 
 router.post("/skills/discover", (_req, res) => {
@@ -693,6 +709,40 @@ router.post("/skills/import", async (req, res) => {
     const message = err instanceof Error ? err.message : "Import failed";
     logger.error({ err, url }, "Skill import failed");
     res.status(400).json({ error: message });
+  }
+});
+
+/**
+ * POST /admin/seed-ecc
+ *
+ * Idempotent one-click operation:
+ *  1. Imports the ECC repo if not already in the DB (calls importSkillFromUrl).
+ *  2. Approves the curated ECC Essentials set and creates/updates the bundle.
+ *
+ * Safe to call multiple times — skills already approved are left unchanged.
+ */
+router.post("/admin/seed-ecc", async (_req, res) => {
+  try {
+    let importResult: { count: number } | null = null;
+    const existing = await getEccSource();
+    if (!existing) {
+      logger.info("ECC source not found — importing now");
+      const imported = await importSkillFromUrl(ECC_REPO_URL);
+      importResult = { count: imported.skills.length };
+      logger.info({ count: importResult.count }, "ECC import complete");
+    }
+
+    const seedResult = await seedEccEssentials();
+
+    res.json({
+      ok: true,
+      imported: importResult,
+      ...seedResult,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "ECC seed failed";
+    logger.error({ err }, "ECC seed error");
+    res.status(500).json({ error: message });
   }
 });
 

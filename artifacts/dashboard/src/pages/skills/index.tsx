@@ -180,6 +180,19 @@ function DesignCategoryPills({ categories }: { categories: string[] }) {
   );
 }
 
+const ECC_REPO_URL_FRAGMENT = "affaan-m/ECC";
+
+function EccBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="text-[9px] py-0 h-4 border-amber-500/40 text-amber-400 bg-amber-500/10 font-semibold tracking-wide"
+    >
+      ECC
+    </Badge>
+  );
+}
+
 function SkillCard({
   skill,
   showProvenance,
@@ -190,6 +203,7 @@ function SkillCard({
   isActioning,
   feedbackScores,
   designCategories,
+  eccSourceId,
   onClick,
 }: {
   skill: SkillRecord;
@@ -201,9 +215,11 @@ function SkillCard({
   isActioning?: boolean;
   feedbackScores?: Record<string, FeedbackScoreEntry>;
   designCategories?: string[];
+  eccSourceId?: number | null;
   onClick?: () => void;
 }) {
   const isHighRisk = skill.installRisk === "hooked" || skill.installRisk === "binary";
+  const isEcc = eccSourceId != null && skill.sourceId === eccSourceId;
 
   return (
     <Card
@@ -223,6 +239,7 @@ function SkillCard({
               {feedbackScores && (
                 <SkillEffectivenessBadge slug={skill.slug} feedbackScores={feedbackScores} />
               )}
+              {isEcc && <EccBadge />}
             </div>
             <h3 className="font-semibold text-sm mt-1">{skill.name}</h3>
             {skill.description && (
@@ -1039,6 +1056,7 @@ function ImportModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
 export default function SkillsLibrary() {
   const [tab, setTab] = useState<LibTab>("installed");
   const [importOpen, setImportOpen] = useState(false);
+  const [seedingEcc, setSeedingEcc] = useState(false);
   const [selectedBundle, setSelectedBundle] = useState<SkillBundle | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<SkillRecord | null>(null);
   const [actioningId, setActioningId] = useState<number | null>(null);
@@ -1056,6 +1074,44 @@ export default function SkillsLibrary() {
   const skillsLoading = tab === "pending" ? pendingLoading : approvedLoading;
   const { data: bundlesData, isLoading: bundlesLoading } = useListSkillBundles();
   const { data: feedbackScoresData } = useGetSkillFeedbackScores();
+
+  const { data: sourcesData } = useQuery({
+    queryKey: ["skill-sources"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}api/skills/sources`);
+      if (!res.ok) throw new Error("Failed to fetch sources");
+      return res.json() as Promise<{ sources: Array<{ id: number; repoUrl: string }> }>;
+    },
+    staleTime: 60000,
+  });
+  const eccSourceId = sourcesData?.sources.find(s => s.repoUrl.includes(ECC_REPO_URL_FRAGMENT))?.id ?? null;
+
+  const handleSeedEcc = async () => {
+    setSeedingEcc(true);
+    try {
+      const res = await fetch(`${BASE_URL}api/admin/seed-ecc`, { method: "POST" });
+      const data = await res.json() as {
+        ok?: boolean; error?: string;
+        totalImported?: number; essentialsFound?: number; bundleCreated?: boolean; imported?: { count: number } | null;
+      };
+      if (!res.ok || data.error) {
+        toast({ title: "ECC seed failed", description: data.error ?? "Unknown error", variant: "destructive" });
+      } else {
+        const importedMsg = data.imported ? ` (${data.imported.count} skills imported from GitHub)` : "";
+        const msg = data.bundleCreated
+          ? `"ECC Essentials" bundle created — ${data.essentialsFound ?? 0} skills approved${importedMsg}`
+          : `"ECC Essentials" refreshed — ${data.essentialsFound ?? 0} skills${importedMsg}`;
+        toast({ title: "ECC Essentials seeded", description: msg });
+        queryClient.invalidateQueries({ queryKey: getListSkillsQueryKey() });
+        queryClient.invalidateQueries({ queryKey: ["skill-sources"] });
+        setTab("installed");
+      }
+    } catch (err) {
+      toast({ title: "ECC seed error", description: (err as Error).message, variant: "destructive" });
+    } finally {
+      setSeedingEcc(false);
+    }
+  };
   const reviewSkill = useReviewSkill();
   const enableSkill = useEnableSkill();
   const disableSkill = useDisableSkill();
@@ -1238,9 +1294,25 @@ export default function SkillsLibrary() {
             </p>
           )}
         </div>
-        <Button className="gap-2" onClick={() => setImportOpen(true)}>
-          <Plus className="w-4 h-4" /> Import Skill
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            className="gap-2 text-amber-400 border-amber-500/40 hover:bg-amber-500/10 hover:border-amber-500/60"
+            onClick={handleSeedEcc}
+            disabled={seedingEcc}
+            title="Import the ECC catalog and approve the curated ECC Essentials bundle"
+          >
+            {seedingEcc ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Wand2 className="w-4 h-4" />
+            )}
+            {seedingEcc ? "Seeding ECC…" : "Seed ECC Essentials"}
+          </Button>
+          <Button className="gap-2" onClick={() => setImportOpen(true)}>
+            <Plus className="w-4 h-4" /> Import Skill
+          </Button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -1301,6 +1373,7 @@ export default function SkillsLibrary() {
                         isActioning={actioningId === skill.id}
                         feedbackScores={feedbackScoresMap}
                         designCategories={skillDesignCategoriesById[skill.id]}
+                        eccSourceId={eccSourceId}
                         onClick={() => setSelectedSkill(skill)}
                       />
                     ))}
@@ -1340,6 +1413,7 @@ export default function SkillsLibrary() {
                   isActioning={actioningId === skill.id}
                   feedbackScores={feedbackScoresMap}
                   designCategories={skillDesignCategoriesById[skill.id]}
+                  eccSourceId={eccSourceId}
                   onClick={() => setSelectedSkill(skill)}
                 />
               ))}
@@ -1461,6 +1535,11 @@ function BundleCard({ bundle, onClick }: { bundle: SkillBundle; onClick: () => v
               {bundle.isDefault && (
                 <Badge variant="outline" className="text-[10px] bg-emerald-500/20 text-emerald-400 border-emerald-500/30 py-0">
                   Native
+                </Badge>
+              )}
+              {bundle.slug === "ecc-essentials" && (
+                <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-400 bg-amber-500/10 py-0 font-semibold">
+                  ECC
                 </Badge>
               )}
               {bundle.taskMode && (
