@@ -1,5 +1,39 @@
 import { logger } from "../lib/logger";
 
+// ─── Fly.io workspace machine URL patterns ────────────────────────────────────
+//
+// Fly.io assigns each machine a unique ID (e.g. "e784927c0d1987"). There are
+// three ways to address a workspace machine's bolt.diy port (5180):
+//
+// 1. SHARED HOSTNAME (wrong for multi-session use)
+//    https://<appName>.fly.dev:5180
+//    Fly's edge load-balancer picks any available machine in the app. Two
+//    concurrent sessions can land on each other's machines. This was the
+//    original approach and is the root cause of the cross-session bug.
+//
+// 2. FLY PRIVATE NETWORK / 6PN (used by the API server proxy — recommended)
+//    http://<machineId>.vm.<appName>.internal:5180
+//    Accessible only from within Fly's private WireGuard network (6PN).
+//    Because mizi-api runs on Fly, it can reach workspace machines directly
+//    at their stable private hostnames. The /api/sessions/:id/workspace proxy
+//    route in sessions.ts uses this pattern: it looks up the session's
+//    flyMachineId in the DB, then forwards all HTTP traffic (and WebSocket
+//    upgrades) over 6PN to the correct machine. Each concurrent session gets a
+//    unique API-server URL, so no cross-session interference is possible.
+//
+// 3. FLY-FORCE-INSTANCE-ID HEADER (server-to-server only)
+//    https://<appName>.fly.dev:5180  +  fly-force-instance-id: <machineId>
+//    Fly's proxy routes the request to the specific machine. Only works for
+//    server-to-server calls where the caller controls HTTP headers — not
+//    suitable for browser redirects (302) because browsers don't forward
+//    custom headers on redirect. Useful for health probes or admin calls
+//    where you must go through the public edge (e.g. no 6PN access).
+//
+// For any future multi-tenant expansion the 6PN approach (pattern 2) remains
+// correct — the proxy URL /api/sessions/:id/workspace is already per-session
+// and the DB lookup guarantees isolation. Pattern 3 would only be needed if
+// the API server needed to probe a specific machine from outside Fly.
+
 const FLY_MACHINES_BASE = "https://api.machines.dev/v1";
 
 // Fly.io shared-CPU-1x: 1 vCPU — sufficient for workspace containers.
