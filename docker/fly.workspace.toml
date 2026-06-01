@@ -1,0 +1,44 @@
+# ============================================================
+# Fly.io configuration — MIZI Workspace App
+#
+# This app hosts the ephemeral workspace machines that run
+# code-server, bolt.diy, and the LiteLLM proxy for NIM sessions.
+# It is SEPARATE from mizi-api (the API server app) to ensure
+# workspace machines don't accidentally appear in — or consume
+# capacity from — the API server's machine pool.
+#
+# One-time setup (run once per environment):
+#   flyctl apps create mizi-workspace --org personal
+#
+# The workspace app has no persistent services of its own.
+# Machines are created/destroyed on-demand by the API server
+# via the Fly Machines API (see artifacts/api-server/src/services/fly.ts).
+# Ports are declared per-machine at creation time, not here.
+#
+# Build and push the workspace image (run from workspace root):
+#   flyctl auth docker
+#   docker build -t registry.fly.io/mizi-workspace:latest \
+#       -f docker/Dockerfile .
+#   docker push registry.fly.io/mizi-workspace:latest
+#
+# Or let flyctl build it remotely:
+#   flyctl deploy --app mizi-workspace \
+#       --dockerfile docker/Dockerfile \
+#       --image-label latest \
+#       --strategy immediate \
+#       --no-public-ips
+#
+# After pushing, set the env var on the API server so it knows
+# which Fly app to launch workspace machines into:
+#   fly secrets set --app mizi-api \
+#       FLY_WORKSPACE_APP_NAME=mizi-workspace
+# ============================================================
+
+app            = "mizi-workspace"
+primary_region = "ord"
+
+[build]
+  dockerfile = "docker/Dockerfile"
+
+[deploy]
+  strategy = "immediate"

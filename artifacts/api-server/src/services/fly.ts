@@ -16,12 +16,45 @@ const FLY_MACHINES_BASE = "https://api.machines.dev/v1";
 const FLY_MACHINE_SIZE = "performance-1x";
 const FLY_MACHINE_MEMORY_MB = 4096;
 
+// Returns the Fly API token and the workspace app name.
+//
+// FLY_WORKSPACE_APP_NAME (preferred) — the dedicated "mizi-workspace" Fly app
+//   that owns all ephemeral workspace machines. Keeping workspace machines in
+//   their own app prevents them from showing up in (or interfering with) the
+//   "mizi-api" API server machine pool.
+//
+// FLY_APP_NAME (legacy fallback) — the API server's own Fly app. Accepted for
+//   backwards compatibility but logs a deprecation warning. Set
+//   FLY_WORKSPACE_APP_NAME=mizi-workspace on the API server to opt out.
 function getConfig(): { token: string; app: string } {
   const token = process.env.FLY_API_TOKEN;
-  const app = process.env.FLY_APP_NAME;
-  if (!token) throw new Error("FLY_API_TOKEN is not set — required to provision NIM workspace machines");
-  if (!app) throw new Error("FLY_APP_NAME is not set — required to provision NIM workspace machines");
-  return { token, app };
+  if (!token) throw new Error(
+    "FLY_API_TOKEN is not set — required to provision NIM workspace machines. " +
+    "Set it with: fly secrets set --app mizi-api FLY_API_TOKEN=<token>"
+  );
+
+  const workspaceApp = process.env.FLY_WORKSPACE_APP_NAME;
+  const apiApp = process.env.FLY_APP_NAME;
+
+  if (workspaceApp) {
+    return { token, app: workspaceApp };
+  }
+
+  if (apiApp) {
+    logger.warn(
+      { FLY_APP_NAME: apiApp },
+      "FLY_WORKSPACE_APP_NAME is not set — falling back to FLY_APP_NAME. " +
+      "Workspace machines will be created inside the API server app. " +
+      "Set FLY_WORKSPACE_APP_NAME=mizi-workspace to use a dedicated app."
+    );
+    return { token, app: apiApp };
+  }
+
+  throw new Error(
+    "Neither FLY_WORKSPACE_APP_NAME nor FLY_APP_NAME is set — " +
+    "required to provision NIM workspace machines. " +
+    "Set FLY_WORKSPACE_APP_NAME=mizi-workspace on the API server."
+  );
 }
 
 function flyHeaders(token: string) {
