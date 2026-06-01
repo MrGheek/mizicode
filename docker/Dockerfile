@@ -1,8 +1,36 @@
-ARG UBUNTU_VERSION=22.04
-ARG CUDA_VERSION=12.4.1
+# ── MIZI Workspace Dockerfile ──────────────────────────────────────────────────
+# Workspace image for Fly.io NIM sessions.
+# Registry: registry.fly.io/mizi-workspace:latest
+# App:      mizi-workspace  (separate from mizi-api — see fly.workspace.toml)
+#
+# Build and push (from workspace root):
+#   flyctl auth docker
+#   docker build -t registry.fly.io/mizi-workspace:latest \
+#       -f docker/Dockerfile .
+#   docker push registry.fly.io/mizi-workspace:latest
+#
+# Or via flyctl (builds remotely, no local Docker needed):
+#   flyctl deploy --app mizi-workspace \
+#       --dockerfile docker/Dockerfile \
+#       --image-label latest \
+#       --strategy immediate
+#
+# No GPU, no vLLM, no CUDA.
+# Inference routes to the NVIDIA NIM API (or any OpenAI-compatible endpoint)
+# via LiteLLM proxy — the heavy lifting is done by the NIM API, not the machine.
+#
+# Services started by onstart.sh:
+#   code-server   — browser IDE on port 8080
+#   claw-runner   — Claw Runner agent loop (Node.js, port 5181)
+#   claw-bridge   — real-time bridge to the API server (WebSocket)
+#   bolt.diy      — AI web IDE frontend (port 5180)
+#   nginx         — reverse proxy and auth gate
+#   litellm       — OpenAI/Anthropic proxy → NIM API (port 8081)
+# ───────────────────────────────────────────────────────────────────────────────
 
-# ── Stage 1: Build claw-code from bundled Rust source ─────────────────────────
-# Source is in docker/claw-code-src — no git clone or auth required.
+ARG UBUNTU_VERSION=22.04
+
+# ── Stage 1: build claw binary from bundled Rust source ───────────────────────
 FROM ubuntu:${UBUNTU_VERSION} AS claw-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -12,14 +40,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-COPY claw-code-src/claw-code-main /opt/claw-code-src
+COPY docker/claw-code-src/claw-code-main /opt/claw-code-src
 RUN cd /opt/claw-code-src/rust && \
+    CARGO_PROFILE_RELEASE_OPT_LEVEL=0 \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256 \
     cargo build --release && \
     cp target/release/claw /usr/local/bin/claw
 
-# ── Runtime image ──────────────────────────────────────────────────────────────
-# Use cudnn-runtime for vLLM compatibility (includes cuDNN shared libs)
-FROM nvidia/cuda:${CUDA_VERSION}-cudnn-runtime-ubuntu${UBUNTU_VERSION}
+# ── Stage 2: slim runtime — ubuntu only, no CUDA, no GPU stack ────────────────
+FROM ubuntu:${UBUNTU_VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -30,7 +59,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apache2-utils \
     python3 \
     python3-pip \
+    python3-dev \
     build-essential \
+    make \
+    g++ \
     ca-certificates \
     vim \
     nano \
@@ -40,73 +72,69 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# vLLM: high-throughput inference engine with PagedAttention.
-# Pinned to an exact version for reproducible builds.
-# Minimum compatibility requirements for active model profiles:
-#   - GLM-5.1 FP8: requires >=0.19.0 for --tool-call-parser glm47,
-#     --reasoning-parser glm45, and --speculative-config.method mtp
-#   - Qwen3-Coder-Next: requires >=0.8.4 for Qwen3 architecture support
-#   - MiniMax M2.5: requires >=0.8.4 for updated MoE kernel support
-# Bump this version after validating new profiles on real GPU hardware.
-# Uses CUDA 12.4 wheels from PyPI.
-RUN pip3 install --no-cache-dir \
-    "vllm==0.19.0" \
-    --extra-index-url https://download.pytorch.org/whl/cu124
+# litellm proxy: accepts OpenAI /v1/chat/completions and Anthropic /v1/messages,
+# forwarding to the NIM API. Lets claw-code use Anthropic format seamlessly.
+# Install base first (heavy) then [proxy] extras (lighter) so layer caching is efficient.
+RUN pip3 install --no-cache-dir fastapi uvicorn httpx litellm
+RUN pip3 install --no-cache-dir 'litellm[proxy]'
 
-# litellm proxy: accepts both OpenAI /v1/chat/completions and Anthropic /v1/messages,
-# forwarding to vLLM. Lets claw-code use Anthropic format seamlessly.
-RUN pip3 install --no-cache-dir litellm
-
-# transformers >=5.3.0 required by GLM-5.1 FP8 tokeniser and GLM-4 tool-call parser.
-# Also benefits Qwen3 and MiniMax M2.5 which rely on recent transformers features.
-RUN pip3 install --no-cache-dir "transformers>=5.3.0"
-
-# DeepGEMM: optional FP8 GEMM kernel library used by vLLM for GLM-5.1 FP8 inference.
-# Provides faster FP8 matrix multiply on H100/H200 vs the default triton kernels.
-# Pinned to a specific commit SHA for reproducible builds.
-# To update: find the desired commit at https://github.com/deepseek-ai/DeepGEMM
-# and set DEEPGEMM_SHA build arg: docker build --build-arg DEEPGEMM_SHA=<sha> ...
-# Falls back gracefully if CUDA compilation is unavailable (runtime image lacks
-# nvcc); vLLM's built-in triton FP8 kernels remain fully functional without it.
-# NOTE: full compilation requires the cudnn-devel base image (see follow-up task).
-ARG DEEPGEMM_SHA=a7b3d1e
-RUN pip3 install --no-cache-dir \
-    "git+https://github.com/deepseek-ai/DeepGEMM.git@${DEEPGEMM_SHA}" \
-    || echo "WARNING: DeepGEMM build failed (SHA=${DEEPGEMM_SHA}) — FP8 inference will use vLLM built-in kernels (fully functional, slightly slower on H100/H200)"
-
-# HuggingFace CLI for volume provisioning (one-time model download)
-RUN pip3 install --no-cache-dir huggingface-hub
-
-COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw
-
+# Node.js 20 + pnpm (claw-runner.js, claw-bridge.mjs, bolt.diy dev server)
+# python3+make+g++ must already be installed before pnpm install runs so that
+# native addons (better-sqlite3) can compile without errors.
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g pnpm@9 && \
     rm -rf /var/lib/apt/lists/*
 
+# code-server (VS Code in the browser)
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 
-RUN git clone --depth 1 https://github.com/stackblitz-labs/bolt.diy /opt/bolt-diy && \
+# bolt.diy (AI web IDE frontend served on port 5180)
+# Pinned to a known-good commit to keep builds deterministic.
+# Verified: 2026-05-21 — commit 2e254ac passes the vite.config.ts patch assertion.
+# To upgrade: update the SHA below, rebuild, confirm the grep -q 'allowedHosts' check
+# still passes, and update this comment with the new date/SHA.
+RUN git clone https://github.com/stackblitz-labs/bolt.diy /opt/bolt-diy && \
     cd /opt/bolt-diy && \
+    git checkout 2e254ac19a696394030601bc602f54945b12bfc4 && \
     pnpm install --frozen-lockfile || pnpm install
 
-COPY claw-code-src/claw-code-main /opt/claw-code
+# Patch vite.config.ts at build time so Vite always allows .fly.dev hosts.
+# Uses an external script to avoid shell-escaping issues with inline node -e "...".
+COPY docker/bolt-vite-patch.mjs /opt/bolt-vite-patch.mjs
+RUN node /opt/bolt-vite-patch.mjs && \
+    grep -q 'allowedHosts' /opt/bolt-diy/vite.config.ts || \
+    (echo 'ERROR: bolt-vite-patch.mjs did not write allowedHosts — build aborted' && exit 1)
+
+# Pre-build bolt.diy for fast production startup.
+# Without this, pnpm run dev compiles the entire TypeScript codebase on-demand on the
+# first browser request — taking 2-4 min on performance-1x, showing a blank black screen.
+# Building here means the production server starts instantly and serves pre-compiled assets.
+# SKIP_ENV_VALIDATION=1 suppresses the LLM API check at build time (those are runtime vars).
+RUN cd /opt/bolt-diy && NODE_ENV=production SKIP_ENV_VALIDATION=1 pnpm run build
+
+# Claw binary from stage 1
+COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw
+
+# Claw source tree (claw-runner.js tooling reference)
+COPY docker/claw-code-src/claw-code-main /opt/claw-code
 
 RUN mkdir -p /run/sshd /workspace/models /workspace/projects /var/log && \
     git config --global --add safe.directory /workspace/projects && \
     git config --global --add safe.directory '*'
 
-COPY onstart.sh /opt/onstart.sh
-COPY claw-bridge.mjs /opt/claw-bridge.mjs
-COPY claw-runner.js /opt/claw-runner.js
-COPY scripts/ /opt/repo-intelligence/
+COPY docker/onstart.sh /opt/onstart.sh
+COPY docker/claw-bridge.mjs /opt/claw-bridge.mjs
+COPY docker/claw-runner.js /opt/claw-runner.js
+COPY docker/scripts/ /opt/repo-intelligence/
+# python3+make+g++ are already installed above so better-sqlite3 compiles cleanly.
 RUN cd /opt/repo-intelligence && npm install --production --prefer-offline && \
     node -e "require('better-sqlite3'); console.log('[repo-intelligence] better-sqlite3 OK')" 2>/dev/null || \
-    echo "[repo-intelligence] WARN: native modules may be missing — indexer will use fallback mode"
+    echo "[repo-intelligence] WARN: native modules may be missing — fallback mode"
 RUN chmod +x /opt/onstart.sh
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD curl -sf http://localhost:8081/health || exit 1
+    CMD curl -sf http://localhost:8081/health/liveliness || exit 1
 
 EXPOSE 5180 5181 8080 8081 3000 22
 

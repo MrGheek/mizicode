@@ -35,6 +35,15 @@
 #                                        of the dashboard — the token is stored but the dashboard
 #                                        never receives the ?github_oauth=connected signal.
 #
+#   Fly workspace provisioning (required for NIM sessions):
+#     FLY_API_TOKEN                    — Fly.io personal access token used by the API server
+#                                        to create/destroy workspace machines via Machines API
+#                                        Generate: fly tokens create deploy -x 999999h
+#     FLY_WORKSPACE_APP_NAME           — Name of the dedicated workspace Fly app (e.g. mizi-workspace)
+#                                        Workspace machines are created inside this app, separate
+#                                        from mizi-api. One-time setup: flyctl apps create mizi-workspace
+#                                        Falls back to FLY_APP_NAME if not set (deprecated).
+#
 #   AI providers (at least one required for AI features):
 #     NVIDIA_NIM_API_KEY               — NVIDIA NIM API key (recommended, free tier available)
 #     VASTAI_API_KEY                   — Vast.ai REST API key
