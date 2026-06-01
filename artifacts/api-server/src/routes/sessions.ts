@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express";
+import { createProxyMiddleware, type RequestHandler as ProxyRequestHandler } from "http-proxy-middleware";
 import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable, sessionLanesTable, sessionModelSwitchesTable, nimCatalogTable, provisionedResourcesTable, schemaTemplatesTable, projectPlansTable, lanePromptSnapshotsTable } from "@workspace/db";
 import { eq, desc, inArray, and, isNull, notLike, sql } from "drizzle-orm";
 import * as neonService from "../services/neon";
@@ -4350,5 +4351,83 @@ router.get(
     }
   },
 );
+
+// ─── Workspace proxy ──────────────────────────────────────────────────────────
+// GET|* /sessions/:id/workspace  (and any sub-path)
+//
+// Proxies all HTTP traffic for a NIM session's bolt.diy workspace to the
+// specific Fly Machine that owns that session. Traffic is forwarded over
+// Fly.io private networking (6PN) to:
+//   http://<flyMachineId>.vm.<workspaceApp>.internal:5180
+//
+// This guarantees each session has a unique, stable URL that routes exclusively
+// to its own machine, preventing concurrent sessions from landing on each
+// other's bolt.diy instances (which would happen with the shared load-balanced
+// FLY_APP_NAME.fly.dev hostname).
+//
+// WebSocket upgrades (Vite HMR) are also supported — the HTTP server's
+// "upgrade" event handler in index.ts calls getWorkspaceProxy() to reuse the
+// same per-machine proxy instance for WS connections.
+
+const _workspaceProxies = new Map<string, ProxyRequestHandler>();
+
+export function getWorkspaceProxy(machineId: string, workspaceApp: string): ProxyRequestHandler {
+  const cached = _workspaceProxies.get(machineId);
+  if (cached) return cached;
+
+  const target = `http://${machineId}.vm.${workspaceApp}.internal:5180`;
+  const proxy = createProxyMiddleware({
+    target,
+    changeOrigin: true,
+    ws: true,
+    on: {
+      error: (err, _req, res) => {
+        logger.warn({ err, machineId }, "Workspace proxy error");
+        const r = res as { headersSent?: boolean; writeHead: (c: number, h: Record<string, string>) => void; end: (b: string) => void };
+        if (!r.headersSent) {
+          r.writeHead(502, { "Content-Type": "text/plain" });
+          r.end("Workspace proxy unavailable — the machine may still be starting. Try again in a few seconds.");
+        }
+      },
+    },
+  });
+
+  _workspaceProxies.set(machineId, proxy);
+  return proxy;
+}
+
+// Evict a proxy from the cache when a machine is destroyed so we don't hold
+// stale http-agent connections open indefinitely.
+export function evictWorkspaceProxy(machineId: string): void {
+  _workspaceProxies.delete(machineId);
+}
+
+router.use("/sessions/:id/workspace", async (req, res, next) => {
+  const sessionId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (isNaN(sessionId)) {
+    res.status(400).json({ error: "Invalid session ID" });
+    return;
+  }
+
+  const [session] = await db
+    .select({ flyMachineId: sessionsTable.flyMachineId })
+    .from(sessionsTable)
+    .where(eq(sessionsTable.id, sessionId))
+    .limit(1);
+
+  if (!session?.flyMachineId) {
+    res.status(404).json({ error: "No active workspace machine for this session" });
+    return;
+  }
+
+  const workspaceApp = process.env.FLY_WORKSPACE_APP_NAME || process.env.FLY_APP_NAME;
+  if (!workspaceApp) {
+    res.status(500).json({ error: "FLY_WORKSPACE_APP_NAME is not configured on the API server" });
+    return;
+  }
+
+  const proxy = getWorkspaceProxy(session.flyMachineId, workspaceApp);
+  proxy(req, res, next);
+});
 
 export default router;

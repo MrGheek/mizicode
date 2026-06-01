@@ -585,10 +585,12 @@ chmod +x /usr/local/bin/git`
   ELAPSED=\$(( \$(date +%s) - START_TIME + 15 ))
   touch /tmp/nim-bolt-ready
   echo "[nim-gate] Gate done: exit=\${EXIT_CODE} elapsed=\${ELAPSED}s attempts=\${ATTEMPT}" >> /var/log/onstart.log
-  # FLY_APP_NAME is injected by Fly.io into every machine — use it to build
-  # the public bolt.diy URL so the dashboard "Open Coding Environment" button
-  # has a URL to link to.
-  BOLT_URL="https://\${FLY_APP_NAME}.fly.dev:5180"
+  # Route through the API server's per-session workspace proxy so that each
+  # concurrent session has a unique URL that routes to its own machine via
+  # Fly.io private networking (6PN). This avoids the shared-app-hostname
+  # load-balancer ambiguity where FLY_APP_NAME.fly.dev:5180 could land on
+  # any machine in the pool.
+  BOLT_URL="${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/workspace"
   if [ \$EXIT_CODE -eq 0 ]; then
     curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
       -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
@@ -618,7 +620,7 @@ chmod +x /usr/local/bin/git`
     curl -sf -X POST "${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/status" \\
       -H "Authorization: Bearer ${profileConfig.memAuthToken || ""}" \\
       -H "Content-Type: application/json" \\
-      -d "{\\"status\\":\\"bolt_ready\\",\\"message\\":\\"NIM watchdog: force-marking ready after 15 min\\",\\"boltUrl\\":\\"https://\${FLY_APP_NAME}.fly.dev:5180\\"}" \\
+      -d "{\\"status\\":\\"bolt_ready\\",\\"message\\":\\"NIM watchdog: force-marking ready after 15 min\\",\\"boltUrl\\":\\"${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/workspace\\"}" \\
       --max-time 10 >> /var/log/onstart.log 2>&1 || true
   fi
 ) &`
@@ -644,11 +646,14 @@ chmod +x /usr/local/bin/git`
   //   NOTE: NGINX_AUTH_USER/NGINX_AUTH_PASS and WebSocket proxy headers are already
   //   handled correctly by onstart.sh in the Docker image.
   //
-  //   SINGLE-TENANT NOTE: boltUrl uses ${FLY_APP_NAME}.fly.dev:5180, which is the
-  //   shared app hostname. This is correct for single-user deployments (one active
-  //   NIM machine at a time). For multi-tenant deployments where multiple users may
-  //   have concurrent NIM sessions, per-machine routing would be required (e.g. a
-  //   proxy endpoint using fly-force-instance-id header).
+  //   PER-MACHINE ROUTING NOTE: boltUrl now points to
+  //   <callbackBaseUrl>/api/sessions/<id>/workspace — the API server's workspace
+  //   proxy route — rather than the shared FLY_APP_NAME.fly.dev:5180 hostname.
+  //   The proxy resolves the session's flyMachineId from the DB and forwards all
+  //   HTTP traffic to that machine via Fly.io private networking (6PN):
+  //   http://<machineId>.vm.<workspaceApp>.internal:5180. This ensures each
+  //   concurrent session has a unique, stable URL that routes exclusively to its
+  //   own machine regardless of load-balancer decisions.
   const nimViteHmrPatchLines = profileConfig.nimModelId
     ? `# ── Vite HMR clientPort fix (inline, runs before onstart.sh starts Vite) ──
 # Tells Vite's HMR client to connect to the public nginx proxy port (5180)

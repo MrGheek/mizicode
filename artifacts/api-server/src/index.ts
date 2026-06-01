@@ -3,7 +3,7 @@ import path from "path";
 import { WebSocketServer } from "ws";
 import app from "./app";
 import { logger } from "./lib/logger";
-import { db, pool, laneClaimsTable, claimPurgeLogsTable } from "@workspace/db";
+import { db, pool, laneClaimsTable, claimPurgeLogsTable, sessionsTable } from "@workspace/db";
 import { and, eq, lt } from "drizzle-orm";
 
 // ─── Distribution mode ────────────────────────────────────────────────────────
@@ -109,6 +109,37 @@ if (!IS_LOCAL_DISTRIBUTION && process.env["NODE_ENV"] === "production" && !proce
   process.exit(1);
 }
 
+// Production guard: FLY_API_TOKEN must be set when NODE_ENV=production.
+// Without it, all NIM session create/destroy calls to the Fly Machines API
+// will throw immediately with a clear error, but that error surfaces as a
+// confusing "provisioning error" in the dashboard rather than a missing-secret
+// message. Catching it at startup makes the root cause unambiguous in logs.
+if (!IS_LOCAL_DISTRIBUTION && process.env["NODE_ENV"] === "production" && !process.env["FLY_API_TOKEN"]) {
+  logger.error(
+    "FLY_API_TOKEN is required in production — NIM workspace machines cannot be provisioned without it. " +
+    "Generate a token with: fly tokens create deploy -x 999999h  " +
+    "Then set it with: fly secrets set --app mizi-api FLY_API_TOKEN=<token>"
+  );
+  process.exit(1);
+}
+
+// Production guard: FLY_WORKSPACE_APP_NAME must be explicitly set.
+// FLY_APP_NAME (injected by Fly into every machine) is intentionally NOT
+// accepted here because workspace machines and API machines must be in
+// separate Fly apps. Falling back to FLY_APP_NAME would create workspace
+// machines inside the API server's own app, bypassing isolation.
+// Missing this = session provisioning creates machines in the wrong app
+// and per-session workspace URLs route to random API machines.
+if (!IS_LOCAL_DISTRIBUTION && process.env["NODE_ENV"] === "production" &&
+    !process.env["FLY_WORKSPACE_APP_NAME"]) {
+  logger.error(
+    "FLY_WORKSPACE_APP_NAME is required in production — workspace machines cannot be provisioned without it. " +
+    "Create the workspace app once with: flyctl apps create mizi-workspace  " +
+    "Then set it with: fly secrets set --app mizi-api FLY_WORKSPACE_APP_NAME=mizi-workspace"
+  );
+  process.exit(1);
+}
+
 // Production warning: DASHBOARD_URL should be set when the dashboard and API
 // are on different origins (the typical Fly.io deployment: mizicode.fly.dev +
 // mizi-api.fly.dev).  Without it, OAuth redirects use a placeholder value.
@@ -160,22 +191,68 @@ if (!IS_LOCAL_DISTRIBUTION && process.env.DATABASE_URL && process.env["NODE_ENV"
 
 // ─── HTTP server + WebSocket bridge ──────────────────────────────────────────
 // Wrap the Express app in a raw http.Server so we can intercept WebSocket
-// upgrade events for the claw bridge at /api/bridge/:sessionId/:laneId.
+// upgrade events for the claw bridge at /api/bridge/:sessionId/:laneId
+// and for the workspace proxy at /api/sessions/:id/workspace.
 
 const server = http.createServer(app);
 
 // Bridge URL pattern: /api/bridge/:sessionId/:laneId
 const BRIDGE_PATH_RE = /^\/api\/bridge\/(\d+)\/(\d+)(\/|\?.*)?$/;
 
+// Workspace proxy URL pattern: /api/sessions/:id/workspace (and sub-paths)
+// WebSocket upgrades on this path are Vite HMR connections that must be
+// forwarded to the correct Fly Machine via Fly.io private networking (6PN).
+const WORKSPACE_PATH_RE = /^\/api\/sessions\/(\d+)\/workspace(\/.*)?$/;
+
 if (!IS_LOCAL_DISTRIBUTION) {
   // Cloud distribution: WebSocket bridge for claw runner sessions.
   // handleBridgeUpgrade is imported dynamically so esbuild can eliminate it
   // (and the entire bridge module) from local distribution bundles.
   const { handleBridgeUpgrade } = await import("./routes/bridge.js");
+  const { getWorkspaceProxy } = await import("./routes/sessions.js");
   const wss = new WebSocketServer({ noServer: true });
 
-  server.on("upgrade", (req, socket, head) => {
+  server.on("upgrade", async (req, socket, head) => {
     const url = req.url ?? "";
+
+    // ── Workspace proxy WebSocket (Vite HMR) ─────────────────────────────
+    const wsMatch = WORKSPACE_PATH_RE.exec(url);
+    if (wsMatch) {
+      const sessionId = parseInt(wsMatch[1], 10);
+      if (!Number.isFinite(sessionId)) {
+        socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      try {
+        const [session] = await db
+          .select({ flyMachineId: sessionsTable.flyMachineId })
+          .from(sessionsTable)
+          .where(eq(sessionsTable.id, sessionId))
+          .limit(1);
+        if (!session?.flyMachineId) {
+          socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        const workspaceApp = process.env.FLY_WORKSPACE_APP_NAME || process.env.FLY_APP_NAME;
+        if (!workspaceApp) {
+          socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        const proxy = getWorkspaceProxy(session.flyMachineId, workspaceApp);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        proxy.upgrade?.(req, socket as any, head);
+      } catch (err) {
+        logger.warn({ err, url }, "Workspace WebSocket upgrade failed");
+        socket.write("HTTP/1.1 500 Internal Server Error\r\n\r\n");
+        socket.destroy();
+      }
+      return;
+    }
+
+    // ── Claw bridge WebSocket ─────────────────────────────────────────────
     const match = BRIDGE_PATH_RE.exec(url);
     if (!match) {
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
