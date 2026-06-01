@@ -64,61 +64,75 @@ async function fetchRawFile(owner: string, repo: string, branch: string, path: s
   }
 }
 
-async function listDirectoryFiles(owner: string, repo: string, branch: string, dir: string): Promise<string[]> {
-  try {
-    // GitHub Contents API caps at 1000 entries for a directory. Use per_page=100
-    // (the API maximum per page) and collect all pages so large skill catalogs
-    // (e.g. ECC with 249+ entries) are fully fetched.
-    const allFiles: string[] = [];
-    let page = 1;
-    while (true) {
-      const res = await githubFetch(`/repos/${owner}/${repo}/contents/${dir}?ref=${branch}&per_page=100&page=${page}`);
-      if (!res.ok) break;
-      const data = await res.json() as { name?: string; type?: string }[];
-      if (!Array.isArray(data) || data.length === 0) break;
-      const pageFiles = data
-        .filter(f => f.type === "file" && /\.(md|yaml|yml)$/i.test(f.name || ""))
-        .map(f => `${dir}${f.name}`);
-      allFiles.push(...pageFiles);
-      if (data.length < 100) break;
-      page++;
-    }
-    return allFiles;
-  } catch {
-    return [];
-  }
-}
-
 /**
- * For repos that store one skill per subdirectory (e.g. ECC's skills/ layout
- * where each skill lives in skills/<name>/SKILL.md), enumerate subdirectories
- * and fetch the SKILL.md (or CLAUDE.md) inside each one.
+ * Enumerate skill-relevant file paths from a GitHub repo using the Git Trees API.
+ *
+ * Uses `GET /repos/{owner}/{repo}/git/trees/{sha}?recursive=1` which returns
+ * every blob path in the repo in a single, deterministic response — no
+ * pagination, no per_page guessing, and no repeated requests needed even for
+ * repos with thousands of files (e.g. ECC with 249 skill subdirectories).
+ *
+ * Matched paths:
+ *  - Root-level candidate files: SKILL.md, CLAUDE.md, AGENTS.md, README.md
+ *  - Flat files under SKILL_DIR_PATHS: skills/*.md, commands/*.md
+ *  - One-level subdirectory skill files: skills/*\/SKILL.md, skills/*\/CLAUDE.md,
+ *    commands/*\/SKILL.md, commands/*\/CLAUDE.md
+ *
+ * Returns an ordered list of unique paths with root-level candidates first.
  */
-async function listSubdirSkillFiles(owner: string, repo: string, branch: string, dir: string): Promise<string[]> {
+async function listSkillPaths(owner: string, repo: string, treeSha: string): Promise<string[]> {
   try {
-    const allFiles: string[] = [];
-    let page = 1;
-    while (true) {
-      const res = await githubFetch(`/repos/${owner}/${repo}/contents/${dir}?ref=${branch}&per_page=100&page=${page}`);
-      if (!res.ok) break;
-      const data = await res.json() as { name?: string; type?: string }[];
-      if (!Array.isArray(data) || data.length === 0) break;
-      const subdirs = data.filter(f => f.type === "dir").map(f => f.name!);
-      for (const sub of subdirs) {
-        const candidates = ["SKILL.md", "CLAUDE.md"];
-        for (const candidate of candidates) {
-          const filePath = `${dir}${sub}/${candidate}`;
-          const checkRes = await githubFetch(`/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`);
-          if (checkRes.ok) {
-            allFiles.push(filePath);
-            break;
-          }
+    const res = await githubFetch(`/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`);
+    if (!res.ok) return [];
+    const data = await res.json() as {
+      tree?: { path?: string; type?: string }[];
+      truncated?: boolean;
+    };
+    if (!data.tree) return [];
+
+    const blobs = data.tree
+      .filter(e => e.type === "blob" && typeof e.path === "string")
+      .map(e => e.path as string);
+
+    const seen = new Set<string>();
+    const paths: string[] = [];
+
+    function add(p: string) {
+      if (!seen.has(p)) { seen.add(p); paths.push(p); }
+    }
+
+    // 1. Root-level candidate files
+    for (const candidate of CANDIDATE_PATHS) {
+      if (blobs.includes(candidate)) add(candidate);
+    }
+
+    // 2. Flat files directly inside SKILL_DIR_PATHS (e.g. commands/my-command.md)
+    for (const dir of SKILL_DIR_PATHS) {
+      const prefix = dir; // already ends with "/"
+      for (const p of blobs) {
+        if (p.startsWith(prefix) && /\.(md|yaml|yml)$/i.test(p)) {
+          const rel = p.slice(prefix.length);
+          if (!rel.includes("/")) add(p); // flat file, not inside a subdirectory
         }
       }
-      if (data.length < 100) break;
-      page++;
     }
-    return allFiles;
+
+    // 3. One-level subdirectory skill files (e.g. skills/flutter-patterns/SKILL.md)
+    const SUBDIR_FILENAMES = ["SKILL.md", "CLAUDE.md", "AGENTS.md"];
+    for (const dir of SKILL_DIR_PATHS) {
+      const prefix = dir;
+      for (const p of blobs) {
+        if (!p.startsWith(prefix)) continue;
+        const rel = p.slice(prefix.length);
+        const parts = rel.split("/");
+        // Exactly one subdirectory level: skills/<name>/SKILL.md
+        if (parts.length === 2 && SUBDIR_FILENAMES.includes(parts[1])) {
+          add(p);
+        }
+      }
+    }
+
+    return paths;
   } catch {
     return [];
   }
@@ -140,40 +154,19 @@ export async function importSkillFromUrl(url: string): Promise<ImportResult> {
 
   const rawFiles: { path: string; content: string }[] = [];
 
-  for (const candidate of CANDIDATE_PATHS) {
-    const content = await fetchRawFile(owner, repo, branch, candidate);
-    if (content) rawFiles.push({ path: candidate, content });
-  }
-
-  for (const dir of SKILL_DIR_PATHS) {
-    // First try flat files in the directory (e.g. agents/*.md, commands/*.md)
-    const flatFiles = await listDirectoryFiles(owner, repo, branch, dir);
-    for (const filePath of flatFiles) {
+  // Use the Git Trees API to enumerate all skill-relevant paths in one request.
+  // This is deterministic regardless of repo size — no pagination loops needed.
+  if (commitSha) {
+    const skillPaths = await listSkillPaths(owner, repo, commitSha);
+    for (const filePath of skillPaths) {
       const content = await fetchRawFile(owner, repo, branch, filePath);
       if (content) rawFiles.push({ path: filePath, content });
     }
-    // Also probe for subdirectory-per-skill layout (e.g. ECC: skills/<name>/SKILL.md)
-    // Only attempt if very few flat files were found, indicating a subdir layout
-    if (flatFiles.length < 5) {
-      const subdirFiles = await listSubdirSkillFiles(owner, repo, branch, dir);
-      for (const filePath of subdirFiles) {
-        if (rawFiles.some(f => f.path === filePath)) continue;
-        const content = await fetchRawFile(owner, repo, branch, filePath);
-        if (content) rawFiles.push({ path: filePath, content });
-      }
-    }
-  }
-
-  // Explicit subdir probe for repos whose primary skill layout is under skills/
-  // and agents/ as subdirectories (ECC pattern). Skip if already covered above.
-  const subdirDirs = ["skills/", "agents/"];
-  for (const dir of subdirDirs) {
-    if (SKILL_DIR_PATHS.includes(dir)) continue;
-    const subdirFiles = await listSubdirSkillFiles(owner, repo, branch, dir);
-    for (const filePath of subdirFiles) {
-      if (rawFiles.some(f => f.path === filePath)) continue;
-      const content = await fetchRawFile(owner, repo, branch, filePath);
-      if (content) rawFiles.push({ path: filePath, content });
+  } else {
+    // Fallback: commitSha unavailable, probe known candidate paths directly
+    for (const candidate of CANDIDATE_PATHS) {
+      const content = await fetchRawFile(owner, repo, branch, candidate);
+      if (content) rawFiles.push({ path: candidate, content });
     }
   }
 
