@@ -1,0 +1,13 @@
+node_modules
+.git
+.local
+.agents
+attached_assets
+screenshots
+*.log
+nohup.out
+
+# artifact build outputs
+artifacts/*/dist
+artifacts/*/.vite
+artifacts/mockup-sandbox

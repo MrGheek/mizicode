@@ -3,27 +3,41 @@
 # Build context must be the monorepo root so that shared lib/
 # packages and pnpm-lock.yaml are available.
 # ============================================================
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@10.26.1 --activate
 
-# Native modules (better-sqlite3) require Python + C++ build tools
-RUN apk add --no-cache python3 make g++
+# better-sqlite3 prefers prebuilt binaries on glibc (Debian/Ubuntu).
+# Only needed as fallback if no prebuilt binary matches.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
 
-# Copy workspace manifests first so layer caching works well
+# ── Dependency caching layer ─────────────────────────────────
+# Copy only workspace manifests so that `pnpm install` (which
+# compiles better-sqlite3 from source) is cached until the
+# lockfile or workspace configs change — not on every source edit.
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY tsconfig.base.json tsconfig.json ./
 
-# Copy shared libraries used by the API server
-COPY lib/ lib/
+# Copy package.json files only (for workspace package resolution)
+COPY lib/api-client-react/package.json lib/api-client-react/
+COPY lib/api-spec/package.json         lib/api-spec/
+COPY lib/api-zod/package.json          lib/api-zod/
+COPY lib/db/package.json               lib/db/
+COPY lib/integrations-openai-ai-server/package.json lib/integrations-openai-ai-server/
+COPY artifacts/api-server/package.json artifacts/api-server/
 
-# Copy the api-server artifact source
-COPY artifacts/api-server/ artifacts/api-server/
-
-# Install all workspace dependencies (dev deps required for esbuild)
+# Install all workspace dependencies (dev deps required for esbuild).
+# better-sqlite3 C++ compilation happens here and is now fully cached
+# between source-only deploys.
 RUN pnpm install --frozen-lockfile
+
+# ── Source copy ──────────────────────────────────────────────
+# Copy full source after install so code changes don't bust the
+# expensive pnpm install / native-compile cache layer above.
+COPY lib/ lib/
+COPY artifacts/api-server/ artifacts/api-server/
 
 # Run the esbuild bundle from the api-server directory
 WORKDIR /app/artifacts/api-server
@@ -41,7 +55,7 @@ RUN pnpm deploy --filter @workspace/api-server --prod --legacy /app/prod-deploy
 # Slim image that only carries the compiled bundle and the
 # production node_modules created by `pnpm deploy`.
 # ============================================================
-FROM node:20-alpine AS runner
+FROM node:20-slim AS runner
 
 WORKDIR /app
 
@@ -57,6 +71,7 @@ COPY --from=builder /app/artifacts/api-server/dist ./dist
 # Create the default memory data directory.
 # Override the mount path with the MEM_DATA_DIR env var.
 RUN mkdir -p /data/memory
+
 
 VOLUME ["/data/memory"]
 
