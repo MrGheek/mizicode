@@ -69,6 +69,7 @@ async function reconcileFlyMachines(): Promise<void> {
   // dynamic import — preventing fly.ts content from appearing in local bundles.
   if (process.env.MIZI_DISTRIBUTION !== "local") {
     const { getMachineState } = await import("./fly.js");
+    const { evictWorkspaceProxy } = await import("../routes/sessions.js");
     let sessions: Array<{ id: number; flyMachineId: string | null }>;
     try {
       sessions = await db
@@ -105,6 +106,9 @@ async function reconcileFlyMachines(): Promise<void> {
               updatedAt: new Date(),
             })
             .where(eq(sessionsTable.id, session.id));
+          // Evict the proxy so we don't hold stale TCP connections open to a
+          // machine that no longer exists.
+          evictWorkspaceProxy(session.flyMachineId);
           logger.warn(
             { sessionId: session.id, flyMachineId: session.flyMachineId },
             "[reconcile] session marked error — machine destroyed externally"

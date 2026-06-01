@@ -1427,6 +1427,9 @@ router.delete("/sessions/:sessionId", async (req, res) => {
           throw flyErr;
         }
       }
+      // Evict stale proxy entry so we don't hold lingering TCP connections to a
+      // machine that no longer exists (machine gone in both the success and 404 path).
+      evictWorkspaceProxy(session.flyMachineId);
     } else if (session.vastInstanceId) {
       try {
         await vastai.destroyInstance(session.vastInstanceId);

@@ -225,7 +225,7 @@ export function registerSessionTools(server: McpServer, getApiKey: () => ApiKeyR
     if (process.env.MIZI_DISTRIBUTION !== "local") {
       const fly = await import("../../services/fly.js");
       const vastai = await import("../../services/vastai.js");
-      const { cleanupSessionResources } = await import("../../routes/sessions.js");
+      const { cleanupSessionResources, evictWorkspaceProxy } = await import("../../routes/sessions.js");
 
       const [session] = await db
         .select({
@@ -252,6 +252,9 @@ export function registerSessionTools(server: McpServer, getApiKey: () => ApiKeyR
           logger.warn({ err, sessionId, flyMachineId: session.flyMachineId }, "[MCP] delete_session: fly.destroyMachine failed (non-fatal)");
           teardownSteps.push("fly_machine_destroy_failed");
         }
+        // Evict the proxy whether destroy succeeded or failed — in both cases the
+        // machine is being torn down and keeping the connection pool alive is wasteful.
+        evictWorkspaceProxy(session.flyMachineId);
       }
 
       if (session.vastInstanceId) {
