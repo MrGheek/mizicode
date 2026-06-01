@@ -66,13 +66,59 @@ async function fetchRawFile(owner: string, repo: string, branch: string, path: s
 
 async function listDirectoryFiles(owner: string, repo: string, branch: string, dir: string): Promise<string[]> {
   try {
-    const res = await githubFetch(`/repos/${owner}/${repo}/contents/${dir}?ref=${branch}`);
-    if (!res.ok) return [];
-    const data = await res.json() as { name?: string; type?: string }[];
-    if (!Array.isArray(data)) return [];
-    return data
-      .filter(f => f.type === "file" && /\.(md|yaml|yml)$/i.test(f.name || ""))
-      .map(f => `${dir}${f.name}`);
+    // GitHub Contents API caps at 1000 entries for a directory. Use per_page=100
+    // (the API maximum per page) and collect all pages so large skill catalogs
+    // (e.g. ECC with 249+ entries) are fully fetched.
+    const allFiles: string[] = [];
+    let page = 1;
+    while (true) {
+      const res = await githubFetch(`/repos/${owner}/${repo}/contents/${dir}?ref=${branch}&per_page=100&page=${page}`);
+      if (!res.ok) break;
+      const data = await res.json() as { name?: string; type?: string }[];
+      if (!Array.isArray(data) || data.length === 0) break;
+      const pageFiles = data
+        .filter(f => f.type === "file" && /\.(md|yaml|yml)$/i.test(f.name || ""))
+        .map(f => `${dir}${f.name}`);
+      allFiles.push(...pageFiles);
+      if (data.length < 100) break;
+      page++;
+    }
+    return allFiles;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * For repos that store one skill per subdirectory (e.g. ECC's skills/ layout
+ * where each skill lives in skills/<name>/SKILL.md), enumerate subdirectories
+ * and fetch the SKILL.md (or CLAUDE.md) inside each one.
+ */
+async function listSubdirSkillFiles(owner: string, repo: string, branch: string, dir: string): Promise<string[]> {
+  try {
+    const allFiles: string[] = [];
+    let page = 1;
+    while (true) {
+      const res = await githubFetch(`/repos/${owner}/${repo}/contents/${dir}?ref=${branch}&per_page=100&page=${page}`);
+      if (!res.ok) break;
+      const data = await res.json() as { name?: string; type?: string }[];
+      if (!Array.isArray(data) || data.length === 0) break;
+      const subdirs = data.filter(f => f.type === "dir").map(f => f.name!);
+      for (const sub of subdirs) {
+        const candidates = ["SKILL.md", "CLAUDE.md"];
+        for (const candidate of candidates) {
+          const filePath = `${dir}${sub}/${candidate}`;
+          const checkRes = await githubFetch(`/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`);
+          if (checkRes.ok) {
+            allFiles.push(filePath);
+            break;
+          }
+        }
+      }
+      if (data.length < 100) break;
+      page++;
+    }
+    return allFiles;
   } catch {
     return [];
   }
@@ -100,8 +146,32 @@ export async function importSkillFromUrl(url: string): Promise<ImportResult> {
   }
 
   for (const dir of SKILL_DIR_PATHS) {
-    const files = await listDirectoryFiles(owner, repo, branch, dir);
-    for (const filePath of files.slice(0, 20)) {
+    // First try flat files in the directory (e.g. agents/*.md, commands/*.md)
+    const flatFiles = await listDirectoryFiles(owner, repo, branch, dir);
+    for (const filePath of flatFiles) {
+      const content = await fetchRawFile(owner, repo, branch, filePath);
+      if (content) rawFiles.push({ path: filePath, content });
+    }
+    // Also probe for subdirectory-per-skill layout (e.g. ECC: skills/<name>/SKILL.md)
+    // Only attempt if very few flat files were found, indicating a subdir layout
+    if (flatFiles.length < 5) {
+      const subdirFiles = await listSubdirSkillFiles(owner, repo, branch, dir);
+      for (const filePath of subdirFiles) {
+        if (rawFiles.some(f => f.path === filePath)) continue;
+        const content = await fetchRawFile(owner, repo, branch, filePath);
+        if (content) rawFiles.push({ path: filePath, content });
+      }
+    }
+  }
+
+  // Explicit subdir probe for repos whose primary skill layout is under skills/
+  // and agents/ as subdirectories (ECC pattern). Skip if already covered above.
+  const subdirDirs = ["skills/", "agents/"];
+  for (const dir of subdirDirs) {
+    if (SKILL_DIR_PATHS.includes(dir)) continue;
+    const subdirFiles = await listSubdirSkillFiles(owner, repo, branch, dir);
+    for (const filePath of subdirFiles) {
+      if (rawFiles.some(f => f.path === filePath)) continue;
       const content = await fetchRawFile(owner, repo, branch, filePath);
       if (content) rawFiles.push({ path: filePath, content });
     }
