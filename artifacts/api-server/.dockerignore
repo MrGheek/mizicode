@@ -1,0 +1,12 @@
+node_modules
+.git
+dist
+*.log
+.local
+.agents
+artifacts/dashboard
+artifacts/mockup-sandbox
+docker
+scripts
+attached_assets
+screenshots

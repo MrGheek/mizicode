@@ -12,18 +12,26 @@ RUN corepack enable && corepack prepare pnpm@10.26.1 --activate
 # better-sqlite3 (workspace dep) requires Python + C++ build tools
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
 
-# Copy workspace manifests for layer caching
+# ── Dependency caching layer ─────────────────────────────────
+# Copy only workspace manifests so that `pnpm install` is cached
+# until the lockfile changes — not on every source edit.
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY tsconfig.base.json tsconfig.json ./
 
-# Copy shared libraries used by the dashboard
-COPY lib/ lib/
+# Copy package.json files only (for workspace package resolution)
+COPY lib/api-client-react/package.json lib/api-client-react/
+COPY lib/api-spec/package.json         lib/api-spec/
+COPY lib/api-zod/package.json          lib/api-zod/
+COPY lib/db/package.json               lib/db/
+COPY lib/integrations-openai-ai-server/package.json lib/integrations-openai-ai-server/
+COPY artifacts/dashboard/package.json  artifacts/dashboard/
 
-# Copy the dashboard artifact source
-COPY artifacts/dashboard/ artifacts/dashboard/
-
-# Install dependencies
+# Install dependencies (cached until lockfile changes)
 RUN pnpm install --frozen-lockfile
+
+# ── Source copy ──────────────────────────────────────────────
+COPY lib/ lib/
+COPY artifacts/dashboard/ artifacts/dashboard/
 
 # VITE_API_BASE_URL is injected at build time so the SPA knows
 # where to reach the API server on Fly.io.
