@@ -204,6 +204,26 @@ describe("extractSystemInstructions — cap at 15 bullets for large skills", () 
   });
 });
 
+describe("extractSystemInstructions — full-body supplement to fill up to 15 bullets", () => {
+  it("supplements activation bullets with document bullets from other sections", () => {
+    const content = `# Skill\n\n## When to Activate\n\n- Only one activation bullet\n\n## Implementation Notes\n\n- Use small commits\n- Write tests first\n- Document public APIs\n`;
+    const instructions = extractSystemInstructions(content);
+    expect(instructions).toContain("Only one activation bullet");
+    expect(instructions).toContain("Use small commits");
+    expect(instructions).toContain("Write tests first");
+    expect(instructions).toContain("Document public APIs");
+  });
+
+  it("does not duplicate bullets already collected from named sections", () => {
+    const content = `# Skill\n\n## When to Activate\n\n- Unique activation bullet\n\n## Rules\n\n- Unique rule bullet\n`;
+    const instructions = extractSystemInstructions(content);
+    const activationCount = instructions.filter(l => l === "Unique activation bullet").length;
+    const ruleCount = instructions.filter(l => l === "Unique rule bullet").length;
+    expect(activationCount).toBe(1);
+    expect(ruleCount).toBe(1);
+  });
+});
+
 describe("extractSystemInstructions — fallback when no section matches", () => {
   it("falls back to document-level bullets when no activation section exists", () => {
     const content = `# My Skill\n\nSome intro text.\n\n- Do this important thing\n- Also do this\n- And this one too\n`;
@@ -314,6 +334,58 @@ describe("detectRepoKinds — framework detection", () => {
   it("security-review skill → ['any'] (domain skill, not framework-specific)", () => {
     const kinds = detectRepoKinds("skills/security-review/SKILL.md", "security-review", "Security patterns for authentication and API endpoints");
     expect(kinds).toEqual(["any"]);
+  });
+});
+
+// ─── detectRepoKinds — word-boundary regression tests ─────────────────────────
+// Ensures short keywords don't match longer words (e.g. "java" ≠ "javascript")
+
+describe("detectRepoKinds — word-boundary collision prevention", () => {
+  it("javascript skill does NOT get java/spring/maven/gradle kinds", () => {
+    const kinds = detectRepoKinds(
+      "skills/javascript-testing/SKILL.md",
+      "javascript-testing",
+      "JavaScript testing patterns for frontend and Node.js apps"
+    );
+    expect(kinds).not.toContain("java");
+    expect(kinds).not.toContain("spring");
+    expect(kinds).not.toContain("maven");
+    expect(kinds).not.toContain("gradle");
+    expect(kinds).toContain("javascript");
+  });
+
+  it("java skill does NOT get javascript kinds from name alone", () => {
+    const kinds = detectRepoKinds(
+      "skills/java-spring-review/SKILL.md",
+      "java-spring-review",
+      "Java Spring Boot architecture patterns"
+    );
+    expect(kinds).toContain("java");
+    expect(kinds).toContain("spring");
+    expect(kinds).not.toContain("javascript");
+    expect(kinds).not.toContain("typescript");
+  });
+
+  it("rust skill does NOT get ruby kinds", () => {
+    const kinds = detectRepoKinds(
+      "skills/rust-async/SKILL.md",
+      "rust-async",
+      "Async Rust patterns with Tokio"
+    );
+    expect(kinds).toContain("rust");
+    expect(kinds).not.toContain("ruby");
+    expect(kinds).not.toContain("rails");
+  });
+
+  it("angular skill does NOT get angular + vue + react all merged (only angular)", () => {
+    const kinds = detectRepoKinds(
+      "skills/angular-architecture/SKILL.md",
+      "angular-architecture",
+      "Angular module architecture and dependency injection"
+    );
+    expect(kinds).toContain("angular");
+    expect(kinds).not.toContain("vue");
+    expect(kinds).not.toContain("react");
   });
 });
 

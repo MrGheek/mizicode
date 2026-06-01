@@ -13,7 +13,7 @@ const REPO_KIND_PATTERNS: Array<{ keywords: string[]; kinds: string[] }> = [
   { keywords: ["android", "kotlin", "kmp", "compose"],         kinds: ["android", "kotlin", "kmp", "gradle"] },
   { keywords: ["ios", "swift", "swiftui", "swiftpm", "macos"], kinds: ["ios", "swift", "swiftpm", "macos"] },
   { keywords: ["react-native", "expo"],                         kinds: ["react-native", "expo", "javascript", "typescript"] },
-  { keywords: ["nextjs", "next.js", "next"],                   kinds: ["next", "react", "typescript", "node"] },
+  { keywords: ["nextjs", "next.js"],                            kinds: ["next", "react", "typescript", "node"] },
   { keywords: ["react", "tsx", "jsx"],                         kinds: ["react", "javascript", "typescript"] },
   { keywords: ["vue"],                                          kinds: ["vue", "javascript", "typescript"] },
   { keywords: ["angular"],                                      kinds: ["angular", "typescript"] },
@@ -22,9 +22,9 @@ const REPO_KIND_PATTERNS: Array<{ keywords: string[]; kinds: string[] }> = [
   { keywords: ["javascript", "nodejs", "node.js"],              kinds: ["javascript", "node", "nodejs"] },
   { keywords: ["python", "django", "fastapi", "flask"],         kinds: ["python", "django", "fastapi", "flask"] },
   { keywords: ["ruby", "rails", "sinatra"],                     kinds: ["ruby", "rails", "sinatra"] },
-  { keywords: ["java", "spring", "maven", "gradle"],           kinds: ["java", "spring", "maven", "gradle"] },
+  { keywords: ["java", "spring", "maven", "gradle"],            kinds: ["java", "spring", "maven", "gradle"] },
   { keywords: ["golang", "go-lang"],                            kinds: ["go", "golang"] },
-  { keywords: ["rust", "cargo"],                               kinds: ["rust", "cargo"] },
+  { keywords: ["rust", "cargo"],                                kinds: ["rust", "cargo"] },
   { keywords: ["cpp", "c++", "cmake", "clang"],                kinds: ["cpp", "c++", "cmake"] },
   { keywords: ["csharp", "dotnet", ".net", "blazor"],          kinds: ["csharp", "dotnet"] },
   { keywords: ["php", "laravel", "symfony"],                   kinds: ["php", "laravel"] },
@@ -32,34 +32,40 @@ const REPO_KIND_PATTERNS: Array<{ keywords: string[]; kinds: string[] }> = [
 ];
 
 /**
+ * Token-aware keyword match: ensures the keyword is not part of a longer word.
+ * E.g. "java" must not match "javascript"; "ruby" must not match "ruby-on-rails" false negative.
+ *
+ * Uses negative lookbehind/lookahead for [a-z0-9] rather than \b, because
+ * keywords may contain non-word characters (e.g. "c++", ".net", "react-native").
+ */
+function kwMatch(haystack: string, keyword: string): boolean {
+  const escaped = keyword.replace(/[+.*?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, "i");
+  return pattern.test(haystack);
+}
+
+/**
  * Infer repoKinds from skill name, file path, and frontmatter description.
  * Returns ["any"] when no framework/language keyword is detected.
+ *
+ * All keyword matching uses token-aware (word-boundary equivalent) checks so
+ * that short keywords like "java" never match longer words like "javascript".
  */
 export function detectRepoKinds(path: string, name: string, description: string): string[] {
   const haystack = [path, name, description].join(" ").toLowerCase();
-
-  // Special case: "go" is a short word that collides with common English — require
-  // it to appear as a standalone token (word boundary) to avoid false positives.
-  const hasGo = /\bgo[-\s]?(build|review|test|lang|workflow|patterns|skill)\b|\bgo\b/.test(haystack)
-    && !haystack.includes("golang") === false || /\bgo\b/.test(haystack) && /\bgo[-_](build|review|test|patterns|workflow|skill|developer|coder)\b/.test(haystack);
-
   const matched = new Set<string>();
 
   for (const { keywords, kinds } of REPO_KIND_PATTERNS) {
     for (const kw of keywords) {
-      if (kw === "golang" || kw === "go-lang") {
-        if (haystack.includes(kw)) kinds.forEach(k => matched.add(k));
-      } else if (kw === "next") {
-        // "next" alone is too broad — require "nextjs" or path containing "next"
-        if (haystack.includes("nextjs") || haystack.includes("next.js")) kinds.forEach(k => matched.add(k));
-      } else if (haystack.includes(kw)) {
+      if (kwMatch(haystack, kw)) {
         kinds.forEach(k => matched.add(k));
       }
     }
   }
 
-  // Handle standalone "go" with path-based evidence (e.g. skills/go-build/SKILL.md)
-  if (/\/go[-_]/.test(path) || /^go[-_]/.test(name)) {
+  // Path-based evidence for standalone "go" (e.g. skills/go-build/SKILL.md, name: go-build).
+  // "go" is too short for safe content matching so we require path/name evidence.
+  if (/\/go[-_]/.test(path) || /(?<![a-z0-9])go[-_]/.test(name)) {
     matched.add("go");
     matched.add("golang");
   }
@@ -211,12 +217,15 @@ export function extractSystemInstructions(content: string): string[] {
     if (coreMatch) addNumberedBullets(coreMatch[0], MAX_BULLETS);
   }
 
-  // 5. Fallback: scan all bullets in document
-  if (collected.length === 0) {
+  // 5. Scan all bullets in the full document body to fill up to MAX_BULLETS.
+  // Always runs (not just as a zero-fallback) so rich skills with many sections
+  // contribute guidance beyond what the narrow section headers matched.
+  if (collected.length < MAX_BULLETS) {
+    const limit = collected.length === 0 ? MAX_FALLBACK_BULLETS : MAX_BULLETS;
     const allBullets = body.match(/^[-*]\s+(.+)$/gm);
     if (allBullets) {
       for (const b of allBullets) {
-        if (collected.length >= MAX_FALLBACK_BULLETS) break;
+        if (collected.length >= limit) break;
         const text = b.replace(/^[-*]\s+/, "").trim();
         if (text.length > 5 && !collected.includes(text)) collected.push(text);
       }
