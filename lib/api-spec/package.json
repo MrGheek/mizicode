@@ -7,6 +7,6 @@
     "postcodegen": "node ./fix-zod-index.mjs && npx tsc --build ../../lib/api-client-react ../../lib/api-zod ../../lib/db"
   },
   "devDependencies": {
-    "orval": "^8.12.3"
+    "orval": "^8.14.0"
   }
 }
