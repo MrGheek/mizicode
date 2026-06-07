@@ -27,6 +27,15 @@ extraResources:
 
 mac:
   category: public.app-category.developer-tools
+  # identity is intentionally omitted so electron-builder auto-selects the
+  # Developer ID Application certificate imported into the CI keychain.
+  # Local dev builds will be unsigned (no cert in keychain) — that is fine.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # electron-builder's built-in notarize support (electron-builder >= 24.9).
+  # Reads APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID from env.
+  notarize: true
   target:
     - target: dmg
       arch:
