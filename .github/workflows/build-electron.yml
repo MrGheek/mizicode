@@ -41,6 +41,40 @@ jobs:
         # when it actually needs it for packaging.
         run: ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile
 
+      - name: Import Apple Developer ID certificate
+        # Only run when the signing secrets are present (i.e. on the main repo,
+        # not on forks or workflow_dispatch runs without secrets).
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # Decode the base64-encoded .p12 into a temp file
+          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/certificate.p12
+
+          # Create a dedicated keychain so we never touch the login keychain
+          security create-keychain -p "ci-keychain-password" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "ci-keychain-password" build.keychain
+
+          # Import the certificate — allow electron-builder (codesign) to use it
+          security import /tmp/certificate.p12 \
+            -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+
+          # Allow codesign to access the key without an interactive prompt
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s -k "ci-keychain-password" \
+            build.keychain
+
+          # Extend keychain lock timeout so it stays open during the build
+          security set-keychain-settings -t 3600 -l build.keychain
+
+          # Clean up the temp file
+          rm /tmp/certificate.p12
+
       - name: Build Mac DMG
         run: pnpm build:electron
         env:
@@ -49,6 +83,11 @@ jobs:
           # GH_TOKEN lets electron-builder read release metadata if needed;
           # actual asset upload is handled by the step below.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Code-signing & notarization — only populated on the main repo.
+          # electron-builder reads these automatically.
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Upload DMG as Actions artifact
         uses: actions/upload-artifact@v4
