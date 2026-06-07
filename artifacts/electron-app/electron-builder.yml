@@ -1,0 +1,47 @@
+appId: com.mizi.local
+productName: Mizi
+copyright: "Copyright © 2025 Mizi"
+
+directories:
+  output: ../../dist-electron
+  buildResources: build
+
+files:
+  - dist/**
+  - package.json
+  - "!dist/**/*.map"
+
+extraResources:
+  - from: ../api-server/dist
+    to: api-server/dist
+    filter:
+      - "**/*"
+      - "!**/*.map"
+  - from: ../dashboard/dist
+    to: dashboard/dist
+    filter:
+      - "**/*"
+      - "!**/*.map"
+  - from: ../dashboard/serve.mjs
+    to: dashboard/serve.mjs
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: dir
+      arch:
+        - arm64
+        - x64
+
+dmg:
+  title: "${productName} ${version}"
+  window:
+    width: 540
+    height: 380
+
+asar: true
+compression: maximum
