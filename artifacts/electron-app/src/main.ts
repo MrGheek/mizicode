@@ -1,17 +1,23 @@
 /**
  * main.ts — Mizi Electron main process
  *
- * Orchestrates the local distribution:
- *   1. On first launch, installs better-sqlite3 native module for system Node
- *   2. Spawns the API server (Node child process, MIZI_DISTRIBUTION=local)
- *   3. Spawns the dashboard static server (serve.mjs)
- *   4. Opens a BrowserWindow pointing at the dashboard
- *   5. Creates a system-tray icon with status and quick-access menu
- *   6. On quit, SIGTERMs both child processes cleanly
+ * Boot sequence:
+ *   1. Verify system Node.js ≥ 20 is present (required for API server child process)
+ *   2. Ensure Ollama is running: start it if installed-but-idle, warn if missing
+ *   3. Spawn the API server as a Node.js child process (MIZI_DISTRIBUTION=local)
+ *   4. Spawn the dashboard static server
+ *   5. Open a BrowserWindow pointing at the dashboard
+ *   6. Create a system-tray icon with status and quick-access menu
+ *   7. On quit, SIGTERM both child processes cleanly
+ *
+ * Native dependencies (better-sqlite3) are pre-installed into api-server/dist/
+ * at build time via scripts/install-native-deps.mjs — no network access needed
+ * at runtime. The Node.js child process uses the same system Node ABI that was
+ * used during packaging, so the pre-built .node binary loads without recompilation.
  */
 
 import { app, BrowserWindow, Menu, Tray, shell, nativeImage, dialog } from "electron";
-import { spawn, execFile, execFileSync } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import path from "node:path";
 import http from "node:http";
@@ -21,14 +27,15 @@ import fs from "node:fs";
 
 const API_PORT       = Number(process.env["MIZI_API_PORT"])       || 4000;
 const DASHBOARD_PORT = Number(process.env["MIZI_DASHBOARD_PORT"]) || 3000;
+const OLLAMA_PORT    = 11434;
 const MIZI_HOME      = process.env["MIZI_HOME"] ?? path.join(process.env["HOME"] ?? "/tmp", ".mizi");
 const IS_PACKAGED    = app.isPackaged;
 
-// In production  : resources live in process.resourcesPath (Contents/Resources/)
-// In development : run from the monorepo root
+// process.resourcesPath is set by Electron only in packaged builds.
+// In dev we point at the monorepo root (three directories up from dist/main.js).
 const RES = IS_PACKAGED
   ? process.resourcesPath
-  : path.join(__dirname, "..", "..", "..");           // monorepo root
+  : path.join(__dirname, "..", "..", "..");
 
 const API_DIST_DIR = IS_PACKAGED
   ? path.join(RES, "api-server", "dist")
@@ -47,109 +54,179 @@ let dashboardProcess: ChildProcess | null = null;
 let tray:             Tray         | null = null;
 let mainWindow:       BrowserWindow | null = null;
 
-// ── Find system Node.js ───────────────────────────────────────────────────────
+// ── Utility: one-shot HTTP probe ──────────────────────────────────────────────
 
-function findNodeBin(): string {
+function probeTcp(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get({ hostname: "127.0.0.1", port, path: "/" }, (res) => {
+      res.resume();
+      resolve(true);
+    });
+    req.on("error", () => resolve(false));
+    req.setTimeout(800, () => { req.destroy(); resolve(false); });
+  });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Poll a port until it responds or the deadline passes. */
+async function pollUntilReady(port: number, maxWaitMs = 25_000): Promise<boolean> {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    if (await probeTcp(port)) return true;
+    await sleep(600);
+  }
+  return false;
+}
+
+// ── System Node.js discovery ──────────────────────────────────────────────────
+
+/**
+ * Returns the path to system Node.js ≥ 20, or shows an error dialog and
+ * returns null if Node is absent or too old.
+ *
+ * Note: Electron bundles its own Node.js, but the API server (which uses the
+ * better-sqlite3 native module) must run in the *same* Node.js ABI that was
+ * used when better-sqlite3 was compiled at packaging time. We therefore spawn
+ * the API server as a system Node child process, not inside Electron's process.
+ */
+function findNodeBin(): string | null {
   const candidates = [
-    "/opt/homebrew/bin/node",  // Homebrew on Apple Silicon
-    "/usr/local/bin/node",     // Homebrew on Intel / nvm
-    "/usr/bin/node",           // system package managers
+    "/opt/homebrew/bin/node",   // Homebrew on Apple Silicon
+    "/usr/local/bin/node",      // Homebrew on Intel / nvm default
+    "/usr/bin/node",            // System package managers
+  ];
+
+  let nodeBin: string | null = null;
+  for (const c of candidates) {
+    if (fs.existsSync(c)) { nodeBin = c; break; }
+  }
+  if (!nodeBin) {
+    try { nodeBin = execFileSync("which", ["node"], { encoding: "utf8" }).trim(); }
+    catch { /* not on PATH */ }
+  }
+
+  if (!nodeBin) {
+    dialog.showMessageBoxSync({
+      type: "error",
+      title: "Node.js Not Found",
+      message: "Mizi requires Node.js ≥ 20 to run the local AI server.",
+      detail:
+        "Please install Node.js from https://nodejs.org (LTS recommended), " +
+        "then relaunch Mizi.\n\nIf you installed Node.js via Homebrew, make " +
+        "sure /opt/homebrew/bin is in your PATH.",
+      buttons: ["Open nodejs.org", "Quit"],
+    });
+    void shell.openExternal("https://nodejs.org");
+    app.quit();
+    return null;
+  }
+
+  // Verify version ≥ 20
+  try {
+    const raw = execFileSync(nodeBin, ["--version"], { encoding: "utf8" }).trim(); // e.g. "v22.3.0"
+    const major = parseInt(raw.replace(/^v/, "").split(".")[0] ?? "0", 10);
+    if (major < 20) {
+      dialog.showMessageBoxSync({
+        type: "error",
+        title: "Node.js Too Old",
+        message: `Mizi requires Node.js ≥ 20 but found ${raw}.`,
+        detail: "Please upgrade Node.js from https://nodejs.org, then relaunch Mizi.",
+        buttons: ["Open nodejs.org", "Quit"],
+      });
+      void shell.openExternal("https://nodejs.org");
+      app.quit();
+      return null;
+    }
+  } catch { /* version check failed — proceed anyway */ }
+
+  return nodeBin;
+}
+
+// ── Ollama lifecycle ───────────────────────────────────────────────────────────
+
+function findOllamaBin(): string | null {
+  const candidates = [
+    "/opt/homebrew/bin/ollama",
+    "/usr/local/bin/ollama",
+    "/usr/bin/ollama",
   ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
   }
-  try {
-    return execFileSync("which", ["node"], { encoding: "utf8" }).trim();
-  } catch {
-    return "node"; // hope it's on PATH
-  }
+  try { return execFileSync("which", ["ollama"], { encoding: "utf8" }).trim(); }
+  catch { return null; }
 }
 
-// ── Poll until a port accepts connections ─────────────────────────────────────
+/**
+ * Ensure Ollama is running before services start. Mirrors the logic in
+ * mizi-local-start.sh (lines 117–209) adapted for an Electron context:
+ *
+ *  1. Already responding → "running"
+ *  2. Binary found, idle → spawn "ollama serve", wait up to 15s → "started"
+ *  3. Binary not found   → show warning dialog with download link → "missing"
+ *  4. Spawn succeeded but timed out → "timeout" (non-fatal; API server retries)
+ */
+async function ensureOllama(): Promise<"running" | "started" | "missing" | "timeout"> {
+  // 1. Already up?
+  if (await probeTcp(OLLAMA_PORT)) return "running";
 
-function poll(port: number, maxWaitMs = 25_000): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const deadline = Date.now() + maxWaitMs;
-    function attempt(): void {
-      const req = http.get({ hostname: "127.0.0.1", port, path: "/" }, (res) => {
-        res.resume();
-        resolve();
-      });
-      req.on("error", () => {
-        if (Date.now() >= deadline) {
-          reject(new Error(`Port ${port} not ready after ${maxWaitMs}ms`));
-        } else {
-          setTimeout(attempt, 600);
-        }
-      });
-      req.setTimeout(1000, () => req.destroy());
-    }
-    attempt();
-  });
-}
-
-// ── First-run: install better-sqlite3 for the system Node ABI ────────────────
-
-function setupDependencies(nodeBin: string): Promise<void> {
-  const nmDir = path.join(API_DIST_DIR, "node_modules", "better-sqlite3");
-  if (fs.existsSync(nmDir)) return Promise.resolve(); // already installed
-
-  return new Promise((resolve, reject) => {
-    // Show a non-interactive "setting up" window
-    const setupWin = new BrowserWindow({
-      width: 460,
-      height: 170,
-      resizable: false,
-      frame: false,
-      alwaysOnTop: true,
-      webPreferences: { nodeIntegration: false, contextIsolation: true },
+  // 2. Find the binary
+  const ollamaBin = findOllamaBin();
+  if (!ollamaBin) {
+    const choice = dialog.showMessageBoxSync({
+      type: "warning",
+      title: "Ollama Not Installed",
+      message: "Ollama was not found on this machine.",
+      detail:
+        "Mizi uses Ollama to run AI models locally. Without it, AI inference " +
+        "will not work.\n\nInstall Ollama from ollama.com and relaunch Mizi, or " +
+        "click 'Continue' to open the dashboard without AI support.",
+      buttons: ["Download Ollama", "Continue Anyway"],
+      defaultId: 0,
+      cancelId: 1,
     });
-    void setupWin.loadURL(
-      "data:text/html," +
-        encodeURIComponent(
-          `<!DOCTYPE html><html><body style="margin:0;background:#111;color:#e5e5e5;
-            font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-            display:flex;flex-direction:column;align-items:center;
-            justify-content:center;height:100vh;gap:10px;">
-            <p style="font-size:15px;font-weight:500;margin:0">Setting up Mizi…</p>
-            <p style="font-size:12px;color:#888;margin:0">Installing local dependencies (one-time)</p>
-          </body></html>`
-        )
-    );
+    if (choice === 0) void shell.openExternal("https://ollama.com/download/mac");
+    return "missing";
+  }
 
-    // Resolve the npm binary next to the discovered node binary
-    const npmBin = path.join(path.dirname(nodeBin), "npm");
-    const npm    = fs.existsSync(npmBin) ? npmBin : "npm";
-
-    const child = execFile(
-      npm,
-      ["install", "--save", "better-sqlite3@^12.10.0", "--omit=dev", "--no-audit", "--no-fund"],
-      { cwd: API_DIST_DIR, env: { ...process.env, NODE_ENV: "production" } },
-      (err) => {
-        setupWin.destroy();
-        if (err) reject(new Error(`Dependency install failed: ${err.message}`));
-        else resolve();
-      }
-    );
-    void child;
+  // 3. Ollama installed but not running — start it
+  console.log("[mizi] Starting Ollama…");
+  const ollamaLog = fs.createWriteStream(
+    path.join(MIZI_HOME, "logs", "mizi-ollama.log"),
+    { flags: "a" }
+  );
+  const ollamaProc = spawn(ollamaBin, ["serve"], {
+    env: { ...process.env },
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  ollamaProc.stdout?.pipe(ollamaLog);
+  ollamaProc.stderr?.pipe(ollamaLog);
+
+  // 4. Wait up to 15s for Ollama to accept connections
+  const ready = await pollUntilReady(OLLAMA_PORT, 15_000);
+  if (!ready) {
+    console.warn("[mizi] Ollama did not start within 15s");
+    return "timeout";
+  }
+
+  console.log("[mizi] Ollama started");
+  return "started";
 }
 
 // ── Spawn background services ─────────────────────────────────────────────────
 
-async function startServices(): Promise<void> {
-  const nodeBin = findNodeBin();
+async function startServices(nodeBin: string): Promise<void> {
   const logsDir = path.join(MIZI_HOME, "logs");
   fs.mkdirSync(logsDir, { recursive: true });
   fs.mkdirSync(path.join(MIZI_HOME, "workspace"), { recursive: true });
 
-  // First-run setup (packaged only; dev already has node_modules)
-  if (IS_PACKAGED) {
-    await setupDependencies(nodeBin);
-  }
-
   // API server ────────────────────────────────────────────────────────────────
-  if (fs.existsSync(API_DIST)) {
+  if (!fs.existsSync(API_DIST)) {
+    console.warn("[mizi] API dist not found at:", API_DIST);
+  } else {
     const apiLog = fs.createWriteStream(path.join(logsDir, "mizi-api.log"), { flags: "a" });
     apiProcess = spawn(nodeBin, [API_DIST], {
       env: {
@@ -158,7 +235,7 @@ async function startServices(): Promise<void> {
         MIZI_DISTRIBUTION:    "local",
         MIZI_LOCAL_DB_PATH:   path.join(MIZI_HOME, "local.db"),
         MIZI_LOCAL_WORKSPACE: path.join(MIZI_HOME, "workspace"),
-        OLLAMA_BASE_URL:      "http://localhost:11434",
+        OLLAMA_BASE_URL:      `http://localhost:${OLLAMA_PORT}`,
         LOG_LEVEL:            "info",
         NODE_ENV:             "production",
       },
@@ -166,12 +243,12 @@ async function startServices(): Promise<void> {
     apiProcess.stdout?.pipe(apiLog);
     apiProcess.stderr?.pipe(apiLog);
     apiProcess.on("exit", (code) => console.log("[mizi] API server exited:", code));
-  } else {
-    console.warn("[mizi] API dist not found at:", API_DIST);
   }
 
   // Dashboard static server ───────────────────────────────────────────────────
-  if (fs.existsSync(DASHBOARD_SERVE)) {
+  if (!fs.existsSync(DASHBOARD_SERVE)) {
+    console.warn("[mizi] Dashboard serve.mjs not found at:", DASHBOARD_SERVE);
+  } else {
     const dashLog = fs.createWriteStream(path.join(logsDir, "mizi-dashboard.log"), { flags: "a" });
     dashboardProcess = spawn(nodeBin, [DASHBOARD_SERVE], {
       env: {
@@ -184,14 +261,12 @@ async function startServices(): Promise<void> {
     dashboardProcess.stdout?.pipe(dashLog);
     dashboardProcess.stderr?.pipe(dashLog);
     dashboardProcess.on("exit", (code) => console.log("[mizi] Dashboard exited:", code));
-  } else {
-    console.warn("[mizi] Dashboard serve.mjs not found at:", DASHBOARD_SERVE);
   }
 
-  // Wait for both services to accept connections (non-fatal on timeout)
+  // Wait for both services (non-fatal on timeout)
   await Promise.all([
-    poll(API_PORT).catch((e: Error) => console.warn("[mizi] API poll:", e.message)),
-    poll(DASHBOARD_PORT).catch((e: Error) => console.warn("[mizi] Dashboard poll:", e.message)),
+    pollUntilReady(API_PORT).then((ok) => { if (!ok) console.warn("[mizi] API timed out"); }),
+    pollUntilReady(DASHBOARD_PORT).then((ok) => { if (!ok) console.warn("[mizi] Dashboard timed out"); }),
   ]);
 }
 
@@ -222,7 +297,7 @@ function createWindow(): void {
 
   // External links open in the default browser, not in Electron
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (!url.startsWith(`http://localhost:`)) {
+    if (!url.startsWith("http://localhost:")) {
       void shell.openExternal(url);
       return { action: "deny" };
     }
@@ -234,8 +309,7 @@ function createWindow(): void {
 
 // ── System tray ───────────────────────────────────────────────────────────────
 
-function createTray(): void {
-  // Use a bundled 16×16 PNG if present; fall back to an empty image
+function createTray(ollamaStatus: string): void {
   const iconPath = IS_PACKAGED
     ? path.join(process.resourcesPath, "build", "tray-icon.png")
     : path.join(__dirname, "..", "build", "tray-icon.png");
@@ -247,6 +321,10 @@ function createTray(): void {
   tray = new Tray(icon);
   tray.setToolTip("Mizi – Local AI");
 
+  const ollamaLabel = ollamaStatus === "running" || ollamaStatus === "started"
+    ? `Ollama: running  ✓`
+    : `Ollama: ${ollamaStatus} ⚠`;
+
   const menu = Menu.buildFromTemplate([
     {
       label: "Open Dashboard",
@@ -257,8 +335,12 @@ function createTray(): void {
       click: () => void shell.openExternal(`http://localhost:${DASHBOARD_PORT}`),
     },
     { type: "separator" },
-    { label: `API         →  localhost:${API_PORT}`,       enabled: false },
-    { label: `Dashboard  →  localhost:${DASHBOARD_PORT}`, enabled: false },
+    { label: `API        →  localhost:${API_PORT}`,       enabled: false },
+    { label: `Dashboard →  localhost:${DASHBOARD_PORT}`, enabled: false },
+    { label: ollamaLabel,                                 enabled: false },
+    { type: "separator" },
+    { label: "View Logs",
+      click: () => void shell.openPath(path.join(MIZI_HOME, "logs")) },
     { type: "separator" },
     { label: "Quit Mizi", role: "quit" },
   ]);
@@ -275,18 +357,34 @@ app.on("window-all-closed", () => { /* intentionally empty */ });
 app.on("before-quit", stopServices);
 
 void app.whenReady().then(async () => {
+  // Step 1 — Verify system Node.js
+  const nodeBin = findNodeBin();
+  if (!nodeBin) return; // findNodeBin() already called app.quit()
+
+  // Step 2 — Ensure Ollama lifecycle
+  let ollamaStatus = "unknown";
   try {
-    await startServices();
+    ollamaStatus = await ensureOllama();
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    void dialog.showErrorBox("Mizi – Setup Error", `Could not start services:\n\n${msg}\n\nCheck logs at ${path.join(MIZI_HOME, "logs")}`);
+    console.warn("[mizi] Ollama check failed:", err);
   }
 
-  createTray();
+  // Step 3 — Start API + dashboard
+  try {
+    await startServices(nodeBin);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    void dialog.showErrorBox(
+      "Mizi – Service Error",
+      `Could not start services:\n\n${msg}\n\nSee logs at ${path.join(MIZI_HOME, "logs")}`
+    );
+  }
+
+  // Step 4 — UI
+  createTray(ollamaStatus);
   createWindow();
 
   app.on("activate", () => {
-    // Re-open window on dock click (macOS convention)
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
