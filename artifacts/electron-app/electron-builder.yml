@@ -45,3 +45,10 @@ dmg:
 
 asar: true
 compression: maximum
+
+# GitHub publisher — provides metadata for electron-builder's release tooling.
+# Actual asset upload is handled by softprops/action-gh-release in the workflow;
+# electron-builder itself only publishes when --publish flag is passed explicitly.
+publish:
+  provider: github
+  releaseType: release
