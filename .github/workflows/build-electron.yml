@@ -42,13 +42,19 @@ jobs:
         run: ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install --frozen-lockfile
 
       - name: Import Apple Developer ID certificate
-        # Only run when the signing secrets are present (i.e. on the main repo,
-        # not on forks or workflow_dispatch runs without secrets).
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        # Secrets context is not available in 'if' expressions, so we check
+        # inside the shell instead. The step is always scheduled; it exits
+        # early (success) when the signing secrets are absent — e.g. on forks
+        # or manual runs before certificates are configured.
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_CERTIFICATE secret not set — skipping code-signing setup."
+            exit 0
+          fi
+
           # Decode the base64-encoded .p12 into a temp file
           echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/certificate.p12
 
