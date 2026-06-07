@@ -58,7 +58,7 @@ function makeEccTree(skillCount: number) {
 }
 
 function buildFetchMock(tree: { path: string; type: string }[]) {
-  return vi.fn(async (url: string | Request) => {
+  return vi.fn(async (url: string | Request, _init?: RequestInit) => {
     const urlStr = typeof url === "string" ? url : url.url;
 
     // Git Trees API
@@ -101,7 +101,7 @@ function buildFetchMock(tree: { path: string; type: string }[]) {
 
 describe("listSkillPaths — Git Trees API enumeration", () => {
   let originalFetch: typeof global.fetch;
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let fetchMock: ReturnType<typeof buildFetchMock>;
   let calledTreeUrls: string[];
 
   beforeEach(() => {

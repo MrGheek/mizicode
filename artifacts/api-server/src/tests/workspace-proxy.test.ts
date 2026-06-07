@@ -31,7 +31,7 @@ vi.mock("http-proxy-middleware", () => ({
     const mw = (_req: unknown, res: { status: (c: number) => { json: (b: unknown) => void } }, _next: unknown) => {
       res.status(200).json({ proxied: true, target });
     };
-    (mw as Record<string, unknown>)["__proxyTarget"] = target;
+    (mw as unknown as Record<string, unknown>)["__proxyTarget"] = target;
     return mw;
   }),
 }));
@@ -137,7 +137,7 @@ afterEach(() => {
 describe("getWorkspaceProxy (unit)", () => {
   it("builds target URL as http://<machineId>.vm.<workspaceApp>.internal:5180", () => {
     const proxy = getWorkspaceProxy("machine-abc123", "my-workspace-app");
-    expect((proxy as Record<string, unknown>)["__proxyTarget"]).toBe(
+    expect((proxy as unknown as Record<string, unknown>)["__proxyTarget"]).toBe(
       "http://machine-abc123.vm.my-workspace-app.internal:5180"
     );
     evictWorkspaceProxy("machine-abc123");
@@ -154,8 +154,8 @@ describe("getWorkspaceProxy (unit)", () => {
     const proxyA = getWorkspaceProxy("machine-001", "app-x");
     const proxyB = getWorkspaceProxy("machine-002", "app-x");
     expect(proxyA).not.toBe(proxyB);
-    expect((proxyA as Record<string, unknown>)["__proxyTarget"]).not.toBe(
-      (proxyB as Record<string, unknown>)["__proxyTarget"]
+    expect((proxyA as unknown as Record<string, unknown>)["__proxyTarget"]).not.toBe(
+      (proxyB as unknown as Record<string, unknown>)["__proxyTarget"]
     );
     evictWorkspaceProxy("machine-001");
     evictWorkspaceProxy("machine-002");

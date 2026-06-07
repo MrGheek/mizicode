@@ -31,8 +31,7 @@ const DUMMY_SOURCE: SkillSource = {
   pinnedCommitSha: "abc123",
   license: "MIT",
   trustLevel: "user_approved",
-  createdAt: new Date(),
-  updatedAt: new Date(),
+  importedAt: new Date(),
 };
 
 const ECC_SECURITY_SKILL = `---
