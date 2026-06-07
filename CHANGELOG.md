@@ -1,3 +1,17 @@
+## v0.13.0 — 2026-06-07\n\n- Merge branch 'main' of https://github.com/MrGheek/mizicode (2e88d59)
+- feat: code-sign and notarize Mac app to pass Gatekeeper (c1b4a02)
+- Add GitHub Actions workflow to build Mac DMG on release (Task #494) (1ebe6a9)
+- Fix local dist dashboard crash: sessions response shape mismatch (649614a)
+- Git commit prior to merge (3978f40)
+- Remove unnecessary electron rebuild dependency from build process (272b1be)
+- Update packaging to correctly install native dependencies (08b5e92)
+- Add Electron Mac app packaging (Task #488) (3cf33d4)
+- Update packaging for Electron Mac applications (5c0bb9b)
+- Fix 8 TypeScript errors in test files blocking local build packaging (4040a34)
+- Improve deployment process and update dependencies for faster builds (360e07c)
+- Add tests verifying concurrent sessions open their own independent workspaces (cf607d1)
+- feat: automatically evict workspace proxy connections when a session ends (e018715)\n
+
 ## v0.12.0 — 2026-06-01\n\n- Fix per-machine workspace routing and Fly secrets hardening (0b8bfd8)
 - Fix workspace Docker image and dedicated Fly app setup (4065259)
 - Task #479: Import & curate ECC skills catalog (affaan-m/ECC) (864c933)
