@@ -8,6 +8,7 @@
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "build:local": "MIZI_DISTRIBUTION=local pnpm run typecheck && MIZI_DISTRIBUTION=local pnpm -r --if-present run build",
     "package:local": "bash scripts/package-local.sh",
+    "build:electron": "CI=true MIZI_DISTRIBUTION=local pnpm -r --if-present run build && pnpm --filter @workspace/electron-app run build:electron",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },

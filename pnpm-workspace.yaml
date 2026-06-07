@@ -39,6 +39,8 @@ onlyBuiltDependencies:
   - '@swc/core'
   - better-sqlite3
   - esbuild
+  - electron
+  - electron-builder
   - msw
   - unrs-resolver
 
