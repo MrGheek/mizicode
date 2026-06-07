@@ -89,22 +89,20 @@ router.get("/sessions", async (_req: Request, res: Response) => {
        FROM sessions ORDER BY created_at DESC LIMIT 100`
     ).all() as Record<string, unknown>[];
     db.close();
-    res.json({
-      sessions: rows.map(r => ({
-        id:             r["id"],
-        provider:       r["provider"],
-        status:         r["status"],
-        statusMessage:  r["status_message"],
-        modelId:        r["model_id"],
-        intentText:     r["intent_text"],
-        templateSlug:   r["template_slug"],
-        repoUrl:        r["repo_url"],
-        createdAt:      r["created_at"],
-        updatedAt:      r["updated_at"],
-        ollamaEndpoint: OLLAMA_ENDPOINT,
-        localChatUrl:   LOCAL_CHAT_PATH,
-      })),
-    });
+    res.json(rows.map(r => ({
+      id:             r["id"],
+      provider:       r["provider"],
+      status:         r["status"],
+      statusMessage:  r["status_message"],
+      modelId:        r["model_id"],
+      intentText:     r["intent_text"],
+      templateSlug:   r["template_slug"],
+      repoUrl:        r["repo_url"],
+      createdAt:      r["created_at"],
+      updatedAt:      r["updated_at"],
+      ollamaEndpoint: OLLAMA_ENDPOINT,
+      localChatUrl:   LOCAL_CHAT_PATH,
+    })));
   } catch (err) {
     logger.error({ err }, "[sessions-local] Failed to list sessions");
     res.status(500).json({ error: "Failed to list local sessions", detail: String(err) });
