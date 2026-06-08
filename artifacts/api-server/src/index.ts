@@ -241,7 +241,7 @@ if (!IS_LOCAL_DISTRIBUTION) {
           socket.destroy();
           return;
         }
-        const proxy = getWorkspaceProxy(session.flyMachineId, workspaceApp);
+        const proxy = await getWorkspaceProxy(session.flyMachineId, workspaceApp);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         proxy.upgrade?.(req, socket as any, head);
       } catch (err) {

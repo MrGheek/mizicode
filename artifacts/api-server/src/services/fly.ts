@@ -1,3 +1,5 @@
+import { spawn, type ChildProcess } from "child_process";
+import net from "net";
 import { logger } from "../lib/logger";
 
 // ─── Fly.io workspace machine URL patterns ────────────────────────────────────
@@ -315,6 +317,128 @@ export async function patchMachineEnv(
   });
 
   logger.info({ machineId, keys: Object.keys(env) }, "Fly Machine env vars patched");
+}
+
+// ─── Fly proxy subprocess management ─────────────────────────────────────────
+//
+// Each NIM workspace session's `/workspace` proxy route tunnels HTTP traffic
+// through a `fly proxy` subprocess rather than connecting to the 6PN hostname
+// directly.  Advantages:
+//
+//   1. flyctl manages WireGuard routing — no reliance on in-container DNS
+//      resolution of *.internal hostnames (which can fail depending on how the
+//      API server container's resolv.conf is configured).
+//
+//   2. Target is port 5173 (bolt.diy directly) rather than 5180 (nginx).
+//      Going straight to bolt.diy bypasses nginx auth_basic, which would
+//      otherwise return 401 to the unauthenticated API-server proxy.
+//      User authentication is already enforced at the API-server layer.
+//
+// One `fly proxy` process is kept alive per machine for the session lifetime
+// and torn down by `stopMachineProxy` when the session is destroyed.
+
+interface _ProxyEntry {
+  process: ChildProcess;
+  port: number;
+}
+const _machineProxies = new Map<string, _ProxyEntry>();
+
+async function _findFreePort(): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address() as net.AddressInfo;
+      srv.close(() => resolve(port));
+    });
+    srv.on("error", reject);
+  });
+}
+
+/**
+ * Start a `fly proxy` subprocess tunnelling a random local port to the
+ * workspace machine's bolt.diy port (5173) via Fly.io private networking.
+ *
+ * Command:
+ *   fly proxy <localPort>:<machineId>.vm.<appName>.internal:5173 \
+ *     --app <appName> --access-token <token>
+ *
+ * Returns the local port once the tunnel is accepting connections (≤15 s).
+ * Idempotent: if a proxy is already running for this machineId, the existing
+ * port is returned immediately without spawning a new process.
+ */
+export async function startMachineProxy(machineId: string, appName: string): Promise<number> {
+  const existing = _machineProxies.get(machineId);
+  if (existing) return existing.port;
+
+  const localPort = await _findFreePort();
+  const token = process.env.FLY_API_TOKEN ?? "";
+  const remoteHost = `${machineId}.vm.${appName}.internal`;
+
+  const proc = spawn(
+    "fly",
+    [
+      "proxy",
+      `${localPort}:${remoteHost}:5173`,
+      "--app", appName,
+      "--access-token", token,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"], detached: false },
+  );
+
+  proc.stdout?.on("data", (d: Buffer) =>
+    logger.debug({ machineId, out: d.toString().trim() }, "fly proxy stdout"),
+  );
+  proc.stderr?.on("data", (d: Buffer) =>
+    logger.debug({ machineId, err: d.toString().trim() }, "fly proxy stderr"),
+  );
+  proc.on("error", (err) =>
+    logger.warn({ err, machineId }, "fly proxy process error"),
+  );
+  proc.on("exit", (code, sig) => {
+    logger.warn({ machineId, code, sig }, "fly proxy exited");
+    _machineProxies.delete(machineId);
+  });
+
+  // Poll the local port until fly proxy is accepting connections (or timeout).
+  await new Promise<void>((resolve, reject) => {
+    const started = Date.now();
+    const attempt = () => {
+      const sock = new net.Socket();
+      sock.setTimeout(500);
+      const fail = () => {
+        sock.destroy();
+        if (Date.now() - started > 15_000) {
+          reject(new Error(`fly proxy for ${machineId} did not become ready within 15 s`));
+        } else {
+          setTimeout(attempt, 500);
+        }
+      };
+      sock.connect(localPort, "127.0.0.1", () => {
+        sock.destroy();
+        resolve();
+      });
+      sock.on("error", fail);
+      sock.on("timeout", fail);
+    };
+    setTimeout(attempt, 800);
+  });
+
+  _machineProxies.set(machineId, { process: proc, port: localPort });
+  logger.info({ machineId, appName, localPort }, "fly proxy ready for workspace machine");
+  return localPort;
+}
+
+/**
+ * Terminate the `fly proxy` subprocess for a machine (if one is running).
+ * Called when a session is destroyed or its proxy entry is evicted.
+ */
+export function stopMachineProxy(machineId: string): void {
+  const entry = _machineProxies.get(machineId);
+  if (entry) {
+    entry.process.kill("SIGTERM");
+    _machineProxies.delete(machineId);
+    logger.info({ machineId }, "fly proxy stopped");
+  }
 }
 
 /**

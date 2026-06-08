@@ -61,6 +61,13 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+# Install fly CLI so the workspace proxy can use `fly proxy` to tunnel
+# connections to specific workspace machines via Fly.io private networking.
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \
+    curl -fsSL https://fly.io/install.sh | FLYCTL_INSTALL=/usr/local sh && \
+    ln -sf /usr/local/bin/flyctl /usr/local/bin/fly && \
+    rm -rf /var/lib/apt/lists/*
+
 # Production node_modules (includes better-sqlite3 native module,
 # fully resolved — no pnpm symlinks or virtual store needed)
 COPY --from=builder /app/prod-deploy/node_modules ./node_modules
