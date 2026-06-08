@@ -105,7 +105,7 @@ const NIM_ORDER: { key: BootPhaseKey; label: string }[] = [
 
 function detectActive(status: string, msg: string): BootPhaseKey | null {
   const m = msg.toLowerCase();
-  if (status === "ready" || /vllm online|llm ready|session is ready|bolt[._-]?ready|bolt\.diy (ready|is ready)/i.test(m)) return "llm";
+  if (status === "ready" || /vllm online|llm ready|session is ready|bolt[._-]?ready|bolt\.diy (ready|is ready)|bolt\.diy compil/i.test(m)) return "llm";
   if (status === "downloading" || /download(ing)?\s+model|loading model into gpu/.test(m)) return "weights";
   if (/index(ing)?\b|repo[- ]?index|building graph|full[- ]?text index|vector index|summariz/i.test(msg)) return "indexing";
   if (/smart skills|skills compil|skills loaded|skills ready/i.test(msg)) return "skills";
