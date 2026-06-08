@@ -75,3 +75,32 @@ jobs:
           subject-name: index.docker.io/gheeklabs/coding-env
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
+  # Build and push the NIM workspace image to Fly's private registry.
+  # This image is used by mizi-api when launching NIM workspace sessions
+  # (nim-workspace profile in profiles.ts). It is a CPU-only image —
+  # no CUDA, no vLLM — that runs code-server + bolt.diy + LiteLLM proxy.
+  # Machines are created on-demand by the API; this job just ensures the
+  # image exists in registry.fly.io/mizi-workspace:latest.
+  build-workspace-image:
+    name: Build Workspace Image (registry.fly.io/mizi-workspace)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+
+      - name: Build and push workspace image (remote build on Fly Depot)
+        run: |
+          flyctl deploy \
+            --app mizi-workspace \
+            --dockerfile docker/Dockerfile \
+            --image-label latest \
+            --build-only \
+            --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.MIZIAPI }}
