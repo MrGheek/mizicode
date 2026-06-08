@@ -4,8 +4,13 @@
  * Verifies that concurrent NIM sessions each have their own independent
  * workspace proxy pointing exclusively to their own Fly Machine.
  *
+ * The proxy now tunnels through `fly proxy` subprocesses (via
+ * fly.startMachineProxy) rather than connecting to 6PN hostnames directly.
+ * fly.startMachineProxy is mocked here so no real flyctl process is spawned;
+ * it returns deterministic local ports so target-URL assertions remain stable.
+ *
  * Covers:
- *   1. getWorkspaceProxy — target URL is http://<machineId>.vm.<app>.internal:5180
+ *   1. getWorkspaceProxy — target URL is http://127.0.0.1:<port> (fly proxy tunnel)
  *   2. getWorkspaceProxy — same machineId returns cached proxy instance
  *   3. getWorkspaceProxy — two different machineIds → two distinct proxy instances
  *   4. Route: session with flyMachineId → proxy invoked with correct target
@@ -23,7 +28,7 @@ import request from "supertest";
 //
 // The stub captures the target option and returns a lightweight Express
 // middleware that serialises {proxied:true, target} as JSON so tests can
-// assert on the exact Fly internal address that would be used.
+// assert on the exact address that would be used.
 
 vi.mock("http-proxy-middleware", () => ({
   createProxyMiddleware: vi.fn((options: { target: string }) => {
@@ -35,6 +40,28 @@ vi.mock("http-proxy-middleware", () => ({
     return mw;
   }),
 }));
+
+// ── Mock fly.startMachineProxy / stopMachineProxy ──────────────────────────────
+// Returns deterministic ports so that proxy target URLs are stable across runs.
+// Two distinct base ports are used (19001 for machines containing "aaa",
+// 19002 for others) — enough to verify per-machine isolation.
+
+let _mockPortCounter = 19000;
+const _mockPortMap = new Map<string, number>();
+
+vi.mock("../services/fly", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../services/fly")>();
+  return {
+    ...original,
+    startMachineProxy: vi.fn(async (machineId: string) => {
+      if (!_mockPortMap.has(machineId)) {
+        _mockPortMap.set(machineId, ++_mockPortCounter);
+      }
+      return _mockPortMap.get(machineId)!;
+    }),
+    stopMachineProxy: vi.fn(),
+  };
+});
 
 import app from "../app";
 import { db, gpuProfilesTable, sessionsTable } from "@workspace/db";
@@ -130,29 +157,31 @@ afterEach(() => {
   // Evict proxy cache entries so each test starts with a clean slate
   evictWorkspaceProxy(MACHINE_A);
   evictWorkspaceProxy(MACHINE_B);
+  _mockPortMap.clear();
+  _mockPortCounter = 19000;
 });
 
 // ─── Unit tests: getWorkspaceProxy factory ─────────────────────────────────────
 
 describe("getWorkspaceProxy (unit)", () => {
-  it("builds target URL as http://<machineId>.vm.<workspaceApp>.internal:5180", () => {
-    const proxy = getWorkspaceProxy("machine-abc123", "my-workspace-app");
-    expect((proxy as unknown as Record<string, unknown>)["__proxyTarget"]).toBe(
-      "http://machine-abc123.vm.my-workspace-app.internal:5180"
+  it("builds target URL as http://127.0.0.1:<port> (fly proxy tunnel)", async () => {
+    const proxy = await getWorkspaceProxy("machine-abc123", "my-workspace-app");
+    expect((proxy as unknown as Record<string, unknown>)["__proxyTarget"]).toMatch(
+      /^http:\/\/127\.0\.0\.1:\d+$/
     );
     evictWorkspaceProxy("machine-abc123");
   });
 
-  it("returns the same proxy instance for the same machineId (cache hit)", () => {
-    const first = getWorkspaceProxy("machine-cached", "app-x");
-    const second = getWorkspaceProxy("machine-cached", "app-x");
+  it("returns the same proxy instance for the same machineId (cache hit)", async () => {
+    const first = await getWorkspaceProxy("machine-cached", "app-x");
+    const second = await getWorkspaceProxy("machine-cached", "app-x");
     expect(second).toBe(first);
     evictWorkspaceProxy("machine-cached");
   });
 
-  it("returns distinct proxy instances for two different machineIds", () => {
-    const proxyA = getWorkspaceProxy("machine-001", "app-x");
-    const proxyB = getWorkspaceProxy("machine-002", "app-x");
+  it("returns distinct proxy instances for two different machineIds", async () => {
+    const proxyA = await getWorkspaceProxy("machine-001", "app-x");
+    const proxyB = await getWorkspaceProxy("machine-002", "app-x");
     expect(proxyA).not.toBe(proxyB);
     expect((proxyA as unknown as Record<string, unknown>)["__proxyTarget"]).not.toBe(
       (proxyB as unknown as Record<string, unknown>)["__proxyTarget"]
@@ -165,15 +194,14 @@ describe("getWorkspaceProxy (unit)", () => {
 // ─── Integration tests: /sessions/:id/workspace route ─────────────────────────
 
 describe("GET /api/sessions/:id/workspace", () => {
-  it("invokes proxy with the correct Fly internal target when session has flyMachineId", async () => {
+  it("invokes proxy with a localhost tunnel target when session has flyMachineId", async () => {
     const res = await request(app)
       .get(`/api/sessions/${sessionWithMachine}/workspace`)
       .expect(200);
 
-    expect(res.body).toMatchObject({
-      proxied: true,
-      target: `http://${MACHINE_A}.vm.${WORKSPACE_APP}.internal:5180`,
-    });
+    expect(res.body).toMatchObject({ proxied: true });
+    expect(res.body.target).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(res.body.target).not.toContain(".internal");
   });
 
   it("returns 404 when session has no flyMachineId", async () => {
@@ -219,25 +247,21 @@ describe("GET /api/sessions/:id/workspace", () => {
 // ─── Isolation: two concurrent sessions → two distinct proxy targets ───────────
 
 describe("Concurrent session workspace isolation", () => {
-  it("routes session Alpha to its own machine, not to Beta's machine", async () => {
+  it("routes session Alpha to its own tunnel, not Beta's", async () => {
     const resA = await request(app)
       .get(`/api/sessions/${sessionAlpha}/workspace`)
       .expect(200);
 
-    expect(resA.body.target).toBe(
-      `http://${MACHINE_A}.vm.${WORKSPACE_APP}.internal:5180`
-    );
+    expect(resA.body.target).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(resA.body.target).not.toContain(MACHINE_B);
   });
 
-  it("routes session Beta to its own machine, not to Alpha's machine", async () => {
+  it("routes session Beta to its own tunnel, not Alpha's", async () => {
     const resB = await request(app)
       .get(`/api/sessions/${sessionBeta}/workspace`)
       .expect(200);
 
-    expect(resB.body.target).toBe(
-      `http://${MACHINE_B}.vm.${WORKSPACE_APP}.internal:5180`
-    );
+    expect(resB.body.target).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(resB.body.target).not.toContain(MACHINE_A);
   });
 

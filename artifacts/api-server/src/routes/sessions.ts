@@ -4373,36 +4373,59 @@ router.get(
 // same per-machine proxy instance for WS connections.
 
 const _workspaceProxies = new Map<string, ProxyRequestHandler>();
+const _pendingWorkspaceProxies = new Map<string, Promise<ProxyRequestHandler>>();
 
-export function getWorkspaceProxy(machineId: string, workspaceApp: string): ProxyRequestHandler {
+/**
+ * Returns (or creates) the http-proxy-middleware instance for a specific
+ * workspace machine.  The proxy now tunnels through a `fly proxy` subprocess
+ * rather than connecting to the 6PN hostname directly, which avoids any
+ * in-container DNS resolution issues and lets flyctl manage the WireGuard
+ * routing.  Target port is 5173 (bolt.diy directly) — this bypasses the
+ * nginx auth_basic layer that would otherwise return 401 to the API proxy.
+ *
+ * Concurrent callers asking for the same machineId share a single in-flight
+ * Promise so only one `fly proxy` process is ever spawned per machine.
+ */
+export async function getWorkspaceProxy(machineId: string, workspaceApp: string): Promise<ProxyRequestHandler> {
   const cached = _workspaceProxies.get(machineId);
   if (cached) return cached;
 
-  const target = `http://${machineId}.vm.${workspaceApp}.internal:5180`;
-  const proxy = createProxyMiddleware({
-    target,
-    changeOrigin: true,
-    ws: true,
-    on: {
-      error: (err, _req, res) => {
-        logger.warn({ err, machineId }, "Workspace proxy error");
-        const r = res as { headersSent?: boolean; writeHead: (c: number, h: Record<string, string>) => void; end: (b: string) => void };
-        if (!r.headersSent) {
-          r.writeHead(502, { "Content-Type": "text/plain" });
-          r.end("Workspace proxy unavailable — the machine may still be starting. Try again in a few seconds.");
-        }
-      },
-    },
-  });
+  const inflight = _pendingWorkspaceProxies.get(machineId);
+  if (inflight) return inflight;
 
-  _workspaceProxies.set(machineId, proxy);
-  return proxy;
+  const building = (async () => {
+    const localPort = await fly.startMachineProxy(machineId, workspaceApp);
+    const target = `http://127.0.0.1:${localPort}`;
+    const proxy = createProxyMiddleware({
+      target,
+      changeOrigin: true,
+      ws: true,
+      on: {
+        error: (err, _req, res) => {
+          logger.warn({ err, machineId }, "Workspace proxy error");
+          const r = res as { headersSent?: boolean; writeHead: (c: number, h: Record<string, string>) => void; end: (b: string) => void };
+          if (!r.headersSent) {
+            r.writeHead(502, { "Content-Type": "text/plain" });
+            r.end("Workspace proxy unavailable — the machine may still be starting. Try again in a few seconds.");
+          }
+        },
+      },
+    });
+    _workspaceProxies.set(machineId, proxy);
+    _pendingWorkspaceProxies.delete(machineId);
+    return proxy;
+  })();
+
+  _pendingWorkspaceProxies.set(machineId, building);
+  return building;
 }
 
-// Evict a proxy from the cache when a machine is destroyed so we don't hold
-// stale http-agent connections open indefinitely.
+// Evict a proxy from the cache and stop its fly proxy subprocess when a
+// machine is destroyed, so we don't hold stale connections or processes open.
 export function evictWorkspaceProxy(machineId: string): void {
   _workspaceProxies.delete(machineId);
+  _pendingWorkspaceProxies.delete(machineId);
+  fly.stopMachineProxy(machineId);
 }
 
 router.use("/sessions/:id/workspace", async (req, res, next) => {
@@ -4429,7 +4452,7 @@ router.use("/sessions/:id/workspace", async (req, res, next) => {
     return;
   }
 
-  const proxy = getWorkspaceProxy(session.flyMachineId, workspaceApp);
+  const proxy = await getWorkspaceProxy(session.flyMachineId, workspaceApp);
   proxy(req, res, next);
 });
 
