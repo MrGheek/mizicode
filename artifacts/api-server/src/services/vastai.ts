@@ -552,7 +552,7 @@ chmod +x /usr/local/bin/git`
       curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
         -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
         -H "Content-Type: application/json" \\
-        -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy starting... (\${ELAPSED}s elapsed)\\"}" \\
+        -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy compiling: Vite not yet responding (HTTP \${HTTP_CODE}, attempt \${ATTEMPT}, \${ELAPSED}s elapsed)\\"}" \\
         --max-time 10 >> /var/log/onstart.log 2>&1 || true
     fi
     sleep 5
@@ -571,7 +571,7 @@ chmod +x /usr/local/bin/git`
         curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
           -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
           -H "Content-Type: application/json" \\
-          -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy bundling JS deps... (\${ELAPSED}s)\\"}" \\
+          -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy compiling: Vite responding — bundling JS dependencies (\${ELAPSED}s elapsed)\\"}" \\
           --max-time 10 >> /var/log/onstart.log 2>&1 || true
       fi
       sleep 5

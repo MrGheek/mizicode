@@ -222,7 +222,7 @@ function buildFailureStatusMessage(cause: string, suppliedMessage: string | unde
 const INSTANCE_STATUS_MAP: Record<string, { status: typeof sessionsTable.$inferSelect["status"]; statusMessage: string }> = {
   services_ready:   { status: "starting",    statusMessage: "Tools ready — LLM model loading in background..." },
   downloading:      { status: "downloading", statusMessage: "Downloading model weights..." },
-  starting_llm:     { status: "starting",    statusMessage: "Starting NIM proxy..." },
+  starting_llm:     { status: "starting",    statusMessage: "NIM proxy ready — waiting for Bolt.diy to compile (~2–4 min)" },
   skills_compiling: { status: "starting",    statusMessage: "Compiling Smart Skills bundle..." },
   skills_ready:     { status: "starting",    statusMessage: "Smart Skills loaded — LLM loading in background..." },
   llm_ready:        { status: "ready",       statusMessage: "Session is ready" },
