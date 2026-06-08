@@ -91,7 +91,7 @@ jobs:
     if: github.event_name != 'pull_request'
 
     steps:
-      - name: Free disk space
+      - name: Free disk space and add swap
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           sudo rm -rf /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift
@@ -99,6 +99,12 @@ jobs:
           sudo rm -rf /usr/local/share/powershell /usr/share/miniconda
           sudo apt-get clean
           docker image prune -a -f
+          # Add 8 GB swap — bolt.diy Vite build peaks >7 GB on GitHub's runners
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
 
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -116,6 +122,8 @@ jobs:
 
       - name: Build and push workspace image
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v6.2.0
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
         with:
           context: .
           file: docker/Dockerfile

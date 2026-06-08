@@ -111,7 +111,11 @@ RUN node /opt/bolt-vite-patch.mjs && \
 # first browser request — taking 2-4 min on performance-1x, showing a blank black screen.
 # Building here means the production server starts instantly and serves pre-compiled assets.
 # SKIP_ENV_VALIDATION=1 suppresses the LLM API check at build time (those are runtime vars).
-RUN cd /opt/bolt-diy && NODE_ENV=production SKIP_ENV_VALIDATION=1 pnpm run build
+RUN cd /opt/bolt-diy && \
+    NODE_ENV=production \
+    SKIP_ENV_VALIDATION=1 \
+    NODE_OPTIONS="--max-old-space-size=3072" \
+    pnpm run build
 
 # Claw binary from stage 1
 COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw
