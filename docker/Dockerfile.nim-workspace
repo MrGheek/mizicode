@@ -88,7 +88,14 @@ RUN node /opt/bolt-vite-patch.mjs && \
 # first browser request — taking 2-4 min on shared-cpu-1x and showing a blank black screen.
 # Building here means the production server starts instantly and serves pre-compiled assets.
 # SKIP_ENV_VALIDATION=1 suppresses the LLM API check at build time (those are runtime vars).
-RUN cd /opt/bolt-diy && NODE_ENV=production SKIP_ENV_VALIDATION=1 pnpm run build
+# Attempt a production pre-build so wrangler pages dev can serve pre-compiled assets
+# (fast startup, no blank-screen wait). If the remote builder OOMs during Vite
+# chunk-rendering, the build step is allowed to fail — onstart.sh falls back to
+# `pnpm run dev` (Vite dev server at PORT=8788) which is slower on first load but
+# fully functional. Either mode nginx-proxies port 5180→8788.
+RUN cd /opt/bolt-diy && \
+    NODE_OPTIONS="--max-old-space-size=3072" NODE_ENV=production SKIP_ENV_VALIDATION=1 pnpm run build || \
+    echo "[WARN] Vite build OOM — image will use dev mode at runtime (build/server absent)"
 
 # litellm[proxy] extras: the base litellm package is missing several deps
 # required by the proxy server (websockets, backoff, and others). Installing
@@ -106,6 +113,7 @@ RUN mkdir -p /run/sshd /workspace/models /workspace/projects /var/log && \
     git config --global --add safe.directory /workspace/projects && \
     git config --global --add safe.directory '*'
 
+COPY docker/nim-proxy.py /opt/nim-proxy.py
 COPY docker/onstart.sh /opt/onstart.sh
 COPY docker/claw-bridge.mjs /opt/claw-bridge.mjs
 COPY docker/claw-runner.js /opt/claw-runner.js
@@ -113,7 +121,7 @@ COPY docker/scripts/ /opt/repo-intelligence/
 RUN cd /opt/repo-intelligence && npm install --production --prefer-offline && \
     node -e "require('better-sqlite3'); console.log('[repo-intelligence] better-sqlite3 OK')" 2>/dev/null || \
     echo "[repo-intelligence] WARN: native modules may be missing — fallback mode"
-RUN chmod +x /opt/onstart.sh
+RUN chmod +x /opt/onstart.sh /opt/nim-proxy.py
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -sf http://localhost:8081/health/liveliness || exit 1

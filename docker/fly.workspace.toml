@@ -38,7 +38,6 @@ app            = "mizi-workspace"
 primary_region = "ord"
 
 [build]
-  dockerfile = "docker/Dockerfile"
 
 [deploy]
   strategy = "immediate"
