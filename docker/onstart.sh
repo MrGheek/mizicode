@@ -254,15 +254,20 @@ if (c.includes('allowedHosts')) {
 }
 "
 
-log "Starting Bolt.diy on internal port 5173 (nginx proxies to external port ${BOLT_PORT:-5180})..."
+log "Starting Bolt.diy on internal port 8788 (nginx proxies to external port ${BOLT_PORT:-5180})..."
 # Use pre-built production server if the image was compiled with `pnpm run build`
 # (Dockerfile.nim-workspace build step). Falls back to Vite dev mode for older images.
+# NOTE: wrangler pages dev ignores PORT env var — it always binds to 8788 by default.
+# nginx and the nim-gate script both use 8788 to match this.
 if [ -d /opt/bolt-diy/build/server ]; then
     log "Bolt.diy: production mode (pre-built assets found — fast startup)"
-    (cd /opt/bolt-diy && PORT=5173 pnpm run start) > /var/log/bolt-diy.log 2>&1 &
+    # wrangler pages dev always binds to 8788, ignores PORT env var.
+    (cd /opt/bolt-diy && pnpm run start) > /var/log/bolt-diy.log 2>&1 &
 else
-    log "Bolt.diy: dev mode (no pre-built assets — expect slow first-load)"
-    (cd /opt/bolt-diy && PORT=5173 pnpm run dev) > /var/log/bolt-diy.log 2>&1 &
+    log "Bolt.diy: dev mode (no pre-built assets — expect slow first-load, ~2-4 min)"
+    # Vite dev server respects PORT env var — set to 8788 so nginx and nim-gate
+    # use the same port regardless of production vs dev mode.
+    (cd /opt/bolt-diy && PORT=8788 pnpm run dev) > /var/log/bolt-diy.log 2>&1 &
 fi
 log "Bolt.diy started"
 
@@ -298,7 +303,7 @@ server {
     auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
-        proxy_pass http://localhost:5173;
+        proxy_pass http://localhost:8788;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

@@ -2,3 +2,4 @@
 - [Bolt.diy iframe fix](bolt-diy-iframe.md) — boltDiyUrl can't be embedded in iframe (X-Frame-Options); show "Open in new tab" card instead
 - [Fly.io deploy method](fly-deploy.md) — build image first with nohup, then deploy prebuilt image with --image + --strategy immediate to avoid sandbox timeout
 - [esbuild local-bundle dead code](esbuild-local-bundle-dead-code.md) — `if (true) return;` does NOT eliminate dead bodies; use `if (!IS_LOCAL) { }` + `minifySyntax: true` + stub plugin together.
+- [Wrangler port and Vite prebuild](wrangler-port-vite-build.md) — wrangler pages dev ignores PORT, always binds 8788; Vite respects PORT; Depot OOMs on Vite chunk-render at ~1530MB

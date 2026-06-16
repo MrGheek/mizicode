@@ -512,15 +512,17 @@ chmod +x /usr/local/bin/git`
   // compilation is in progress rather than a stale "compiling" message.
   const nimBoltWarmupLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
     ? `# Bolt.diy gate — two phases:
-#   Phase 1: poll :5173 until Vite is up (first 200).
+#   Phase 1: poll :8788 until wrangler is up (first 200).
 #   Phase 2: wait for /opt/bolt-diy/node_modules/.vite/deps/_metadata.json —
 #            Vite writes this file only when dep optimisation is fully complete.
 #            Before this file exists the page loads HTML but JS bundles are still
 #            being compiled; the user sees a black screen until Vite auto-reloads.
 #
-# Why :5173 not :5180: nginx htpasswd is derived from the NGINX_AUTH_PASS
+# Why :8788 not :5180: nginx htpasswd is derived from the NGINX_AUTH_PASS
 # provisioning env var while the password file on disk is a fresh random value
 # written at runtime — they never match, producing 401 on every attempt.
+# Why :8788 not :5173: wrangler pages dev binds to 8788 by default and ignores
+# the PORT env var; nginx proxies 5180→8788 to match.
 (
   sleep 15
   START_TIME=\$(date +%s)
@@ -533,14 +535,14 @@ chmod +x /usr/local/bin/git`
   # Without this, Phase 2 would be skipped on warm machines (file already exists)
   # even though Vite is re-running dep optimisation — causing a black screen.
   rm -f "\$DEPS_META"
-  echo "[nim-gate] Phase 1: polling Vite :5173 (deadline 720s)..." >> /var/log/onstart.log
-  # Phase 1 — wait for Vite to respond at all
+  echo "[nim-gate] Phase 1: polling wrangler :8788 (deadline 720s)..." >> /var/log/onstart.log
+  # Phase 1 — wait for wrangler to respond at all
   while [ \$(date +%s) -lt \$DEADLINE ]; do
     ATTEMPT=\$((ATTEMPT + 1))
     NOW=\$(date +%s)
     ELAPSED=\$((NOW - START_TIME + 15))
     HTTP_CODE=\$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \\
-      "http://localhost:5173/" 2>/dev/null)
+      "http://localhost:8788/" 2>/dev/null)
     CURL_EXIT=\$?
     echo "[nim-gate] Attempt \${ATTEMPT} (\${ELAPSED}s): http=\${HTTP_CODE} exit=\${CURL_EXIT}" >> /var/log/onstart.log
     if [ "\$HTTP_CODE" = "200" ] || [ "\$HTTP_CODE" = "302" ]; then
