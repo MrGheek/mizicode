@@ -356,10 +356,16 @@ async function _findFreePort(): Promise<number> {
 
 /**
  * Start a `fly proxy` subprocess tunnelling a random local port to the
- * workspace machine's bolt.diy port (5173) via Fly.io private networking.
+ * workspace machine's bolt.diy port (8788) via Fly.io private networking.
+ *
+ * Port 8788 is the default wrangler pages dev port. wrangler ignores the
+ * PORT env var, so 8788 is always the correct target regardless of what
+ * onstart.sh sets. nginx (port 5180) is bypassed intentionally — user auth
+ * is already enforced at the API server layer, so the nginx htpasswd prompt
+ * is unnecessary and would break the unauthenticated API proxy.
  *
  * Command:
- *   fly proxy <localPort>:<machineId>.vm.<appName>.internal:5173 \
+ *   fly proxy <localPort>:<machineId>.vm.<appName>.internal:8788 \
  *     --app <appName> --access-token <token>
  *
  * Returns the local port once the tunnel is accepting connections (≤15 s).
@@ -378,7 +384,7 @@ export async function startMachineProxy(machineId: string, appName: string): Pro
     "fly",
     [
       "proxy",
-      `${localPort}:${remoteHost}:5173`,
+      `${localPort}:${remoteHost}:8788`,
       "--app", appName,
       "--access-token", token,
     ],
