@@ -290,10 +290,15 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
   // its own human-readable message text. Without this, the dashboard's
   // parseBootFailure() classifier loses the structured cause and the
   // suggested-next-step UX silently regresses.
+  //
+  // For non-failure phases, always use the mapped statusMessage — the raw
+  // `message` field sent by onstart.sh is an internal log string (e.g.
+  // "Starting NIM proxy...") that is NOT intended for user display. The
+  // INSTANCE_STATUS_MAP values are the canonical user-facing copy.
   const isFailurePhase = instanceStatus in FAILURE_DEFAULT_MESSAGES;
   const statusMessage = isFailurePhase
     ? buildFailureStatusMessage(instanceStatus, message)
-    : ((message?.trim()) || effectiveMapped.statusMessage);
+    : effectiveMapped.statusMessage;
 
   logger.info({ sessionId, instanceStatus, dbStatus: effectiveMapped.status, statusMessage }, "Instance status callback received");
 
