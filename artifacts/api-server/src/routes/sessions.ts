@@ -4424,11 +4424,20 @@ export function getWorkspaceProxy(machineId: string, workspaceApp: string): Prox
         const expressReq = req as import("express").Request;
         const basePath = (expressReq.baseUrl ?? "").replace(/\/$/, "");
         let html = buffer.toString("utf-8");
-        // Rewrite attribute-quoted absolute paths: href="/assets/…", src="/assets/…"
-        // and dynamic import("/assets/…") calls inside inline <script> tags.
+        // 1. Rewrite attribute-quoted absolute paths: href="/assets/…", src="/assets/…"
+        //    and dynamic import("/assets/…") calls inside inline <script> tags.
         html = html
           .replace(/(['"])\/(assets\/)/g, `$1${basePath}/assets/`)
           .replace(/(['"])\/favicon\.(svg|ico|png)/g, `$1${basePath}/favicon.$2`);
+        // 2. Fix Remix / React Router v7 basename so the client-side router strips
+        //    the proxy prefix before matching routes.  bolt.diy's wrangler worker
+        //    sees GET / (proxy strips the prefix), so it renders basename:"/" into
+        //    the SSR context.  The browser sits at /api/sessions/<id>/workspace, so
+        //    the router tries to match that full path and finds no route → Error 404.
+        //    Overwrite the basename in the serialised context with the real base path.
+        html = html
+          .replace(/"basename":"\/"/g, `"basename":"${basePath}"`)
+          .replace(/"basename":""/g,   `"basename":"${basePath}"`);
         return html;
       }),
     },
@@ -4444,8 +4453,13 @@ export function evictWorkspaceProxy(machineId: string): void {
   fly.stopMachineProxy(machineId);
 }
 
-router.use("/sessions/:id/workspace", async (req, res, next) => {
-  const sessionId = parseInt(String(req.params["id"] ?? ""), 10);
+// Also match React Router v7 "single fetch" data requests that append ".data"
+// to the page URL (e.g. /sessions/73/workspace.data) and any other non-slash
+// suffixes that the router may generate for its own endpoints.
+router.use(["/sessions/:id/workspace", /^\/sessions\/(\d+)\/workspace[^/]/], async (req, res, next) => {
+  // When matched by the regex branch, extract the id manually.
+  const rawId = req.params["id"] ?? (req.url.match(/^\/sessions\/(\d+)\/workspace/)?.[1]);
+  const sessionId = parseInt(String(rawId ?? ""), 10);
   if (isNaN(sessionId)) {
     res.status(400).json({ error: "Invalid session ID" });
     return;
