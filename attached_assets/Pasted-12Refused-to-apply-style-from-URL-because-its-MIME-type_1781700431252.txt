@@ -1,0 +1,26 @@
+12Refused to apply style from '<URL>' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+workspace:1 Refused to apply style from 'https://mizi-api.fly.dev/assets/tailwind-compat-Bwh-BmjE.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+workspace:1 Refused to apply style from 'https://mizi-api.fly.dev/assets/root-I13TLF3W.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+workspace:1 Refused to apply style from 'https://mizi-api.fly.dev/assets/ReactToastify-Bh76j7cs.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+workspace:1 Refused to apply style from 'https://mizi-api.fly.dev/assets/xterm-LZoznX6r.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+workspace:1 Refused to apply style from 'https://mizi-api.fly.dev/assets/index-Vtr-_4vZ.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+workspace:1 Refused to apply style from 'https://mizi-api.fly.dev/assets/Header-rCLYcnnd.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+workspace:1 Refused to apply style from 'https://mizi-api.fly.dev/assets/root-I13TLF3W.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+workspace:1 Refused to apply style from 'https://mizi-api.fly.dev/assets/tailwind-compat-Bwh-BmjE.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+workspace:1 Refused to apply style from 'https://mizi-api.fly.dev/assets/ReactToastify-Bh76j7cs.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+workspace:1 Refused to apply style from 'https://mizi-api.fly.dev/assets/index-Vtr-_4vZ.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+workspace:1 Refused to apply style from 'https://mizi-api.fly.dev/assets/xterm-LZoznX6r.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+workspace:1 Refused to apply style from 'https://mizi-api.fly.dev/assets/Header-rCLYcnnd.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+2contentscript.js:14083 ObjectMultiplex - orphaned data for stream "background-liveness"
+warn @ contentscript.js:14083
+2contentscript.js:14083 ObjectMultiplex - malformed chunk without name "[object Object]"
+warn @ contentscript.js:14083
+entry.client-CGvMlajq.js:1  Failed to load resource: the server responded with a status of 404 ()
+components-CE_o6jZX.js:1  Failed to load resource: the server responded with a status of 404 ()
+react-toastify.esm-C8l2NJW3.js:1  Failed to load resource: the server responded with a status of 404 ()
+root-C9E5YVPz.js:1  Failed to load resource: the server responded with a status of 404 ()
+chat._id-CZKlotxi.js:1  Failed to load resource: the server responded with a status of 404 ()
+_index-344XTUr7.js:1  Failed to load resource: the server responded with a status of 404 ()
+mobile-lN7FTGAW.js:1  Failed to load resource: the server responded with a status of 404 ()
+Header-09HnaiAP.js:1  Failed to load resource: the server responded with a status of 404 ()
+/favicon.svg:1  Failed to load resource: the server responded with a status of 404 ()
