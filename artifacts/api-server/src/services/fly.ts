@@ -1,5 +1,3 @@
-import { spawn, type ChildProcess } from "child_process";
-import net from "net";
 import { logger } from "../lib/logger";
 
 // ─── Fly.io workspace machine URL patterns ────────────────────────────────────
@@ -319,132 +317,43 @@ export async function patchMachineEnv(
   logger.info({ machineId, keys: Object.keys(env) }, "Fly Machine env vars patched");
 }
 
-// ─── Fly proxy subprocess management ─────────────────────────────────────────
+// ─── Workspace machine proxy URL ─────────────────────────────────────────────
 //
-// Each NIM workspace session's `/workspace` proxy route tunnels HTTP traffic
-// through a `fly proxy` subprocess rather than connecting to the 6PN hostname
-// directly.  Advantages:
+// The API server runs inside Fly's private network (6PN), so it can reach any
+// workspace machine directly using its stable .internal DNS name:
 //
-//   1. flyctl manages WireGuard routing — no reliance on in-container DNS
-//      resolution of *.internal hostnames (which can fail depending on how the
-//      API server container's resolv.conf is configured).
+//   http://<machineId>.vm.<appName>.internal:8788
 //
-//   2. Target is port 5173 (bolt.diy directly) rather than 5180 (nginx).
-//      Going straight to bolt.diy bypasses nginx auth_basic, which would
-//      otherwise return 401 to the unauthenticated API-server proxy.
-//      User authentication is already enforced at the API-server layer.
+// Port 8788 is the wrangler pages dev port (bolt.diy). nginx (5180) is
+// bypassed intentionally — user auth is enforced at the API server layer.
 //
-// One `fly proxy` process is kept alive per machine for the session lifetime
-// and torn down by `stopMachineProxy` when the session is destroyed.
+// The previous approach spawned a `fly proxy` subprocess to establish the
+// tunnel.  That was wrong: `fly proxy` creates a new WireGuard session, which
+// conflicts with the existing 6PN WireGuard interface already present in every
+// Fly container.  fly proxy would bind to the local port immediately (making
+// the readiness poll pass), but then fail to forward any real HTTP traffic,
+// producing "Workspace proxy unavailable" on every request.
+//
+// Direct 6PN is the correct and documented approach (Pattern 2 at the top of
+// this file).  No subprocess or polling needed.
 
-interface _ProxyEntry {
-  process: ChildProcess;
-  port: number;
-}
-const _machineProxies = new Map<string, _ProxyEntry>();
-
-async function _findFreePort(): Promise<number> {
-  return new Promise<number>((resolve, reject) => {
-    const srv = net.createServer();
-    srv.listen(0, "127.0.0.1", () => {
-      const { port } = srv.address() as net.AddressInfo;
-      srv.close(() => resolve(port));
-    });
-    srv.on("error", reject);
-  });
+/**
+ * Return the 6PN target URL for a workspace machine's bolt.diy port.
+ * The mizi-api container has direct WireGuard (6PN) access to all machines in
+ * the mizi-workspace app, so no subprocess or tunnel is needed.
+ */
+export function getMachineProxyUrl(machineId: string, appName: string): string {
+  const url = `http://${machineId}.vm.${appName}.internal:8788`;
+  logger.info({ machineId, appName, url }, "workspace machine 6PN proxy URL");
+  return url;
 }
 
 /**
- * Start a `fly proxy` subprocess tunnelling a random local port to the
- * workspace machine's bolt.diy port (8788) via Fly.io private networking.
- *
- * Port 8788 is the default wrangler pages dev port. wrangler ignores the
- * PORT env var, so 8788 is always the correct target regardless of what
- * onstart.sh sets. nginx (port 5180) is bypassed intentionally — user auth
- * is already enforced at the API server layer, so the nginx htpasswd prompt
- * is unnecessary and would break the unauthenticated API proxy.
- *
- * Command:
- *   fly proxy <localPort>:<machineId>.vm.<appName>.internal:8788 \
- *     --app <appName> --access-token <token>
- *
- * Returns the local port once the tunnel is accepting connections (≤15 s).
- * Idempotent: if a proxy is already running for this machineId, the existing
- * port is returned immediately without spawning a new process.
+ * No-op kept for call-site compatibility.  The old fly proxy subprocess model
+ * has been replaced by direct 6PN connections (getMachineProxyUrl).
  */
-export async function startMachineProxy(machineId: string, appName: string): Promise<number> {
-  const existing = _machineProxies.get(machineId);
-  if (existing) return existing.port;
-
-  const localPort = await _findFreePort();
-  const token = process.env.FLY_API_TOKEN ?? "";
-  const remoteHost = `${machineId}.vm.${appName}.internal`;
-
-  const proc = spawn(
-    "fly",
-    [
-      "proxy",
-      `${localPort}:${remoteHost}:8788`,
-      "--app", appName,
-      "--access-token", token,
-    ],
-    { stdio: ["ignore", "pipe", "pipe"], detached: false },
-  );
-
-  proc.stdout?.on("data", (d: Buffer) =>
-    logger.debug({ machineId, out: d.toString().trim() }, "fly proxy stdout"),
-  );
-  proc.stderr?.on("data", (d: Buffer) =>
-    logger.debug({ machineId, err: d.toString().trim() }, "fly proxy stderr"),
-  );
-  proc.on("error", (err) =>
-    logger.warn({ err, machineId }, "fly proxy process error"),
-  );
-  proc.on("exit", (code, sig) => {
-    logger.warn({ machineId, code, sig }, "fly proxy exited");
-    _machineProxies.delete(machineId);
-  });
-
-  // Poll the local port until fly proxy is accepting connections (or timeout).
-  await new Promise<void>((resolve, reject) => {
-    const started = Date.now();
-    const attempt = () => {
-      const sock = new net.Socket();
-      sock.setTimeout(500);
-      const fail = () => {
-        sock.destroy();
-        if (Date.now() - started > 15_000) {
-          reject(new Error(`fly proxy for ${machineId} did not become ready within 15 s`));
-        } else {
-          setTimeout(attempt, 500);
-        }
-      };
-      sock.connect(localPort, "127.0.0.1", () => {
-        sock.destroy();
-        resolve();
-      });
-      sock.on("error", fail);
-      sock.on("timeout", fail);
-    };
-    setTimeout(attempt, 800);
-  });
-
-  _machineProxies.set(machineId, { process: proc, port: localPort });
-  logger.info({ machineId, appName, localPort }, "fly proxy ready for workspace machine");
-  return localPort;
-}
-
-/**
- * Terminate the `fly proxy` subprocess for a machine (if one is running).
- * Called when a session is destroyed or its proxy entry is evicted.
- */
-export function stopMachineProxy(machineId: string): void {
-  const entry = _machineProxies.get(machineId);
-  if (entry) {
-    entry.process.kill("SIGTERM");
-    _machineProxies.delete(machineId);
-    logger.info({ machineId }, "fly proxy stopped");
-  }
+export function stopMachineProxy(_machineId: string): void {
+  // nothing to clean up
 }
 
 /**
