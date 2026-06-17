@@ -328,6 +328,30 @@ server {
         proxy_read_timeout 300;
     }
 }
+
+# Internal-only proxy for the Fly 6PN proxy (mizi-api → this machine).
+# Port 8789 is NOT a Fly internet service so it is only reachable via the
+# private WireGuard network (6PN).  No htpasswd here — the API server
+# enforces auth at its own layer before forwarding requests.
+# workerd (wrangler) binds to 127.0.0.1:8788 so 6PN connections to :8788
+# get ECONNREFUSED; this block forwards them through nginx which CAN reach
+# the loopback address from within the same container.
+server {
+    listen 8789;
+    listen [::]:8789;
+    server_name _;
+
+    location / {
+        proxy_pass http://localhost:8788;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host localhost;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 86400;
+    }
+}
 NGINX
 ln -sf /etc/nginx/sites-available/preview /etc/nginx/sites-enabled/preview
 rm -f /etc/nginx/sites-enabled/default

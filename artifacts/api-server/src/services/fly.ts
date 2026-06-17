@@ -343,7 +343,12 @@ export async function patchMachineEnv(
  * the mizi-workspace app, so no subprocess or tunnel is needed.
  */
 export function getMachineProxyUrl(machineId: string, appName: string): string {
-  const url = `http://${machineId}.vm.${appName}.internal:8788`;
+  // Port 8789 = nginx no-auth block that forwards to workerd on 127.0.0.1:8788.
+  // workerd (wrangler) only binds to 127.0.0.1, so direct 6PN connections to
+  // :8788 get ECONNREFUSED.  Port 8789 listens on 0.0.0.0 (nginx) and can
+  // reach loopback from within the container.  Port 8789 is NOT a Fly internet
+  // service — only reachable via 6PN.
+  const url = `http://${machineId}.vm.${appName}.internal:8789`;
   logger.info({ machineId, appName, url }, "workspace machine 6PN proxy URL");
   return url;
 }
