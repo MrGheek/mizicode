@@ -5,3 +5,4 @@
 - [Fly proxy subprocess vs 6PN direct](fly-proxy-6pn.md) — `fly proxy` subprocess from inside a Fly container conflicts with existing WireGuard (6PN); always use direct `http://<machineId>.vm.<app>.internal:<port>` instead.
 - [Wrangler port and Vite prebuild](wrangler-port-vite-build.md) — wrangler pages dev ignores PORT, always binds 8788; Vite respects PORT; Depot OOMs on Vite chunk-render at ~1530MB
 - [Wrangler 6PN nginx IPv6 proxy](wrangler-6pn-nginx-ipv6.md) — workerd binds loopback-only; 6PN is IPv6; nginx proxy needs both `listen 8789;` AND `listen [::]:8789;`
+- [Workspace proxy HTML base-path rewriting](workspace-proxy-base-path.md) — bolt.diy absolute /assets/ paths must be rewritten via responseInterceptor in http-proxy-middleware

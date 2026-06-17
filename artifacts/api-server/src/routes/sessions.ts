@@ -1,5 +1,5 @@
 import { Router, type RequestHandler } from "express";
-import { createProxyMiddleware, type RequestHandler as ProxyRequestHandler } from "http-proxy-middleware";
+import { createProxyMiddleware, responseInterceptor, type RequestHandler as ProxyRequestHandler } from "http-proxy-middleware";
 import { db, sessionsTable, gpuProfilesTable, templatesTable, skillBundlesTable, sessionLanesTable, sessionModelSwitchesTable, nimCatalogTable, provisionedResourcesTable, schemaTemplatesTable, projectPlansTable, lanePromptSnapshotsTable } from "@workspace/db";
 import { eq, desc, inArray, and, isNull, notLike, sql } from "drizzle-orm";
 import * as neonService from "../services/neon";
@@ -4397,6 +4397,9 @@ export function getWorkspaceProxy(machineId: string, workspaceApp: string): Prox
     target,
     changeOrigin: true,
     ws: true,
+    // selfHandleResponse is required for responseInterceptor to work.
+    // It only affects HTTP responses — WebSocket upgrades (ws:true) are unaffected.
+    selfHandleResponse: true,
     on: {
       error: (err, _req, res) => {
         logger.warn({ err, machineId, target }, "Workspace proxy error");
@@ -4406,6 +4409,28 @@ export function getWorkspaceProxy(machineId: string, workspaceApp: string): Prox
           r.end("Workspace proxy unavailable — the machine may still be starting. Try again in a few seconds.");
         }
       },
+      // Intercept HTML responses from bolt.diy and rewrite absolute asset paths
+      // so the browser fetches them through the workspace proxy route, not the
+      // API server root.  bolt.diy's build output uses absolute paths like
+      // /assets/root.css which the browser resolves against mizi-api.fly.dev,
+      // causing 404s.  We rewrite them to /api/sessions/<id>/workspace/assets/…
+      // using req.baseUrl (set by Express to the matched proxy mount path).
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
+      proxyRes: responseInterceptor(async (buffer, proxyRes, req) => {
+        const contentType = String(proxyRes.headers["content-type"] ?? "");
+        if (!contentType.includes("text/html")) {
+          return buffer;
+        }
+        const expressReq = req as import("express").Request;
+        const basePath = (expressReq.baseUrl ?? "").replace(/\/$/, "");
+        let html = buffer.toString("utf-8");
+        // Rewrite attribute-quoted absolute paths: href="/assets/…", src="/assets/…"
+        // and dynamic import("/assets/…") calls inside inline <script> tags.
+        html = html
+          .replace(/(['"])\/(assets\/)/g, `$1${basePath}/assets/`)
+          .replace(/(['"])\/favicon\.(svg|ico|png)/g, `$1${basePath}/favicon.$2`);
+        return html;
+      }),
     },
   });
   _workspaceProxies.set(machineId, proxy);
