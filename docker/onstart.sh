@@ -223,7 +223,16 @@ fi
 
 log "Configuring Bolt.diy..."
 cd /opt/bolt-diy
+# .env.local is read by Vite (dev mode).
+# .dev.vars is read by wrangler pages dev (production mode, pnpm run start).
+# Both must be written so the OPENAI_LIKE_API_BASE_URL binding reaches the
+# worker regardless of which mode bolt.diy started in.
 cat > .env.local << EOF
+OPENAI_LIKE_API_BASE_URL=http://localhost:${VLLM_PORT}/v1
+OPENAI_LIKE_API_KEY=not-needed
+DEFAULT_NUM_CTX=${VLLM_MAX_MODEL_LEN}
+EOF
+cat > .dev.vars << EOF
 OPENAI_LIKE_API_BASE_URL=http://localhost:${VLLM_PORT}/v1
 OPENAI_LIKE_API_KEY=not-needed
 DEFAULT_NUM_CTX=${VLLM_MAX_MODEL_LEN}
