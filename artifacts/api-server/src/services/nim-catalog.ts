@@ -348,10 +348,58 @@ export async function syncNimCatalog(): Promise<void> {
       upserted++;
     }
 
+    // Step 4.5: Auto-upsert NVIDIA-live models not covered by SEED_MODELS.
+    // SEED_MODELS provides hand-curated metadata for known models; any model that
+    // NVIDIA makes live but isn't in SEED_MODELS is auto-discovered here so the
+    // dashboard stays current without manual SEED_MODELS maintenance.
+    // Seeded models are always preferred — this only fills the gaps.
+    let nvidiaDiscovered = 0;
+    if (nvidiaKey) {
+      for (const modelId of nvidiaSet) {
+        if (seedSet.has(modelId)) continue; // Already handled by Step 4
+        const rawName = modelId.split("/").pop() ?? modelId;
+        const displayName = rawName
+          .split(/[-_.]/g)
+          .map((s: string) => s.charAt(0).toUpperCase() + s.slice(1))
+          .join(" ");
+        const extraPartners = discoveredPartners[modelId] ?? [];
+        const benchSeed = CATALOG_SWE_BENCH_SCORES[modelId];
+        const throughputClass = CATALOG_THROUGHPUT_CLASS[modelId] ?? null;
+        await db
+          .insert(nimCatalogTable)
+          .values({
+            nimModelId: modelId,
+            displayName,
+            nimTypes: extraPartners.length > 0 ? ["nim_type_preview", "nim_type_upgrade_available"] : ["nim_type_preview"],
+            partnerProviders: extraPartners,
+            shortDescription: "Available on NVIDIA NIM. Free on hosted endpoint.",
+            usecaseTags: [],
+            contextLength: null,
+            sweBenchScore: benchSeed?.score ?? null,
+            benchmarkVariant: benchSeed?.variant ?? null,
+            throughputClass,
+            syncedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: nimCatalogTable.nimModelId,
+            set: {
+              // Update live-status fields but don't overwrite any manually set display name,
+              // description, or tags in case an admin enriched the record since last sync.
+              partnerProviders: extraPartners,
+              ...(benchSeed ? { sweBenchScore: benchSeed.score, benchmarkVariant: benchSeed.variant } : {}),
+              ...(throughputClass ? { throughputClass } : {}),
+              syncedAt: now,
+            },
+          });
+        nvidiaDiscovered++;
+      }
+    }
+
     // Step 5: Insert dynamically discovered partner models not in SEED_MODELS
     let discovered = 0;
     for (const [modelId, providers] of Object.entries(discoveredPartners)) {
       if (seedSet.has(modelId)) continue; // Already handled above
+      if (nvidiaSet.has(modelId)) continue; // Already handled by Step 4.5
       // Infer a display name from the model ID (last segment, title-cased)
       const rawName = modelId.split("/").pop() ?? modelId;
       const displayName = rawName
@@ -384,7 +432,7 @@ export async function syncNimCatalog(): Promise<void> {
     // SEED_MODELS and was not discovered from any live partner provider.
     // Without this, EOL models removed from SEED_MODELS linger in the DB and
     // keep appearing as selectable options in the dashboard.
-    const keepIds = [...seedSet, ...Object.keys(discoveredPartners)];
+    const keepIds = [...seedSet, ...nvidiaSet, ...Object.keys(discoveredPartners)];
     let pruned = 0;
     if (keepIds.length > 0) {
       const result = await db
@@ -393,7 +441,7 @@ export async function syncNimCatalog(): Promise<void> {
       pruned = (result as { rowCount?: number }).rowCount ?? 0;
     }
 
-    logger.info({ upserted, discovered, pruned }, "NIM catalog synced");
+    logger.info({ upserted, nvidiaDiscovered, discovered, pruned }, "NIM catalog synced");
   } catch (err) {
     logger.error({ err }, "NIM catalog sync failed");
   }
