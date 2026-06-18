@@ -248,6 +248,7 @@ export async function embedText(text: string): Promise<{ vector: number[]; model
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ model: EMBEDDING_MODEL, input: [text] }),
+      signal: AbortSignal.timeout(300),
     });
     if (!response.ok) return null;
     const data = (await response.json()) as { data: Array<{ embedding: number[] }> };
@@ -282,8 +283,12 @@ export async function embedAndStoreItem(itemId: number, content: string): Promis
 /**
  * Backfill embeddings for items missing them. Runs in chunks to keep memory
  * pressure low. Returns the number of items embedded.
+ * @param maxItems  Upper bound on rows to process in this call.
+ * @param budgetMs  Wall-clock budget (ms). Processing stops early if exceeded.
+ *                  Defaults to 30 s so a single backfill pass never blocks
+ *                  indefinitely when the embeddings provider is slow.
  */
-export async function backfillItemEmbeddings(maxItems: number = 500): Promise<number> {
+export async function backfillItemEmbeddings(maxItems: number = 500, budgetMs = 30_000): Promise<number> {
   const db = getDb();
   const rows = db.prepare(`
     SELECT mi.id, mi.content FROM mem_items mi
@@ -294,8 +299,13 @@ export async function backfillItemEmbeddings(maxItems: number = 500): Promise<nu
     LIMIT ?
   `).all(maxItems) as Array<{ id: number; content: string }>;
 
+  const deadline = Date.now() + budgetMs;
   let embedded = 0;
   for (const r of rows) {
+    if (Date.now() >= deadline) {
+      logger.debug({ remaining: rows.length - embedded }, "[mem-passive] backfill budget exhausted");
+      break;
+    }
     try {
       if (await embedAndStoreItem(r.id, r.content)) {
         embedded++;
