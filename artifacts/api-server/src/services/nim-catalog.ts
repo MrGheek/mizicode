@@ -1,4 +1,5 @@
 import { db, nimCatalogTable } from "@workspace/db";
+import { notInArray } from "drizzle-orm";
 import { logger } from "../lib/logger";
 
 export type NimTier = "free" | "partner";
@@ -379,7 +380,20 @@ export async function syncNimCatalog(): Promise<void> {
       discovered++;
     }
 
-    logger.info({ upserted, discovered }, "NIM catalog synced");
+    // Step 6: Prune stale records — delete any DB entry that is no longer in
+    // SEED_MODELS and was not discovered from any live partner provider.
+    // Without this, EOL models removed from SEED_MODELS linger in the DB and
+    // keep appearing as selectable options in the dashboard.
+    const keepIds = [...seedSet, ...Object.keys(discoveredPartners)];
+    let pruned = 0;
+    if (keepIds.length > 0) {
+      const result = await db
+        .delete(nimCatalogTable)
+        .where(notInArray(nimCatalogTable.nimModelId, keepIds));
+      pruned = (result as { rowCount?: number }).rowCount ?? 0;
+    }
+
+    logger.info({ upserted, discovered, pruned }, "NIM catalog synced");
   } catch (err) {
     logger.error({ err }, "NIM catalog sync failed");
   }
