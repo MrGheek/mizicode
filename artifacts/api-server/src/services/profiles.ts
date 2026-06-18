@@ -40,7 +40,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "CPU",
     numGpus: 0,
     totalVram: 0,
-    dockerImageTag: "registry.fly.io/mizi-workspace:deployment-01KVAJYHD6CM1CQHT53YJBG5GY",
+    dockerImageTag: "registry.fly.io/mizi-workspace:deployment-01KVCV3639YY0SB14X827VABBP",
     defaultQuant: "nim-hosted",
     quantSizeGb: 0,
     diskSizeGb: 50,

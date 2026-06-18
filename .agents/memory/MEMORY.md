@@ -6,3 +6,4 @@
 - [Wrangler port and Vite prebuild](wrangler-port-vite-build.md) — wrangler pages dev ignores PORT, always binds 8788; Vite respects PORT; Depot OOMs on Vite chunk-render at ~1530MB
 - [Wrangler 6PN nginx IPv6 proxy](wrangler-6pn-nginx-ipv6.md) — workerd binds loopback-only; 6PN is IPv6; nginx proxy needs both `listen 8789;` AND `listen [::]:8789;`
 - [Workspace proxy HTML base-path rewriting](workspace-proxy-base-path.md) — bolt.diy absolute /assets/ paths must be rewritten via responseInterceptor in http-proxy-middleware
+- [Wrangler env vars require .dev.vars](wrangler-dev-vars.md) — wrangler pages dev reads env from .dev.vars, NOT .env.local; write both files in onstart.sh
