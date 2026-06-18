@@ -1,0 +1,45 @@
+useSupabaseConnection: Server-side initialization completed
+/api/mcp-update-config:1  Failed to load resource: the server responded with a status of 404 ()
+Header-09HnaiAP.js:2214 Error parsing saved mcp config: Error: Server responded with 404: 
+    at PB (Header-09HnaiAP.js:2214:9856)
+    at async initialize (Header-09HnaiAP.js:2214:8924)
+initialize @ Header-09HnaiAP.js:2214
+/api/models:1  Failed to load resource: the server responded with a status of 404 ()
+Header-09HnaiAP.js:2589 Error fetching model list: SyntaxError: Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+(anonymous) @ Header-09HnaiAP.js:2589
+/assets/react-toastify.esm-C8l2NJW3.js:1  Failed to load resource: the server responded with a status of 404 ()
+/api/check-env-key?provider=AmazonBedrock:1  Failed to load resource: the server responded with a status of 404 ()
+Header-09HnaiAP.js:2428 Failed to check environment API key: SyntaxError: Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+(anonymous) @ Header-09HnaiAP.js:2428
+/api/models/AmazonBedrock:1  Failed to load resource: the server responded with a status of 404 ()
+Header-09HnaiAP.js:2589 Error loading dynamic models for: AmazonBedrock SyntaxError: Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+Ce @ Header-09HnaiAP.js:2589
+logo-dark-styled.png:1  Failed to load resource: the server responded with a status of 404 ()
+/api/models:1  Failed to load resource: the server responded with a status of 404 ()
+Header-09HnaiAP.js:2589 Error fetching model list: SyntaxError: Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+(anonymous) @ Header-09HnaiAP.js:2589
+logo-light-styled.png:1  Failed to load resource: the server responded with a status of 404 ()
+contentscript.js:14083 MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added. Use emitter.setMaxListeners() to increase limit
+n @ contentscript.js:14083
+contentscript.js:14083 MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added. Use emitter.setMaxListeners() to increase limit
+n @ contentscript.js:14083
+2contentscript.js:14083 ObjectMultiplex - orphaned data for stream "app-init-liveness"
+warn @ contentscript.js:14083
+2contentscript.js:14083 ObjectMultiplex - orphaned data for stream "background-liveness"
+warn @ contentscript.js:14083
+2contentscript.js:14083 ObjectMultiplex - malformed chunk without name "[object Object]"
+warn @ contentscript.js:14083
+/inspector-script.js:1  Failed to load resource: the server responded with a status of 404 ()
+2react-toastify.esm-C8l2NJW3.js:7 INFO LockedFiles Cleared locked items cache
+react-toastify.esm-C8l2NJW3.js:7 INFO FilesStore No locked items found for chat ID: default
+react-toastify.esm-C8l2NJW3.js:7 INFO LockedFiles Cleared locked items cache
+react-toastify.esm-C8l2NJW3.js:7 INFO FilesStore No locked items found for chat ID: default
+headless?coep=credentialless&version=1.6.1-internal.1:1 The resource https://w-credentialless-staticblitz.com/fetch.worker.5162ecc8.js was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.
+/api/llmcall:1  Failed to load resource: the server responded with a status of 404 ()
+workspace:1 Uncaught (in promise) SyntaxError: Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+blitz.5162ecc8.js:19 [Contextify] [WARNING] running source code in new context
+(anonymous) @ blitz.5162ecc8.js:19
+react-toastify.esm-C8l2NJW3.js:7 INFO LockedFiles Cleared locked items cache
+react-toastify.esm-C8l2NJW3.js:7 INFO LockedFiles Cleared locked items cache
+react-toastify.esm-C8l2NJW3.js:7 INFO FilesStore No locked items found for chat ID: default
+headless?coep=credentialless&version=1.6.1-internal.1:1 The resource https://w-credentialless-staticblitz.com/fetch.worker.5162ecc8.js was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally.
