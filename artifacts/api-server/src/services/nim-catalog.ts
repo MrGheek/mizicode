@@ -25,7 +25,6 @@ export const CATALOG_SWE_BENCH_SCORES: Record<string, { score: number; variant: 
   "moonshotai/kimi-k2.6":                        { score: 65.8, variant: "SWE-bench Verified" },
   "deepseek-ai/deepseek-v4-pro":                 { score: 67.0, variant: "SWE-bench Verified" },
   "moonshotai/kimi-k2-instruct-0905":            { score: 63.6, variant: "SWE-bench Verified" },
-  "moonshotai/kimi-k2-instruct":                 { score: 63.6, variant: "SWE-bench Verified" },
   "moonshotai/kimi-k2-thinking":                 { score: 63.6, variant: "SWE-bench Verified" },
   "qwen/qwen3-coder-480b-a35b-instruct":         { score: 62.0, variant: "SWE-bench Verified" },
   "z-ai/glm-5.1":                                { score: 58.4, variant: "SWE-bench Pro" },
@@ -44,7 +43,6 @@ export const CATALOG_SWE_BENCH_SCORES: Record<string, { score: number; variant: 
 // which tend to be fast per-token; "standard" for mid-size dense; "economy" for small.
 export const CATALOG_THROUGHPUT_CLASS: Record<string, ThroughputClass> = {
   "moonshotai/kimi-k2.6":                        "high",
-  "moonshotai/kimi-k2-instruct":                 "high",
   "moonshotai/kimi-k2-instruct-0905":            "high",
   "moonshotai/kimi-k2-thinking":                 "high",
   "minimaxai/minimax-m2.7":                      "high",
@@ -72,7 +70,6 @@ const PARTNER_PROVIDERS: Record<string, string[]> = {
   "qwen/qwen3.5-122b-a10b":                      ["together", "deepinfra"],
   "minimaxai/minimax-m2.5":                      ["vultr", "together"],
   "bytedance/seed-oss-36b-instruct":             ["together"],
-  "moonshotai/kimi-k2-instruct":                 [],
   "moonshotai/kimi-k2-instruct-0905":            [],
   "moonshotai/kimi-k2-thinking":                 [],
   "minimaxai/minimax-m2.7":                      ["vultr"],
@@ -91,15 +88,6 @@ const SEED_MODELS: Omit<NimModel, "syncedAt">[] = [
     partnerProviders: PARTNER_PROVIDERS["moonshotai/kimi-k2.6"],
     shortDescription: "Frontier coding model from Moonshot AI. Best-in-class agentic coding on partner clouds.",
     usecaseTags: ["coding", "agentic", "reasoning"],
-    contextLength: "128K",
-  },
-  {
-    nimModelId: "moonshotai/kimi-k2-instruct",
-    displayName: "Kimi K2",
-    nimTypes: ["nim_type_preview"],
-    partnerProviders: [],
-    shortDescription: "Kimi K2 base instruct model. Free on NVIDIA-hosted endpoint.",
-    usecaseTags: ["coding", "chat"],
     contextLength: "128K",
   },
   {
@@ -315,10 +303,12 @@ export async function syncNimCatalog(): Promise<void> {
       );
       const onPartner = mergedPartners.some((p) => partnerModelsByProvider[p]?.has(model.nimModelId));
 
-      // Skip if NVIDIA is configured but the model isn't live anywhere
+      // Skip if NVIDIA is configured but the model isn't live anywhere (covers
+      // the case where a model reaches end-of-life and NVIDIA drops it, even when
+      // no partner keys are configured).
       const nvidiaConfigured = !!nvidiaKey;
       const anyPartnerConfigured = Object.keys(partnerModelsByProvider).length > 0;
-      if (nvidiaConfigured && anyPartnerConfigured && !onNvidia && !onPartner) {
+      if (nvidiaConfigured && !onNvidia && (anyPartnerConfigured ? !onPartner : true)) {
         continue;
       }
 

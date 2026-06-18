@@ -98,7 +98,13 @@ async def proxy(path: str, request: Request):
         except (json.JSONDecodeError, ValueError):
             pass
 
-    url = f"{api_base}/{path}"
+    # NIM_API_BASE typically ends with "/v1" (e.g. https://integrate.api.nvidia.com/v1).
+    # FastAPI's /{path:path} captures the full request path WITHOUT the leading slash,
+    # so a request to /v1/chat/completions gives path="v1/chat/completions".
+    # Naively joining produces ".../v1/v1/chat/completions" (double prefix) → 404.
+    # Strip the leading "v1/" from path when the base already ends with "/v1".
+    effective_path = path[3:] if api_base.endswith("/v1") and path.startswith("v1/") else path
+    url = f"{api_base}/{effective_path}"
 
     if is_streaming:
         async def generate():

@@ -54,8 +54,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# nim-proxy.py runtime deps (fastapi, uvicorn, httpx) + LiteLLM base
-RUN pip3 install --no-cache-dir fastapi uvicorn httpx litellm
+# nim-proxy.py runtime deps (fastapi, uvicorn, httpx)
+# Note: litellm is intentionally NOT installed here — NIM sessions use nim-proxy.py
+# (a custom FastAPI proxy) which replaced litellm[proxy]. The litellm CLI is only
+# needed in the vLLM/GPU path (Dockerfile.workspace), not here.
+RUN pip3 install --no-cache-dir fastapi uvicorn httpx
 
 # Node.js 20 + pnpm (claw-runner.js, claw-bridge.mjs, bolt.diy)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
@@ -94,14 +97,8 @@ RUN node /opt/bolt-vite-patch.mjs && \
 # `pnpm run dev` (Vite dev server at PORT=8788) which is slower on first load but
 # fully functional. Either mode nginx-proxies port 5180→8788.
 RUN cd /opt/bolt-diy && \
-    NODE_OPTIONS="--max-old-space-size=3072" NODE_ENV=production SKIP_ENV_VALIDATION=1 pnpm run build || \
-    echo "[WARN] Vite build OOM — image will use dev mode at runtime (build/server absent)"
-
-# litellm[proxy] extras: the base litellm package is missing several deps
-# required by the proxy server (websockets, backoff, and others). Installing
-# litellm[proxy] here (after the heavy cached layers) adds only the missing
-# extras on top of the already-installed litellm base above.
-RUN pip3 install --no-cache-dir 'litellm[proxy]'
+    timeout 90 bash -c 'NODE_OPTIONS="--max-old-space-size=3072" NODE_ENV=production SKIP_ENV_VALIDATION=1 pnpm run build' || \
+    echo "[WARN] Vite build timed-out/OOM — image will use dev mode at runtime (build/server absent)"
 
 # Claw binary from stage 1
 COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw
