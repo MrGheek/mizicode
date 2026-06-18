@@ -2,6 +2,7 @@
 - [Bolt.diy iframe fix](bolt-diy-iframe.md) — boltDiyUrl can't be embedded in iframe (X-Frame-Options); show "Open in new tab" card instead
 - [Fly.io deploy method](fly-deploy.md) — build image first with nohup, then deploy prebuilt image with --image + --strategy immediate to avoid sandbox timeout
 - [esbuild local-bundle dead code](esbuild-local-bundle-dead-code.md) — `if (true) return;` does NOT eliminate dead bodies; use `if (!IS_LOCAL) { }` + `minifySyntax: true` + stub plugin together.
+- [NIM proxy patch deploy strategy](nim-proxy-deploy-strategy.md) — patch nim-proxy.py for all new sessions via vastai.ts nimLines heredoc; no image push needed.
 - [Fly proxy subprocess vs 6PN direct](fly-proxy-6pn.md) — `fly proxy` subprocess from inside a Fly container conflicts with existing WireGuard (6PN); always use direct `http://<machineId>.vm.<app>.internal:<port>` instead.
 - [Wrangler port and Vite prebuild](wrangler-port-vite-build.md) — wrangler pages dev ignores PORT, always binds 8788; Vite respects PORT; Depot OOMs on Vite chunk-render at ~1530MB
 - [Wrangler 6PN nginx IPv6 proxy](wrangler-6pn-nginx-ipv6.md) — workerd binds loopback-only; 6PN is IPv6; nginx proxy needs both `listen 8789;` AND `listen [::]:8789;`
