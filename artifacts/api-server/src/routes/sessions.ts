@@ -4418,26 +4418,66 @@ export function getWorkspaceProxy(machineId: string, workspaceApp: string): Prox
       // eslint-disable-next-line @typescript-eslint/no-misused-promises
       proxyRes: responseInterceptor(async (buffer, proxyRes, req) => {
         const contentType = String(proxyRes.headers["content-type"] ?? "");
-        if (!contentType.includes("text/html")) {
+        const isHtml = contentType.includes("text/html");
+        const isJs   = contentType.includes("javascript");
+        if (!isHtml && !isJs) {
           return buffer;
         }
+
         const expressReq = req as import("express").Request;
         const basePath = (expressReq.baseUrl ?? "").replace(/\/$/, "");
+
+        if (isJs) {
+          // Rewrite absolute /assets/ references inside JS bundles so that
+          // Vite dynamic import() calls (e.g. import("/assets/chunk-xxx.js"))
+          // and other absolute asset strings are resolved through the proxy.
+          let js = buffer.toString("utf-8");
+          js = js
+            .replace(/(['"])\/(assets\/)/g, `$1${basePath}/assets/`)
+            .replace(/(['"])\/favicon\.(svg|ico|png)/g, `$1${basePath}/favicon.$2`);
+          return js;
+        }
+
+        // ── HTML handling ────────────────────────────────────────────────────
         let html = buffer.toString("utf-8");
+
         // 1. Rewrite attribute-quoted absolute paths: href="/assets/…", src="/assets/…"
-        //    and dynamic import("/assets/…") calls inside inline <script> tags.
         html = html
           .replace(/(['"])\/(assets\/)/g, `$1${basePath}/assets/`)
           .replace(/(['"])\/favicon\.(svg|ico|png)/g, `$1${basePath}/favicon.$2`);
+
         // 2. Fix Remix / React Router v7 basename so the client-side router strips
-        //    the proxy prefix before matching routes.  bolt.diy's wrangler worker
-        //    sees GET / (proxy strips the prefix), so it renders basename:"/" into
-        //    the SSR context.  The browser sits at /api/sessions/<id>/workspace, so
-        //    the router tries to match that full path and finds no route → Error 404.
-        //    Overwrite the basename in the serialised context with the real base path.
+        //    the proxy prefix before matching routes.
         html = html
           .replace(/"basename":"\/"/g, `"basename":"${basePath}"`)
           .replace(/"basename":""/g,   `"basename":"${basePath}"`);
+
+        // 3. Inject a fetch/XHR interceptor so bolt.diy's runtime API calls
+        //    (e.g. fetch('/api/models'), fetch('/api/llmcall')) are transparently
+        //    rewritten to go through the workspace proxy path instead of hitting
+        //    the mizi-api root.  Any absolute same-origin path that doesn't
+        //    already start with basePath gets basePath prepended.
+        const bp = JSON.stringify(basePath);
+        const interceptorScript = `<script>(function(){` +
+          `var bp=${bp};` +
+          `var of=window.fetch;` +
+          `window.fetch=function(i,o){` +
+            `if(typeof i==='string'&&i.charCodeAt(0)===47&&i.indexOf(bp)!==0)i=bp+i;` +
+            `return of.call(this,i,o);` +
+          `};` +
+          `var ox=XMLHttpRequest.prototype.open;` +
+          `XMLHttpRequest.prototype.open=function(m,u,a,s,p){` +
+            `if(typeof u==='string'&&u.charCodeAt(0)===47&&u.indexOf(bp)!==0)u=bp+u;` +
+            `return ox.call(this,m,u,a,s,p);` +
+          `};` +
+        `})();</script>`;
+
+        if (html.includes("</head>")) {
+          html = html.replace("</head>", `${interceptorScript}</head>`);
+        } else {
+          html = interceptorScript + html;
+        }
+
         return html;
       }),
     },
