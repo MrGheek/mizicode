@@ -3,7 +3,7 @@
 
 const http      = require('http');
 const https     = require('https');
-const { execSync, spawnSync } = require('child_process');
+const { execSync, execFileSync, spawnSync } = require('child_process');
 const fs        = require('fs');
 const crypto    = require('crypto');
 
@@ -523,10 +523,12 @@ function runSingleAgentFallback(originalTask, taskId, requestId) {
     try {
       execSync(`tmux new-session -d -s ${SESSION} -x 220 -y 50`);
       // Write to dedicated FALLBACK_OUT — never touches OUTPUT_FILE during execution
-      execSync(
-        `tmux send-keys -t ${SESSION} "VLLM_REQUEST_PRIORITY=1 REQUEST_ID=${requestId}-fallback ` +
-        `cd /workspace/projects && claw '${escaped}' 2>&1 | tee ${FALLBACK_OUT}; echo '[CLAW DONE]'" Enter`
-      );
+      // execFileSync avoids shell interpolation of user-controlled task text
+      execFileSync('tmux', [
+        'send-keys', '-t', SESSION,
+        `VLLM_REQUEST_PRIORITY=1 REQUEST_ID=${requestId}-fallback cd /workspace/projects && claw '${escaped}' 2>&1 | tee ${FALLBACK_OUT}; echo '[CLAW DONE]'`,
+        'Enter',
+      ]);
     } catch (err) {
       appendEvent({
         actor_type: 'claw-runner',
@@ -825,12 +827,13 @@ async function runWorker(worker, subtask, sharedContext, taskId, requestId) {
   const escaped = workerPrompt.replace(/\\/g, '\\\\').replace(/'/g, "'\\''");
 
   // Priority 5 = worker; use sanitized shellId (never raw model id) in shell env
-  execSync(
-    `tmux new-session -d -s ${worker.session} -x 220 -y 50 \\; ` +
-    `send-keys -t ${worker.session} ` +
-    `"VLLM_REQUEST_PRIORITY=5 REQUEST_ID=${requestId}-${worker.shellId} CLAW_MAX_TOKENS=${WORKER_MAX_TOKENS} ` +
-    `cd /workspace/projects && claw --max-tokens ${WORKER_MAX_TOKENS} '${escaped}' 2>&1 | tee ${worker.outputFile}; echo '[WORKER DONE]'" Enter`
-  );
+  // execFileSync avoids shell interpolation of user-controlled task text
+  execSync(`tmux new-session -d -s ${worker.session} -x 220 -y 50`);
+  execFileSync('tmux', [
+    'send-keys', '-t', worker.session,
+    `VLLM_REQUEST_PRIORITY=5 REQUEST_ID=${requestId}-${worker.shellId} CLAW_MAX_TOKENS=${WORKER_MAX_TOKENS} cd /workspace/projects && claw --max-tokens ${WORKER_MAX_TOKENS} '${escaped}' 2>&1 | tee ${worker.outputFile}; echo '[WORKER DONE]'`,
+    'Enter',
+  ]);
 
   // Wait for worker to complete or timeout
   const success = await waitForWorkerCompletion(worker, taskId, requestId);
@@ -848,12 +851,12 @@ async function runWorker(worker, subtask, sharedContext, taskId, requestId) {
     try { execSync(`tmux kill-session -t ${worker.session} 2>/dev/null`); } catch {}
     try { fs.writeFileSync(worker.outputFile, ''); } catch {}
 
-    execSync(
-      `tmux new-session -d -s ${worker.session} -x 220 -y 50 \\; ` +
-      `send-keys -t ${worker.session} ` +
-      `"VLLM_REQUEST_PRIORITY=5 REQUEST_ID=${requestId}-${worker.shellId}-retry CLAW_MAX_TOKENS=${WORKER_MAX_TOKENS} ` +
-      `cd /workspace/projects && claw --max-tokens ${WORKER_MAX_TOKENS} '${escaped}' 2>&1 | tee ${worker.outputFile}; echo '[WORKER DONE]'" Enter`
-    );
+    execSync(`tmux new-session -d -s ${worker.session} -x 220 -y 50`);
+    execFileSync('tmux', [
+      'send-keys', '-t', worker.session,
+      `VLLM_REQUEST_PRIORITY=5 REQUEST_ID=${requestId}-${worker.shellId}-retry CLAW_MAX_TOKENS=${WORKER_MAX_TOKENS} cd /workspace/projects && claw --max-tokens ${WORKER_MAX_TOKENS} '${escaped}' 2>&1 | tee ${worker.outputFile}; echo '[WORKER DONE]'`,
+      'Enter',
+    ]);
 
     await waitForWorkerCompletion(worker, taskId, requestId);
   }
@@ -1033,10 +1036,12 @@ function runTask(taskText, opts = {}) {
   const escaped = orchestratorTask.replace(/\\/g, '\\\\').replace(/'/g, "'\\''");
   execSync(`tmux new-session -d -s ${TMUX_SESSION} -x 220 -y 50`);
   // Priority 1 = orchestrator planning; REQUEST_ID correlates this call end-to-end
-  execSync(
-    `tmux send-keys -t ${TMUX_SESSION} "VLLM_REQUEST_PRIORITY=1 REQUEST_ID=${requestId} ` +
-    `cd /workspace/projects && claw '${escaped}' 2>&1 | tee ${OUTPUT_FILE}; echo '[CLAW DONE]'" Enter`
-  );
+  // execFileSync avoids shell interpolation of user-controlled task text
+  execFileSync('tmux', [
+    'send-keys', '-t', TMUX_SESSION,
+    `VLLM_REQUEST_PRIORITY=1 REQUEST_ID=${requestId} cd /workspace/projects && claw '${escaped}' 2>&1 | tee ${OUTPUT_FILE}; echo '[CLAW DONE]'`,
+    'Enter',
+  ]);
 
   // Monitor orchestrator completion and trigger swarm if decomposition found
   monitorOrchestratorAndSwarm(taskText, currentTaskId, requestId);
