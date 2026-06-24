@@ -1,3 +1,6 @@
+## v0.13.4 — 2026-06-24\n\n- fix: use semver tags for GitHub Actions (fixes hash resolution) (bb09ee5)
+- chore: add missing Theia source files and package-lock (1273131)\n
+
 ## v0.13.3 — 2026-06-24\n\n- fix: exclude docker/mizi-theia from pnpm workspace (2bdaa80)\n
 
 ## v0.13.2 — 2026-06-24\n\n- fix: use ubuntu-latest runner for Build MIZI Theia workflow (cda3548)\n
