@@ -1,3 +1,5 @@
+## v0.13.5 — 2026-06-24\n\n- fix: add workflow file to path trigger filter (496cf5b)\n
+
 ## v0.13.4 — 2026-06-24\n\n- fix: use semver tags for GitHub Actions (fixes hash resolution) (bb09ee5)
 - chore: add missing Theia source files and package-lock (1273131)\n
 
