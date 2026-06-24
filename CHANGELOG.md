@@ -1,3 +1,5 @@
+## v0.13.3 — 2026-06-24\n\n- fix: exclude docker/mizi-theia from pnpm workspace (2bdaa80)\n
+
 ## v0.13.2 — 2026-06-24\n\n- fix: use ubuntu-latest runner for Build MIZI Theia workflow (cda3548)\n
 
 ## v0.13.1 — 2026-06-24\n\n- Phase 5d: 20 Theia extensions + skills deep integration (2b1a1b5)
