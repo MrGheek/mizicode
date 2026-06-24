@@ -1,6 +1,7 @@
 packages:
   - artifacts/*
   - docker/*
+  - '!docker/mizi-theia'
   - lib/*
   - lib/integrations/*
   - scripts
