@@ -49,7 +49,7 @@
   },
   "devDependencies": {
     "@theia/cli": "^1.72.3",
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.28.1"
   },
   "scripts": {
     "build": "theia build",
