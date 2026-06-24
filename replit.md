@@ -30,7 +30,7 @@ artifacts-monorepo/
 ├── docker/                 # Docker files for Vast.ai instances
 │   ├── Dockerfile          # Pre-built GPU coding environment image
 │   ├── onstart.sh          # Parameterized startup script
-│   └── nginx-preview.conf  # Nginx config for preview proxy
+│   ├── mizi-theia/          # Eclipse Theia IDE application
 ├── lib/                    # Shared libraries
 │   ├── api-spec/           # OpenAPI spec + Orval codegen config
 │   ├── api-client-react/   # Generated React Query hooks

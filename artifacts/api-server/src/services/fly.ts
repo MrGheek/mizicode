@@ -1,4 +1,5 @@
 import { logger } from "../lib/logger";
+import { withRetry } from "./retry.js";
 
 // ─── Fly.io workspace machine URL patterns ────────────────────────────────────
 //
@@ -99,7 +100,7 @@ function flyHeaders(token: string) {
   };
 }
 
-async function flyFetch<T = Record<string, unknown>>(
+async function flyFetchRaw<T = Record<string, unknown>>(
   path: string,
   opts: RequestInit & { token: string },
 ): Promise<T> {
@@ -113,10 +114,21 @@ async function flyFetch<T = Record<string, unknown>>(
   if (!res.ok) {
     const text = await res.text();
     logger.error({ status: res.status, body: text, url }, "Fly Machines API error");
-    throw new Error(`Fly Machines API error ${res.status}: ${text}`);
+    throw Object.assign(new Error(`Fly Machines API error ${res.status}: ${text}`), { status: res.status });
   }
   if (res.status === 204) return {} as T;
   return res.json() as Promise<T>;
+}
+
+async function flyFetch<T = Record<string, unknown>>(
+  path: string,
+  opts: RequestInit & { token: string },
+): Promise<T> {
+  return withRetry(
+    () => flyFetchRaw<T>(path, opts),
+    `Fly Machines ${opts.method || "GET"} ${path}`,
+    { maxRetries: 2, baseDelayMs: 2000 },
+  );
 }
 
 // Fly machine state as returned by the API
@@ -176,7 +188,7 @@ export async function createMachine(params: CreateMachineParams): Promise<Create
       // Expose all required workspace ports as TCP services.
       // Ports 3000/5180/5181/8080/8081 use ["tls","http"] so Fly's edge
       // terminates TLS and forwards plain HTTP to the machine — this allows
-      // https:// URLs (e.g. boltDiyUrl, codeServerUrl) to work correctly.
+      // https:// URLs (e.g. theiaUrl) to work correctly.
       // NOTE: Port 22 (SSH) is intentionally omitted. Fly's hallpass SSH proxy
       // always tries to bind port 22 inside the microVM; if we also declare port 22
       // as a service, hallpass and the container's sshd both try to bind it, hallpass
@@ -322,10 +334,10 @@ export async function patchMachineEnv(
 // The API server runs inside Fly's private network (6PN), so it can reach any
 // workspace machine directly using its stable .internal DNS name:
 //
-//   http://<machineId>.vm.<appName>.internal:8788
+//   http://<machineId>.vm.<appName>.internal:8789
 //
-// Port 8788 is the wrangler pages dev port (bolt.diy). nginx (5180) is
-// bypassed intentionally — user auth is enforced at the API server layer.
+// Port 8789 is nginx no-auth forwarding to Theia on 8788. The nginx auth
+// gate (port 8080) is bypassed — user auth is enforced at the API server layer.
 //
 // The previous approach spawned a `fly proxy` subprocess to establish the
 // tunnel.  That was wrong: `fly proxy` creates a new WireGuard session, which
@@ -338,15 +350,15 @@ export async function patchMachineEnv(
 // this file).  No subprocess or polling needed.
 
 /**
- * Return the 6PN target URL for a workspace machine's bolt.diy port.
+ * Return the 6PN target URL for a workspace machine's Theia port.
  * The mizi-api container has direct WireGuard (6PN) access to all machines in
  * the mizi-workspace app, so no subprocess or tunnel is needed.
  */
 export function getMachineProxyUrl(machineId: string, appName: string): string {
-  // Port 8789 = nginx no-auth block that forwards to workerd on 127.0.0.1:8788.
-  // workerd (wrangler) only binds to 127.0.0.1, so direct 6PN connections to
-  // :8788 get ECONNREFUSED.  Port 8789 listens on 0.0.0.0 (nginx) and can
-  // reach loopback from within the container.  Port 8789 is NOT a Fly internet
+  // Port 8789 = nginx no-auth block that forwards to Theia on 127.0.0.1:8788.
+  // Theia binds to 127.0.0.1:8788, so direct 6PN connections to :8788 get
+  // ECONNREFUSED.  Port 8789 listens on 0.0.0.0 (nginx) and can reach
+  // loopback from within the container.  Port 8789 is NOT a Fly internet
   // service — only reachable via 6PN.
   const url = `http://${machineId}.vm.${appName}.internal:8789`;
   logger.info({ machineId, appName, url }, "workspace machine 6PN proxy URL");

@@ -10,6 +10,7 @@ export default defineConfig({
     sequence: {
       concurrent: false,
     },
+    setupFiles: ["src/tests/setup.ts"],
     coverage: {
       enabled: true,
       provider: "v8",

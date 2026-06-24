@@ -616,11 +616,11 @@ export function CommandPalette() {
                   >
                     <Copy /> Copy SSH Command
                   </CommandItem>
-                  {currentSession.boltDiyUrl && (
+                  {currentSession.theiaUrl && (
                     <CommandItem
                       onSelect={() =>
                         runCommand(() =>
-                          window.open(currentSession.boltDiyUrl ?? "", "_blank", "noopener"),
+                          window.open(currentSession.theiaUrl ?? "", "_blank", "noopener"),
                         )
                       }
                       keywords={["ide", "editor", "bolt"]}

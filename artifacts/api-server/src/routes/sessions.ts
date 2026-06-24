@@ -75,7 +75,7 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
     const vastCumulativeCost = instance.cost_run_time ?? null;
 
     logger.info(
-      { sessionId: session.id, vastInstanceId: session.vastInstanceId, vastStatus, rawStatusMsg, codeServerUrl: urls.codeServerUrl, llmProxyUrl: urls.llmProxyUrl, dph_total: actualCostPerHour, cost_run_time: vastCumulativeCost },
+      { sessionId: session.id, vastInstanceId: session.vastInstanceId, vastStatus, rawStatusMsg, theiaUrl: urls.theiaUrl, llmProxyUrl: urls.llmProxyUrl, dph_total: actualCostPerHour, cost_run_time: vastCumulativeCost },
       "Vast.ai sync — raw values"
     );
 
@@ -132,13 +132,13 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
       ? Math.round(vastCumulativeCost * 1000) / 1000
       : Math.round(costPerHourFinal * hoursRunning * 1000) / 1000;
 
-    // Update team member ideUrls by appending each member's path to the codeServerUrl
+    // Update team member ideUrls by appending each member's path to theiaUrl
     let updatedTeamMembers = session.teamMembers as TeamMemberRecord[] | null;
-    const baseCodeServerUrl = (urls.codeServerUrl || session.codeServerUrl || "").replace(/\/$/, "");
-    if (updatedTeamMembers && baseCodeServerUrl) {
+    const baseIdeUrl = (urls.theiaUrl || session.theiaUrl || "").replace(/\/$/, "");
+    if (updatedTeamMembers && baseIdeUrl) {
       updatedTeamMembers = updatedTeamMembers.map((m) => ({
         ...m,
-        ideUrl: m.ideUrl || `${baseCodeServerUrl}${m.path}`,
+        ideUrl: m.ideUrl || `${baseIdeUrl}${m.path}`,
       }));
     }
 
@@ -147,8 +147,7 @@ async function syncSessionFromVastai(session: typeof sessionsTable.$inferSelect)
       .set({
         status,
         statusMessage,
-        boltDiyUrl: urls.boltDiyUrl || session.boltDiyUrl,
-        codeServerUrl: urls.codeServerUrl || session.codeServerUrl,
+        theiaUrl: urls.theiaUrl || session.theiaUrl,
         previewUrl: urls.previewUrl || session.previewUrl,
         sshHost: urls.sshHost || session.sshHost,
         sshPort: urls.sshPort || session.sshPort,
@@ -222,13 +221,12 @@ function buildFailureStatusMessage(cause: string, suppliedMessage: string | unde
 const INSTANCE_STATUS_MAP: Record<string, { status: typeof sessionsTable.$inferSelect["status"]; statusMessage: string }> = {
   services_ready:   { status: "starting",    statusMessage: "Tools ready — LLM model loading in background..." },
   downloading:      { status: "downloading", statusMessage: "Downloading model weights..." },
-  starting_llm:     { status: "starting",    statusMessage: "NIM proxy ready — waiting for Bolt.diy to compile (~2–4 min)" },
+  starting_llm:     { status: "starting",    statusMessage: "NIM proxy ready — waiting for Theia to start..." },
   skills_compiling: { status: "starting",    statusMessage: "Compiling Smart Skills bundle..." },
   skills_ready:     { status: "starting",    statusMessage: "Smart Skills loaded — LLM loading in background..." },
   llm_ready:        { status: "ready",       statusMessage: "Session is ready" },
-  // NIM-specific: sent by the bolt.diy gate once Vite responds to the first request.
-  // This is the signal that unlocks "Open Coding Environment" for NIM sessions.
-  bolt_ready:       { status: "ready",       statusMessage: "Bolt.diy is ready — open your coding environment!" },
+  // NIM-specific: sent by the Theia gate once the server accepts connections.
+  theia_ready:      { status: "ready",       statusMessage: "Theia IDE is ready — open your coding environment!" },
   // Failure phases — all map to status "error". The persisted statusMessage
   // is built per-request to preserve the structured cause marker.
   ...Object.fromEntries(
@@ -257,7 +255,7 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
     }
   }
 
-  const { status: instanceStatus, message, boltUrl } = req.body as { status?: string; message?: string; boltUrl?: string };
+  const { status: instanceStatus, message, theiaUrl } = req.body as { status?: string; message?: string; theiaUrl?: string };
   if (!instanceStatus) {
     res.status(400).json({ error: "Missing status field" });
     return;
@@ -276,13 +274,12 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
     .from(sessionsTable)
     .where(eq(sessionsTable.id, sessionId));
 
-  // For NIM sessions, `llm_ready` means "NIM proxy is up" but bolt.diy's Vite
-  // dev server hasn't finished its first TypeScript compilation yet — the UI
-  // would show a blank black page. Keep the session in "starting" state until
-  // the bolt.diy gate script sends `bolt_ready` (once curl to :5173 succeeds).
+  // For NIM sessions, `llm_ready` means "NIM proxy is up" but Theia's
+  // frontend assets may not be served yet. Keep the session in "starting"
+  // state until `theia_ready` is received.
   const effectiveMapped =
     instanceStatus === "llm_ready" && prevSession?.provider === "nim"
-      ? { status: "starting" as const, statusMessage: "Bolt.diy compiling — first Vite build (~8 min)..." }
+      ? { status: "starting" as const, statusMessage: "Waiting for Theia to start..." }
       : mapped;
 
   // For failure phases, ALWAYS rebuild the message so the
@@ -307,7 +304,7 @@ router.post("/sessions/:sessionId/status", async (req, res) => {
     .set({
       status: effectiveMapped.status,
       statusMessage,
-      ...(boltUrl ? { boltDiyUrl: boltUrl } : {}),
+      ...(theiaUrl ? { theiaUrl } : {}),
       updatedAt: new Date(),
     })
     .where(eq(sessionsTable.id, sessionId));
@@ -370,7 +367,7 @@ router.get("/sessions", async (_req, res) => {
       templateHash: sessionsTable.templateHash,
       status: sessionsTable.status,
       statusMessage: sessionsTable.statusMessage,
-      boltDiyUrl: sessionsTable.boltDiyUrl,
+      theiaUrl: sessionsTable.theiaUrl,
       codeServerUrl: sessionsTable.codeServerUrl,
       previewUrl: sessionsTable.previewUrl,
       sshHost: sessionsTable.sshHost,
@@ -1175,7 +1172,7 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
           VLLM_PORT: "8081",
           // Fly.io exposes internal port 5180 as an HTTP service (fly.ts services config).
           // Override the onstart.sh default (5173) so bolt.diy binds on the exposed port.
-          BOLT_PORT: "5180",
+          THEIA_PORT: "8788",
           // nginx basic-auth credentials — onstart.sh picks these up via
           // NGINX_AUTH_USER / NGINX_AUTH_PASS env vars.
           NGINX_AUTH_USER: nimWorkspaceUser,
@@ -1377,8 +1374,7 @@ router.post("/sessions/:sessionId/refresh", async (req, res) => {
       .set({
         status,
         statusMessage,
-        boltDiyUrl: urls.boltDiyUrl || session.boltDiyUrl,
-        codeServerUrl: urls.codeServerUrl || session.codeServerUrl,
+        theiaUrl: urls.theiaUrl || session.theiaUrl,
         previewUrl: urls.previewUrl || session.previewUrl,
         sshHost: urls.sshHost || session.sshHost,
         sshPort: urls.sshPort || session.sshPort,
@@ -4409,76 +4405,28 @@ export function getWorkspaceProxy(machineId: string, workspaceApp: string): Prox
           r.end("Workspace proxy unavailable — the machine may still be starting. Try again in a few seconds.");
         }
       },
-      // Intercept HTML responses from bolt.diy and rewrite absolute asset paths
-      // so the browser fetches them through the workspace proxy route, not the
-      // API server root.  bolt.diy's build output uses absolute paths like
-      // /assets/root.css which the browser resolves against mizi-api.fly.dev,
-      // causing 404s.  We rewrite them to /api/sessions/<id>/workspace/assets/…
+      // Intercept responses from Theia and rewrite absolute asset paths so the
+      // browser fetches them through the workspace proxy route. Theia's built
+      // output may use absolute paths that the browser resolves against the API
+      // server root — we rewrite them to /api/sessions/<id>/workspace/assets/…
       // using req.baseUrl (set by Express to the matched proxy mount path).
       // eslint-disable-next-line @typescript-eslint/no-misused-promises
       proxyRes: responseInterceptor(async (buffer, proxyRes, req) => {
         const contentType = String(proxyRes.headers["content-type"] ?? "");
-        const isHtml = contentType.includes("text/html");
-        const isJs   = contentType.includes("javascript");
-        if (!isHtml && !isJs) {
+        if (!contentType.includes("text/html") && !contentType.includes("javascript")) {
           return buffer;
         }
 
         const expressReq = req as import("express").Request;
         const basePath = (expressReq.baseUrl ?? "").replace(/\/$/, "");
+        let body = buffer.toString("utf-8");
 
-        if (isJs) {
-          // Rewrite absolute /assets/ references inside JS bundles so that
-          // Vite dynamic import() calls (e.g. import("/assets/chunk-xxx.js"))
-          // and other absolute asset strings are resolved through the proxy.
-          let js = buffer.toString("utf-8");
-          js = js
-            .replace(/(['"])\/(assets\/)/g, `$1${basePath}/assets/`)
-            .replace(/(['"])\/favicon\.(svg|ico|png)/g, `$1${basePath}/favicon.$2`);
-          return js;
-        }
-
-        // ── HTML handling ────────────────────────────────────────────────────
-        let html = buffer.toString("utf-8");
-
-        // 1. Rewrite attribute-quoted absolute paths: href="/assets/…", src="/assets/…"
-        html = html
+        // Rewrite absolute asset paths through the proxy base path
+        body = body
           .replace(/(['"])\/(assets\/)/g, `$1${basePath}/assets/`)
           .replace(/(['"])\/favicon\.(svg|ico|png)/g, `$1${basePath}/favicon.$2`);
 
-        // 2. Fix Remix / React Router v7 basename so the client-side router strips
-        //    the proxy prefix before matching routes.
-        html = html
-          .replace(/"basename":"\/"/g, `"basename":"${basePath}"`)
-          .replace(/"basename":""/g,   `"basename":"${basePath}"`);
-
-        // 3. Inject a fetch/XHR interceptor so bolt.diy's runtime API calls
-        //    (e.g. fetch('/api/models'), fetch('/api/llmcall')) are transparently
-        //    rewritten to go through the workspace proxy path instead of hitting
-        //    the mizi-api root.  Any absolute same-origin path that doesn't
-        //    already start with basePath gets basePath prepended.
-        const bp = JSON.stringify(basePath);
-        const interceptorScript = `<script>(function(){` +
-          `var bp=${bp};` +
-          `var of=window.fetch;` +
-          `window.fetch=function(i,o){` +
-            `if(typeof i==='string'&&i.charCodeAt(0)===47&&i.indexOf(bp)!==0)i=bp+i;` +
-            `return of.call(this,i,o);` +
-          `};` +
-          `var ox=XMLHttpRequest.prototype.open;` +
-          `XMLHttpRequest.prototype.open=function(m,u,a,s,p){` +
-            `if(typeof u==='string'&&u.charCodeAt(0)===47&&u.indexOf(bp)!==0)u=bp+u;` +
-            `return ox.call(this,m,u,a,s,p);` +
-          `};` +
-        `})();</script>`;
-
-        if (html.includes("</head>")) {
-          html = html.replace("</head>", `${interceptorScript}</head>`);
-        } else {
-          html = interceptorScript + html;
-        }
-
-        return html;
+        return body;
       }),
     },
   });

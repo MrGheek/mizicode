@@ -256,7 +256,7 @@ async function sendExistingSessionResponse(res: Response, sessionId: number): Pr
     .where(eq(sessionLanesTable.sessionId, sessionId))
     .orderBy(desc(sessionLanesTable.createdAt));
 
-  const baseUrl = (sess.codeServerUrl || "").replace(/\/$/, "");
+  const baseUrl = (sess.theiaUrl || "").replace(/\/$/, "");
   const members = lanes.map((lane) => {
     const member = (sess.teamMembers as TeamMemberRecord[] | null)
       ?.find((tm) => tm.name === lane.memberIdentifier);
@@ -792,7 +792,7 @@ router.get("/sessions/:sessionId/orchestration-status", async (req, res) => {
       .where(eq(sessionLanesTable.sessionId, sessionId))
       .orderBy(desc(sessionLanesTable.createdAt));
 
-    const baseUrl = (session.codeServerUrl || "").replace(/\/$/, "");
+    const baseUrl = (session.theiaUrl || "").replace(/\/$/, "");
     const teamMembers = (session.teamMembers as TeamMemberRecord[] | null) ?? [];
 
     const laneStatuses = lanes.map((lane) => {

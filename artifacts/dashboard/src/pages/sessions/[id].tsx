@@ -3301,7 +3301,7 @@ export default function SessionDetail() {
           }
           break;
         case "7":
-          if (sess.boltDiyUrl) {
+          if (sess.theiaUrl) {
             e.preventDefault();
             lastDetailTabRef.current = "preview";
             setActiveTab("preview");
@@ -3823,7 +3823,7 @@ export default function SessionDetail() {
           )}
 
           {/* Primary launch — shown when ready */}
-          {isReady && session.boltDiyUrl ? (
+          {isReady && session.theiaUrl ? (
             <Card className="border-primary/60 bg-primary/5">
               <CardContent className="pt-6 pb-6 flex flex-col items-center gap-4 text-center">
                 <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center">
@@ -3836,7 +3836,7 @@ export default function SessionDetail() {
                   </p>
                 </div>
                 <Button size="lg" className="gap-2 px-8" asChild>
-                  <a href={session.boltDiyUrl} target="_blank" rel="noopener noreferrer">
+                  <a href={session.theiaUrl} target="_blank" rel="noopener noreferrer">
                     <ExternalLink className="w-4 h-4" />
                     Open Coding Environment
                   </a>
@@ -4337,7 +4337,7 @@ export default function SessionDetail() {
               >
                 <DatabaseZap className="w-3 h-3" /> Environment
               </button>
-              {session.boltDiyUrl && (
+              {session.theiaUrl && (
                 <button
                   onClick={() => { lastDetailTabRef.current = "preview"; setActiveTab("preview"); }}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "preview" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
@@ -4421,11 +4421,11 @@ export default function SessionDetail() {
                 }
               />
             )}
-            {activeTab === "preview" && session.boltDiyUrl && (
+            {activeTab === "preview" && session.theiaUrl && (
               <PreviewTab
                 sessionId={sessionId}
                 previewUrl={session.previewUrl ?? null}
-                boltDiyUrl={session.boltDiyUrl ?? null}
+                theiaUrl={session.theiaUrl ?? null}
                 codeServerUrl={session.codeServerUrl ?? null}
                 isReady={isReady}
               />

@@ -1,5 +1,6 @@
 packages:
   - artifacts/*
+  - docker/*
   - lib/*
   - lib/integrations/*
   - scripts
@@ -36,12 +37,19 @@ minimumReleaseAgeExclude:
   - stripe-replit-sync
 
 onlyBuiltDependencies:
+  - '@parcel/watcher'
   - '@swc/core'
+  - '@theia/ffmpeg'
   - better-sqlite3
+  - drivelist
   - esbuild
   - electron
   - electron-builder
+  - keytar
   - msw
+  - msgpackr-extract
+  - node-pty
+  - puppeteer
   - unrs-resolver
 
 overrides:

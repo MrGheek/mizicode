@@ -42,7 +42,7 @@ interface MemObs {
 interface PreviewTabProps {
   sessionId: number;
   previewUrl: string | null;
-  boltDiyUrl: string | null;
+  theiaUrl: string | null;
   codeServerUrl: string | null;
   isReady: boolean;
 }
@@ -74,7 +74,7 @@ function resolveDefaultUrl(previewUrl: string | null): string {
 export function PreviewTab({
   sessionId,
   previewUrl,
-  boltDiyUrl,
+  theiaUrl,
   codeServerUrl,
   isReady,
 }: PreviewTabProps) {
@@ -363,7 +363,7 @@ export function PreviewTab({
 
   const portChips: { label: string; url: string; newTab?: boolean }[] = [
     ...(previewUrl    ? [{ label: "3000", url: previewUrl }]                         : []),
-    ...(boltDiyUrl    ? [{ label: "5180", url: boltDiyUrl,    newTab: true }]        : []),
+    ...(theiaUrl    ? [{ label: "5180", url: theiaUrl,    newTab: true }]        : []),
     ...(codeServerUrl ? [{ label: "8080", url: codeServerUrl, newTab: true }]        : []),
   ];
 
@@ -513,7 +513,7 @@ export function PreviewTab({
           minHeight: "400px",
         }}
       >
-        {noUrl && boltDiyUrl && (
+        {noUrl && theiaUrl && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
             <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ background: "rgba(99,102,241,0.15)" }}>
               <Terminal className="w-6 h-6" style={{ color: "#818cf8" }} />
@@ -525,7 +525,7 @@ export function PreviewTab({
               </p>
             </div>
             <a
-              href={boltDiyUrl}
+              href={theiaUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
@@ -540,7 +540,7 @@ export function PreviewTab({
           </div>
         )}
 
-        {noUrl && !boltDiyUrl && (
+        {noUrl && !theiaUrl && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground">
             <WifiOff className="w-8 h-8 opacity-20" />
             <p className="text-xs">No preview URL available yet.</p>

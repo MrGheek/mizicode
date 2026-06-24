@@ -32,7 +32,7 @@ export const sessionsTable = pgTable("sessions", {
   templateHash: text("template_hash"),
   status: text("status").notNull().default("pending"),
   statusMessage: text("status_message"),
-  boltDiyUrl: text("bolt_diy_url"),
+  theiaUrl: text("theia_url"),
   codeServerUrl: text("code_server_url"),
   previewUrl: text("preview_url"),
   sshHost: text("ssh_host"),

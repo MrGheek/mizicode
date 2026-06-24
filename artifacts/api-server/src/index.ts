@@ -200,7 +200,7 @@ const server = http.createServer(app);
 const BRIDGE_PATH_RE = /^\/api\/bridge\/(\d+)\/(\d+)(\/|\?.*)?$/;
 
 // Workspace proxy URL pattern: /api/sessions/:id/workspace (and sub-paths)
-// WebSocket upgrades on this path are Vite HMR connections that must be
+// WebSocket upgrades on this path are Theia JSON-RPC connections that must be
 // forwarded to the correct Fly Machine via Fly.io private networking (6PN).
 const WORKSPACE_PATH_RE = /^\/api\/sessions\/(\d+)\/workspace(\/.*)?$/;
 
@@ -215,7 +215,7 @@ if (!IS_LOCAL_DISTRIBUTION) {
   server.on("upgrade", async (req, socket, head) => {
     const url = req.url ?? "";
 
-    // ── Workspace proxy WebSocket (Vite HMR) ─────────────────────────────
+    // ── Workspace proxy WebSocket (Theia JSON-RPC) ───────────────────────
     const wsMatch = WORKSPACE_PATH_RE.exec(url);
     if (wsMatch) {
       const sessionId = parseInt(wsMatch[1], 10);
@@ -335,8 +335,12 @@ server.listen(port, async (err?: Error) => {
       logger.error(e, "Failed to seed curated design intelligence sources");
     }
 
-    const { startScheduler } = await import("./services/scheduler.js");
-    startScheduler();
+    try {
+      const { startScheduler } = await import("./services/scheduler.js");
+      startScheduler();
+    } catch (err) {
+      logger.error({ err }, "Failed to start scheduler (non-fatal)");
+    }
 
     try {
       const { sweepExpiredClaims, recordExternalSweep, startClaimSweeper } = await import("./services/claim-sweeper.js");
@@ -348,19 +352,42 @@ server.listen(port, async (err?: Error) => {
       logger.error({ err }, "Startup claim sweep failed");
     }
 
-    startClaimPurger();
+    try {
+      startClaimPurger();
+    } catch (err) {
+      logger.error({ err }, "Failed to start claim purger (non-fatal)");
+    }
 
-    const { startEvalScheduler } = await import("./services/skills-evals.js");
-    startEvalScheduler(60);
+    try {
+      const { startEvalScheduler } = await import("./services/skills-evals.js");
+      startEvalScheduler(60);
+    } catch (err) {
+      logger.error({ err }, "Failed to start eval scheduler (non-fatal)");
+    }
 
-    const { startMemoryDiskMonitor, runPassiveRecallBackfill } = await import("./services/memory.js");
-    startMemoryDiskMonitor();
+    let runPassiveRecallBackfill: ((limit: number) => Promise<number>) | undefined;
 
-    const { startPlanAutoAdvance } = await import("./services/plan-auto-advance.js");
-    startPlanAutoAdvance();
+    try {
+      const memoryModule = await import("./services/memory.js");
+      runPassiveRecallBackfill = memoryModule.runPassiveRecallBackfill;
+      memoryModule.startMemoryDiskMonitor();
+    } catch (err) {
+      logger.error({ err }, "Failed to start memory disk monitor (non-fatal)");
+    }
 
-    const { startPlanDecompose } = await import("./services/plan-decompose.js");
-    startPlanDecompose();
+    try {
+      const { startPlanAutoAdvance } = await import("./services/plan-auto-advance.js");
+      startPlanAutoAdvance();
+    } catch (err) {
+      logger.error({ err }, "Failed to start plan auto-advance (non-fatal)");
+    }
+
+    try {
+      const { startPlanDecompose } = await import("./services/plan-decompose.js");
+      startPlanDecompose();
+    } catch (err) {
+      logger.error({ err }, "Failed to start plan decompose (non-fatal)");
+    }
 
     try {
       const { syncNimCatalog } = await import("./services/nim-catalog.js");
@@ -390,6 +417,7 @@ server.listen(port, async (err?: Error) => {
     // Passive memory recall: embedding backfill for legacy items.
     // Runs in the background so startup is never blocked on embedding API calls.
     void (async () => {
+      if (!runPassiveRecallBackfill) return;
       try {
         const embedded = await runPassiveRecallBackfill(500);
         if (embedded > 0) {

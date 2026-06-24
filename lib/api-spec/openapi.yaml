@@ -3026,7 +3026,7 @@ components:
         statusMessage:
           type: string
           nullable: true
-        boltDiyUrl:
+        theiaUrl:
           type: string
           nullable: true
         codeServerUrl:
