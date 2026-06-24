@@ -130,28 +130,24 @@ MODEL_BASE_PATH="${MODEL_BASE_PATH:-/workspace/models}"
 SWARM_MAX_WORKERS="${SWARM_MAX_WORKERS:-0}"
 export SWARM_MAX_WORKERS
 
-# VLLM_PORT is the external port (litellm proxy — speaks OpenAI + Anthropic API)
+# VLLM_PORT is the external port (nim-proxy — speaks OpenAI + Anthropic API)
 VLLM_PORT="${VLLM_PORT:-8081}"
 # Internal port for vLLM (OpenAI format only)
 VLLM_INTERNAL_PORT=8082
-CODE_SERVER_PORT="${CODE_SERVER_PORT:-8080}"
-BOLT_PORT="${BOLT_PORT:-5173}"
-PREVIEW_PORT="${PREVIEW_PORT:-3000}"
+THEIA_PORT="${THEIA_PORT:-8788}"
 
-if [ -z "$CODE_SERVER_PASSWORD" ]; then
-    CODE_SERVER_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
-    echo "$CODE_SERVER_PASSWORD" > /workspace/.code-server-password
-    chmod 600 /workspace/.code-server-password
-    log "code-server password generated and stored at /workspace/.code-server-password (readable after SSH)"
+# Generate a shared auth password for nginx (also used for SSH).
+if [ -z "${NGINX_AUTH_PASS:-}" ]; then
+    NGINX_AUTH_PASS=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 16)
+    echo "$NGINX_AUTH_PASS" > /workspace/.mizi-password
+    chmod 600 /workspace/.mizi-password
+    log "nginx password generated and stored at /workspace/.mizi-password"
 fi
 
 # TEAM_MEMBERS_JSON is optional: JSON array of {name, password, path} objects.
 # First element is always __shared__ when present.
-# e.g. '[{"name":"__shared__","password":"...","path":"/shared/"},{"name":"alice","password":"...","path":"/ide/alice/"}]'
+# Team sessions use a single Theia backend shared by all members via nginx auth.
 TEAM_MEMBERS_JSON="${TEAM_MEMBERS_JSON:-}"
-# Internal ports for team member code-server instances (not exposed externally)
-TEAM_MEMBER_INTERNAL_PORTS=(8093 8094 8095 8096)
-SHARED_INTERNAL_PORT=8097
 
 log "=== MIZI Coding Environment Starting ==="
 log "Model: $MODEL_REPO (cached as $MODEL_QUANT)"
@@ -172,24 +168,7 @@ echo "PermitRootLogin prohibit-password" >> /etc/ssh/sshd_config
 /usr/sbin/sshd
 log "SSH server started (key-based auth only)"
 
-# For team sessions, owner's code-server moves to an internal port (nginx will own port 8080).
-# For solo sessions, code-server binds directly on 8080 (existing behaviour).
-if [ -n "$TEAM_MEMBERS_JSON" ]; then
-    OWNER_CODE_SERVER_INTERNAL_PORT=8090
-    log "Team session: owner code-server will start on internal port $OWNER_CODE_SERVER_INTERNAL_PORT (nginx routes port 8080)"
-else
-    OWNER_CODE_SERVER_INTERNAL_PORT=$CODE_SERVER_PORT
-fi
-
-log "Starting code-server (owner) on port $OWNER_CODE_SERVER_INTERNAL_PORT..."
 mkdir -p /workspace/projects
-PASSWORD="$CODE_SERVER_PASSWORD" code-server \
-    --bind-addr "0.0.0.0:${OWNER_CODE_SERVER_INTERNAL_PORT}" \
-    --auth password \
-    --disable-telemetry \
-    /workspace/projects \
-    > /var/log/code-server.log 2>&1 &
-log "code-server (owner) started"
 
 log "Starting Claw Task Runner on port 5182..."
 # Wire swarm worker cap from profile env (swarmWorkerCap → SWARM_MAX_WORKERS).
@@ -221,94 +200,46 @@ else
     log "Claw Bridge: MIZI_BRIDGE_URL not set or claw-bridge.mjs not installed — bridge skipped"
 fi
 
-log "Configuring Bolt.diy..."
-cd /opt/bolt-diy
-# .env.local is read by Vite (dev mode).
-# .dev.vars is read by wrangler pages dev (production mode, pnpm run start).
-# Both must be written so the OPENAI_LIKE_API_BASE_URL binding reaches the
-# worker regardless of which mode bolt.diy started in.
-cat > .env.local << EOF
-OPENAI_LIKE_API_BASE_URL=http://localhost:${VLLM_PORT}/v1
-OPENAI_LIKE_API_KEY=not-needed
-DEFAULT_NUM_CTX=${VLLM_MAX_MODEL_LEN}
-EOF
-cat > .dev.vars << EOF
-OPENAI_LIKE_API_BASE_URL=http://localhost:${VLLM_PORT}/v1
-OPENAI_LIKE_API_KEY=not-needed
-DEFAULT_NUM_CTX=${VLLM_MAX_MODEL_LEN}
-EOF
+log "Configuring Theia..."
+THEIA_SETTINGS="/workspace/.theia/settings.json"
+mkdir -p "/workspace/.theia"
 
-log "Patching bolt.diy vite.config.ts to allow all hosts (allowedHosts: true)..."
-node -e "
-const fs = require('fs');
-const p = '/opt/bolt-diy/vite.config.ts';
-let c = fs.readFileSync(p, 'utf8');
-// Always force allowedHosts: true — do NOT skip if the key already exists.
-// bolt.diy ships with a restrictive allowedHosts value; skipping would leave it blocked.
-if (c.includes('allowedHosts')) {
-  const fixed = c.replace(/allowedHosts\s*:\s*[^,}\n]+/g, 'allowedHosts: true');
-  fs.writeFileSync(p, fixed);
-  console.log('[onstart] vite.config.ts: forced existing allowedHosts to true');
-} else {
-  const idx = c.indexOf('  return {');
-  if (idx === -1) {
-    console.error('[onstart] ERROR: could not find return { in vite.config.ts');
-  } else {
-    const NL = String.fromCharCode(10);
-    const PATCH = '    server: { host: true, allowedHosts: true },';
-    c = c.slice(0, idx + 10) + NL + PATCH + c.slice(idx + 10);
-    fs.writeFileSync(p, c);
-    console.log('[onstart] vite.config.ts patched: host:true, allowedHosts:true');
-  }
-}
-"
+NIM_MODEL="${NIM_MODEL_ID:-}"
+THEIA_AI_CONFIG='{'
+THEIA_AI_CONFIG+='"ai-core.enable":true,'
+THEIA_AI_CONFIG+='"ai-openai.models":[{"id":"mizi-vllm","model":"'"${MODEL_QUANT:-kimi-k2-6}"'","url":"http://localhost:8081/v1","apiKey":"not-needed","enableStreaming":true,"supportsStructuredOutput":false}],'
 
-log "Starting Bolt.diy on internal port 8788 (nginx proxies to external port ${BOLT_PORT:-5180})..."
-# Use pre-built production server if the image was compiled with `pnpm run build`
-# (Dockerfile.nim-workspace build step). Falls back to Vite dev mode for older images.
-# NOTE: wrangler pages dev ignores PORT env var — it always binds to 8788 by default.
-# nginx and the nim-gate script both use 8788 to match this.
-if [ -d /opt/bolt-diy/build/server ]; then
-    log "Bolt.diy: production mode (pre-built assets found — fast startup)"
-    # wrangler pages dev always binds to 8788, ignores PORT env var.
-    (cd /opt/bolt-diy && pnpm run start) > /var/log/bolt-diy.log 2>&1 &
+if [ -n "$NIM_MODEL" ]; then
+  THEIA_AI_CONFIG+='"ai-vercel-ai.enable":true,'
+  THEIA_AI_CONFIG+='"ai-vercel-ai.providers":[{"id":"mizi-nim","provider":"nvidia","model":"'"${NIM_MODEL}"'","apiKey":"'"${NIM_API_KEY:-}"'"}],'
+  THEIA_AI_CONFIG+='"ai-core.defaultLanguageModel":"vercel-ai/mizi-nim",'
 else
-    log "Bolt.diy: dev mode (no pre-built assets — expect slow first-load, ~2-4 min)"
-    # Vite dev server respects PORT env var — set to 8788 so nginx and nim-gate
-    # use the same port regardless of production vs dev mode.
-    (cd /opt/bolt-diy && PORT=8788 pnpm run dev) > /var/log/bolt-diy.log 2>&1 &
+  THEIA_AI_CONFIG+='"ai-core.defaultLanguageModel":"openai/mizi-vllm",'
 fi
-log "Bolt.diy started"
+
+THEIA_AI_CONFIG+='"ai-mcp.servers":[{"id":"mizi-api","url":"http://localhost:8789/api/mcp","transport":"streamable-http"}],"ai-history.enable":true'
+THEIA_AI_CONFIG+='}'
+
+cat > "$THEIA_SETTINGS" <<< "$THEIA_AI_CONFIG"
+log "Theia settings written to ${THEIA_SETTINGS}"
+
+log "Starting Theia on internal port ${THEIA_PORT}..."
+node /opt/mizi-theia/src-gen/backend/server.js \
+  --port="${THEIA_PORT}" --hostname=0.0.0.0 --root-dir=/workspace \
+  > /var/log/theia.log 2>&1 &
+log "Theia started"
 
 log "Configuring nginx with basic auth for exposed services..."
 NGINX_AUTH_USER="${NGINX_AUTH_USER:-mizi}"
-NGINX_AUTH_PASS="${NGINX_AUTH_PASS:-$CODE_SERVER_PASSWORD}"
+NGINX_AUTH_PASS="${NGINX_AUTH_PASS:-$NGINX_AUTH_PASS}"
 htpasswd -cb /etc/nginx/.htpasswd "$NGINX_AUTH_USER" "$NGINX_AUTH_PASS" 2>/dev/null
-log "Nginx credentials — user: $NGINX_AUTH_USER, pass: in /workspace/.code-server-password"
+log "Nginx credentials — user: $NGINX_AUTH_USER, pass: in /workspace/.mizi-password"
 
 cat > /etc/nginx/sites-available/preview << 'NGINX'
 server {
-    listen 3000;
+    listen 8080;
     server_name _;
-    auth_basic "MIZI Preview";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-
-    location / {
-        proxy_pass http://localhost:5174;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host localhost;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_read_timeout 86400;
-    }
-}
-
-server {
-    listen 5180;
-    server_name _;
-    auth_basic "MIZI Bolt.diy";
+    auth_basic "MIZI";
     auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
@@ -342,8 +273,8 @@ server {
 # Port 8789 is NOT a Fly internet service so it is only reachable via the
 # private WireGuard network (6PN).  No htpasswd here — the API server
 # enforces auth at its own layer before forwarding requests.
-# workerd (wrangler) binds to 127.0.0.1:8788 so 6PN connections to :8788
-# get ECONNREFUSED; this block forwards them through nginx which CAN reach
+# Theia binds to 127.0.0.1:8788 so 6PN connections to :8788 get
+# ECONNREFUSED; this block forwards them through nginx which CAN reach
 # the loopback address from within the same container.
 server {
     listen 8789;
@@ -366,137 +297,68 @@ ln -sf /etc/nginx/sites-available/preview /etc/nginx/sites-enabled/preview
 rm -f /etc/nginx/sites-enabled/default
 
 nginx -t && nginx
-log "nginx started — ports 5180 (Bolt), 5181 (Claw Runner), 3000 (Preview) open"
+log "nginx started — ports 8080 (Theia), 5181 (Claw Runner) open"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Team session: path-based nginx routing on port 8080
-# Owner IDE: /            → internal 8090
-# Member IDEs: /ide/<name>/ → internal 8093-8096
-# Shared workspace: /shared/ → internal 8097  (combined htpasswd: all members)
-# All traffic flows through the single exposed port 8080.
+# Team session: single Theia backend shared by all members
+# All traffic flows through nginx on port 8080 (already configured above).
+# Each member authenticates with their own password against a combined htpasswd
+# that includes the primary owner (NGINX_AUTH_USER/NGINX_AUTH_PASS) plus all
+# named members. Members open their workspace folder (/workspace/users/<name>/)
+# in Theia's file navigator.
 # ─────────────────────────────────────────────────────────────────────────────
 if [ -n "$TEAM_MEMBERS_JSON" ]; then
-    log "Team session: configuring path-based nginx routing on port 8080..."
+    log "Team session: configuring shared htpasswd..."
 
-    # Validate JSON is parseable
     if ! echo "$TEAM_MEMBERS_JSON" | jq -e '.' > /dev/null 2>&1; then
         log "ERROR: TEAM_MEMBERS_JSON is not valid JSON — skipping team setup"
     else
+        _SHARED_HTPASSWD=/etc/nginx/.htpasswd
+        _tm_named_idx=0
 
-    # Open the server block (owner's code-server at /)
-    cat > /etc/nginx/sites-available/team-ide << 'TEAM_NGINX_OPEN'
-server {
-    listen 8080;
-    server_name _;
+        while IFS= read -r _TM_ENTRY_JSON; do
+            _TM_NAME=$(printf '%s' "$_TM_ENTRY_JSON" | jq -r '.name')
+            _TM_PASS=$(printf '%s' "$_TM_ENTRY_JSON" | jq -r '.password')
+            _TM_PATH=$(printf '%s' "$_TM_ENTRY_JSON" | jq -r '.path')
 
-    # Owner IDE at /
-    location / {
-        auth_basic "MIZI";
-        auth_basic_user_file /etc/nginx/.htpasswd;
-        proxy_pass http://localhost:8090;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_read_timeout 86400;
-    }
-TEAM_NGINX_OPEN
-
-    # ── Combine all team member credentials into a shared htpasswd file ──
-    _SHARED_HTPASSWD=/etc/nginx/.htpasswd-shared
-    cp /dev/null "$_SHARED_HTPASSWD"
-
-    _tm_named_idx=0
-
-    while IFS= read -r _TM_ENTRY_JSON; do
-        _TM_NAME=$(printf '%s' "$_TM_ENTRY_JSON" | jq -r '.name')
-        _TM_PASS=$(printf '%s' "$_TM_ENTRY_JSON" | jq -r '.password')
-        _TM_PATH=$(printf '%s' "$_TM_ENTRY_JSON" | jq -r '.path')
-
-        if [ "$_TM_NAME" = "__shared__" ]; then
-            # Shared workspace: nginx handles all auth via combined htpasswd.
-            # code-server runs with --auth none (nginx is the sole auth gate).
-            _TM_INT_PORT=$SHARED_INTERNAL_PORT
-            _TM_WORKSPACE=/workspace/shared
-        else
-            if [ $_tm_named_idx -ge 4 ]; then
-                log "Skipping '$_TM_NAME' — max 4 named members reached"
-                continue
+            if [ "$_TM_NAME" = "__shared__" ]; then
+                _TM_WORKSPACE=/workspace/shared
+            else
+                if [ $_tm_named_idx -ge 4 ]; then
+                    log "Skipping '$_TM_NAME' — max 4 named members reached"
+                    continue
+                fi
+                _TM_WORKSPACE="/workspace/users/${_TM_NAME}"
+                _tm_named_idx=$((_tm_named_idx + 1))
             fi
-            _TM_INT_PORT="${TEAM_MEMBER_INTERNAL_PORTS[$_tm_named_idx]}"
-            _TM_WORKSPACE="/workspace/users/${_TM_NAME}"
-            _tm_named_idx=$((_tm_named_idx + 1))
 
-            # Per-member htpasswd (for /ide/<name>/ location)
-            htpasswd -cb "/etc/nginx/.htpasswd-${_TM_NAME}" "$_TM_NAME" "$_TM_PASS" 2>/dev/null
+            mkdir -p "$_TM_WORKSPACE"
 
-            # Add member credential to the shared htpasswd (all members can access /shared/)
-            htpasswd -b "$_SHARED_HTPASSWD" "$_TM_NAME" "$_TM_PASS" 2>/dev/null
-        fi
-
-        mkdir -p "$_TM_WORKSPACE"
-
-        # Write ANTHROPIC_BASE_URL .env so claw-code uses the litellm proxy inside the container
-        cat > "${_TM_WORKSPACE}/.env" << MEMBER_ENV
+            cat > "${_TM_WORKSPACE}/.env" << MEMBER_ENV
 ANTHROPIC_BASE_URL=http://localhost:8081
 ANTHROPIC_API_KEY=not-needed
 MEMBER_ENV
-        chmod 600 "${_TM_WORKSPACE}/.env"
+            chmod 600 "${_TM_WORKSPACE}/.env"
 
-        if [ "$_TM_NAME" = "__shared__" ]; then
-            # Shared code-server: nginx is the sole auth gate (combined htpasswd).
-            # Run without code-server password so member creds work transparently.
-            code-server \
-                --bind-addr "0.0.0.0:${_TM_INT_PORT}" \
-                --auth none \
-                --disable-telemetry \
-                --base-path "${_TM_PATH}" \
-                "$_TM_WORKSPACE" \
-                > "/var/log/code-server-${_TM_NAME}.log" 2>&1 &
-        else
-            PASSWORD="$_TM_PASS" code-server \
-                --bind-addr "0.0.0.0:${_TM_INT_PORT}" \
-                --auth password \
-                --disable-telemetry \
-                --base-path "${_TM_PATH}" \
-                "$_TM_WORKSPACE" \
-                > "/var/log/code-server-${_TM_NAME}.log" 2>&1 &
-        fi
+            # Add member to shared htpasswd
+            htpasswd -b "$_SHARED_HTPASSWD" "$_TM_NAME" "$_TM_PASS" 2>/dev/null
 
-        if [ "$_TM_NAME" = "__shared__" ]; then
-            # /shared/ uses the combined htpasswd (populated after all named members are processed)
-            printf '    location /shared/ {\n        auth_basic "MIZI Shared";\n        auth_basic_user_file %s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
-                "$_SHARED_HTPASSWD" "$_TM_INT_PORT" \
-                >> /etc/nginx/sites-available/team-ide
-        else
-            printf '    location %s {\n        auth_basic "MIZI - %s";\n        auth_basic_user_file /etc/nginx/.htpasswd-%s;\n        proxy_pass http://localhost:%s;\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_read_timeout 86400;\n    }\n' \
-                "$_TM_PATH" "$_TM_NAME" "$_TM_NAME" "$_TM_INT_PORT" \
-                >> /etc/nginx/sites-available/team-ide
-        fi
+            log "Team member '$_TM_NAME': workspace=$_TM_WORKSPACE"
+        done < <(printf '%s' "$TEAM_MEMBERS_JSON" | jq -c '.[]')
 
-        log "Team member '$_TM_NAME': code-server port=$_TM_INT_PORT path=$_TM_PATH workspace=$_TM_WORKSPACE"
-    done < <(printf '%s' "$TEAM_MEMBERS_JSON" | jq -c '.[]')
-
-    # Close the server block
-    echo '}' >> /etc/nginx/sites-available/team-ide
-
-    ln -sf /etc/nginx/sites-available/team-ide /etc/nginx/sites-enabled/team-ide
-    nginx -t && nginx -s reload
-    log "nginx reloaded with team path-based routing on port 8080"
-
-    fi  # end TEAM_MEMBERS_JSON valid JSON guard
+        nginx -s reload
+        log "nginx reloaded — team members added to shared htpasswd"
+    fi
 fi
 
-# Mark phase 1 done — code-server, Bolt.diy, and nginx are up.
+# Mark phase 1 done — Theia, Claw Runner, and nginx are up.
 # Use "services_ready" (not "ready") so the dashboard knows tools are accessible
 # but does NOT yet confuse this with full LLM readiness. "ready" is reserved for
 # the final "llm_ready" state set by Phase 2 once vLLM is online.
 set_status "services_ready"
 report_status "services_ready"
 touch /tmp/instance-ready
-log "=== Phase 1 done — code-server and tools available (LLM loading in background) ==="
+log "=== Phase 1 done — Theia and tools available (LLM loading in background) ==="
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 1.5: Smart Skills bundle activation

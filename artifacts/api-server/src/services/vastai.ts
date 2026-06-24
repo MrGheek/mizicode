@@ -1,4 +1,5 @@
 import { logger } from "../lib/logger";
+import { withRetry } from "./retry.js";
 
 const VASTAI_BASE = "https://cloud.vast.ai/api/v0";
 
@@ -16,16 +17,24 @@ function headers() {
   };
 }
 
-async function vastFetch<T = Record<string, unknown>>(path: string, opts: RequestInit = {}): Promise<T> {
+async function vastFetchRaw<T = Record<string, unknown>>(path: string, opts: RequestInit = {}): Promise<T> {
   const url = `${VASTAI_BASE}${path}`;
   logger.info({ url, method: opts.method || "GET" }, "Vast.ai API call");
   const res = await fetch(url, { ...opts, headers: { ...headers(), ...opts.headers } });
   if (!res.ok) {
     const text = await res.text();
     logger.error({ status: res.status, body: text, url }, "Vast.ai API error");
-    throw new Error(`Vast.ai API error ${res.status}: ${text}`);
+    throw Object.assign(new Error(`Vast.ai API error ${res.status}: ${text}`), { status: res.status });
   }
   return res.json() as Promise<T>;
+}
+
+async function vastFetch<T = Record<string, unknown>>(path: string, opts: RequestInit = {}): Promise<T> {
+  return withRetry(
+    () => vastFetchRaw<T>(path, opts),
+    `Vast.ai ${opts.method || "GET"} ${path}`,
+    { maxRetries: 3, baseDelayMs: 1000 },
+  );
 }
 
 export interface VastOffer {
@@ -642,181 +651,29 @@ MIZI_GIT_WRAPPER
 chmod +x /usr/local/bin/git`
     : "";
 
-  // Bolt.diy gate + pre-warm: polls localhost:5173 until Vite responds, then
-  // sends bolt_ready to unlock "Open Coding Environment" in the dashboard.
-  //
-  // The API server intercepts the llm_ready callback (sent by onstart.sh when
-  // the NIM proxy comes up) and keeps the session in "starting" state for NIM
-  // sessions.  This gate is the only thing that can move it to "ready", so the
-  // button stays locked until bolt.diy has actually finished its first compile.
-  //
-  // Timeline on shared-cpu-1x:
-  //   t=0   — gate background job starts
-  //   t=30  — bolt.diy pnpm-dev server starts (Phase 1 of onstart.sh)
-  //   t=60  — NIM proxy ready → llm_ready → intercepted → "starting/compiling"
-  //   t=?   — Vite responds to first HTTP request (2-4 min compile)
-  //   t=?   — bolt_ready sent → session moves to "ready" → button unlocks
-  //
-  // Progress pings every 60 s keep the boot log alive so the user sees
-  // compilation is in progress rather than a stale "compiling" message.
-  const nimBoltWarmupLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
-    ? `# Bolt.diy gate — two phases:
-#   Phase 1: poll :8788 until wrangler is up (first 200).
-#   Phase 2: wait for /opt/bolt-diy/node_modules/.vite/deps/_metadata.json —
-#            Vite writes this file only when dep optimisation is fully complete.
-#            Before this file exists the page loads HTML but JS bundles are still
-#            being compiled; the user sees a black screen until Vite auto-reloads.
-#
-# Why :8788 not :5180: nginx htpasswd is derived from the NGINX_AUTH_PASS
-# provisioning env var while the password file on disk is a fresh random value
-# written at runtime — they never match, producing 401 on every attempt.
-# Why :8788 not :5173: wrangler pages dev binds to 8788 by default and ignores
-# the PORT env var; nginx proxies 5180→8788 to match.
+  // Theia ready gate: polls localhost:8788 until Theia accepts connections, then
+  // sends `theia_ready` to unlock "Open Coding Environment" in the dashboard.
+  // Theia starts in <5s (pre-built, no compilation step), so this gate is short.
+  // Route through the API server's per-session workspace proxy so each session
+  // has a unique URL that routes to its own machine via Fly.io 6PN.
+  const nimTheiaReadyLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
+    ? `# Theia ready gate: poll :8788 until the server accepts connections
 (
-  sleep 15
-  START_TIME=\$(date +%s)
-  DEADLINE=\$((START_TIME + 720))
-  LAST_PING=\$START_TIME
-  ATTEMPT=0
-  EXIT_CODE=1
-  DEPS_META="/opt/bolt-diy/node_modules/.vite/deps/_metadata.json"
-  # Remove any stale _metadata.json from a previous session on this machine.
-  # Without this, Phase 2 would be skipped on warm machines (file already exists)
-  # even though Vite is re-running dep optimisation — causing a black screen.
-  rm -f "\$DEPS_META"
-  echo "[nim-gate] Phase 1: polling wrangler :8788 (deadline 720s)..." >> /var/log/onstart.log
-  # Phase 1 — wait for wrangler to respond at all
-  while [ \$(date +%s) -lt \$DEADLINE ]; do
-    ATTEMPT=\$((ATTEMPT + 1))
-    NOW=\$(date +%s)
-    ELAPSED=\$((NOW - START_TIME + 15))
-    HTTP_CODE=\$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \\
-      "http://localhost:8788/" 2>/dev/null)
-    CURL_EXIT=\$?
-    echo "[nim-gate] Attempt \${ATTEMPT} (\${ELAPSED}s): http=\${HTTP_CODE} exit=\${CURL_EXIT}" >> /var/log/onstart.log
-    if [ "\$HTTP_CODE" = "200" ] || [ "\$HTTP_CODE" = "302" ]; then
-      EXIT_CODE=0
-      break
-    fi
-    if [ \$((NOW - LAST_PING)) -ge 60 ]; then
-      LAST_PING=\$NOW
+  sleep 10
+  THEIA_URL="${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/workspace"
+  for i in $(seq 1 30); do
+    if curl -sf --max-time 5 http://localhost:8788/ > /dev/null 2>&1; then
+      echo "[theia-gate] Theia ready after \${i} probes" >> /var/log/onstart.log
       curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
         -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
         -H "Content-Type: application/json" \\
-        -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy compiling: Vite not yet responding (HTTP \${HTTP_CODE}, attempt \${ATTEMPT}, \${ELAPSED}s elapsed)\\"}" \\
+        -d "{\\"status\\":\\"theia_ready\\",\\"message\\":\\"Theia IDE ready — open your coding environment!\\",\\"theiaUrl\\":\\"\${THEIA_URL}\\"}" \\
         --max-time 10 >> /var/log/onstart.log 2>&1 || true
+      break
     fi
-    sleep 5
+    sleep 2
   done
-  # Phase 2 — wait for dep optimisation to complete (metadata.json is written
-  # by Vite at the very end of esbuild dep bundling; before it exists the browser
-  # gets the HTML shell but JS bundles are still compiling → black screen)
-  if [ \$EXIT_CODE -eq 0 ] && [ ! -f "\$DEPS_META" ]; then
-    echo "[nim-gate] Phase 2: waiting for dep optimisation (_metadata.json)..." >> /var/log/onstart.log
-    while [ ! -f "\$DEPS_META" ] && [ \$(date +%s) -lt \$DEADLINE ]; do
-      NOW=\$(date +%s)
-      ELAPSED=\$((NOW - START_TIME + 15))
-      if [ \$((NOW - LAST_PING)) -ge 60 ]; then
-        LAST_PING=\$NOW
-        echo "[nim-gate] Still compiling JS deps (\${ELAPSED}s)..." >> /var/log/onstart.log
-        curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
-          -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
-          -H "Content-Type: application/json" \\
-          -d "{\\"status\\":\\"starting_llm\\",\\"message\\":\\"Bolt.diy compiling: Vite responding — bundling JS dependencies (\${ELAPSED}s elapsed)\\"}" \\
-          --max-time 10 >> /var/log/onstart.log 2>&1 || true
-      fi
-      sleep 5
-    done
-    if [ -f "\$DEPS_META" ]; then
-      echo "[nim-gate] Dep optimisation complete (_metadata.json found)" >> /var/log/onstart.log
-    else
-      echo "[nim-gate] Deadline reached before dep optimisation finished — opening anyway" >> /var/log/onstart.log
-    fi
-  fi
-  ELAPSED=\$(( \$(date +%s) - START_TIME + 15 ))
-  touch /tmp/nim-bolt-ready
-  echo "[nim-gate] Gate done: exit=\${EXIT_CODE} elapsed=\${ELAPSED}s attempts=\${ATTEMPT}" >> /var/log/onstart.log
-  # Route through the API server's per-session workspace proxy so that each
-  # concurrent session has a unique URL that routes to its own machine via
-  # Fly.io private networking (6PN). This avoids the shared-app-hostname
-  # load-balancer ambiguity where FLY_APP_NAME.fly.dev:5180 could land on
-  # any machine in the pool.
-  BOLT_URL="${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/workspace"
-  if [ \$EXIT_CODE -eq 0 ]; then
-    curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
-      -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
-      -H "Content-Type: application/json" \\
-      -d "{\\"status\\":\\"bolt_ready\\",\\"message\\":\\"Bolt.diy ready (\${ELAPSED}s) — open your coding environment!\\",\\"boltUrl\\":\\"\${BOLT_URL}\\"}" \\
-      --max-time 10 >> /var/log/onstart.log 2>&1 || true
-  else
-    curl -sf -X POST "\${MIZI_CALLBACK_URL}" \\
-      -H "Authorization: Bearer \${MIZI_MEM_AUTH_TOKEN}" \\
-      -H "Content-Type: application/json" \\
-      -d "{\\"status\\":\\"bolt_ready\\",\\"message\\":\\"Bolt.diy warmup timed out — opening anyway (may take a moment to load)\\",\\"boltUrl\\":\\"\${BOLT_URL}\\"}" \\
-      --max-time 10 >> /var/log/onstart.log 2>&1 || true
-  fi
 ) &`
-    : "";
-
-  // NIM-session watchdog: if the bolt.diy gate never fires bolt_ready within
-  // 8 minutes (e.g. gate process crashed), force-send bolt_ready so the user
-  // is never stuck on the boot screen forever.  Harmless if gate already fired.
-  const nimWatchdogLines = profileConfig.nimModelId && profileConfig.callbackBaseUrl && profileConfig.sessionId != null
-    ? `# NIM watchdog: force bolt_ready after 15 min if the gate never fired
-(
-  sleep 900
-  if [ ! -f "/tmp/nim-bolt-ready" ]; then
-    echo "[nim-watchdog] Gate never fired — force bolt_ready after 15 min" >> /var/log/onstart.log
-    touch /tmp/nim-bolt-ready
-    curl -sf -X POST "${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/status" \\
-      -H "Authorization: Bearer ${profileConfig.memAuthToken || ""}" \\
-      -H "Content-Type: application/json" \\
-      -d "{\\"status\\":\\"bolt_ready\\",\\"message\\":\\"NIM watchdog: force-marking ready after 15 min\\",\\"boltUrl\\":\\"${profileConfig.callbackBaseUrl}/api/sessions/${profileConfig.sessionId}/workspace\\"}" \\
-      --max-time 10 >> /var/log/onstart.log 2>&1 || true
-  fi
-) &`
-    : "";
-
-  // Vite HMR fix for Fly.io reverse-proxy — runs inline, before /opt/onstart.sh.
-  //
-  // Why this is needed:
-  //   Users open bolt.diy at https://<app>.fly.dev:5180 (Fly TLS → nginx → Vite:5173).
-  //   Vite's HMR client is injected into every HTML page it serves and, by default,
-  //   tries to open a WebSocket back to the same host:port the page was loaded from.
-  //   If the page was served via the nginx reverse proxy at :5180, the HMR client
-  //   will try wss://<host>:5180 — which nginx can then forward to Vite's internal
-  //   WS port (:5173).  This works IF nginx has the WS upgrade headers (which
-  //   onstart.sh already sets) AND if Vite is told that the *client-side* port is
-  //   5180 (not 5173, which Vite assumes by default in some configs).
-  //
-  //   Setting `server.hmr.clientPort = 5180` in vite.config.ts explicitly tells
-  //   Vite: "emit HMR client code that connects to port 5180" — so the injected
-  //   script always targets the correct public nginx port regardless of Vite's
-  //   internal server port.
-  //
-  //   NOTE: NGINX_AUTH_USER/NGINX_AUTH_PASS and WebSocket proxy headers are already
-  //   handled correctly by onstart.sh in the Docker image.
-  //
-  //   PER-MACHINE ROUTING NOTE: boltUrl now points to
-  //   <callbackBaseUrl>/api/sessions/<id>/workspace — the API server's workspace
-  //   proxy route — rather than the shared FLY_APP_NAME.fly.dev:5180 hostname.
-  //   The proxy resolves the session's flyMachineId from the DB and forwards all
-  //   HTTP traffic to that machine via Fly.io private networking (6PN):
-  //   http://<machineId>.vm.<workspaceApp>.internal:5180. This ensures each
-  //   concurrent session has a unique, stable URL that routes exclusively to its
-  //   own machine regardless of load-balancer decisions.
-  const nimViteHmrPatchLines = profileConfig.nimModelId
-    ? `# ── Vite HMR clientPort fix (inline, runs before onstart.sh starts Vite) ──
-# Tells Vite's HMR client to connect to the public nginx proxy port (5180)
-# rather than Vite's internal port (5173), so WebSocket upgrades are routed
-# correctly through Fly's TLS terminator and nginx reverse proxy.
-BOLT_CONF="/opt/bolt-diy/vite.config.ts"
-[ -f "\$BOLT_CONF" ] || BOLT_CONF="/opt/bolt-diy/vite.config.js"
-if [ -f "\$BOLT_CONF" ] && ! grep -q "clientPort" "\$BOLT_CONF"; then
-  sed -i "s|server: {|server: { hmr: { protocol: 'wss', clientPort: 5180 },|" "\$BOLT_CONF" \\
-    && echo "[vite-hmr] Patched \$BOLT_CONF: hmr.clientPort=5180" >> /var/log/onstart.log \\
-    || echo "[vite-hmr] Failed to patch \$BOLT_CONF (continuing)" >> /var/log/onstart.log
-fi`
     : "";
 
   return `#!/bin/bash
@@ -835,9 +692,7 @@ ${bridgeLines}
 ${teamLine}
 ${skillsLine}
 ${githubLines}
-${nimBoltWarmupLines}
-${nimWatchdogLines}
-${nimViteHmrPatchLines}
+${nimTheiaReadyLines}
 /opt/onstart.sh
 `;
 }
@@ -875,18 +730,16 @@ export function buildInstanceUrls(instance: { public_ipaddr?: string; ports?: Re
     return mapping?.[0]?.HostPort;
   };
 
-  const boltPort = getPort("5180");
-  const codeServerPort = getPort("8080");
+  const theiaPort = getPort("8080");
   const previewPort = getPort("3000");
   const sshPort = getPort("22");
 
   const llmProxyPort = getPort("8081");
 
   return {
-    boltDiyUrl: boltPort ? `http://${ip}:${boltPort}` : null,
-    codeServerUrl: codeServerPort ? `http://${ip}:${codeServerPort}` : null,
-    llmProxyUrl: llmProxyPort ? `http://${ip}:${llmProxyPort}` : null,
+    theiaUrl: theiaPort ? `http://${ip}:${theiaPort}` : null,
     previewUrl: previewPort ? `http://${ip}:${previewPort}` : null,
+    llmProxyUrl: llmProxyPort ? `http://${ip}:${llmProxyPort}` : null,
     sshHost: ip,
     sshPort: sshPort ? parseInt(sshPort) : null,
     publicIp: ip,

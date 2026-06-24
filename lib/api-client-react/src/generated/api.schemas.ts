@@ -165,7 +165,7 @@ export interface Session {
   templateHash?: string | null;
   status: SessionStatus;
   statusMessage?: string | null;
-  boltDiyUrl?: string | null;
+  theiaUrl?: string | null;
   codeServerUrl?: string | null;
   previewUrl?: string | null;
   sshHost?: string | null;

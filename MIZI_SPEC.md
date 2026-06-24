@@ -38,9 +38,8 @@ Each **session** is a rented GPU machine running:
 - A frontier open-source LLM (Kimi K2.6, Qwen3-Coder-Next, DeepSeek V3.2, etc.)
 - **vLLM** for high-throughput GPU inference
 - **litellm proxy** for Anthropic-compatible API (so claw-code CLI works out of the box)
-- **code-server** — VS Code in the browser with the LLM wired in
-- **Bolt.diy** — React app generator that talks to the local LLM
-- **nginx** — routes traffic, handles basic auth, provides preview proxy
+- **Eclipse Theia** — extensible browser-based IDE with AI plugins (`@theia/ai-core`, `@theia/ai-chat-ui`, `@theia/ai-vercel-ai`, etc.)
+- **nginx** — routes traffic, handles basic auth
 - **SSH** — key-based access for terminal use or port forwarding
 
 The hosted dashboard (this app) handles instance provisioning, status tracking, cost tracking, memory persistence, scheduled auto-launch/stop, repo intelligence indexing, and team lane coordination.
@@ -89,7 +88,7 @@ The hosted dashboard (this app) handles instance provisioning, status tracking, 
 │              (rented bare-metal, your Docker image)                          │
 │                                                                              │
 │  onstart.sh runs at boot:                                                    │
-│    Phase 1 (immediate): code-server · Bolt.diy · nginx · SSH                │
+│    Phase 1 (immediate): Theia IDE · nginx · SSH                             │
 │      → Compiles Smart Skills bundle                                          │
 │      → Starts Repo Intelligence indexer                                      │
 │      → POSTs services_ready callback                                         │
@@ -97,10 +96,8 @@ The hosted dashboard (this app) handles instance provisioning, status tracking, 
 │      → POSTs phase callbacks (downloading / starting_llm / llm_ready)       │
 │                                                                              │
 │  Exposed ports (Vast.ai maps to random external ports):                      │
-│    8080 → code-server (or nginx team router)                                 │
+│    8080 → Eclipse Theia (via nginx)                                          │
 │    8081 → litellm proxy (OpenAI + Anthropic API)                             │
-│    5180 → Bolt.diy (through nginx auth)                                      │
-│    3000 → preview proxy (through nginx auth)                                 │
 │    5181 → Claw Runner                                                        │
 │    22   → SSH                                                                │
 └─────────────────────────────────────────────────────────────────────────────┘

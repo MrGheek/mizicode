@@ -2,19 +2,30 @@ import { Router, type IRouter } from "express";
 import { HealthCheckResponse } from "@workspace/api-zod";
 import { getSweeperHealth } from "../services/claim-sweeper";
 import { probeMemoryDb, getMemoryDiskHealth } from "../services/memory";
+import { pool } from "@workspace/db";
 
 const router: IRouter = Router();
 
-router.get("/health", (_req, res) => {
+router.get("/health", async (_req, res) => {
   const result = probeMemoryDb();
-  if (result.ok) {
-    res.status(200).json({ status: "ok", memDb: "ok", dbPath: result.dbPath });
+
+  let dbStatus = "ok";
+  try {
+    if (typeof pool?.query === "function") {
+      await pool.query("SELECT 1");
+    }
+  } catch {
+    dbStatus = "error";
+  }
+
+  if (result.ok && dbStatus === "ok") {
+    res.status(200).json({ status: "ok", memDb: "ok", db: dbStatus, dbPath: result.dbPath });
   } else {
-    res.status(503).json({ status: "degraded", memDb: "error", error: result.error });
+    res.status(503).json({ status: "degraded", memDb: result.ok ? "ok" : "error", db: dbStatus, error: !result.ok ? result.error : undefined });
   }
 });
 
-router.get("/healthz", (_req, res) => {
+router.get("/healthz", async (_req, res) => {
   const isProd = process.env["NODE_ENV"] === "production";
   const isLocal = process.env["MIZI_DISTRIBUTION"] === "local";
 
@@ -28,12 +39,9 @@ router.get("/healthz", (_req, res) => {
         "Set: fly secrets set --app mizi-api FLY_API_TOKEN=<token>"
       );
     }
-    // FLY_APP_NAME is intentionally NOT accepted as a fallback here — workspace
-    // machines must live in their own dedicated Fly app, not the API server's app.
     if (!process.env["FLY_WORKSPACE_APP_NAME"]) {
       missingSecrets.push(
         "FLY_WORKSPACE_APP_NAME — name of the dedicated Fly app for workspace machines (e.g. mizi-workspace). " +
-        "FLY_APP_NAME is NOT accepted as a substitute (workspace and API machines must be isolated). " +
         "Create: flyctl apps create mizi-workspace  " +
         "Set: fly secrets set --app mizi-api FLY_WORKSPACE_APP_NAME=mizi-workspace"
       );
@@ -45,6 +53,24 @@ router.get("/healthz", (_req, res) => {
       status: "degraded",
       error: "One or more required secrets are missing — NIM workspace provisioning will fail",
       missingSecrets,
+    });
+    return;
+  }
+
+  let dbStatus = "ok";
+  try {
+    if (typeof pool?.query === "function") {
+      await pool.query("SELECT 1");
+    }
+  } catch {
+    dbStatus = "error";
+  }
+
+  if (dbStatus !== "ok") {
+    res.status(503).json({
+      status: "degraded",
+      error: "Database connectivity check failed",
+      db: dbStatus,
     });
     return;
   }

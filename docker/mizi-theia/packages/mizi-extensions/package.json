@@ -1,0 +1,124 @@
+{
+  "name": "@mizi/theia-extensions",
+  "version": "1.0.0",
+  "description": "MIZI AI extensions for Eclipse Theia",
+  "keywords": ["theia-extension"],
+  "license": "MIT",
+  "dependencies": {
+    "@theia/core": "^1.72.3",
+    "@theia/ai-core": "^1.72.3",
+    "@theia/ai-chat-ui": "^1.72.3",
+    "@theia/ai-history": "^1.72.3",
+    "@theia/ai-mcp": "^1.72.3",
+    "@theia/task": "^1.72.3",
+    "@theia/ai-code-completion": "^1.72.3",
+    "@theia/ai-terminal": "^1.72.3",
+    "@theia/editor": "^1.72.3",
+    "@theia/scm": "^1.72.3"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/mizi-token-mode/frontend-contribution",
+      "frontendElectron": "lib/mizi-token-mode/frontend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-phase-selector/frontend-contribution",
+      "frontendElectron": "lib/mizi-phase-selector/frontend-contribution"
+    },
+    {
+      "backend": "lib/mizi-repo-context-provider/backend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-plan-view/frontend-contribution",
+      "frontendElectron": "lib/mizi-plan-view/frontend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-memory-panel/frontend-contribution",
+      "frontendElectron": "lib/mizi-memory-panel/frontend-contribution"
+    },
+    {
+      "backend": "lib/mizi-memory-bridge/backend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-ambient-panel/frontend-contribution",
+      "frontendElectron": "lib/mizi-ambient-panel/frontend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-ai-palette/frontend-contribution",
+      "frontendElectron": "lib/mizi-ai-palette/frontend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-design-context/frontend-contribution",
+      "frontendElectron": "lib/mizi-design-context/frontend-contribution",
+      "backend": "lib/mizi-design-context/backend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-skills-view/frontend-contribution",
+      "frontendElectron": "lib/mizi-skills-view/frontend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-repo-index-status/frontend-contribution",
+      "frontendElectron": "lib/mizi-repo-index-status/frontend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-snapshot-rollback/frontend-contribution",
+      "frontendElectron": "lib/mizi-snapshot-rollback/frontend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-lane-coordinator/frontend-contribution",
+      "frontendElectron": "lib/mizi-lane-coordinator/frontend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-session-status-bar/frontend-contribution",
+      "frontendElectron": "lib/mizi-session-status-bar/frontend-contribution"
+    },
+    {
+      "backend": "lib/mizi-nim-provider/backend-contribution"
+    },
+    {
+      "backend": "lib/mizi-mcp-server/backend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-git-lanes/frontend-contribution",
+      "frontendElectron": "lib/mizi-git-lanes/frontend-contribution"
+    },
+    {
+      "backend": "lib/mizi-claw-runner/backend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-claw-runner/frontend-contribution",
+      "frontendElectron": "lib/mizi-claw-runner/frontend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-vllm-manager/frontend-contribution",
+      "frontendElectron": "lib/mizi-vllm-manager/frontend-contribution",
+      "backend": "lib/mizi-vllm-manager/backend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-metrics-contributor/frontend-contribution",
+      "frontendElectron": "lib/mizi-metrics-contributor/frontend-contribution",
+      "backend": "lib/mizi-metrics-contributor/backend-contribution"
+    },
+    {
+      "backend": "lib/mizi-doctrine-prompt/backend-contribution"
+    },
+    {
+      "backend": "lib/mizi-agent-workflows/backend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-language-tasks/backend-contribution",
+      "frontendElectron": "lib/mizi-language-tasks/backend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-working-state/backend-contribution",
+      "frontendElectron": "lib/mizi-working-state/backend-contribution"
+    },
+    {
+      "frontend": "lib/mizi-skill-feedback/frontend-contribution",
+      "frontendElectron": "lib/mizi-skill-feedback/frontend-contribution"
+    },
+    {
+      "backend": "lib/mizi-terminal-ops/backend-contribution"
+    }
+  ]
+}

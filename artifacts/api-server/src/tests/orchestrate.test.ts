@@ -26,7 +26,7 @@ vi.mock("../services/vastai", () => ({
   createInstance: vi.fn().mockResolvedValue({ new_contract: 9900, expected_price: 0.35 }),
   destroyInstance: vi.fn().mockResolvedValue({}),
   getInstance: vi.fn().mockResolvedValue({ actual_status: "running", status_msg: "llm_ready", dph_total: 0.35 }),
-  buildInstanceUrls: vi.fn().mockReturnValue({ codeServerUrl: "http://mock-host:8080", boltDiyUrl: null, previewUrl: null, sshHost: "mock-host", sshPort: 22, publicIp: "1.2.3.4" }),
+  buildInstanceUrls: vi.fn().mockReturnValue({ theiaUrl: "http://mock-host:8080", previewUrl: null, sshHost: "mock-host", sshPort: 22, publicIp: "1.2.3.4" }),
   buildOnStartScript: vi.fn().mockReturnValue("#!/bin/bash\necho mocked"),
 }));
 
@@ -620,7 +620,7 @@ describe("GET /api/sessions/:id/orchestration-status", () => {
 
   it("returns 'ready' or 'provisioning' status when bootPhase is ready (depends on bridge connections)", async () => {
     await db.update(sessionsTable)
-      .set({ status: "ready", statusMessage: "Session is ready — vLLM online", codeServerUrl: "http://mock:8080" })
+      .set({ status: "ready", statusMessage: "Session is ready — vLLM online", theiaUrl: "http://mock:8080" })
       .where(eq(sessionsTable.id, pollingSessionId));
 
     const res = await request(app).get(`/api/sessions/${pollingSessionId}/orchestration-status`);

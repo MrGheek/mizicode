@@ -20,12 +20,11 @@
 # via LiteLLM proxy — the heavy lifting is done by the NIM API, not the machine.
 #
 # Services started by onstart.sh:
-#   code-server   — browser IDE on port 8080
+#   theia         — Eclipse Theia IDE on port 8080
 #   claw-runner   — Claw Runner agent loop (Node.js, port 5181)
 #   claw-bridge   — real-time bridge to the API server (WebSocket)
-#   bolt.diy      — AI web IDE frontend (port 5180)
 #   nginx         — reverse proxy and auth gate
-#   litellm       — OpenAI/Anthropic proxy → NIM API (port 8081)
+#   nim-proxy     — OpenAI-compatible proxy → NIM API (port 8081)
 # ───────────────────────────────────────────────────────────────────────────────
 
 ARG UBUNTU_VERSION=22.04
@@ -86,36 +85,15 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     npm install -g pnpm@9 && \
     rm -rf /var/lib/apt/lists/*
 
-# code-server (VS Code in the browser)
-RUN curl -fsSL https://code-server.dev/install.sh | sh
-
-# bolt.diy (AI web IDE frontend served on port 5180)
-# Pinned to a known-good commit to keep builds deterministic.
-# Verified: 2026-05-21 — commit 2e254ac passes the vite.config.ts patch assertion.
-# To upgrade: update the SHA below, rebuild, confirm the grep -q 'allowedHosts' check
-# still passes, and update this comment with the new date/SHA.
-RUN git clone https://github.com/stackblitz-labs/bolt.diy /opt/bolt-diy && \
-    cd /opt/bolt-diy && \
-    git checkout 2e254ac19a696394030601bc602f54945b12bfc4 && \
-    pnpm install --frozen-lockfile || pnpm install
-
-# Patch vite.config.ts at build time so Vite always allows .fly.dev hosts.
-# Uses an external script to avoid shell-escaping issues with inline node -e "...".
-COPY docker/bolt-vite-patch.mjs /opt/bolt-vite-patch.mjs
-RUN node /opt/bolt-vite-patch.mjs && \
-    grep -q 'allowedHosts' /opt/bolt-diy/vite.config.ts || \
-    (echo 'ERROR: bolt-vite-patch.mjs did not write allowedHosts — build aborted' && exit 1)
-
-# Pre-build bolt.diy for fast production startup.
-# Without this, pnpm run dev compiles the entire TypeScript codebase on-demand on the
-# first browser request — taking 2-4 min on performance-1x, showing a blank black screen.
-# Building here means the production server starts instantly and serves pre-compiled assets.
-# SKIP_ENV_VALIDATION=1 suppresses the LLM API check at build time (those are runtime vars).
-RUN cd /opt/bolt-diy && \
-    NODE_ENV=production \
-    SKIP_ENV_VALIDATION=1 \
-    NODE_OPTIONS="--max-old-space-size=3072" \
-    pnpm run build
+# Theia IDE (pre-built, downloaded from GH Actions artifact)
+# Built by .github/workflows/build-theia.yml.
+# THEIA_ARTIFACT_URL should point to a GitHub release or actions artifact URL.
+# Example: https://github.com/gheeklabs/mizi/releases/download/theia/latest.tar.gz
+ARG THEIA_ARTIFACT_URL=https://github.com/gheeklabs/mizi/releases/download/theia/latest.tar.gz
+RUN curl -fsSL "${THEIA_ARTIFACT_URL}" -o /tmp/mizi-theia.tar.gz && \
+    mkdir -p /opt/mizi-theia && \
+    tar xzf /tmp/mizi-theia.tar.gz -C /opt/mizi-theia/ && \
+    rm /tmp/mizi-theia.tar.gz
 
 # Claw binary from stage 1
 COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw
@@ -140,6 +118,6 @@ RUN chmod +x /opt/onstart.sh
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -sf http://localhost:8081/health/liveliness || exit 1
 
-EXPOSE 5180 5181 8080 8081 3000 22
+EXPOSE 8080 8081 5181 22
 
 CMD ["/opt/onstart.sh"]

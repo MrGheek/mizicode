@@ -15,6 +15,7 @@ import schemaTemplatesRouter from "./schema-templates";
 import planRouter from "./plan";
 import toolsRouter from "./tools";
 import snapshotsRouter from "./snapshots";
+import metricsRouter from "./metrics";
 import localRouter from "./local";
 
 // ─── Distribution guard ───────────────────────────────────────────────────────
@@ -71,6 +72,7 @@ router.use(intentRouter);
 router.use(schemaTemplatesRouter);
 router.use(planRouter);
 router.use(toolsRouter);
+router.use(metricsRouter);
 router.use(snapshotsRouter);
 
 if (IS_LOCAL_DISTRIBUTION) {
