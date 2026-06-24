@@ -1,3 +1,5 @@
+## v0.13.2 — 2026-06-24\n\n- fix: use ubuntu-latest runner for Build MIZI Theia workflow (cda3548)\n
+
 ## v0.13.1 — 2026-06-24\n\n- Phase 5d: 20 Theia extensions + skills deep integration (2b1a1b5)
 - Automatically add new models from NVIDIA's API to the catalog (765c8d1)
 - Add a system to remove outdated model options from the catalog (5ca6525)
