@@ -5,9 +5,11 @@ on:
     branches: [main]
     paths:
       - "docker/mizi-theia/**"
+      - ".github/workflows/build-theia.yml"
   pull_request:
     paths:
       - "docker/mizi-theia/**"
+      - ".github/workflows/build-theia.yml"
   workflow_dispatch:
 
 concurrency:
