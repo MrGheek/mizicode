@@ -43,6 +43,12 @@ export const HandoffLaneCommand: Command = {
   label: "MIZI: Handoff Lane to PR",
 };
 
+export const ManageLaneTypesCommand: Command = {
+  id: "mizi.lane.manage-types",
+  label: "MIZI: Manage Lane Types",
+  category: "MIZI",
+};
+
 @injectable()
 export class MiziLaneCoordinatorContribution implements FrontendApplicationContribution, CommandContribution {
   @inject(StatusBar) protected readonly statusBar: StatusBar;
@@ -78,6 +84,9 @@ export class MiziLaneCoordinatorContribution implements FrontendApplicationContr
     });
     commands.registerCommand(HandoffLaneCommand, {
       execute: () => this.handoffLane(),
+    });
+    commands.registerCommand(ManageLaneTypesCommand, {
+      execute: () => this.manageLaneTypes(),
     });
   }
 
@@ -188,6 +197,50 @@ export class MiziLaneCoordinatorContribution implements FrontendApplicationContr
         this.msg.info(`Handoff complete${data.prUrl ? `: ${data.prUrl}` : ""}`);
       } else {
         this.msg.error(`Handoff failed: ${await resp.text()}`);
+      }
+    } catch (err) {
+      this.msg.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private async manageLaneTypes(): Promise<void> {
+    try {
+      const resp = await fetch(`${MIZI_API_BASE}/api/lanes/types`);
+      if (!resp.ok) { this.msg.warn("Lane types unavailable"); return; }
+      const types = (await resp.json()) as Array<{ id: string; name: string; description: string; defaultStatus: string }>;
+      if (!Array.isArray(types)) {
+        this.msg.info("No lane types defined");
+        return;
+      }
+      const items = types.map((t) => ({
+        label: t.name,
+        description: t.defaultStatus,
+        detail: t.description,
+      }));
+      const picked = await this.quickInput.pick(items, { placeHolder: "Lane Types (select to create new)" });
+      if (!picked) {
+        // Offer to create new lane type
+        const inputBox = this.quickInput.createInputBox();
+        inputBox.title = "Create New Lane Type";
+        inputBox.placeholder = "lane-type-name:description:defaultStatus";
+        inputBox.ignoreFocusOut = true;
+        inputBox.onDidAccept(async () => {
+          const val = inputBox.value.trim();
+          inputBox.dispose();
+          if (!val) return;
+          const parts = val.split(":");
+          const createResp = await fetch(`${MIZI_API_BASE}/api/lanes/types`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: parts[0], description: parts[1] ?? "", defaultStatus: parts[2] ?? "pending" }),
+          });
+          if (createResp.ok) {
+            this.msg.info(`Lane type "${parts[0]}" created`);
+          } else {
+            this.msg.error(`Failed to create lane type: ${await createResp.text()}`);
+          }
+        });
+        inputBox.show();
       }
     } catch (err) {
       this.msg.error(`Error: ${err instanceof Error ? err.message : String(err)}`);

@@ -54,3 +54,16 @@ Thumbs.db
 # Memory SQLite databases
 .memory-data/
 **/.memory-data/
+
+# Local screenshot / reference blobs — not part of the build
+attached_assets/
+
+# Environment files — keep .env.example tracked, ignore actual secrets
+.env
+.env.local
+.env.production
+artifacts/*/.env
+artifacts/*/.env.local
+
+# Local machine config — browser crash dumps, Docker state, etc.
+.config/

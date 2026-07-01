@@ -8,9 +8,9 @@ import {
   ResolvedAIVariable,
   AIContextVariable,
 } from "@theia/ai-core/lib/common/variable-service";
-import { AISymbol, TechStackEntry, RepoGraphResponse } from "./types";
+import { AISymbol, RepoGraphResponse } from "./types";
 
-const MIZI_API_BASE = process.env.MIZI_API_BASE || "http://localhost:3000";
+const MIZI_API_BASE = process.env.MIZI_API_BASE || "";
 
 @injectable()
 export class MiziRepoContextProviderContribution implements AIVariableContribution, AIVariableResolver {
@@ -18,14 +18,13 @@ export class MiziRepoContextProviderContribution implements AIVariableContributi
   protected readonly variableService: AIVariableService;
 
   private symbolGraph: AISymbol[] = [];
-  private techStack: TechStackEntry[] = [];
   private lastRefresh = 0;
   private readonly refreshIntervalMs = 60_000;
 
   readonly variable: AIContextVariable = {
     id: "mizi_repo_context",
     name: "mizi_repo_context",
-    description: "Repository symbol graph and tech stack",
+    description: "Repository symbol graph",
     isContextVariable: true,
     label: "Repo Context",
   };
@@ -52,25 +51,13 @@ export class MiziRepoContextProviderContribution implements AIVariableContributi
     }
 
     const parts: string[] = [];
-    if (this.techStack.length > 0) {
-      parts.push("## Tech Stack\n");
-      for (const entry of this.techStack) {
-        parts.push(`- ${entry.framework} ${entry.version ?? ""} (${entry.category})`);
-      }
-      parts.push("");
-    }
     if (this.symbolGraph.length > 0) {
       parts.push(`## Symbol Graph (${this.symbolGraph.length} symbols)\n`);
-      const sorted = [...this.symbolGraph].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0));
-      const top = sorted.slice(0, 50);
-      for (const sym of top) {
-        const deps = sym.relations && sym.relations.length > 0
-          ? ` depends_on: ${sym.relations.map((r) => r.target).join(", ")}`
-          : "";
-        parts.push(`- ${sym.kind} \`${sym.name}\` in ${sym.filePath}:${sym.line}${deps}`);
+      for (const sym of this.symbolGraph.slice(0, 50)) {
+        parts.push(`- ${sym.kind} \`${sym.name}\` in ${sym.filePath}:${sym.line}`);
       }
-      if (sorted.length > 50) {
-        parts.push(`\n_… and ${sorted.length - 50} more symbols_`);
+      if (this.symbolGraph.length > 50) {
+        parts.push(`\n_… and ${this.symbolGraph.length - 50} more symbols_`);
       }
       parts.push("");
     }
@@ -88,7 +75,6 @@ export class MiziRepoContextProviderContribution implements AIVariableContributi
       if (!resp.ok) return;
       const data = (await resp.json()) as RepoGraphResponse;
       this.symbolGraph = data.symbols ?? [];
-      this.techStack = data.techStack ?? [];
       this.lastRefresh = Date.now();
     } catch {
       // Silent

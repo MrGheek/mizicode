@@ -26,7 +26,9 @@
       "frontendElectron": "lib/mizi-phase-selector/frontend-contribution"
     },
     {
-      "backend": "lib/mizi-repo-context-provider/backend-contribution"
+      "frontend": "lib/mizi-repo-context-provider/frontend-module",
+      "frontendElectron": "lib/mizi-repo-context-provider/frontend-module",
+      "backend": "lib/mizi-repo-context-provider/module"
     },
     {
       "frontend": "lib/mizi-plan-view/frontend-contribution",
@@ -37,7 +39,7 @@
       "frontendElectron": "lib/mizi-memory-panel/frontend-contribution"
     },
     {
-      "backend": "lib/mizi-memory-bridge/backend-contribution"
+      "backend": "lib/mizi-memory-bridge/module"
     },
     {
       "frontend": "lib/mizi-ambient-panel/frontend-contribution",
@@ -50,7 +52,7 @@
     {
       "frontend": "lib/mizi-design-context/frontend-contribution",
       "frontendElectron": "lib/mizi-design-context/frontend-contribution",
-      "backend": "lib/mizi-design-context/backend-contribution"
+      "backend": "lib/mizi-design-context/backend-module"
     },
     {
       "frontend": "lib/mizi-skills-view/frontend-contribution",
@@ -73,17 +75,24 @@
       "frontendElectron": "lib/mizi-session-status-bar/frontend-contribution"
     },
     {
-      "backend": "lib/mizi-nim-provider/backend-contribution"
+      "frontend": "lib/mizi-nim-provider/frontend-contribution",
+      "frontendElectron": "lib/mizi-nim-provider/frontend-contribution",
+      "backend": "lib/mizi-nim-provider/backend-module"
     },
     {
-      "backend": "lib/mizi-mcp-server/backend-contribution"
+      "frontend": "lib/mizi-local-config/frontend-contribution",
+      "frontendElectron": "lib/mizi-local-config/frontend-contribution",
+      "backend": "lib/mizi-local-config/backend-module"
+    },
+    {
+      "backend": "lib/mizi-mcp-server/module"
     },
     {
       "frontend": "lib/mizi-git-lanes/frontend-contribution",
       "frontendElectron": "lib/mizi-git-lanes/frontend-contribution"
     },
     {
-      "backend": "lib/mizi-claw-runner/backend-contribution"
+      "backend": "lib/mizi-claw-runner/module"
     },
     {
       "frontend": "lib/mizi-claw-runner/frontend-contribution",
@@ -92,18 +101,18 @@
     {
       "frontend": "lib/mizi-vllm-manager/frontend-contribution",
       "frontendElectron": "lib/mizi-vllm-manager/frontend-contribution",
-      "backend": "lib/mizi-vllm-manager/backend-contribution"
+      "backend": "lib/mizi-vllm-manager/backend-module"
     },
     {
       "frontend": "lib/mizi-metrics-contributor/frontend-contribution",
       "frontendElectron": "lib/mizi-metrics-contributor/frontend-contribution",
-      "backend": "lib/mizi-metrics-contributor/backend-contribution"
+      "backend": "lib/mizi-metrics-contributor/backend-module"
     },
     {
-      "backend": "lib/mizi-doctrine-prompt/backend-contribution"
+      "backend": "lib/mizi-doctrine-prompt/module"
     },
     {
-      "backend": "lib/mizi-agent-workflows/backend-contribution"
+      "backend": "lib/mizi-agent-workflows/module"
     },
     {
       "frontend": "lib/mizi-language-tasks/backend-contribution",
@@ -118,7 +127,7 @@
       "frontendElectron": "lib/mizi-skill-feedback/frontend-contribution"
     },
     {
-      "backend": "lib/mizi-terminal-ops/backend-contribution"
+      "backend": "lib/mizi-terminal-ops/module"
     }
   ]
 }

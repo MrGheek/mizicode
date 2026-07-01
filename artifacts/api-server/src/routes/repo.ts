@@ -1150,4 +1150,51 @@ interface RepoSyncPayload {
   errorDetails?: string;
 }
 
+// ─── /api/repo/graph ─────────────────────────────────────────────────────────────
+// Standalone endpoint: returns the latest indexed repo graph (symbols + edges)
+// without requiring a session ID. Used by the Theia extension's hierarchy panels.
+
+export const repoGraphRouter = Router();
+
+repoGraphRouter.get("/graph", async (req, res) => {
+  try {
+    const [row] = await db
+      .select({
+        symbolsJson: sessionRepoContextTable.symbolsJson,
+        edgesJson: sessionRepoContextTable.edgesJson,
+        indexedAt: sessionRepoContextTable.indexedAt,
+      })
+      .from(sessionRepoContextTable)
+      .where(eq(sessionRepoContextTable.indexStatus, "completed"))
+      .orderBy(desc(sessionRepoContextTable.updatedAt))
+      .limit(1);
+
+    if (!row) {
+      res.json({ symbols: [], edges: [] });
+      return;
+    }
+
+    const rawSymbols: RepoSymbolRaw[] = (row.symbolsJson ?? []) as RepoSymbolRaw[];
+    const rawEdges: RepoEdgeRaw[] = (row.edgesJson ?? []) as RepoEdgeRaw[];
+
+    res.json({
+      symbols: rawSymbols.map(s => ({
+        name: s.name ?? "",
+        kind: s.kind ?? "unknown",
+        filePath: s.path ?? "",
+        line: s.line ?? 0,
+        callers: s.callers ?? [],
+        callees: s.callees ?? [],
+      })),
+      edges: rawEdges.map(e => ({
+        from: e.from ?? "",
+        to: e.to ?? "",
+      })),
+    });
+  } catch (err) {
+    logger.warn({ err }, "GET /api/repo/graph failed");
+    res.json({ symbols: [], edges: [] });
+  }
+});
+
 export default router;

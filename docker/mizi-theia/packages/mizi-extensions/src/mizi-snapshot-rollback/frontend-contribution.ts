@@ -1,8 +1,11 @@
 import { injectable, inject } from "@theia/core/shared/inversify";
 import { FrontendApplicationContribution } from "@theia/core/lib/browser/frontend-application-contribution";
 import { CommandContribution, CommandRegistry, Command } from "@theia/core/lib/common/command";
+import { WidgetManager } from "@theia/core/lib/browser/widget-manager";
+import { ApplicationShell } from "@theia/core/lib/browser/shell/application-shell";
 import { MessageService } from "@theia/core/lib/common/message-service";
 import { QuickInputService } from "@theia/core/lib/browser";
+import { SnapshotListWidget } from "./snapshot-list-widget";
 
 const MIZI_API_BASE =
   typeof window !== "undefined" &&
@@ -26,10 +29,17 @@ export const RollbackToSnapshotCommand: Command = {
   label: "MIZI: Rollback to Snapshot…",
 };
 
+export const OpenSnapshotsListCommand: Command = {
+  id: "mizi.snapshot.open-list",
+  label: "MIZI: Show Snapshots",
+};
+
 @injectable()
 export class MiziSnapshotRollbackContribution implements FrontendApplicationContribution, CommandContribution {
   @inject(MessageService) protected readonly msg: MessageService;
   @inject(QuickInputService) protected readonly quickInput: QuickInputService;
+  @inject(WidgetManager) protected readonly widgetManager: WidgetManager;
+  @inject(ApplicationShell) protected readonly shell: ApplicationShell;
 
   onStart(): void {}
 
@@ -40,6 +50,17 @@ export class MiziSnapshotRollbackContribution implements FrontendApplicationCont
     commands.registerCommand(RollbackToSnapshotCommand, {
       execute: () => this.rollback(),
     });
+    commands.registerCommand(OpenSnapshotsListCommand, {
+      execute: () => this.openSnapshotsWidget(),
+    });
+  }
+
+  private async openSnapshotsWidget(): Promise<void> {
+    const widget = await this.widgetManager.getOrCreateWidget(SnapshotListWidget.FACTORY_ID);
+    if (!widget.isAttached) {
+      this.shell.addWidget(widget, { area: 'right' });
+    }
+    this.shell.activateWidget(widget.id);
   }
 
   private async listSnapshots(): Promise<void> {

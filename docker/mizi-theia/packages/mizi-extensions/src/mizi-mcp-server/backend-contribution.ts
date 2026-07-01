@@ -1,7 +1,7 @@
 import { injectable, postConstruct, inject } from "@theia/core/shared/inversify";
 import { ToolInvocationRegistry } from "@theia/ai-core/lib/common/tool-invocation-registry";
 
-const MIZI_API_BASE = process.env.MIZI_API_BASE || "http://localhost:3000";
+const MIZI_API_BASE = process.env.MIZI_API_BASE || "";
 
 interface MCPToolDef {
   name: string;

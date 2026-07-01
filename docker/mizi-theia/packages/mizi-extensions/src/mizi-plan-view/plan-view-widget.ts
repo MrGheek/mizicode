@@ -51,6 +51,19 @@ export class PlanViewWidget extends Widget {
     this.connectSSE();
   }
 
+  async loadPlan(planId: string): Promise<void> {
+    try {
+      const resp = await fetch(`${MIZI_API_BASE}/api/plan/${planId}`);
+      if (resp.ok) {
+        this.board = (await resp.json()) as PlanBoardState;
+        this.render();
+        this.onDidChangeEmitter.fire();
+      }
+    } catch {
+      this.msg.warn("Failed to load plan");
+    }
+  }
+
   dispose(): void {
     this.disconnectSSE();
     super.dispose();

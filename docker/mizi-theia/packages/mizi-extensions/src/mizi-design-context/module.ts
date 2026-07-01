@@ -7,7 +7,7 @@ import { MiziDesignContextContribution } from "./frontend-contribution";
 import { DesignContextWidget } from "./design-context-widget";
 import { MiziDesignContextProvider } from "./backend-contribution";
 
-export const miziDesignContextModule = new ContainerModule((bind) => {
+const miziDesignContextModule = new ContainerModule((bind) => {
   bind(DesignContextWidget).toSelf();
   bind(WidgetFactory).toDynamicValue(() => ({
     id: DesignContextWidget.FACTORY_ID,
@@ -20,3 +20,5 @@ export const miziDesignContextModule = new ContainerModule((bind) => {
   bind(MiziDesignContextProvider).toSelf().inSingletonScope();
   bind(AIVariableContribution).toService(MiziDesignContextProvider);
 });
+export { miziDesignContextModule };
+export default miziDesignContextModule;

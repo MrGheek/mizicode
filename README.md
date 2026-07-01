@@ -1,7 +1,7 @@
 # MIZI Code
 
 A full-stack platform for spinning up GPU-powered AI coding sessions on Vast.ai.
-The system provisions remote GPU machines running Bolt.diy, llama.cpp with GGUF models, code-server (VS Code), and an nginx preview proxy.
+The system provisions remote GPU machines running Theia IDE, vLLM with GGUF models, and an nginx preview proxy.
 
 ## Deploying to Fly.io
 
@@ -117,7 +117,7 @@ fly logs --app mizi-dashboard
 
 ## Local development
 
-See individual artifact READMEs. The project uses pnpm workspaces:
+See individual artifact READMEs. The project uses pnpm workspaces (the API server and dashboard). The Theia IDE is a separate npm project — see `docker/mizi-theia/`:
 
 ```bash
 pnpm install

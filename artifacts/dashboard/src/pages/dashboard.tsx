@@ -27,7 +27,7 @@ import {
   GitBranch, Eye, EyeOff, Zap, Cpu,
   ChevronDown, ChevronRight, RotateCcw, X, Globe,
   ClipboardList, Plus, Trash2, GripVertical,
-  Check, AlertTriangle,
+  Check, AlertTriangle, ExternalLink,
 } from "lucide-react";
 import { FaGithub as Github } from "react-icons/fa";
 import { SwarmPill } from "@/components/swarm-activity-panel";
@@ -1360,17 +1360,34 @@ function ActiveSessionBanner({ session, onView }: { session: Session; onView: ()
         </div>
       </div>
       <SwarmPill sessionId={session.id} isReady={session.status === "ready"} />
-      <button
-        onClick={onView}
-        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg shrink-0 transition-colors"
-        style={{
-          background: "var(--bg-glass-hover)", border: "1px solid var(--border-glass)",
-          color: "var(--text-primary)",
-        }}
-      >
-        <Terminal className="w-3.5 h-3.5" />
-        Open cockpit
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onView}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg shrink-0 transition-colors"
+          style={{
+            background: "var(--bg-glass-hover)", border: "1px solid var(--border-glass)",
+            color: "var(--text-primary)",
+          }}
+        >
+          <Terminal className="w-3.5 h-3.5" />
+          Open cockpit
+        </button>
+        {session.theiaUrl && (
+          <a
+            href={session.theiaUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg shrink-0 transition-colors"
+            style={{
+              background: "rgba(0,180,216,0.08)", border: "1px solid rgba(0,180,216,0.2)",
+              color: "var(--accent-cyan)",
+            }}
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            Open Theia
+          </a>
+        )}
+      </div>
     </div>
   );
 }
