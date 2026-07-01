@@ -3,8 +3,8 @@ export interface AISymbol {
   kind: string;
   filePath: string;
   line: number;
-  rank?: number;
-  relations?: Array<{ target: string; relation: string }>;
+  callers?: string[];
+  callees?: string[];
 }
 
 export interface TechStackEntry {
@@ -13,7 +13,12 @@ export interface TechStackEntry {
   category: string;
 }
 
+export interface RepoEdge {
+  from: string;
+  to: string;
+}
+
 export interface RepoGraphResponse {
-  symbols?: AISymbol[];
-  techStack?: TechStackEntry[];
+  symbols: AISymbol[];
+  edges: RepoEdge[];
 }

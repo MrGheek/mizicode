@@ -9,6 +9,15 @@ on:
   pull_request:
     paths:
       - "docker/**"
+  # Rebuild the workspace image every time the Theia IDE artifact is updated
+  # so the Docker image always contains the latest Theia build. Without this,
+  # a push that changes both docker/Dockerfile and docker/mizi-theia/ would
+  # trigger docker-build.yml and build-theia.yml in parallel — the Docker
+  # build would get the stale Theia artifact from the previous release.
+  workflow_run:
+    workflows: ["Build MIZI Theia"]
+    types:
+      - completed
 
 # Cancel in-progress runs for the same PR when a new commit arrives.
 # Push-to-main and manual runs use unique keys so they always complete.
@@ -19,6 +28,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Skip when triggered by the Theia build — only the workspace image needs
+    # rebuilding for Theia artifact changes. The base image is unaffected.
+    if: github.event_name != 'workflow_run'
     permissions:
       contents: read
       id-token: write

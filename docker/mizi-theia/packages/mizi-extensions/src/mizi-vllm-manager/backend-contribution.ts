@@ -1,7 +1,7 @@
 import { injectable, postConstruct } from "@theia/core/shared/inversify";
 import { BackendApplicationContribution } from "@theia/core/lib/node/backend-application";
 
-const MIZI_API_BASE = process.env.MIZI_API_BASE || "http://localhost:3000";
+const MIZI_API_BASE = process.env.MIZI_API_BASE || "";
 
 interface VLLMModel {
   id: string;

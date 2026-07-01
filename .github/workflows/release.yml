@@ -127,4 +127,5 @@ jobs:
           tag: ${{ steps.version.outputs.next }}
           name: ${{ steps.version.outputs.next }}
           generateReleaseNotes: true
+          allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}

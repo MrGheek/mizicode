@@ -1,4 +1,4 @@
-const MIZI_API_BASE = process.env.MIZI_API_BASE || "http://localhost:3000";
+const MIZI_API_BASE = process.env.MIZI_API_BASE || "";
 
 export interface OpsToolDef {
   name: string;

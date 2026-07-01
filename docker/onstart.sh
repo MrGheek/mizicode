@@ -24,15 +24,15 @@ set_status() {
 report_status() {
     local _phase="$1"
     local _msg="$2"
-    local _bolt_url="$3"
+    local _theia_url="$3"
     if [ -z "${MIZI_CALLBACK_URL:-}" ]; then
         return 0
     fi
     local _payload
-    if [ -n "$_bolt_url" ] && [ -n "$_msg" ]; then
-        _payload="{\"status\":\"${_phase}\",\"message\":\"${_msg}\",\"boltUrl\":\"${_bolt_url}\"}"
-    elif [ -n "$_bolt_url" ]; then
-        _payload="{\"status\":\"${_phase}\",\"boltUrl\":\"${_bolt_url}\"}"
+    if [ -n "$_theia_url" ] && [ -n "$_msg" ]; then
+        _payload="{\"status\":\"${_phase}\",\"message\":\"${_msg}\",\"theiaUrl\":\"${_theia_url}\"}"
+    elif [ -n "$_theia_url" ]; then
+        _payload="{\"status\":\"${_phase}\",\"theiaUrl\":\"${_theia_url}\"}"
     elif [ -n "$_msg" ]; then
         _payload="{\"status\":\"${_phase}\",\"message\":\"${_msg}\"}"
     else
@@ -570,11 +570,11 @@ log "Starting LLM backend in background..."
         # Build the bolt.diy public URL so the dashboard can surface the Preview tab.
         # FLY_APP_NAME is injected automatically by Fly.io into every machine in the app.
         # BOLT_PORT is set to 5180 at session creation so it matches the Fly service mapping.
-        _BOLT_URL=""
+        _THEIA_URL=""
         if [ -n "${FLY_APP_NAME:-}" ]; then
-            _BOLT_URL="https://${FLY_APP_NAME}.fly.dev:${BOLT_PORT:-5180}"
+            _THEIA_URL="https://${FLY_APP_NAME}.fly.dev:${BOLT_PORT:-5180}"
         fi
-        report_status "starting_llm" "Starting NIM proxy..." "$_BOLT_URL"
+        report_status "starting_llm" "Starting NIM proxy..." "$_THEIA_URL"
 
         # Write the initial LiteLLM config. The reload script (/opt/mizi/reload-model.sh)
         # rewrites this file and sends SIGHUP when a mid-session model switch is requested.

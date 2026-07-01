@@ -62,7 +62,6 @@ import { isTypingTarget } from "@/lib/shortcuts";
 import { TeamTab } from "@/components/team-tab";
 import { InferenceTab } from "@/components/inference-tab";
 import { PreviewTab } from "@/components/preview-tab";
-import { SnapshotsPanel } from "@/components/snapshots-panel";
 import { FilesTab } from "@/components/files-tab";
 import { SwarmActivityPanel, useSwarmStatus, swarmTabBadgeLabel, swarmTabIsActive, swarmTabShouldShow } from "@/components/swarm-activity-panel";
 import { GitHubBranchChip } from "@/components/github-branch-chip";
@@ -2589,15 +2588,15 @@ export default function SessionDetail() {
   const { toast } = useToast();
   const { pref: handoffNotifPref, setPref: setHandoffNotifPref, browserPermission } = useHandoffNotificationPref();
   const [notifPopoverOpen, setNotifPopoverOpen] = useState(false);
-  const lastDetailTabRef = useRef<"memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "preview" | "snapshots" | "files">("memory");
+  const lastDetailTabRef = useRef<"memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "preview" | "files">("memory");
   const queryClient = useQueryClient();
-  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm", "inference", "environment", "preview", "snapshots", "files"] as const;
-  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "snapshots" | "files" => {
+  const validTabs = ["overview", "memory", "smart-skills", "repo", "coordination", "team", "swarm", "inference", "environment", "preview", "files"] as const;
+  const resolveTab = (raw: string | null): "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "files" => {
     const settled = validTabs.includes(raw as typeof validTabs[number]) ? raw : "overview";
-    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "snapshots" | "files";
+    return (settled === "team" ? "coordination" : settled) as "overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "files";
   };
 
-  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "snapshots" | "files">(() => {
+  const [activeTab, setActiveTab] = useState<"overview" | "memory" | "smart-skills" | "repo" | "coordination" | "swarm" | "inference" | "environment" | "preview" | "files">(() => {
     const stored = sessionStorage.getItem(`session-tab-${id}`);
     const urlTab = new URLSearchParams(window.location.search).get("tab");
     const validStored = stored && (validTabs as readonly string[]).includes(stored) ? stored : null;
@@ -4256,12 +4255,14 @@ export default function SessionDetail() {
               >
                 <FolderTree className="w-3.5 h-3.5" /> Browse Files
               </button>
-              <button
-                onClick={() => { lastDetailTabRef.current = "snapshots"; setActiveTab("snapshots"); }}
+              <a
+                href={session.theiaUrl ? `${session.theiaUrl.replace(/\/$/, "")}/?command=mizi.snapshot.open-list` : "#"}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border/50 bg-secondary/40 text-muted-foreground hover:text-foreground hover:bg-secondary/70 transition-colors"
               >
-                <History className="w-3.5 h-3.5" /> Snapshots
-              </button>
+                <History className="w-3.5 h-3.5" /> Snapshots (Theia)
+              </a>
             </div>
           )}
         </>
@@ -4345,12 +4346,16 @@ export default function SessionDetail() {
                   <MonitorSmartphone className="w-3 h-3" /> Preview
                 </button>
               )}
-              <button
-                onClick={() => { lastDetailTabRef.current = "snapshots"; setActiveTab("snapshots"); }}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "snapshots" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
-              >
-                <History className="w-3 h-3" /> Snapshots
-              </button>
+              {session.theiaUrl && (
+                <a
+                  href={`${session.theiaUrl.replace(/\/$/, "")}/?command=mizi.snapshot.open-list`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all text-muted-foreground hover:text-foreground hover:bg-accent"
+                >
+                  <History className="w-3 h-3" /> Snapshots (Theia)
+                </a>
+              )}
               <button
                 onClick={() => { lastDetailTabRef.current = "files"; setActiveTab("files"); }}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${activeTab === "files" ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
@@ -4408,7 +4413,18 @@ export default function SessionDetail() {
               <EnvironmentTab sessionId={sessionId} />
             )}
             {activeTab === "snapshots" && (
-              <SnapshotsPanel sessionId={sessionId} />
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <History className="w-10 h-10 mb-4 text-muted-foreground/60" />
+                <p className="text-sm text-muted-foreground mb-2">Snapshots are now managed in Theia</p>
+                <p className="text-xs text-muted-foreground/60 mb-6">Use <code className="text-xs px-1 py-0.5 bg-muted rounded">MIZI: Show Snapshots</code> from the command palette in your workspace.</p>
+                {session.theiaUrl && (
+                  <a href={`${session.theiaUrl.replace(/\/$/, "")}/?command=mizi.snapshot.open-list`}
+                     target="_blank" rel="noopener noreferrer"
+                     className="text-xs font-medium text-primary hover:underline">
+                    Open in Theia →
+                  </a>
+                )}
+              </div>
             )}
             {activeTab === "files" && (
               <FilesTab

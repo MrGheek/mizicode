@@ -2,6 +2,13 @@ import { injectable, inject, postConstruct } from "@theia/core/shared/inversify"
 import { Widget } from "@theia/core/lib/browser/widgets/widget";
 import { MessageService } from "@theia/core/lib/common/message-service";
 
+interface GovernanceStats {
+  totalItems: number;
+  stalePercentage: number;
+  hitRate: number;
+  contradictions: number;
+}
+
 interface MemoryItem {
   id: string;
   content: string;
@@ -10,6 +17,12 @@ interface MemoryItem {
   timestamp: string;
   source: string;
   pinned: boolean;
+  sessionId?: string | null;
+}
+
+interface Session {
+  id: number;
+  label?: string;
 }
 
 type SortOrder = "relevance" | "recency";
@@ -28,8 +41,13 @@ export class MemoryPanelWidget extends Widget {
   @inject(MessageService) protected readonly msg: MessageService;
 
   private memories: MemoryItem[] = [];
+  private sessions: Session[] = [];
+  private governance: GovernanceStats | null = null;
   private sortOrder: SortOrder = "relevance";
+  private searchQuery = "";
+  private selectedSessionId = "";
   private sseAbortController: AbortController | null = null;
+  private searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     super();
@@ -44,21 +62,53 @@ export class MemoryPanelWidget extends Widget {
 
   @postConstruct()
   protected init(): void {
+    this.fetchSessions();
     this.fetchMemories();
+    this.fetchGovernance();
     this.connectSSE();
   }
 
   dispose(): void {
     this.sseAbortController?.abort();
+    if (this.searchTimeout) clearTimeout(this.searchTimeout);
     super.dispose();
+  }
+
+  private async fetchGovernance(): Promise<void> {
+    try {
+      const resp = await fetch(`${MIZI_API_BASE}/api/memory/governance-stats`);
+      if (resp.ok) {
+        this.governance = (await resp.json()) as GovernanceStats;
+        this.render();
+      }
+    } catch { /* ignore */ }
+  }
+
+  private async fetchSessions(): Promise<void> {
+    try {
+      const resp = await fetch(`${MIZI_API_BASE}/api/memory/sessions`);
+      if (resp.ok) {
+        this.sessions = (await resp.json()) as Session[];
+      }
+    } catch {
+      // Non-critical
+    }
   }
 
   private async fetchMemories(): Promise<void> {
     try {
-      const resp = await fetch(`${MIZI_API_BASE}/api/mem/observations?limit=50`);
+      let url = `${MIZI_API_BASE}/api/mem/observations?limit=50`;
+      if (this.searchQuery) {
+        url = `${MIZI_API_BASE}/api/mem/observations/search?q=${encodeURIComponent(this.searchQuery)}&limit=50`;
+      }
+      if (this.selectedSessionId) {
+        url += `${this.searchQuery ? "&" : ""}sessionId=${encodeURIComponent(this.selectedSessionId)}`;
+      }
+      const resp = await fetch(url);
       if (resp.ok) {
-        const data = (await resp.json()) as { observations: MemoryItem[] };
-        this.memories = (data.observations ?? []).map((m) => ({ ...m, pinned: false }));
+        const data = (await resp.json()) as { observations?: MemoryItem[]; results?: MemoryItem[] };
+        const items = data.observations ?? data.results ?? [];
+        this.memories = items.map((m) => ({ ...m, pinned: false }));
         this.sortMemories();
         this.render();
       }
@@ -115,9 +165,28 @@ export class MemoryPanelWidget extends Widget {
   }
 
   private render(): void {
+    const sessionOptions = `<option value="">All sessions</option>
+      ${this.sessions.map((s) => `<option value="${s.id}" ${this.selectedSessionId === String(s.id) ? "selected" : ""}>${this.escapeHtml(s.label || `Session #${s.id}`)}</option>`).join("")}`;
+
+    const gov = this.governance;
+    const govHtml = gov ? `<div style="display:flex;gap:10px;margin-bottom:6px;font-size:0.8em;color:var(--theia-descriptionForeground);flex-wrap:wrap">
+      <span>Total: ${gov.totalItems}</span>
+      <span>Hit rate: ${(gov.hitRate * 100).toFixed(0)}%</span>
+      <span style="color:${gov.stalePercentage > 20 ? "#f44747" : "#4ec9b0"}">Stale: ${gov.stalePercentage.toFixed(0)}%</span>
+      ${gov.contradictions > 0 ? `<span style="color:#dcdcaa">Conflicts: ${gov.contradictions}</span>` : ""}
+    </div>` : "";
+
     const headerHtml = `
+      ${govHtml}
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <span style="font-weight:600">Memories (${this.memories.length})</span>
+        <input data-search type="text" placeholder="Search memories…" value="${this.escapeHtml(this.searchQuery)}" style="
+          flex:1;min-width:120px;font-size:0.85em;
+          background:var(--theia-input-background);color:var(--theia-input-foreground);
+          border:1px solid var(--theia-input-border);border-radius:3px;padding:3px 6px;
+        ">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <span style="font-weight:600;font-size:0.9em">Memories (${this.memories.length})</span>
         <select data-sort style="
           font-size:0.85em;background:var(--theia-dropdown-background);
           color:var(--theia-dropdown-foreground);border:1px solid var(--theia-dropdown-border);
@@ -126,6 +195,11 @@ export class MemoryPanelWidget extends Widget {
           <option value="relevance" ${this.sortOrder === "relevance" ? "selected" : ""}>By Relevance</option>
           <option value="recency"   ${this.sortOrder === "recency"   ? "selected" : ""}>By Recency</option>
         </select>
+        <select data-session-filter style="
+          font-size:0.85em;background:var(--theia-dropdown-background);
+          color:var(--theia-dropdown-foreground);border:1px solid var(--theia-dropdown-border);
+          border-radius:3px;padding:2px 4px;max-width:140px;
+        ">${sessionOptions}</select>
       </div>
     `;
 
@@ -161,10 +235,24 @@ export class MemoryPanelWidget extends Widget {
     this.node.innerHTML = headerHtml + (itemsHtml || "<p style='color:var(--theia-descriptionForeground)'>No memories yet</p>");
 
     // Event delegation
+    this.node.querySelector("[data-search]")?.addEventListener("input", (e) => {
+      const val = (e.target as HTMLInputElement).value;
+      if (this.searchTimeout) clearTimeout(this.searchTimeout);
+      this.searchTimeout = setTimeout(() => {
+        this.searchQuery = val;
+        this.fetchMemories();
+      }, 300);
+    });
+
     this.node.querySelector("[data-sort]")?.addEventListener("change", (e) => {
       this.sortOrder = (e.target as HTMLSelectElement).value as SortOrder;
       this.sortMemories();
       this.render();
+    });
+
+    this.node.querySelector("[data-session-filter]")?.addEventListener("change", (e) => {
+      this.selectedSessionId = (e.target as HTMLSelectElement).value;
+      this.fetchMemories();
     });
 
     this.node.querySelectorAll("[data-action]").forEach((el) => {

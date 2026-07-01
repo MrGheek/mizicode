@@ -4,10 +4,12 @@ import { BackendApplicationContribution } from "@theia/core/lib/node/backend-app
 import { MiziMetricsContributorContribution } from "./backend-contribution";
 import { MiziMetricsFrontendContribution } from "./frontend-contribution";
 
-export const miziMetricsContributorModule = new ContainerModule((bind) => {
+const miziMetricsContributorModule = new ContainerModule((bind) => {
   bind(MiziMetricsFrontendContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(MiziMetricsFrontendContribution);
 
   bind(MiziMetricsContributorContribution).toSelf().inSingletonScope();
   bind(BackendApplicationContribution).toService(MiziMetricsContributorContribution);
 });
+export { miziMetricsContributorModule };
+export default miziMetricsContributorModule;

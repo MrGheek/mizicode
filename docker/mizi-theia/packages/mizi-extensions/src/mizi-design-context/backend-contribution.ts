@@ -9,7 +9,7 @@ import {
   AIContextVariable,
 } from "@theia/ai-core/lib/common/variable-service";
 
-const MIZI_API_BASE = process.env.MIZI_API_BASE || "http://localhost:3000";
+const MIZI_API_BASE = process.env.MIZI_API_BASE || "";
 
 interface DesignCategory {
   name: string;

@@ -5,7 +5,7 @@ import { BackendApplicationContribution } from "@theia/core/lib/node/backend-app
 import { MiziVLLMManagerContribution } from "./backend-contribution";
 import { MiziVLLMFrontendContribution } from "./frontend-contribution";
 
-export const miziVLLMManagerModule = new ContainerModule((bind) => {
+const miziVLLMManagerModule = new ContainerModule((bind) => {
   bind(MiziVLLMFrontendContribution).toSelf().inSingletonScope();
   bind(FrontendApplicationContribution).toService(MiziVLLMFrontendContribution);
   bind(CommandContribution).toService(MiziVLLMFrontendContribution);
@@ -13,3 +13,5 @@ export const miziVLLMManagerModule = new ContainerModule((bind) => {
   bind(MiziVLLMManagerContribution).toSelf().inSingletonScope();
   bind(BackendApplicationContribution).toService(MiziVLLMManagerContribution);
 });
+export { miziVLLMManagerModule };
+export default miziVLLMManagerModule;
