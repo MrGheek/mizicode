@@ -51,6 +51,11 @@
     "@theia/cli": "^1.72.3",
     "esbuild": "^0.25.0"
   },
+  "overrides": {
+    "glob@>=10.2.0 <10.5.0": "^10.5.0",
+    "dompurify": "^3.4.11",
+    "serialize-javascript": "^7.0.3"
+  },
   "scripts": {
     "build": "theia build",
     "start": "node src-gen/backend/server.js"
