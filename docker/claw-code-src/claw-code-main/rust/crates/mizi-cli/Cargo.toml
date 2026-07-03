@@ -1,0 +1,30 @@
+[package]
+name = "mizi-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "mizi"
+path = "src/main.rs"
+
+[dependencies]
+commands = { path = "../commands" }
+runtime = { path = "../runtime" }
+tools = { path = "../tools" }
+
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+dirs = "6"
+pulldown-cmark = "0.13"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rustyline = "15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+syntect = "5"
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "time"] }
+toml = "0.8"
+
+[lints]
+workspace = true
