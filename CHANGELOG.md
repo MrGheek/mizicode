@@ -1,3 +1,6 @@
+## vtheia.theia.1 — 2026-07-03\n\n- fix(mizi-cli): rebuild session/config handling on shared runtime types, fix clippy, add tests (6d34018)
+- chore: batch update — CI fixes, route docs, session tests, Theia extensions, cleanup (50168b6)\n
+
 ## v0.13.5 — 2026-06-24\n\n- fix: add workflow file to path trigger filter (496cf5b)\n
 
 ## v0.13.4 — 2026-06-24\n\n- fix: use semver tags for GitHub Actions (fixes hash resolution) (bb09ee5)
