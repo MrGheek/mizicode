@@ -84,6 +84,9 @@ enum ConfigAction {
         model: Option<String>,
         #[arg(long)]
         provider: Option<String>,
+        /// MIZI backend API base URL (e.g. <http://localhost:8080> for a local server)
+        #[arg(long = "api-base")]
+        api_base: Option<String>,
     },
 }
 
@@ -594,13 +597,20 @@ fn run_config_action(action: Option<ConfigAction>) {
                 }
             }
         }
-        ConfigAction::Set { model, provider } => {
+        ConfigAction::Set {
+            model,
+            provider,
+            api_base,
+        } => {
             let mut config = MiziConfig::load();
             if model.is_some() {
                 config.default_model = model;
             }
             if provider.is_some() {
                 config.default_provider = provider;
+            }
+            if let Some(api_base) = api_base {
+                config.api_base_url = api_base;
             }
             config.save();
             println!("[Config saved to {}]", MiziConfig::path().display());
@@ -699,14 +709,22 @@ mod tests {
             "gpt-4o-mini",
             "--provider",
             "https://example.com",
+            "--api-base",
+            "http://localhost:8080",
         ])
         .command
         {
             Some(Commands::Config {
-                action: Some(ConfigAction::Set { model, provider }),
+                action:
+                    Some(ConfigAction::Set {
+                        model,
+                        provider,
+                        api_base,
+                    }),
             }) => {
                 assert_eq!(model.as_deref(), Some("gpt-4o-mini"));
                 assert_eq!(provider.as_deref(), Some("https://example.com"));
+                assert_eq!(api_base.as_deref(), Some("http://localhost:8080"));
             }
             _ => panic!("expected config set"),
         }
