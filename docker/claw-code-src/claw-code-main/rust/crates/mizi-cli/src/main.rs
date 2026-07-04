@@ -16,6 +16,7 @@ use runtime::{ApiRequest, AssistantEvent, ContentBlock, ConversationMessage, Ses
 use tools::{execute_tool, mvp_tool_specs, ToolSpec};
 
 const DEFAULT_MODEL: &str = "gpt-4o";
+const DEFAULT_LLM_PROVIDER: &str = "https://api.openai.com";
 const DEFAULT_SYSTEM_PROMPT: &str = "You are MIZI, a terminal-native AI coding assistant. You have access to tools that let you read, write, and edit files, run shell commands, search the web, and more. Use them to help the user with their tasks. Think step by step before calling tools. When you have completed the task, summarize what you did.";
 
 // ── CLI ─────────────────────────────────────────────────────────────────
@@ -134,8 +135,9 @@ fn main() {
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 fn get_provider() -> String {
-    let config = MiziConfig::load();
-    config.default_provider.unwrap_or(config.api_base_url)
+    MiziConfig::load()
+        .default_provider
+        .unwrap_or_else(|| DEFAULT_LLM_PROVIDER.to_string())
 }
 
 fn get_api_key() -> String {
