@@ -279,11 +279,14 @@ impl OpenAiRuntimeClient {
         self.send_request(&body)
     }
 
+    fn chat_completions_url(&self) -> String {
+        let base = self.api_base.trim_end_matches('/');
+        let base = base.strip_suffix("/v1").unwrap_or(base);
+        format!("{base}/v1/chat/completions")
+    }
+
     fn send_request(&mut self, body: &Value) -> Result<Vec<AssistantEvent>, RuntimeError> {
-        let url = format!(
-            "{}/v1/chat/completions",
-            self.api_base.trim_end_matches('/')
-        );
+        let url = self.chat_completions_url();
 
         let response = self
             .client
@@ -412,6 +415,30 @@ impl ApiClient for OpenAiRuntimeClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn client_with_base(api_base: &str) -> OpenAiRuntimeClient {
+        OpenAiRuntimeClient::new(api_base.to_string(), "key".to_string(), "model".to_string())
+    }
+
+    #[test]
+    fn chat_completions_url_does_not_double_v1() {
+        assert_eq!(
+            client_with_base("http://localhost:11434").chat_completions_url(),
+            "http://localhost:11434/v1/chat/completions"
+        );
+        assert_eq!(
+            client_with_base("http://localhost:11434/v1").chat_completions_url(),
+            "http://localhost:11434/v1/chat/completions"
+        );
+        assert_eq!(
+            client_with_base("http://localhost:11434/v1/").chat_completions_url(),
+            "http://localhost:11434/v1/chat/completions"
+        );
+        assert_eq!(
+            client_with_base("https://api.openai.com/").chat_completions_url(),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
 
     fn sse(chunks: &[&str]) -> String {
         let mut body = String::new();
