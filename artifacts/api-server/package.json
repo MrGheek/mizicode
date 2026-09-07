@@ -13,7 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/ws": "^8.18.1",
     "@workspace/api-zod": "workspace:*",
@@ -24,11 +24,11 @@
     "cors": "^2",
     "drizzle-orm": "catalog:",
     "express": "^5",
-    "http-proxy-middleware": "^4.0.0",
+    "http-proxy-middleware": "^4.2.0",
     "pino": "^10",
     "pino-http": "^11",
-    "playwright": "^1.60.0",
-    "ws": "^8.21.0",
+    "playwright": "^1.62.1",
+    "ws": "^8.21.3",
     "zod": "catalog:"
   },
   "devDependencies": {
