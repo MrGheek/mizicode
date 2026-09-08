@@ -385,13 +385,13 @@ describe("Heavy Job Priority Scheduling Under Load", () => {
       .update(laneHeavyJobsTable)
       .set({
         status: "failed",
-        errorMessage: errorMsg,
+        errorDetails: errorMsg,
       })
       .where(eq(laneHeavyJobsTable.id, job.id));
 
     const [failed] = await db.select().from(laneHeavyJobsTable).where(eq(laneHeavyJobsTable.id, job.id));
     expect(failed.status).toBe("failed");
-    expect(failed.errorMessage).toContain("timeout");
+    expect(failed.errorDetails).toContain("timeout");
   });
 
   it("queries pending jobs efficiently (index on status, priority)", async () => {

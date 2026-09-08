@@ -387,7 +387,7 @@ describe("Team Member Session Setup & Nginx Path-Based Routing", () => {
       .from(laneClaimsTable)
       .where(
         and(
-          eq(laneClaimsTable.sessionId, sessionId),
+          inArray(laneClaimsTable.laneId, [lane1.id, lane2.id]),
           eq(laneClaimsTable.active, true),
         ),
       );

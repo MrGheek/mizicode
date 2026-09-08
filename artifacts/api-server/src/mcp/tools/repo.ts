@@ -48,23 +48,32 @@ export function registerRepoTools(server: McpServer): void {
   });
 
   server.registerTool("repo_search", {
-    description: "[Read] Search the indexed repo graph for files/symbols matching a query. Searches the session's repo edge graph for file paths and symbols that match the given query string.",
+    description: "[Read] Search the indexed repo graph for files/symbols/chunks using hybrid retrieval (lexical + semantic + graph centrality), then surface the PageRank dependency halo of the top hits. Returns ranked symbols with their snippets and `path:line` refs plus related files the task may touch.",
     inputSchema: z.object({
       sessionId: z.number().int().describe("Session ID"),
-      query: z.string().describe("Search query (file path fragment or symbol name)"),
+      query: z.string().describe("Search query (natural language, symbol name, or file path fragment)"),
       limit: z.number().int().min(1).max(50).optional().describe("Max results (default 10)"),
     }),
   }, async ({ sessionId, query, limit }) => {
     const maxResults = limit ?? 10;
 
+    // Lazy import avoids a static routes→mcp cycle; routes/repo already exports
+    // autoEnqueueRepoIndexIfNeeded for trigger_repo_index via the same pattern.
+    const { searchRepoContext, codeContextForTask } = await import("../../routes/repo.js");
+    const { pageRankFiles } = await import("../../services/repo-rank.js");
+
     const [repoCtx] = await db
-      .select({ edgesJson: sessionRepoContextTable.edgesJson })
+      .select({
+        edgesJson: sessionRepoContextTable.edgesJson,
+        filesJson: sessionRepoContextTable.filesJson,
+        indexStatus: sessionRepoContextTable.indexStatus,
+      })
       .from(sessionRepoContextTable)
       .where(eq(sessionRepoContextTable.sessionId, sessionId))
       .orderBy(desc(sessionRepoContextTable.updatedAt))
       .limit(1);
 
-    if (!repoCtx?.edgesJson) {
+    if (!repoCtx) {
       return {
         content: [{
           type: "text",
@@ -78,27 +87,23 @@ export function registerRepoTools(server: McpServer): void {
       };
     }
 
-    const edges = repoCtx.edgesJson as Array<{ from: string; to: string }>;
-    const lowerQuery = query.toLowerCase();
+    const search = await searchRepoContext(sessionId, query, { limit: maxResults });
+    const topPaths = search.results.slice(0, 8).map((r) => r.path).filter(Boolean);
 
-    const matchedPaths = new Set<string>();
-    for (const edge of edges) {
-      if (edge.from.toLowerCase().includes(lowerQuery)) matchedPaths.add(edge.from);
-      if (edge.to.toLowerCase().includes(lowerQuery)) matchedPaths.add(edge.to);
-      if (matchedPaths.size >= maxResults * 2) break;
-    }
+    // PageRank dependency halo seeded by the top hits: tells the model which
+    // files around the relevant symbols it is likely to need.
+    const ranks = pageRankFiles(
+      (repoCtx.edgesJson ?? []) as Array<{ from: string; to: string }>,
+      (repoCtx.filesJson ?? []) as Array<{ path?: string; centralityScore?: number; dependencyDegree?: number }>,
+      topPaths,
+    );
+    const relatedFiles = Array.from(ranks.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([path, score]) => ({ path, pageRank: Number(score.toFixed(4)) }));
 
-    const results = Array.from(matchedPaths).slice(0, maxResults).map((path) => {
-      const deps = edges
-        .filter((e) => e.from === path)
-        .map((e) => e.to)
-        .slice(0, 5);
-      const dependents = edges
-        .filter((e) => e.to === path)
-        .map((e) => e.from)
-        .slice(0, 5);
-      return { path, deps, dependents };
-    });
+    // Compact per-hit context for the LLM (declaration + path:line), budget ~1200 tokens.
+    const compact = await codeContextForTask(sessionId, query, { budgetTokens: 1200, topN: maxResults });
 
     return {
       content: [{
@@ -106,8 +111,19 @@ export function registerRepoTools(server: McpServer): void {
         text: JSON.stringify({
           sessionId,
           query,
-          results,
-          totalEdges: edges.length,
+          indexStatus: repoCtx.indexStatus || null,
+          results: search.results.slice(0, maxResults).map((r) => ({
+            type: r.type,
+            name: r.name,
+            kind: r.kind,
+            path: r.path,
+            line: r.line,
+            snippet: r.snippet,
+            score: Number(r.scores.combined.toFixed(4)),
+          })),
+          relatedFiles,
+          compactContext: compact,
+          total: search.total,
         }, null, 2),
       }],
     };

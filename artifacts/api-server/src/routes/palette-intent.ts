@@ -8,6 +8,10 @@ import {
   PALETTE_INTENT_VERSION,
 } from "../prompts/contracts";
 import { callLlm } from "../services/llm-client";
+import {
+  resolvePaletteCommandHeuristic,
+  type PaletteIntentResult,
+} from "../services/palette-resolution";
 
 const router = Router();
 
@@ -134,6 +138,24 @@ router.post("/palette/intent", async (req, res) => {
     ? (context.recentSessionIds as unknown[]).filter((x): x is number => typeof x === "number")
     : [];
 
+  // RFC 0001 Layer 1 (AVOID): common commands are resolved deterministically
+  // with zero LLM tokens. Only unparsable queries fall through to the LLM path.
+  const heuristic = resolvePaletteCommandHeuristic(query, {
+    route,
+    activeSessionId,
+    activeSessionStatus,
+    recentSessionIds,
+  });
+  if (heuristic) {
+    logger.info(
+      { query, ok: heuristic.ok, action: heuristic.action, sessionId: heuristic.payload?.sessionId ?? null, mode: "heuristic" },
+      "palette-intent: resolved heuristically (LLM skipped, 0 tokens)",
+    );
+    void persistIntent(PALETTE_USER_ID, query, heuristic);
+    res.json(heuristic);
+    return;
+  }
+
   try {
     // Fetch this user's recent successful intents to use as few-shot examples.
     // Filtered by PALETTE_USER_ID so no cross-user data leaks into the prompt.
@@ -181,7 +203,7 @@ router.post("/palette/intent", async (req, res) => {
       messages,
       max_tokens: 512,
       temperature: 0,
-      overrideModel: "meta/llama-3.1-8b-instruct",
+      taskClass: "cheap",
       promptVersion: PALETTE_INTENT_VERSION,
       logTag: "palette.intent",
     });

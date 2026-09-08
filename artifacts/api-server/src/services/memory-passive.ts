@@ -25,6 +25,9 @@ import {
   MEMORY_SIDECAR_VERIFY_VERSION,
 } from "../prompts/contracts";
 import { callLlm } from "./llm-client";
+import { isNearDuplicate } from "./task-relative-rerank";
+import { estimateMessageTokens } from "./token-budget";
+import { recordSaving } from "./token-accounting";
 
 const DATA_DIR = process.env["MEM_DATA_DIR"] || path.join(os.homedir(), "mizi-memory");
 const DB_PATH = path.join(DATA_DIR, "mem.db");
@@ -68,6 +71,15 @@ const BFS_MAX_DEPTH = 2;
 const BFS_FANOUT = 5;
 const SIDECAR_ACCEPT_THRESHOLD = 0.55;
 const RELATES_TO_AUTO_THRESHOLD = 0.75;
+
+// Confidence cascade bands (RFC 0001 Layer 1 AVOID / Layer 2 COMPRESS):
+//   - blended >= SIDECAR_ACCEPT_HIGH   → clear-accept, decided heuristically
+//   - blended <  SIDECAR_ACCEPT_LOW    → clear-reject, decided heuristically
+//   - otherwise                        → ambiguous, LLM consulted when enabled
+// This reserves the (small) sidecar LLM calls for genuinely uncertain recall
+// candidates instead of paying for every item.
+const SIDECAR_ACCEPT_HIGH = 0.78;
+const SIDECAR_ACCEPT_LOW = 0.40;
 
 export function passiveRecallGloballyEnabled(): boolean {
   return process.env["MIZI_MEM_PASSIVE_RECALL"] === "1";
@@ -336,7 +348,34 @@ export async function recordTurn(params: {
 
   // Embed asynchronously and persist on the same row.
   (async () => {
-    const emb = await embedText(params.content);
+    // RFC 0001 Layer 3 §11 — embedding dedupe: a turn that is a token-level
+    // near-duplicate of a previously embedded item reuses that stored vector
+    // instead of paying the embeddings API. Attributed to the savings ledger.
+    let emb: { vector: number[]; model: string } | null = null;
+    try {
+      const prev = db.prepare(`
+        SELECT mi.content, me.vector_json FROM mem_items mi
+        JOIN mem_embeddings me ON me.item_id = mi.id
+        WHERE mi.user_id = ? AND me.vector_json IS NOT NULL
+        ORDER BY mi.roi_score DESC, mi.id DESC
+        LIMIT 50
+      `).all(params.userId) as Array<{ content: string; vector_json: string }>;
+      const near = prev.find((r) => isNearDuplicate(params.content, r.content));
+      if (near) {
+        emb = { vector: JSON.parse(near.vector_json), model: "cached:near-duplicate" };
+        void recordSaving({
+          sessionId: null,
+          kind: "embedding_dedupe",
+          unit: "tokens",
+          amount: estimateMessageTokens([{ role: "user", content: params.content }]),
+          meta: { user: params.userId, reuseOf: params.content },
+        });
+      }
+    } catch (err) {
+      logger.debug({ err, turnId }, "[mem-passive] embedding dedupe lookup skipped");
+    }
+
+    if (!emb) emb = await embedText(params.content);
     if (!emb) return;
     try {
       db.prepare(`
@@ -470,7 +509,8 @@ export async function inferEdgesForNewItem(params: {
   }
 }
 
-/** Sidecar verifier: tries an LLM call when configured, otherwise heuristic. */
+/** Sidecar verifier: tries an LLM call when configured (and only for ambiguous
+ *  candidates), otherwise heuristic. */
 async function sidecarVerify(
   turnContent: string,
   candidate: { id: number; content: string; similarity: number },
@@ -479,15 +519,27 @@ async function sidecarVerify(
   const lexical = tfidfCosineSimilarity(turnContent, candidate.content);
   const blended = candidate.similarity * 0.7 + lexical * 0.3;
   const heuristicAccepted = blended >= SIDECAR_ACCEPT_THRESHOLD;
+  const band =
+    blended >= SIDECAR_ACCEPT_HIGH
+      ? "clear-accept"
+      : blended < SIDECAR_ACCEPT_LOW
+        ? "clear-reject"
+        : "ambiguous";
   const heuristic = {
     accepted: heuristicAccepted,
     score: blended,
     reason: heuristicAccepted
-      ? `heuristic: blended=${blended.toFixed(2)} (sim=${candidate.similarity.toFixed(2)}, lex=${lexical.toFixed(2)})`
-      : `heuristic-rejected: blended=${blended.toFixed(2)} below ${SIDECAR_ACCEPT_THRESHOLD}`,
+      ? `heuristic[${band}]: blended=${blended.toFixed(2)} (sim=${candidate.similarity.toFixed(2)}, lex=${lexical.toFixed(2)})`
+      : `heuristic[${band}]-rejected: blended=${blended.toFixed(2)} below ${SIDECAR_ACCEPT_THRESHOLD}`,
   };
 
   if (process.env["MIZI_MEM_RECALL_SIDECAR_LLM"] !== "1") {
+    return heuristic;
+  }
+
+  // LLM is an opt-in upgrade, reserved for the ambiguous band — clear accepts
+  // and clear rejects are decided with zero tokens (RFC 0001 Layer 1 AVOID).
+  if (band !== "ambiguous") {
     return heuristic;
   }
 
@@ -504,12 +556,17 @@ async function sidecarVerify(
     );
     // Route through the shared callLlm client so promptVersion is recorded
     // uniformly via the [llm-client] log contract on every call.
-    const model = process.env["MIZI_MEM_RECALL_SIDECAR_MODEL"] || "meta/llama-3.1-8b-instruct";
+    // An operator may pin a specific model; otherwise route as a cheap task so
+    // a live local Ollama daemon absorbs the load and the default is a hosted
+    // small model (RFC 0001 Layer 3 — cheapest adequate model).
+    const pinned = process.env["MIZI_MEM_RECALL_SIDECAR_MODEL"];
+    const memoryOverride = pinned && pinned.trim() ? { overrideModel: pinned.trim() } : {};
     const text = await callLlm({
       messages: renderMemorySidecarVerify(contractInput),
       max_tokens: 80,
       temperature: 0,
-      overrideModel: model,
+      taskClass: "cheap",
+      ...memoryOverride,
       promptVersion: MEMORY_SIDECAR_VERIFY_VERSION,
       logTag: "memory.sidecarVerify",
     });
@@ -520,7 +577,7 @@ async function sidecarVerify(
     return {
       accepted: !!parsed.relevant,
       score: parsed.relevant ? Math.max(blended, 0.6) : blended,
-      reason: `sidecar(${model}): ${parsed.reason || (parsed.relevant ? "accepted" : "rejected")}`,
+      reason: `sidecar(${pinned?.trim() || "routed"}): ${parsed.reason || (parsed.relevant ? "accepted" : "rejected")}`,
     };
   } catch (err) {
     logger.debug({ err }, "[mem-passive] sidecar LLM verify failed; falling back to heuristic");

@@ -31,6 +31,18 @@
 import { z } from "zod";
 import type { LlmMessage } from "../services/llm-client";
 
+// ─── Shared rendering helpers ─────────────────────────────────────────────────
+
+/**
+ * Wrap a graph-selected code-context block (RFC 0001 graph-gated slicing).
+ * Returns an empty string when no context is supplied so callers can inject it
+ * unconditionally without conditional prompt building.
+ */
+function renderCodeContextBlock(codeContext?: string): string {
+  if (!codeContext || codeContext.trim() === "") return "";
+  return `\n\nRelevant repository code context (graph-selected by task relevance, zero-cost slicing of the repo index):\n${codeContext}`;
+}
+
 // ─── plan.generate ────────────────────────────────────────────────────────────
 
 export const PLAN_GENERATE_SYSTEM = `You are MIZI, an AI project planner. Decompose a software development intent into 3–7 concrete, actionable steps.
@@ -60,7 +72,7 @@ Rules:
 - No markdown, no extra text — pure JSON only`;
 
 /** Semver-style version stamp. Bump manually when the system template above changes. */
-export const PLAN_GENERATE_VERSION = "plan.generate@1.0.0";
+export const PLAN_GENERATE_VERSION = "plan.generate@1.1.0";
 
 export const PlanGenerateInputSchema = z.object({
   intentText: z.string(),
@@ -76,6 +88,7 @@ export const PlanGenerateInputSchema = z.object({
     )
     .optional(),
   skillContext: z.string().optional(),
+  codeContext: z.string().optional(),
 });
 
 export type PlanGenerateInput = z.infer<typeof PlanGenerateInputSchema>;
@@ -94,11 +107,12 @@ export function renderPlanGenerate(input: PlanGenerateInput): LlmMessage[] {
   const skillSection = validated.skillContext
     ? `\n\n${validated.skillContext}\nOnly decompose into tasks that fall within the described capabilities. If the goal requires capabilities outside this set, flag it explicitly in the first step.`
     : "";
+  const codeContextSection = renderCodeContextBlock(validated.codeContext);
   return [
     { role: "system", content: PLAN_GENERATE_SYSTEM },
     {
       role: "user",
-      content: `Intent: ${validated.intentText}${validated.repoUrl ? `\nRepository: ${validated.repoUrl}` : ""}${skillSection}${existingContext}`,
+      content: `Intent: ${validated.intentText}${validated.repoUrl ? `\nRepository: ${validated.repoUrl}` : ""}${codeContextSection}${skillSection}${existingContext}`,
     },
   ];
 }
@@ -115,7 +129,7 @@ Rules:
 - Pure JSON array only, no markdown`;
 
 /** Semver-style version stamp. Bump manually when the system template above changes. */
-export const PLAN_REASSESS_VERSION = "plan.reassess@1.0.0";
+export const PLAN_REASSESS_VERSION = "plan.reassess@1.1.0";
 
 export const PlanReassessInputSchema = z.object({
   tasks: z.array(
@@ -134,6 +148,7 @@ export const PlanReassessInputSchema = z.object({
     }),
   ),
   skillContext: z.string().optional(),
+  codeContext: z.string().optional(),
 });
 
 export type PlanReassessInput = z.infer<typeof PlanReassessInputSchema>;
@@ -153,11 +168,12 @@ export function renderPlanReassess(input: PlanReassessInput): LlmMessage[] {
   const skillSection = validated.skillContext
     ? `\n\n${validated.skillContext}\nUse this to inform your assessment — the swarm can only perform actions within these capabilities.`
     : "";
+  const codeContextSection = renderCodeContextBlock(validated.codeContext);
   return [
     { role: "system", content: PLAN_REASSESS_SYSTEM },
     {
       role: "user",
-      content: `Tasks:\n${taskList}${skillSection}\n\nSession observations:\n${observationSummary}`,
+      content: `Tasks:\n${taskList}${codeContextSection}${skillSection}\n\nSession observations:\n${observationSummary}`,
     },
   ];
 }
@@ -178,7 +194,7 @@ const PLAN_DECOMPOSE_STATIC_RULES = `Rules:
 - Pure JSON array only, no markdown`;
 
 /** Semver-style version stamp. Bump manually when the preamble or rules above change. */
-export const PLAN_DECOMPOSE_VERSION = "plan.decompose@1.0.0";
+export const PLAN_DECOMPOSE_VERSION = "plan.decompose@1.1.0";
 
 export const PlanDecomposeInputSchema = z.object({
   existingTasks: z.array(z.object({ text: z.string(), status: z.string() })),
@@ -197,6 +213,7 @@ export const PlanDecomposeInputSchema = z.object({
   ),
   rationaleContext: z.string(),
   maxCandidates: z.number().int().positive().default(3),
+  codeContext: z.string().optional(),
 });
 
 export type PlanDecomposeInput = z.infer<typeof PlanDecomposeInputSchema>;
@@ -222,6 +239,7 @@ export function renderPlanDecompose(input: PlanDecomposeInput): LlmMessage[] {
   const rationaleSection = validated.rationaleContext
     ? `\nSkill activation rationale (why these skills were chosen for this session):\n${validated.rationaleContext}\n`
     : "";
+  const codeContextSection = renderCodeContextBlock(validated.codeContext);
   const system = `${PLAN_DECOMPOSE_STATIC_PREAMBLE}
 
 Active swarm skills (only suggest tasks these skills can handle):
@@ -233,7 +251,7 @@ ${PLAN_DECOMPOSE_STATIC_RULES}`;
     { role: "system", content: system },
     {
       role: "user",
-      content: `Current plan tasks:\n${taskList}\n\nRecent swarm observations:\n${obsList}`,
+      content: `Current plan tasks:\n${taskList}${codeContextSection}\n\nRecent swarm observations:\n${obsList}`,
     },
   ];
 }

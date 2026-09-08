@@ -3,6 +3,8 @@ import { db, repoGraphJobsTable, sessionRepoContextTable, sessionsTable } from "
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { markSymbolsStaleForSession } from "../services/memory";
+import { pageRankFiles, fitToBudget, estimateTokens } from "../services/repo-rank";
+import { taskRelativeRerank } from "../services/task-relative-rerank";
 
 export const batchRepoRouter = Router();
 
@@ -358,9 +360,54 @@ router.get("/search", async (req, res) => {
     return;
   }
 
+  const result = await searchRepoContext(sessionId, q, {
+    typeFilter,
+    limit,
+    offset,
+    langFilter,
+    pathPrefix,
+  });
+  res.json(result);
+});
+
+export interface RepoSearchOptions {
+  typeFilter?: string;
+  limit?: number;
+  offset?: number;
+  langFilter?: string;
+  pathPrefix?: string;
+}
+
+export interface RepoSearchResult {
+  sessionId: number;
+  q: string;
+  total: number;
+  indexStatus: string | null;
+  isStale: boolean;
+  confidenceLevel: string | null;
+  results: SearchResult[];
+}
+
+/**
+ * Shared hybrid repo search, backed by the graph's hybridSearch (
+ * BM25 lexical + embedded cosine + graph centrality). Used by both the
+ * GET /api/repo/search handler and the MCP repo_search tool so there is a
+ * single source of relevance truth.
+ *
+ * When the graph holds real MiniLM vectors (embeddingDim === 384) the query is
+ * embedded via the remote embedding API so cosine is meaningful; any failure
+ * falls back to a local n-gram vector.
+ */
+export async function searchRepoContext(
+  sessionId: number,
+  q: string,
+  opts: RepoSearchOptions = {},
+): Promise<RepoSearchResult> {
+  const { typeFilter, limit = 20, offset = 0, langFilter, pathPrefix } = opts;
+
   const ctx = await getRepoContext(sessionId);
   if (!ctx) {
-    res.json({
+    return {
       sessionId,
       q,
       total: 0,
@@ -368,8 +415,7 @@ router.get("/search", async (req, res) => {
       isStale: false,
       confidenceLevel: "none",
       results: [],
-    });
-    return;
+    };
   }
 
   // Embed the search query into the same vector space as stored embeddings.
@@ -394,21 +440,139 @@ router.get("/search", async (req, res) => {
     filesJson: ctx.filesJson as RepoFileRaw[] | null,
     chunksJson: ctx.chunksJson as RepoChunkRaw[] | null,
     embeddingsJson: ctx.embeddingsJson as RepoEmbeddingRaw[] | null,
-    embeddingDim: ctx.embeddingDim ?? null,
+    embeddingDim: storedDim,
     queryVec,
     queryVecIsRemote,
   });
 
-  res.json({
+  return {
     sessionId,
     q,
     total: results.total,
     indexStatus: ctx.indexStatus,
-    isStale: ctx.isStale,
+    isStale: ctx.isStale || false,
     confidenceLevel: ctx.confidenceLevel,
     results: results.items,
+  };
+}
+
+export interface CodeContextForTask {
+  /** Rendered, budget-fitted symbol signature lines, most relevant first. */
+  signatures: string[];
+  /** File → path:line references for the included symbols. */
+  files: Array<{ path: string; refs: string[] }>;
+  /** Estimated tokens of `signatures`. */
+  estimatedTokens: number;
+  symbolsIncluded: number;
+  totalSymbolsIndexed: number;
+  rankingSeedFiles: string[];
+  query: string;
+}
+
+/**
+ * Assemble a compact, token-budget-capped code context for a task (RFC 0001
+ * graph-gated slicing). Retrieves via hybridSearch, reranks the admitting
+ * results with a personalized PageRank (seeded by the top-hit paths so the
+ * dependency halo of directly-relevant symbols is visible), fits to the token
+ * budget via binary search, and renders compact `decl  // path:line` lines.
+ *
+ * Callers: plan/ambient prompt assembly (services), MCP context tools.
+ */
+export async function codeContextForTask(
+  sessionId: number,
+  query: string,
+  opts: { budgetTokens?: number; seedFiles?: string[]; topN?: number; taskText?: string } = {},
+): Promise<CodeContextForTask> {
+  const budgetTokens = opts.budgetTokens ?? 1200;
+  const topN = opts.topN ?? 25;
+
+  const ctx = await getRepoContext(sessionId);
+  const empty: CodeContextForTask = {
+    signatures: [],
+    files: [],
+    estimatedTokens: 0,
+    symbolsIncluded: 0,
+    totalSymbolsIndexed: 0,
+    rankingSeedFiles: [],
+    query,
+  };
+  if (!ctx) return empty;
+
+  const storedDim = ctx.embeddingDim ?? 0;
+  const { vec: queryVec, isRemote: queryVecIsRemote } = await getQueryEmbedding(query, storedDim);
+  const results = approximateSearch({
+    q: query,
+    limit: topN,
+    offset: 0,
+    symbolsJson: ctx.symbolsJson as RepoSymbolRaw[] | null,
+    filesJson: ctx.filesJson as RepoFileRaw[] | null,
+    chunksJson: ctx.chunksJson as RepoChunkRaw[] | null,
+    embeddingsJson: ctx.embeddingsJson as RepoEmbeddingRaw[] | null,
+    embeddingDim: storedDim,
+    queryVec,
+    queryVecIsRemote,
   });
-});
+
+  if (results.total === 0) {
+    return { ...empty, totalSymbolsIndexed: Array.isArray(ctx.symbolsJson) ? ctx.symbolsJson.length : 0 };
+  }
+
+  // Personalized PageRank: seed with the top hybrid hits so their dependency
+  // halo rises; everything else keeps a global (unseeded) graph relevance.
+  const seedFiles = opts.seedFiles?.filter(Boolean) ?? results.items.slice(0, 8).map((r) => r.path);
+  const ranks = pageRankFiles(
+    ctx.edgesJson as RepoEdgeRaw[],
+    ctx.filesJson as RepoFileRaw[],
+    seedFiles,
+  );
+
+  const ranked = results.items.map((item) => {
+    const combined = item.scores.combined;
+    const pr = ranks.get(item.path) ?? 0;
+    // Personalization bias lifts directly-relevant symbols by ~2x before the
+    // graph halo; combined stays dominant so the query still steers results.
+    const relevance = combined * 0.7 + pr * 0.3;
+    const renderText = item.snippet || item.name || item.path;
+    const text = item.snippet || item.name ? `${renderText}  // ${item.path}${item.line ? `:${item.line}` : ""}` : item.path;
+    return { relevance, item, text };
+  }).sort((a, b) => b.relevance - a.relevance);
+
+  // Task-relative rerank (RFC 0001 Layer 4 / Phase 4): when a task description
+  // is supplied, relativize the admission list to the intent — symbols lexically
+  // close to the *task* outrank query-alone relevance, and the similarity floor
+  // drops candidates that only matched because of graph halo.
+  let fittedCandidates = ranked;
+  if (opts.taskText?.trim()) {
+    const relativized = taskRelativeRerank(
+      ranked.map((r) => ({ id: `${r.item.path}:${r.item.line ?? 0}`, text: r.text, base: r.relevance, orig: r })),
+      opts.taskText,
+    );
+    fittedCandidates = relativized.filter((r) => r.admitted).map((r) => r.item.orig);
+  }
+
+  const fitted = fitToBudget(fittedCandidates, budgetTokens);
+
+  const fileMap = new Map<string, string[]>();
+  for (const { item } of fitted) {
+    const refs = fileMap.get(item.path) ?? [];
+    const loc = item.line ? `${item.path}:${item.line}` : item.path;
+    if (!refs.includes(loc)) refs.push(loc);
+    fileMap.set(item.path, refs);
+  }
+
+  const signatures = fitted.map((f) => f.text);
+  const estimatedTokens = signatures.reduce((s, v) => s + estimateTokens(v), 0);
+
+  return {
+    signatures,
+    files: Array.from(fileMap.entries()).map(([path, refs]) => ({ path, refs })),
+    estimatedTokens,
+    symbolsIncluded: fitted.length,
+    totalSymbolsIndexed: Array.isArray(ctx.symbolsJson) ? ctx.symbolsJson.length : 0,
+    rankingSeedFiles: seedFiles,
+    query,
+  };
+}
 
 router.get("/blast-radius", async (req, res) => {
   const sessionId = Number(getParam(req, "sessionId"));
