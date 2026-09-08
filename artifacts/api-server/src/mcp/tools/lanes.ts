@@ -3,7 +3,27 @@ import { db, sessionLanesTable, laneClaimsTable, laneHandoffsTable, sessionsTabl
 import { eq, and, desc } from "drizzle-orm";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { resolveValidLaneType, getLanePolicyAsync, LANE_DEFAULT_TTL_SECONDS } from "../../services/lane-policy.js";
+import { checkLanePermission } from "../../services/lane-governor.js";
 import type { ClaimType } from "@workspace/db";
+
+/**
+ * RFC 0002 Phase 3 — enforce the lane's permission profile before a tool acts.
+ * Returns a denial message when the lane type may not call this tool (or touch
+ * the path); null when allowed.
+ */
+async function permissionDenial(
+  sessionId: number,
+  laneId: number,
+  toolName: string,
+  path?: string | null,
+): Promise<string | null> {
+  const [lane] = await db.select({ laneType: sessionLanesTable.laneType })
+    .from(sessionLanesTable)
+    .where(and(eq(sessionLanesTable.id, laneId), eq(sessionLanesTable.sessionId, sessionId)));
+  if (!lane) return "Lane not found";
+  const check = checkLanePermission(lane.laneType, toolName, path);
+  return check.allowed ? null : check.reason;
+}
 
 export function registerLaneTools(server: McpServer): void {
   server.registerTool("list_lanes", {
@@ -93,6 +113,11 @@ export function registerLaneTools(server: McpServer): void {
       ttlSeconds: z.number().int().optional().describe("Claim TTL in seconds"),
     }),
   }, async ({ sessionId, laneId, resourcePath, strength, claimType, ttlSeconds }) => {
+    const denied = await permissionDenial(sessionId, laneId, "claim_resource", resourcePath);
+    if (denied) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: denied }) }] };
+    }
+
     const [lane] = await db.select().from(sessionLanesTable)
       .where(and(eq(sessionLanesTable.id, laneId), eq(sessionLanesTable.sessionId, sessionId)));
     if (!lane) {
@@ -138,6 +163,11 @@ export function registerLaneTools(server: McpServer): void {
       message: z.string().optional().describe("Human-readable message"),
     }),
   }, async ({ sessionId, laneId, handoffType, toLaneIds, resourcePaths, message }) => {
+    const denied = await permissionDenial(sessionId, laneId, "lane_handoff");
+    if (denied) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: denied }) }] };
+    }
+
     const [lane] = await db.select().from(sessionLanesTable)
       .where(and(eq(sessionLanesTable.id, laneId), eq(sessionLanesTable.sessionId, sessionId)));
     if (!lane) {
