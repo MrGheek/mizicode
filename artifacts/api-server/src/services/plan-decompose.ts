@@ -27,6 +27,7 @@ import { broadcastPlanTasks } from "./lane-sse-broadcaster";
 import { callLlm } from "./llm-client";
 import { renderPlanDecompose, PLAN_DECOMPOSE_VERSION } from "../prompts/contracts";
 import { scoreModelsForPhase } from "./inference-router";
+import { loadCodeContextBlock } from "./code-context";
 import type { Observation } from "./memory";
 
 // ── Tuning constants ───────────────────────────────────────────────────────────
@@ -192,6 +193,17 @@ async function callLlmForDecomposition(params: {
     logger.debug({ err }, "[plan-decompose] Inference-router score failed, using default model");
   }
 
+  // Graph-gated slicing: show which repo symbols the swarm's plan/observations
+  // touch (budget-capped) so discovered complexity is anchored in real code.
+  // The composite task text feeds both the query and Phase-4 task-relative rerank.
+  const taskText = [
+    ...params.existingTasks.slice(0, 3).map(t => t.text),
+    ...params.recentObservations.slice(0, 3).map(o => o.inputSummary),
+  ].join(" ");
+  const codeContext = params.sessionId
+    ? await loadCodeContextBlock(params.sessionId, taskText, 500, { taskText })
+    : "";
+
   const raw = await callLlm({
     logTag: "plan.decompose",
     promptVersion: PLAN_DECOMPOSE_VERSION,
@@ -199,12 +211,14 @@ async function callLlmForDecomposition(params: {
     max_tokens: 600,
     overrideModel,
     sessionId: params.sessionId,
+    budget: { taskClass: "plan-decompose", phase: "implement", sessionId: params.sessionId },
     messages: renderPlanDecompose({
       existingTasks: params.existingTasks,
       recentObservations: params.recentObservations,
       activeSkills: params.activeSkills,
       rationaleContext: params.rationaleContext,
       maxCandidates: MAX_CANDIDATES_PER_PASS,
+      codeContext: codeContext || undefined,
     }),
   });
 

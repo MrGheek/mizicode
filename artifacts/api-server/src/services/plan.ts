@@ -18,6 +18,7 @@ import {
   renderPlanReassess,
   PLAN_REASSESS_VERSION,
 } from "../prompts/contracts";
+import { loadCodeContextBlock } from "./code-context";
 
 export type { ProjectPlan, ProjectTask };
 
@@ -214,6 +215,7 @@ async function callLlmForPlan(params: {
     temperature: 0.3,
     max_tokens: 2200,
     overrideModel: routedModel,
+    budget: { taskClass: "plan-generate", phase: "plan" },
     messages: renderPlanGenerate({
       intentText: params.intentText,
       repoUrl: params.repoUrl,
@@ -242,6 +244,14 @@ async function callLlmForReassessment(params: {
 }): Promise<Array<{ taskId: number; newStatus: PlanTaskStatus; reason: string }> | null> {
   const routedModel = await getModelForPhase("review");
 
+  // Graph-gated slicing: surface the repo symbols the session's tasks touch
+  // (budget-capped) so status judgment is grounded in what was actually edited.
+  // The task text feeds both the search query and Phase-4 task-relative rerank.
+  const taskText = params.tasks.slice(0, 3).map(t => t.text).join(" ");
+  const codeContext = params.sessionId
+    ? await loadCodeContextBlock(params.sessionId, taskText, 600, { taskText })
+    : "";
+
   const raw = await callLlm({
     logTag: "plan.reassess",
     promptVersion: PLAN_REASSESS_VERSION,
@@ -249,10 +259,12 @@ async function callLlmForReassessment(params: {
     max_tokens: 800,
     overrideModel: routedModel,
     sessionId: params.sessionId,
+    budget: { taskClass: "plan-reassess", phase: "review", sessionId: params.sessionId },
     messages: renderPlanReassess({
       tasks: params.tasks,
       observations: params.observations,
       skillContext: params.skillContext,
+      codeContext: codeContext || undefined,
     }),
   });
   if (!raw) return null;

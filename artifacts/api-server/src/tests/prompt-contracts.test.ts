@@ -35,9 +35,9 @@ describe("prompt contract version stamps", () => {
   });
 
   it("version stamps are stable (hardcoded semver, not runtime-computed hashes)", () => {
-    expect(PLAN_GENERATE_VERSION).toBe("plan.generate@1.0.0");
-    expect(PLAN_REASSESS_VERSION).toBe("plan.reassess@1.0.0");
-    expect(PLAN_DECOMPOSE_VERSION).toBe("plan.decompose@1.0.0");
+    expect(PLAN_GENERATE_VERSION).toBe("plan.generate@1.1.0");
+    expect(PLAN_REASSESS_VERSION).toBe("plan.reassess@1.1.0");
+    expect(PLAN_DECOMPOSE_VERSION).toBe("plan.decompose@1.1.0");
     expect(MEMORY_SIDECAR_VERIFY_VERSION).toBe("memory.sidecarVerify@1.0.0");
     expect(PALETTE_INTENT_VERSION).toBe("palette.intent@1.0.0");
   });

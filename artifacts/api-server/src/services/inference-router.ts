@@ -1,7 +1,7 @@
 /**
  * inference-router.ts
  *
- * Phase-aware LLM model scoring for NIM sessions (Task #300).
+ * Phase-aware LLM model scoring (Task #300).
  *
  * Scoring formula (identical intent to intent.ts for consistency):
  *   score = sweBench × phaseQualityWeight × (1000 / latencyMs) × costFactor × throughputBonus(phase, throughputClass)
@@ -11,11 +11,40 @@
  * Live provider latency is probed from the PROVIDER_CONFIG endpoints (same
  * logic as getProviderLatencies() in intent.ts) so routing accounts for
  * real-time provider health — not just static catalog metadata.
+ *
+ * Local Ollama models (ollama-local) are scored as cheap on-box candidates:
+ * they carry a low SWE-bench score and a phase-dependent local bonus so they
+ * only win cost-sensitive phases (swarm, review) when the daemon is live.
  */
 
 import { listNimModels, getConfiguredProviders, PROVIDER_CONFIG, CATALOG_SWE_BENCH_SCORES } from "./nim-catalog";
 import type { NimModel, ThroughputClass } from "./nim-catalog";
 import { logger } from "../lib/logger";
+
+// ── Local Ollama candidates ──────────────────────────────────────────────────
+// Cheap on-box models that only win cost-sensitive phases. The SWE-bench score
+// is intentionally low so hosted frontier models dominate quality phases.
+export const LOCAL_OLLAMA_MODELS: Array<{ modelId: string; displayName: string; sweBenchScore: number }> = [
+  { modelId: "qwen2.5-coder:7b", displayName: "Qwen2.5 Coder 7B (local)", sweBenchScore: 20 },
+  { modelId: "qwen2.5-coder:14b", displayName: "Qwen2.5 Coder 14B (local)", sweBenchScore: 30 },
+  { modelId: "llama3.1:8b", displayName: "Llama 3.1 8B (local)", sweBenchScore: 15 },
+];
+
+/** Model ids that must be routed to the local Ollama daemon, never a NIM provider. */
+export const LOCAL_OLLAMA_MODEL_IDS: ReadonlySet<string> = new Set(
+  LOCAL_OLLAMA_MODELS.map((m) => m.modelId),
+);
+
+// Per-phase bonus for local models. Swarm/review are cost-sensitive → local
+// gets a large bonus; quality phases get a penalty so hosted models win.
+const PHASE_LOCAL_BONUS: Record<SessionPhase, number> = {
+  explore:    0.20,
+  plan:       0.15,
+  implement:  0.30,
+  swarm:      2.50,
+  synthesise: 0.25,
+  review:     1.50,
+};
 
 export type SessionPhase =
   | "explore"
@@ -112,13 +141,27 @@ export async function getProviderSnapshots(): Promise<Record<string, ProviderSna
       out[key] = snap;
     }
   }
+
+  // Probe local Ollama (ollama-local) — live only when a daemon answers.
+  const ollamaBase = process.env["OLLAMA_BASE_URL"] || "http://localhost:11434";
+  const start = Date.now();
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 3000);
+    const resp = await fetch(`${ollamaBase}/api/tags`, { signal: controller.signal });
+    clearTimeout(tid);
+    out["ollama-local"] = { latencyMs: Date.now() - start, live: resp.ok };
+  } catch {
+    out["ollama-local"] = { latencyMs: null, live: false };
+  }
+
   return out;
 }
 
 // ── Scoring ───────────────────────────────────────────────────────────────────
 
 export interface ScoredModel {
-  model: NimModel;
+  model: NimModel | LocalOllamaModel;
   score: number;
   provider: string;
   latencyMs: number | null;
@@ -126,6 +169,14 @@ export interface ScoredModel {
   qualityComponent: number;
   costComponent: number;
   throughputComponent: number;
+}
+
+/** Local Ollama candidate — shaped like NimModel so callers can read nimModelId. */
+export interface LocalOllamaModel {
+  nimModelId: string;
+  displayName: string;
+  sweBenchScore: number;
+  throughputClass: null;
 }
 
 /**
@@ -213,6 +264,32 @@ function scoreModel(
 }
 
 /**
+ * Score a local Ollama model as a cheap on-box candidate. Only wins when the
+ * daemon is live and the phase is cost-sensitive (swarm/review).
+ */
+function scoreLocalModel(
+  model: { modelId: string; displayName: string; sweBenchScore: number },
+  phase: SessionPhase,
+  snapshots: Record<string, ProviderSnapshot>,
+): { score: number; provider: string; latencyMs: number | null;
+      qualityComponent: number; costComponent: number; throughputComponent: number } | null {
+  const snap = snapshots["ollama-local"];
+  if (!snap?.live) return null;
+  const latencyMs = snap.latencyMs ?? 500;
+
+  const qualityWeight = PHASE_QUALITY_WEIGHTS[phase];
+  const localBonus = PHASE_LOCAL_BONUS[phase];
+  const latencyScore = 1000 / latencyMs;
+
+  const qualityComponent = model.sweBenchScore * qualityWeight;
+  const costComponent = 1.0; // free — no per-token cost
+  const throughputComponent = localBonus;
+  const score = qualityComponent * latencyScore * costComponent * throughputComponent;
+
+  return { score, provider: "ollama-local", latencyMs, qualityComponent, costComponent, throughputComponent };
+}
+
+/**
  * Score all available NIM models for the given phase.
  * Returns models sorted descending by composite score.
  * Uses live provider latency probes for primary scoring.
@@ -226,6 +303,9 @@ export async function scoreModelsForPhase(
   options?: {
     configuredProviders?: Record<string, boolean>;
     snapshots?: Record<string, ProviderSnapshot>;
+    /** Include local Ollama candidates. Default true — server-side inference
+     *  (plan generation, memory) can use the API host's Ollama as a cheap option. */
+    includeLocal?: boolean;
   },
 ): Promise<ScoredModel[]> {
   const configuredProviders = options?.configuredProviders ?? getConfiguredProviders();
@@ -249,6 +329,20 @@ export async function scoreModelsForPhase(
     const result = scoreModel(model, phase, snapshots, configuredProviders);
     if (result) {
       scored.push({ model, ...result });
+    }
+  }
+
+  // Append local Ollama candidates — cheap on-box models that only win
+  // cost-sensitive phases (swarm/review) when the daemon is live.
+  if (options?.includeLocal !== false) {
+    for (const local of LOCAL_OLLAMA_MODELS) {
+      const result = scoreLocalModel(local, phase, snapshots);
+      if (result) {
+        scored.push({
+          model: { nimModelId: local.modelId, displayName: local.displayName, sweBenchScore: local.sweBenchScore, throughputClass: null },
+          ...result,
+        });
+      }
     }
   }
 
@@ -276,13 +370,18 @@ export async function getBestModelForPhase(
     currentProvider?: string | null;
   },
 ): Promise<{ model: NimModel; provider: string } | null> {
-  const ranked = await scoreModelsForPhase(phase, options);
+  // Workspace model selection (swarm pre-select, auto-route) must never pick a
+  // local Ollama model — the workspace's litellm proxy cannot reach the API
+  // host's Ollama daemon. Local candidates are only for server-side inference.
+  const ranked = await scoreModelsForPhase(phase, { ...options, includeLocal: false });
   if (ranked.length === 0) return null;
 
   const top = ranked[0]!;
+  // includeLocal: false guarantees every candidate is a catalog model.
+  const topModel = top.model as NimModel;
   // No switch needed if both the model AND provider are already the best candidate.
   const isSameModelAndProvider =
-    top.model.nimModelId === currentModelId && top.provider === (options?.currentProvider ?? null);
+    topModel.nimModelId === currentModelId && top.provider === (options?.currentProvider ?? null);
   if (isSameModelAndProvider) return null;
 
   // Only suggest a switch if the top candidate meaningfully beats the current (model, provider).
@@ -291,5 +390,5 @@ export async function getBestModelForPhase(
   );
   if (currentRank && top.score - currentRank.score < top.score * 0.05) return null;
 
-  return { model: top.model, provider: top.provider };
+  return { model: topModel, provider: top.provider };
 }

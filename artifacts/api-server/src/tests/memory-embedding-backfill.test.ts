@@ -14,37 +14,14 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import request from "supertest";
 import app from "../app";
-import { db, gpuProfilesTable, sessionsTable, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
-let testUserId: number;
-const TEST_USER_EMAIL = `test-embedding-${Date.now()}@example.com`;
-
-async function setup() {
-  const [user] = await db
-    .insert(usersTable)
-    .values({
-      email: TEST_USER_EMAIL,
-      emailVerified: true,
-    })
-    .returning();
-  testUserId = user.id;
-}
-
-async function cleanup() {
-  if (testUserId) {
-    await db.delete(usersTable).where(eq(usersTable.id, testUserId));
-  }
-}
+// The memory API keys items by a string userId (SQLite store), not a PG row.
+const testUserId = `test-embedding-${Date.now()}`;
 
 beforeAll(async () => {
-  await setup();
-});
-
-afterAll(async () => {
-  await cleanup();
+  // no-op: userId is a plain string for the memory store
 });
 
 // ─── Tests ─────────────────────────────────────────────────────────────────────
