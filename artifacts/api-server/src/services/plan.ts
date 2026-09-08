@@ -252,6 +252,19 @@ async function callLlmForReassessment(params: {
     ? await loadCodeContextBlock(params.sessionId, taskText, 600, { taskText })
     : "";
 
+  // RFC 0002 Phase 2 — durable intent: surface lane decisions/interface
+  // changes/warnings so status judgment reflects what lanes actually decided.
+  let intentContext = "";
+  if (params.sessionId) {
+    try {
+      const { createDbIntentStore, renderIntentBlock } = await import("./lane-intent");
+      const events = await createDbIntentStore().listForSession(params.sessionId);
+      intentContext = renderIntentBlock(events);
+    } catch (err) {
+      logger.debug({ err, sessionId: params.sessionId }, "[plan] intent context unavailable — skipping");
+    }
+  }
+
   const raw = await callLlm({
     logTag: "plan.reassess",
     promptVersion: PLAN_REASSESS_VERSION,
@@ -265,6 +278,7 @@ async function callLlmForReassessment(params: {
       observations: params.observations,
       skillContext: params.skillContext,
       codeContext: codeContext || undefined,
+      intentContext: intentContext || undefined,
     }),
   });
   if (!raw) return null;

@@ -175,6 +175,49 @@ describe("LaneMergeQueue", () => {
     expect(git.calls).not.toContain("writeFile");
   });
 
+  it("uses the Arbiter to resolve a surviving text conflict when provided", async () => {
+    const git = new FakeGit();
+    git.mergeResult = "conflict";
+    git.conflictedFiles = ["src/auth/UserIdentity.ts"];
+    git.structuralFiles = [{
+      file: "src/auth/UserIdentity.ts",
+      base: "export class UserIdentity {}",
+      incoming: "export class UserIdentity { role!: string }",
+    }];
+    const { store, queue } = makeQueue(git);
+
+    const arbiter = {
+      resolveConflict: async () => ({ accepted: true, resolution: "export class UserIdentity { role!: string }", reason: "accepted" }),
+    };
+    await enqueueTwo(queue, store);
+
+    const outcomes = await queue.drain(1, { repoPath: "/repo", testGate: passingGate, structuralMerge: true, arbiter });
+    expect(outcomes[0]!.status).toBe("merged");
+    expect(git.calls).toContain("writeFile");
+    expect(git.calls).toContain("finishMerge");
+  });
+
+  it("leaves the lane skipped when the Arbiter rejects", async () => {
+    const git = new FakeGit();
+    git.mergeResult = "conflict";
+    git.conflictedFiles = ["src/auth/UserIdentity.ts"];
+    git.structuralFiles = [{
+      file: "src/auth/UserIdentity.ts",
+      base: "export class UserIdentity {}",
+      incoming: "export class UserIdentity { role!: string }",
+    }];
+    const { store, queue } = makeQueue(git);
+
+    const arbiter = {
+      resolveConflict: async () => ({ accepted: false, reason: "escalated" }),
+    };
+    await enqueueTwo(queue, store);
+
+    const outcomes = await queue.drain(1, { repoPath: "/repo", testGate: passingGate, structuralMerge: true, arbiter });
+    expect(outcomes[0]!.status).toBe("skipped");
+    expect(git.calls).not.toContain("finishMerge");
+  });
+
   it("resolve retries a skipped job and can succeed on the second attempt", async () => {
     const git = new FakeGit();
     const { store, queue } = makeQueue(git);

@@ -149,6 +149,8 @@ export const PlanReassessInputSchema = z.object({
   ),
   skillContext: z.string().optional(),
   codeContext: z.string().optional(),
+  /** RFC 0002 Phase 2 — durable lane intent (decisions/interface changes/warnings). */
+  intentContext: z.string().optional(),
 });
 
 export type PlanReassessInput = z.infer<typeof PlanReassessInputSchema>;
@@ -169,11 +171,14 @@ export function renderPlanReassess(input: PlanReassessInput): LlmMessage[] {
     ? `\n\n${validated.skillContext}\nUse this to inform your assessment — the swarm can only perform actions within these capabilities.`
     : "";
   const codeContextSection = renderCodeContextBlock(validated.codeContext);
+  const intentSection = validated.intentContext
+    ? `\n\n${validated.intentContext}\nUse this to inform your assessment — lanes publish durable decisions, interface changes, and warnings.`
+    : "";
   return [
     { role: "system", content: PLAN_REASSESS_SYSTEM },
     {
       role: "user",
-      content: `Tasks:\n${taskList}${codeContextSection}${skillSection}\n\nSession observations:\n${observationSummary}`,
+      content: `Tasks:\n${taskList}${codeContextSection}${skillSection}${intentSection}\n\nSession observations:\n${observationSummary}`,
     },
   ];
 }
@@ -377,6 +382,64 @@ export function renderPaletteIntent(input: PaletteIntentInput): LlmMessage[] {
   ];
 }
 
+// ─── lane.arbiter ────────────────────────────────────────────────────────────
+// RFC 0002 Phase 2 — intent-aware conflict resolution. The Arbiter reconstructs
+// both lanes' durable intent and proposes a resolution that preserves both
+// objectives when compatible; true requirement conflicts escalate to a human.
+
+export const LANE_ARBITER_SYSTEM = `You are MIZI's merge Arbiter. Two parallel lanes conflicted on the same file. Reconstruct both lanes' durable intent from the provided context and propose a resolution that preserves BOTH objectives whenever they are compatible.
+
+Return ONLY valid JSON:
+{ "resolution": "the merged file content", "outcome": "preserved_both|chose_one|escalated", "summary": "1-2 sentences explaining the resolution" }
+
+Rules:
+- "preserved_both" when both lanes' changes can coexist (e.g. different functions, additive fields)
+- "chose_one" only when one lane's change is strictly subsumed by the other
+- "escalated" when the requirements are logically incompatible (e.g. one lane removes what another adds) — do NOT invent a winner
+- Preserve imports, signatures, and high-entropy tokens (UUIDs/hashes)
+- Pure JSON only, no markdown`;
+
+/** Semver-style version stamp. Bump manually when the system template above changes. */
+export const LANE_ARBITER_VERSION = "lane.arbiter@1.0.0";
+
+export const LaneArbiterInputSchema = z.object({
+  filePath: z.string(),
+  baseContent: z.string(),
+  laneA: z.object({
+    laneId: z.number().int(),
+    content: z.string(),
+    intent: z.string().optional(),
+  }),
+  laneB: z.object({
+    laneId: z.number().int(),
+    content: z.string(),
+    intent: z.string().optional(),
+  }),
+});
+
+export type LaneArbiterInput = z.infer<typeof LaneArbiterInputSchema>;
+
+export function renderLaneArbiter(input: LaneArbiterInput): LlmMessage[] {
+  const validated = LaneArbiterInputSchema.parse(input);
+  const intentA = validated.laneA.intent ? `\nLane ${validated.laneA.laneId} intent:\n${validated.laneA.intent}` : "";
+  const intentB = validated.laneB.intent ? `\nLane ${validated.laneB.laneId} intent:\n${validated.laneB.intent}` : "";
+  return [
+    { role: "system", content: LANE_ARBITER_SYSTEM },
+    {
+      role: "user",
+      content: [
+        `Conflicted file: ${validated.filePath}`,
+        ``,
+        `Base (pre-conflict):\n\`\`\`\n${validated.baseContent}\n\`\`\``,
+        ``,
+        `Lane ${validated.laneA.laneId} version:\n\`\`\`\n${validated.laneA.content}\n\`\`\`${intentA}`,
+        ``,
+        `Lane ${validated.laneB.laneId} version:\n\`\`\`\n${validated.laneB.content}\n\`\`\`${intentB}`,
+      ].join("\n"),
+    },
+  ];
+}
+
 // ─── Generic dispatcher ───────────────────────────────────────────────────────
 
 /**
@@ -409,6 +472,7 @@ export function renderPrompt(contractId: "plan.reassess", vars: PlanReassessInpu
 export function renderPrompt(contractId: "plan.decompose", vars: PlanDecomposeInput, ctx?: PromptRenderContext): LlmMessage[];
 export function renderPrompt(contractId: "memory.sidecarVerify", vars: MemorySidecarVerifyInput, ctx?: PromptRenderContext): LlmMessage[];
 export function renderPrompt(contractId: "palette.intent", vars: PaletteIntentInput, ctx?: PromptRenderContext): LlmMessage[];
+export function renderPrompt(contractId: "lane.arbiter", vars: LaneArbiterInput, ctx?: PromptRenderContext): LlmMessage[];
 export function renderPrompt(contractId: string, vars: unknown, _ctx?: PromptRenderContext): LlmMessage[] {
   switch (contractId) {
     case "plan.generate":
@@ -421,6 +485,8 @@ export function renderPrompt(contractId: string, vars: unknown, _ctx?: PromptRen
       return renderMemorySidecarVerify(vars as MemorySidecarVerifyInput);
     case "palette.intent":
       return renderPaletteIntent(vars as PaletteIntentInput);
+    case "lane.arbiter":
+      return renderLaneArbiter(vars as LaneArbiterInput);
     default:
       throw new Error(`Unknown prompt contract: ${contractId}`);
   }

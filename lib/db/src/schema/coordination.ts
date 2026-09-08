@@ -114,7 +114,13 @@ export type LaneEventType =
   | "heavy_job_started"
   | "heavy_job_completed"
   | "lane_created"
-  | "lane_destroyed";
+  | "lane_destroyed"
+  // RFC 0002 Phase 2 — typed intent events (durable engineering context)
+  | "intent_decision"
+  | "intent_interface_change"
+  | "intent_warning"
+  | "intent_verification"
+  | "conflict_resolved";
 
 export const laneEventsTable = pgTable("lane_events", {
   id: serial("id").primaryKey(),
@@ -125,8 +131,30 @@ export const laneEventsTable = pgTable("lane_events", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-export type LaneMergeStatus = "queued" | "merging" | "merged" | "skipped" | "failed";
+export type ConflictResolutionOutcome = "preserved_both" | "chose_one" | "escalated";
 
+/**
+ * RFC 0002 Phase 2 — conflict-resolution notes.
+ *
+ * Every resolved merge conflict records how it was resolved and the intent
+ * that drove it, so the Arbiter and eval harness can learn from past
+ * resolutions instead of re-deriving them.
+ */
+export const laneConflictResolutionsTable = pgTable("lane_conflict_resolutions", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").notNull().references(() => sessionsTable.id),
+  mergeJobId: integer("merge_job_id").references(() => laneMergeQueueTable.id),
+  filePath: text("file_path").notNull(),
+  outcome: text("outcome").notNull().default("preserved_both"),
+  summary: text("summary").notNull(),
+  /** Intent events (ids) that informed the resolution. */
+  intentEventIds: jsonb("intent_event_ids"),
+  /** True when the resolution was verified by a passing test command. */
+  testVerified: boolean("test_verified").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type LaneMergeStatus = "queued" | "merging" | "merged" | "skipped" | "failed";
 /**
  * RFC 0002 Phase 1 — risk-sequenced lane merge queue.
  *
@@ -164,3 +192,4 @@ export type CustomLaneType = typeof customLaneTypesTable.$inferSelect;
 export type LaneEvent = typeof laneEventsTable.$inferSelect;
 export type LanePromptSnapshot = typeof lanePromptSnapshotsTable.$inferSelect;
 export type LaneMergeJob = typeof laneMergeQueueTable.$inferSelect;
+export type LaneConflictResolution = typeof laneConflictResolutionsTable.$inferSelect;
