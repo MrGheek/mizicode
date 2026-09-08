@@ -179,11 +179,30 @@ export interface TestGate {
   run(repoPath: string, sessionId: number): Promise<{ passed: boolean; output: string }>;
 }
 
+/**
+ * Optional RFC 0002 Phase 2 Arbiter hook. When provided, a text conflict that
+ * survives the structural merge is handed to the Arbiter (intent-reconstructed,
+ * test-verified). An accepted resolution finishes the merge; a rejection leaves
+ * the lane skipped as usual.
+ */
+export interface MergeArbiter {
+  resolveConflict(args: {
+    repoPath: string;
+    sessionId: number;
+    filePath: string;
+    baseContent: string;
+    laneA: { laneId: number; content: string };
+    laneB: { laneId: number; content: string };
+  }): Promise<{ accepted: boolean; resolution?: string; reason: string }>;
+}
+
 export interface DrainOptions {
   repoPath: string;
   testGate: TestGate;
   /** Structural-merge manifests before falling back to text merge. */
   structuralMerge?: boolean;
+  /** RFC 0002 Phase 2 — intent-aware Arbiter for surviving text conflicts. */
+  arbiter?: MergeArbiter;
 }
 
 export class LaneMergeQueue {
@@ -293,6 +312,33 @@ export class LaneMergeQueue {
       await this.git.writeFile(opts.repoPath, file, structural.content);
       await this.git.stageFile(opts.repoPath, file);
       resolvedAny = true;
+    }
+
+    // RFC 0002 Phase 2 — when a text conflict survives the structural merge,
+    // hand it to the Arbiter (intent-reconstructed, test-verified). The two
+    // sides are the integration branch (baseBranch, laneId 0 = session core)
+    // and this lane (headBranch). An accepted resolution is written + staged;
+    // a rejection leaves the lane skipped.
+    if (!resolvedAny && opts.arbiter) {
+      for (const file of conflictedFiles) {
+        const integration = await this.git.readFile(opts.repoPath, job.baseBranch, file);
+        const laneVersion = await this.git.readFile(opts.repoPath, job.headBranch, file);
+        if (integration === null || laneVersion === null) continue;
+
+        const arbiterResult = await opts.arbiter.resolveConflict({
+          repoPath: opts.repoPath,
+          sessionId: job.sessionId,
+          filePath: file,
+          baseContent: integration,
+          laneA: { laneId: 0, content: integration },
+          laneB: { laneId: job.laneId, content: laneVersion },
+        });
+        if (arbiterResult.accepted && arbiterResult.resolution) {
+          await this.git.writeFile(opts.repoPath, file, arbiterResult.resolution);
+          await this.git.stageFile(opts.repoPath, file);
+          resolvedAny = true;
+        }
+      }
     }
 
     if (!resolvedAny) return "conflict";

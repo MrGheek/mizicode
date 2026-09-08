@@ -60,7 +60,7 @@ import {
 import type { HeavyJobClass, HeavyJobStatus, HandoffType, ClaimType, SessionLane, LaneClaim, LaneHandoff, LaneHeavyJob } from "@workspace/db";
 import { createDraftPullRequest } from "../services/github-pr";
 import { getLaneBranchName, getSessionBranchName } from "../services/lane-branch";
-import { createDbMergeQueueStore, LaneMergeQueue, scoreMergeRisk, type GitExecutor, type MergeJob, type MergeStatus } from "../services/lane-merge";
+import { createDbMergeQueueStore, LaneMergeQueue, scoreMergeRisk, type GitExecutor, type MergeArbiter, type MergeJob, type MergeStatus } from "../services/lane-merge";
 import { LaneTestGate, resolveTestCommand } from "../services/lane-test-gate";
 
 const router = Router({ mergeParams: true });
@@ -1292,6 +1292,44 @@ function buildMergeQueueForSession() {
   return { queue, testGate };
 }
 
+/**
+ * Build the RFC 0002 Phase 2 Arbiter for a session. The Arbiter reconstructs
+ * both lanes' durable intent (from intent events) and proposes a resolution
+ * that is verified against the real test command before acceptance.
+ */
+async function buildMergeArbiter(sessionId: number): Promise<MergeArbiter> {
+  const { createDbIntentStore, renderIntentBlock } = await import("../services/lane-intent");
+  const { arbitrateConflict, createDefaultArbiterLlm } = await import("../services/lane-arbiter");
+  const intentStore = createDbIntentStore();
+  const llm = createDefaultArbiterLlm();
+  const testGate = new LaneTestGate(resolveTestCommand(sessionId));
+
+  return {
+    async resolveConflict(args) {
+      const intentEvents = await intentStore.listForSession(args.sessionId);
+      const result = await arbitrateConflict(
+        {
+          filePath: args.filePath,
+          baseContent: args.baseContent,
+          laneA: { laneId: args.laneA.laneId, content: args.laneA.content },
+          laneB: { laneId: args.laneB.laneId, content: args.laneB.content },
+          intentEvents,
+        },
+        {
+          llm,
+          testGate,
+          git: { writeFile: async () => true },
+        },
+        args.repoPath,
+      );
+      if (result.accepted && result.proposal) {
+        return { accepted: true, resolution: result.proposal.resolution, reason: result.reason };
+      }
+      return { accepted: false, reason: result.reason };
+    },
+  };
+}
+
 // GET /api/sessions/:id/merge-queue — list merge jobs (optional ?status= filter)
 router.get("/sessions/:id/merge-queue", requireAgentAuth(["coordination:read"]));
 router.post("/sessions/:id/merge-queue/drain", requireAgentAuth(["coordination:write"]));
@@ -1330,7 +1368,8 @@ router.post("/sessions/:id/merge-queue/drain", async (req, res) => {
   }
 
   const { queue, testGate } = buildMergeQueueForSession();
-  const outcomes = await queue.drain(sessionId, { repoPath, testGate, structuralMerge: true });
+  const arbiter = await buildMergeArbiter(sessionId);
+  const outcomes = await queue.drain(sessionId, { repoPath, testGate, structuralMerge: true, arbiter });
 
   broadcastCoordinationUpdate(sessionId);
   res.json({ sessionId, outcomes, total: outcomes.length });
@@ -1351,10 +1390,129 @@ router.post("/sessions/:id/merge-queue/:jobId/resolve", async (req, res) => {
   }
 
   const { queue, testGate } = buildMergeQueueForSession();
-  const outcome = await queue.resolve(jobId, { repoPath, testGate, structuralMerge: true });
+  const arbiter = await buildMergeArbiter(sessionId);
+  const outcome = await queue.resolve(jobId, { repoPath, testGate, structuralMerge: true, arbiter });
 
   broadcastCoordinationUpdate(sessionId);
   res.json({ sessionId, outcome });
+});
+
+// ─── RFC 0002 Phase 2 intent-event + conflict-resolution routes ───────────────
+
+const VALID_INTENT_TYPES = ["intent_decision", "intent_interface_change", "intent_warning", "intent_verification"] as const;
+const VALID_RESOLUTION_OUTCOMES = ["preserved_both", "chose_one", "escalated"] as const;
+
+// POST /api/sessions/:id/lanes/:laneId/intent — publish a typed intent event
+router.post("/sessions/:id/lanes/:laneId/intent", requireAgentAuth(["coordination:write"]));
+router.post("/sessions/:id/lanes/:laneId/intent", async (req, res) => {
+  const sessionId = getSessionId(req);
+  const laneId = parseInt(req.params["laneId"] ?? "");
+  if (!sessionId || !Number.isFinite(laneId)) {
+    res.status(400).json({ error: "Invalid session or lane ID" }); return;
+  }
+
+  const { eventType, summary, file, contract, risk, evidence } = req.body as {
+    eventType?: string;
+    summary?: string;
+    file?: string;
+    contract?: string;
+    risk?: string;
+    evidence?: string;
+  };
+
+  if (!eventType || !VALID_INTENT_TYPES.includes(eventType as (typeof VALID_INTENT_TYPES)[number])) {
+    res.status(400).json({ error: `eventType must be one of: ${VALID_INTENT_TYPES.join(", ")}` }); return;
+  }
+  if (!summary || typeof summary !== "string") {
+    res.status(400).json({ error: "summary is required" }); return;
+  }
+
+  const { createDbIntentStore } = await import("../services/lane-intent");
+  const event = await createDbIntentStore().publish({
+    sessionId,
+    laneId,
+    eventType: eventType as (typeof VALID_INTENT_TYPES)[number],
+    summary,
+    file: file ?? null,
+    contract: contract ?? null,
+    risk: risk ?? null,
+    evidence: evidence ?? null,
+  });
+
+  emitLaneEvent(sessionId, laneId, event.eventType, {
+    summary: event.summary,
+    file: event.file,
+    contract: event.contract,
+    risk: event.risk,
+    evidence: event.evidence,
+  });
+  broadcastCoordinationUpdate(sessionId);
+  res.status(201).json({ event });
+});
+
+// GET /api/sessions/:id/intent — list intent events (optional ?laneId= filter)
+router.get("/sessions/:id/intent", requireAgentAuth(["coordination:read"]));
+router.get("/sessions/:id/intent", async (req, res) => {
+  const sessionId = getSessionId(req);
+  if (!sessionId) { res.status(400).json({ error: "Invalid session ID" }); return; }
+
+  const rawLane = req.query["laneId"] as string | undefined;
+  const laneId = rawLane ? parseInt(rawLane) : undefined;
+
+  const { createDbIntentStore } = await import("../services/lane-intent");
+  const events = await createDbIntentStore().listForSession(sessionId, laneId);
+  res.json({ sessionId, events, total: events.length });
+});
+
+// POST /api/sessions/:id/conflict-resolutions — record a conflict-resolution note
+router.post("/sessions/:id/conflict-resolutions", requireAgentAuth(["coordination:write"]));
+router.post("/sessions/:id/conflict-resolutions", async (req, res) => {
+  const sessionId = getSessionId(req);
+  if (!sessionId) { res.status(400).json({ error: "Invalid session ID" }); return; }
+
+  const { filePath, outcome, summary, mergeJobId, intentEventIds, testVerified } = req.body as {
+    filePath?: string;
+    outcome?: string;
+    summary?: string;
+    mergeJobId?: number;
+    intentEventIds?: number[];
+    testVerified?: boolean;
+  };
+
+  if (!filePath || typeof filePath !== "string") {
+    res.status(400).json({ error: "filePath is required" }); return;
+  }
+  if (!outcome || !VALID_RESOLUTION_OUTCOMES.includes(outcome as (typeof VALID_RESOLUTION_OUTCOMES)[number])) {
+    res.status(400).json({ error: `outcome must be one of: ${VALID_RESOLUTION_OUTCOMES.join(", ")}` }); return;
+  }
+  if (!summary || typeof summary !== "string") {
+    res.status(400).json({ error: "summary is required" }); return;
+  }
+
+  const { createDbResolutionStore } = await import("../services/lane-intent");
+  const resolution = await createDbResolutionStore().record({
+    sessionId,
+    mergeJobId: mergeJobId ?? null,
+    filePath,
+    outcome: outcome as (typeof VALID_RESOLUTION_OUTCOMES)[number],
+    summary,
+    intentEventIds: Array.isArray(intentEventIds) ? intentEventIds : [],
+    testVerified: testVerified ?? false,
+  });
+
+  broadcastCoordinationUpdate(sessionId);
+  res.status(201).json({ resolution });
+});
+
+// GET /api/sessions/:id/conflict-resolutions — list resolution notes
+router.get("/sessions/:id/conflict-resolutions", requireAgentAuth(["coordination:read"]));
+router.get("/sessions/:id/conflict-resolutions", async (req, res) => {
+  const sessionId = getSessionId(req);
+  if (!sessionId) { res.status(400).json({ error: "Invalid session ID" }); return; }
+
+  const { createDbResolutionStore } = await import("../services/lane-intent");
+  const resolutions = await createDbResolutionStore().listForSession(sessionId);
+  res.json({ sessionId, resolutions, total: resolutions.length });
 });
 
 // ─── GET /api/sessions/:id/lanes/:laneId/timeline ─────────────────────────────
