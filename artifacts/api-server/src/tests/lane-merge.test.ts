@@ -174,6 +174,43 @@ describe("LaneMergeQueue", () => {
     expect(outcomes[0]!.status).toBe("skipped");
     expect(git.calls).not.toContain("writeFile");
   });
+
+  it("resolve retries a skipped job and can succeed on the second attempt", async () => {
+    const git = new FakeGit();
+    const { store, queue } = makeQueue(git);
+    await enqueueTwo(queue, store);
+
+    // First drain: conflict → skipped.
+    git.mergeResult = "conflict";
+    const first = await queue.drain(1, { repoPath: "/repo", testGate: passingGate });
+    expect(first[0]!.status).toBe("skipped");
+
+    // Operator fixes the underlying disagreement; resolve retries → clean.
+    git.mergeResult = "clean";
+    const jobs = await store.list(1);
+    const outcome = await queue.resolve(jobs[0]!.id, { repoPath: "/repo", testGate: passingGate });
+    expect(outcome.status).toBe("merged");
+    expect(outcome.reason).toContain("tests passed");
+  });
+
+  it("resolve refuses jobs that are not skipped/failed", async () => {
+    const git = new FakeGit();
+    const { store, queue } = makeQueue(git);
+    await enqueueTwo(queue, store);
+    const jobs = await store.list(1);
+
+    const outcome = await queue.resolve(jobs[0]!.id, { repoPath: "/repo", testGate: passingGate });
+    expect(outcome.status).toBe("failed");
+    expect(outcome.reason).toContain("only skipped/failed");
+  });
+
+  it("resolve reports a missing job", async () => {
+    const git = new FakeGit();
+    const { queue } = makeQueue(git);
+    const outcome = await queue.resolve(999, { repoPath: "/repo", testGate: passingGate });
+    expect(outcome.status).toBe("failed");
+    expect(outcome.reason).toContain("not found");
+  });
 });
 
 describe("LaneTestGate", () => {

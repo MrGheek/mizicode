@@ -215,6 +215,22 @@ export class LaneMergeQueue {
     return outcomes;
   }
 
+  /**
+   * Resumable resolve: retry a previously skipped merge job (conflict or test
+   * failure) against the current integration branch. The lane's branch is
+   * re-committed and re-merged; a clean result is test-gated as usual.
+   */
+  async resolve(jobId: number, opts: DrainOptions): Promise<MergeOutcome> {
+    const job = await this.store.get(jobId);
+    if (!job) {
+      return { jobId, status: "failed", reason: "merge job not found", mergedKeys: [], conflicts: [] };
+    }
+    if (job.status !== "skipped" && job.status !== "failed") {
+      return { jobId, status: "failed", reason: `job is ${job.status} — only skipped/failed jobs are resumable`, mergedKeys: [], conflicts: [] };
+    }
+    return this.mergeOne(job, opts);
+  }
+
   private async mergeOne(job: MergeJob, opts: DrainOptions): Promise<MergeOutcome> {
     await this.store.update(job.id, { status: "merging", startedAt: new Date() });
 
