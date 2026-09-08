@@ -60,8 +60,8 @@ import {
 import type { HeavyJobClass, HeavyJobStatus, HandoffType, ClaimType, SessionLane, LaneClaim, LaneHandoff, LaneHeavyJob } from "@workspace/db";
 import { createDraftPullRequest } from "../services/github-pr";
 import { getLaneBranchName, getSessionBranchName } from "../services/lane-branch";
-import { createDbMergeQueueStore, LaneMergeQueue, scoreMergeRisk, type GitExecutor } from "../services/lane-merge";
-import { resolveTestCommand } from "../services/lane-test-gate";
+import { createDbMergeQueueStore, LaneMergeQueue, scoreMergeRisk, type GitExecutor, type MergeJob, type MergeStatus } from "../services/lane-merge";
+import { LaneTestGate, resolveTestCommand } from "../services/lane-test-gate";
 
 const router = Router({ mergeParams: true });
 
@@ -1249,6 +1249,112 @@ router.patch("/sessions/:id/heavy-jobs/:jobId", async (req, res) => {
 
   broadcastCoordinationUpdate(sessionId);
   res.json(serializeJob(updated));
+});
+
+// ─── RFC 0002 merge-queue routes ──────────────────────────────────────────────
+// The risk-sequenced lane merge queue: list, drain, and resumable resolve.
+
+const VALID_MERGE_STATUSES = ["queued", "merging", "merged", "skipped", "failed"] as const;
+
+function serializeMergeJob(job: MergeJob) {
+  return {
+    id: job.id,
+    sessionId: job.sessionId,
+    laneId: job.laneId,
+    handoffId: job.handoffId,
+    status: job.status,
+    riskScore: job.riskScore,
+    headBranch: job.headBranch,
+    baseBranch: job.baseBranch,
+    headSha: job.headSha,
+    result: job.result,
+    errorDetails: job.errorDetails,
+    createdAt: job.createdAt.toISOString(),
+    startedAt: job.startedAt?.toISOString() ?? null,
+    completedAt: job.completedAt?.toISOString() ?? null,
+  };
+}
+
+/** Resolve the workspace repo path for a session (from repo context). */
+async function resolveSessionRepoPath(sessionId: number): Promise<string | null> {
+  const [ctx] = await db.select({ repoPath: sessionRepoContextTable.repoPath })
+    .from(sessionRepoContextTable)
+    .where(eq(sessionRepoContextTable.sessionId, sessionId))
+    .orderBy(desc(sessionRepoContextTable.updatedAt))
+    .limit(1);
+  return ctx?.repoPath ?? null;
+}
+
+/** Build the merge queue + test gate for a session. */
+function buildMergeQueueForSession() {
+  const queue = new LaneMergeQueue(createDbMergeQueueStore(), createGitExecutor());
+  const testGate = new LaneTestGate(resolveTestCommand(0));
+  return { queue, testGate };
+}
+
+// GET /api/sessions/:id/merge-queue — list merge jobs (optional ?status= filter)
+router.get("/sessions/:id/merge-queue", requireAgentAuth(["coordination:read"]));
+router.post("/sessions/:id/merge-queue/drain", requireAgentAuth(["coordination:write"]));
+router.post("/sessions/:id/merge-queue/:jobId/resolve", requireAgentAuth(["coordination:write"]));
+
+router.get("/sessions/:id/merge-queue", async (req, res) => {
+  const sessionId = getSessionId(req);
+  if (!sessionId) { res.status(400).json({ error: "Invalid session ID" }); return; }
+
+  const rawStatus = req.query["status"] as string | undefined;
+  let statusFilter: MergeStatus[] | undefined;
+  if (rawStatus) {
+    const parts = rawStatus.split(",").map(s => s.trim()) as MergeStatus[];
+    const invalid = parts.filter(s => !VALID_MERGE_STATUSES.includes(s as (typeof VALID_MERGE_STATUSES)[number]));
+    if (invalid.length > 0) {
+      res.status(400).json({ error: `Invalid status values: ${invalid.join(", ")}. Must be one of: ${VALID_MERGE_STATUSES.join(", ")}` });
+      return;
+    }
+    statusFilter = parts;
+  }
+
+  const { queue } = buildMergeQueueForSession();
+  const jobs = await queue.list(sessionId, statusFilter);
+  res.json({ sessionId, jobs: jobs.map(serializeMergeJob), total: jobs.length });
+});
+
+// POST /api/sessions/:id/merge-queue/drain — run the queue (risk-sequenced, test-gated)
+router.post("/sessions/:id/merge-queue/drain", async (req, res) => {
+  const sessionId = getSessionId(req);
+  if (!sessionId) { res.status(400).json({ error: "Invalid session ID" }); return; }
+
+  const repoPath = await resolveSessionRepoPath(sessionId);
+  if (!repoPath) {
+    res.status(409).json({ error: "No repo path indexed for this session — cannot run merges" });
+    return;
+  }
+
+  const { queue, testGate } = buildMergeQueueForSession();
+  const outcomes = await queue.drain(sessionId, { repoPath, testGate, structuralMerge: true });
+
+  broadcastCoordinationUpdate(sessionId);
+  res.json({ sessionId, outcomes, total: outcomes.length });
+});
+
+// POST /api/sessions/:id/merge-queue/:jobId/resolve — retry a skipped/failed merge
+router.post("/sessions/:id/merge-queue/:jobId/resolve", async (req, res) => {
+  const sessionId = getSessionId(req);
+  const jobId = parseInt(req.params["jobId"] ?? "");
+  if (!sessionId || !Number.isFinite(jobId)) {
+    res.status(400).json({ error: "Invalid session or job ID" }); return;
+  }
+
+  const repoPath = await resolveSessionRepoPath(sessionId);
+  if (!repoPath) {
+    res.status(409).json({ error: "No repo path indexed for this session — cannot run merges" });
+    return;
+  }
+
+  const { queue, testGate } = buildMergeQueueForSession();
+  const outcome = await queue.resolve(jobId, { repoPath, testGate, structuralMerge: true });
+
+  broadcastCoordinationUpdate(sessionId);
+  res.json({ sessionId, outcome });
 });
 
 // ─── GET /api/sessions/:id/lanes/:laneId/timeline ─────────────────────────────
