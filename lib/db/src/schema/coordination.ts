@@ -193,3 +193,27 @@ export type LaneEvent = typeof laneEventsTable.$inferSelect;
 export type LanePromptSnapshot = typeof lanePromptSnapshotsTable.$inferSelect;
 export type LaneMergeJob = typeof laneMergeQueueTable.$inferSelect;
 export type LaneConflictResolution = typeof laneConflictResolutionsTable.$inferSelect;
+
+/**
+ * RFC 0002 Phase 3 — lane governance.
+ *
+ * Per-lane circuit-breaker state and takeover incidents. Permission profiles
+ * are static (lane-policy.ts / lane-governor.ts); only breaker state and
+ * recovery incidents persist here.
+ */
+export const laneGovernanceTable = pgTable("lane_governance", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").references(() => sessionsTable.id),
+  laneId: integer("lane_id").notNull().references(() => sessionLanesTable.id),
+  /** Circuit-breaker state (consecutiveFailures, tripped, timestamps). */
+  breakerState: jsonb("breaker_state"),
+  /** Takeover incident fields (null when the row is breaker-only). */
+  takeoverFromLaneId: integer("takeover_from_lane_id"),
+  takeoverReason: text("takeover_reason"),
+  takeoverEvidence: jsonb("takeover_evidence"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("lane_governance_lane_unique_idx").on(table.laneId),
+]);
+
+export type LaneGovernance = typeof laneGovernanceTable.$inferSelect;

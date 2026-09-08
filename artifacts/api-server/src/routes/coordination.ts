@@ -1515,6 +1515,142 @@ router.get("/sessions/:id/conflict-resolutions", async (req, res) => {
   res.json({ sessionId, resolutions, total: resolutions.length });
 });
 
+// ─── RFC 0002 Phase 3 governance routes ────────────────────────────────────────
+
+// GET /api/sessions/:id/lanes/:laneId/governance — breaker state + takeovers
+router.get("/sessions/:id/lanes/:laneId/governance", requireAgentAuth(["coordination:read"]));
+router.get("/sessions/:id/lanes/:laneId/governance", async (req, res) => {
+  const sessionId = getSessionId(req);
+  const laneId = parseInt(req.params["laneId"] ?? "");
+  if (!sessionId || !Number.isFinite(laneId)) {
+    res.status(400).json({ error: "Invalid session or lane ID" }); return;
+  }
+
+  const { createDbGovernanceStore } = await import("../services/lane-governor");
+  const store = createDbGovernanceStore();
+  const breaker = await store.getBreaker(laneId);
+  const takeovers = (await store.listTakeovers(sessionId)).filter((t) => t.toLaneId === laneId || t.fromLaneId === laneId);
+  res.json({ sessionId, laneId, breaker, takeovers });
+});
+
+// POST /api/sessions/:id/lanes/:laneId/governance/failure — record a lane failure (breaker)
+router.post("/sessions/:id/lanes/:laneId/governance/failure", requireAgentAuth(["coordination:write"]));
+router.post("/sessions/:id/lanes/:laneId/governance/failure", async (req, res) => {
+  const sessionId = getSessionId(req);
+  const laneId = parseInt(req.params["laneId"] ?? "");
+  if (!sessionId || !Number.isFinite(laneId)) {
+    res.status(400).json({ error: "Invalid session or lane ID" }); return;
+  }
+
+  const { createDbGovernanceStore, recordLaneFailure } = await import("../services/lane-governor");
+  const store = createDbGovernanceStore();
+  const current = await store.getBreaker(laneId);
+  const next = recordLaneFailure(current);
+  await store.setBreaker(laneId, next);
+
+  if (next.tripped) {
+    emitLaneEvent(sessionId, laneId, "lane_destroyed", { reason: "circuit_breaker_tripped", consecutiveFailures: next.consecutiveFailures });
+  }
+  broadcastCoordinationUpdate(sessionId);
+  res.json({ sessionId, laneId, breaker: next });
+});
+
+// POST /api/sessions/:id/lanes/:laneId/governance/success — record a lane success (reset breaker)
+router.post("/sessions/:id/lanes/:laneId/governance/success", requireAgentAuth(["coordination:write"]));
+router.post("/sessions/:id/lanes/:laneId/governance/success", async (req, res) => {
+  const sessionId = getSessionId(req);
+  const laneId = parseInt(req.params["laneId"] ?? "");
+  if (!sessionId || !Number.isFinite(laneId)) {
+    res.status(400).json({ error: "Invalid session or lane ID" }); return;
+  }
+
+  const { createDbGovernanceStore, recordLaneSuccess } = await import("../services/lane-governor");
+  const store = createDbGovernanceStore();
+  const current = await store.getBreaker(laneId);
+  const next = recordLaneSuccess(current);
+  await store.setBreaker(laneId, next);
+
+  broadcastCoordinationUpdate(sessionId);
+  res.json({ sessionId, laneId, breaker: next });
+});
+
+// POST /api/sessions/:id/reconcile — run the reconcile pass
+router.post("/sessions/:id/reconcile", requireAgentAuth(["coordination:write"]));
+router.post("/sessions/:id/reconcile", async (req, res) => {
+  const sessionId = getSessionId(req);
+  if (!sessionId) { res.status(400).json({ error: "Invalid session ID" }); return; }
+
+  const { reconcileSession } = await import("../services/lane-governor");
+
+  // Orphan claims: active claims whose lane no longer exists.
+  const lanes = await db.select({ id: sessionLanesTable.id }).from(sessionLanesTable).where(eq(sessionLanesTable.sessionId, sessionId));
+  const laneIds = lanes.map((l) => l.id);
+  const orphanClaims = laneIds.length === 0
+    ? 0
+    : (await db.select({ id: laneClaimsTable.id }).from(laneClaimsTable)
+        .where(and(eq(laneClaimsTable.active, true), inArray(laneClaimsTable.laneId, laneIds)))).length;
+
+  // Uncommitted lanes: lanes with active claims but no merge job completed.
+  const uncommittedLanes = laneIds.length === 0
+    ? []
+    : (await db.select({ memberIdentifier: sessionLanesTable.memberIdentifier }).from(sessionLanesTable)
+        .where(and(eq(sessionLanesTable.sessionId, sessionId), eq(sessionLanesTable.status, "active"))))
+        .map((l) => l.memberIdentifier);
+
+  const result = reconcileSession({
+    orphanClaims,
+    uncommittedLanes,
+    ghostWorktrees: [],
+    goalGaps: [],
+  });
+
+  broadcastCoordinationUpdate(sessionId);
+  res.json({ sessionId, result });
+});
+
+// POST /api/sessions/:id/lanes/:laneId/takeover — evidence-based lane takeover
+router.post("/sessions/:id/lanes/:laneId/takeover", requireAgentAuth(["coordination:write"]));
+router.post("/sessions/:id/lanes/:laneId/takeover", async (req, res) => {
+  const sessionId = getSessionId(req);
+  const toLaneId = parseInt(req.params["laneId"] ?? "");
+  if (!sessionId || !Number.isFinite(toLaneId)) {
+    res.status(400).json({ error: "Invalid session or lane ID" }); return;
+  }
+
+  const { fromLaneId, reason, evidence } = req.body as {
+    fromLaneId?: number;
+    reason?: string;
+    evidence?: { heartbeatStale?: boolean; noLiveProcess?: boolean; lockStale?: boolean };
+  };
+
+  if (!fromLaneId || !Number.isFinite(fromLaneId)) {
+    res.status(400).json({ error: "fromLaneId is required" }); return;
+  }
+  if (!reason || typeof reason !== "string") {
+    res.status(400).json({ error: "reason is required" }); return;
+  }
+
+  const { createDbGovernanceStore, takeoverLane } = await import("../services/lane-governor");
+  const store = createDbGovernanceStore();
+  const result = await takeoverLane(store, {
+    sessionId,
+    fromLaneId,
+    toLaneId,
+    reason,
+    evidence: {
+      heartbeatStale: evidence?.heartbeatStale ?? false,
+      noLiveProcess: evidence?.noLiveProcess ?? false,
+      lockStale: evidence?.lockStale ?? false,
+    },
+  });
+
+  if (result.ok) {
+    emitLaneEvent(sessionId, toLaneId, "lane_created", { reason: "takeover", fromLaneId });
+  }
+  broadcastCoordinationUpdate(sessionId);
+  res.status(result.ok ? 200 : 409).json({ sessionId, result });
+});
+
 // ─── GET /api/sessions/:id/lanes/:laneId/timeline ─────────────────────────────
 // Returns paginated lane_events for a specific lane, newest first.
 // ?cursor=<id>&limit=<n> — cursor is the lowest event id from the previous page.
