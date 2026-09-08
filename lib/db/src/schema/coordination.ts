@@ -125,6 +125,36 @@ export const laneEventsTable = pgTable("lane_events", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export type LaneMergeStatus = "queued" | "merging" | "merged" | "skipped" | "failed";
+
+/**
+ * RFC 0002 Phase 1 — risk-sequenced lane merge queue.
+ *
+ * A lane's `safe_to_merge` handoff enqueues a merge job here. The queue is
+ * drained smallest/lowest-risk first; each merge is test-gated and
+ * skip-not-abort on conflict, so one conflicting lane never blocks the batch.
+ */
+export const laneMergeQueueTable = pgTable("lane_merge_queue", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id").notNull().references(() => sessionsTable.id),
+  laneId: integer("lane_id").notNull().references(() => sessionLanesTable.id),
+  handoffId: integer("handoff_id").references(() => laneHandoffsTable.id),
+  status: text("status").notNull().default("queued"),
+  /** Risk score [0, 1] — lower = merge sooner (small/low-risk first). */
+  riskScore: real("risk_score").notNull().default(0.5),
+  /** Branch names resolved at enqueue time. */
+  headBranch: text("head_branch").notNull(),
+  baseBranch: text("base_branch").notNull(),
+  /** Commit SHA of the lane branch at enqueue time (for resumable resolve). */
+  headSha: text("head_sha"),
+  /** Result of the last merge attempt. */
+  result: jsonb("result"),
+  errorDetails: text("error_details"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+});
+
 export type SessionLane = typeof sessionLanesTable.$inferSelect;
 export type LaneClaim = typeof laneClaimsTable.$inferSelect;
 export type LaneHandoff = typeof laneHandoffsTable.$inferSelect;
@@ -133,3 +163,4 @@ export type ClaimPurgeLog = typeof claimPurgeLogsTable.$inferSelect;
 export type CustomLaneType = typeof customLaneTypesTable.$inferSelect;
 export type LaneEvent = typeof laneEventsTable.$inferSelect;
 export type LanePromptSnapshot = typeof lanePromptSnapshotsTable.$inferSelect;
+export type LaneMergeJob = typeof laneMergeQueueTable.$inferSelect;

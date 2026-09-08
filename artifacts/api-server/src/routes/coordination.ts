@@ -60,6 +60,8 @@ import {
 import type { HeavyJobClass, HeavyJobStatus, HandoffType, ClaimType, SessionLane, LaneClaim, LaneHandoff, LaneHeavyJob } from "@workspace/db";
 import { createDraftPullRequest } from "../services/github-pr";
 import { getLaneBranchName, getSessionBranchName } from "../services/lane-branch";
+import { createDbMergeQueueStore, LaneMergeQueue, scoreMergeRisk, type GitExecutor } from "../services/lane-merge";
+import { resolveTestCommand } from "../services/lane-test-gate";
 
 const router = Router({ mergeParams: true });
 
@@ -110,6 +112,118 @@ function enumToStrength(s: string): number {
   if (s === "owner") return 0.9;
   if (s === "editing") return 0.6;
   return 0.3; // "watching"
+}
+
+// ─── RFC 0002 merge-queue helpers ──────────────────────────────────────────────
+
+/**
+ * Git executor for the lane merge queue. Uses the workspace repo path from the
+ * session's repo context; falls back to the default workspace path.
+ */
+function createGitExecutor(): GitExecutor {
+  return {
+    async resolveSha(repoPath, branch) {
+      const { spawnSync } = await import("child_process");
+      const res = spawnSync("git", ["rev-parse", branch], { cwd: repoPath, encoding: "utf8", timeout: 10_000 });
+      return res.status === 0 ? res.stdout.trim() || null : null;
+    },
+    async commitAll(repoPath, branch, message) {
+      const { spawnSync } = await import("child_process");
+      const add = spawnSync("git", ["add", "-A"], { cwd: repoPath, encoding: "utf8", timeout: 10_000 });
+      if (add.status !== 0) return false;
+      const commit = spawnSync("git", ["commit", "-m", message], { cwd: repoPath, encoding: "utf8", timeout: 10_000 });
+      return commit.status === 0;
+    },
+    async diffStat(repoPath, baseBranch, headBranch) {
+      const { spawnSync } = await import("child_process");
+      const res = spawnSync("git", ["diff", "--numstat", `${baseBranch}...${headBranch}`], { cwd: repoPath, encoding: "utf8", timeout: 10_000 });
+      if (res.status !== 0) return null;
+      let filesChanged = 0, insertions = 0, deletions = 0;
+      for (const line of res.stdout.split(/\r?\n/)) {
+        const m = line.match(/^(\d+|-)\s+(\d+|-)\s+(.+)$/);
+        if (!m) continue;
+        filesChanged++;
+        if (m[1] !== "-") insertions += parseInt(m[1]!, 10);
+        if (m[2] !== "-") deletions += parseInt(m[2]!, 10);
+      }
+      return { filesChanged, insertions, deletions };
+    },
+    async merge(repoPath, baseBranch, headBranch) {
+      const { spawnSync } = await import("child_process");
+      const res = spawnSync("git", ["merge", "--no-edit", headBranch], { cwd: repoPath, encoding: "utf8", timeout: 30_000 });
+      if (res.status === 0) return "clean";
+      // A non-zero exit with unmerged paths means a conflict.
+      const unmerged = spawnSync("git", ["diff", "--name-only", "--diff-filter=U"], { cwd: repoPath, encoding: "utf8", timeout: 10_000 });
+      return unmerged.stdout.trim().length > 0 ? "conflict" : "error";
+    },
+    async abortMerge(repoPath) {
+      const { spawnSync } = await import("child_process");
+      const res = spawnSync("git", ["merge", "--abort"], { cwd: repoPath, encoding: "utf8", timeout: 10_000 });
+      return res.status === 0;
+    },
+    async readFile(repoPath, ref, filePath) {
+      const { spawnSync } = await import("child_process");
+      const res = spawnSync("git", ["show", `${ref}:${filePath}`], { cwd: repoPath, encoding: "utf8", timeout: 10_000 });
+      return res.status === 0 ? res.stdout : null;
+    },
+    async writeFile(repoPath, filePath, content) {
+      const { writeFile } = await import("fs/promises");
+      const { join } = await import("path");
+      try {
+        await writeFile(join(repoPath, filePath), content);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async stageFile(repoPath, filePath) {
+      const { spawnSync } = await import("child_process");
+      const res = spawnSync("git", ["add", filePath], { cwd: repoPath, encoding: "utf8", timeout: 10_000 });
+      return res.status === 0;
+    },
+    async finishMerge(repoPath, message) {
+      const { spawnSync } = await import("child_process");
+      const res = spawnSync("git", ["commit", "--no-edit", "-m", message], { cwd: repoPath, encoding: "utf8", timeout: 10_000 });
+      return res.status === 0;
+    },
+    async listConflictedFiles(repoPath) {
+      const { spawnSync } = await import("child_process");
+      const res = spawnSync("git", ["diff", "--name-only", "--diff-filter=U"], { cwd: repoPath, encoding: "utf8", timeout: 10_000 });
+      if (res.status !== 0) return [];
+      return res.stdout.split(/\r?\n/).filter(Boolean);
+    },
+  };
+}
+
+/** Estimate a lane's merge risk from its diff stat + blast-radius overlap. */
+async function estimateMergeRisk(
+  sessionId: number,
+  lane: { laneType: string },
+  headBranch: string,
+  baseBranch: string,
+): Promise<number> {
+  try {
+    const [ctx] = await db.select({ repoPath: sessionRepoContextTable.repoPath })
+      .from(sessionRepoContextTable)
+      .where(eq(sessionRepoContextTable.sessionId, sessionId))
+      .orderBy(desc(sessionRepoContextTable.updatedAt))
+      .limit(1);
+    if (!ctx?.repoPath) return 0.5;
+
+    const git = createGitExecutor();
+    const stat = await git.diffStat(ctx.repoPath, baseBranch, headBranch);
+    if (!stat) return 0.5;
+
+    return scoreMergeRisk({
+      diffSize: stat.insertions + stat.deletions,
+      filesChanged: stat.filesChanged,
+      blastRadiusOverlap: 0, // full blast-radius scoring arrives with RFC 0002 Phase 2
+      laneType: lane.laneType,
+    });
+  } catch (err) {
+    logger.debug({ err, sessionId }, "Merge risk estimation failed — using conservative default");
+    return 0.5;
+  }
 }
 
 // ─── Serializers ──────────────────────────────────────────────────────────────
@@ -686,9 +800,9 @@ router.post("/sessions/:id/lanes/:laneId/handoff", async (req, res) => {
       .where(eq(sessionLanesTable.id, laneId));
   }
 
-  // When a lane signals "safe to merge", attempt to open a draft PR automatically.
-  // This is fire-and-forget: PR creation failure must never block the handoff response.
-  // The PR URL (if created) is stored in the handoff row so the Team tab can link to it.
+  // When a lane signals "safe to merge", enqueue a risk-sequenced merge job
+  // (RFC 0002 Phase 1) AND open a draft PR for human review. Both are
+  // fire-and-forget: a failure must never block the handoff response.
   let finalHandoff = handoff;
   if (handoffType === "safe_to_merge") {
     (async () => {
@@ -696,6 +810,23 @@ router.post("/sessions/:id/lanes/:laneId/handoff", async (req, res) => {
         const [session] = await db.select({ repoFingerprintJson: sessionsTable.repoFingerprintJson, hasGithubToken: sessionsTable.hasGithubToken })
           .from(sessionsTable)
           .where(eq(sessionsTable.id, sessionId));
+
+        const headBranch = getLaneBranchName(sessionId, lane.memberIdentifier);
+        const baseBranch = getSessionBranchName(sessionId);
+
+        // Enqueue the merge job. Risk is scored from the lane's diff stat when
+        // the repo is reachable; otherwise a conservative default is used.
+        const mergeQueue = new LaneMergeQueue(createDbMergeQueueStore(), createGitExecutor());
+        const riskScore = await estimateMergeRisk(sessionId, lane, headBranch, baseBranch);
+        await mergeQueue.enqueue({
+          sessionId,
+          laneId,
+          handoffId: handoff.id,
+          headBranch,
+          baseBranch,
+          riskScore,
+        });
+        logger.info({ handoffId: handoff.id, laneId, riskScore }, "Lane merge job enqueued for safe_to_merge handoff");
 
         if (!session?.hasGithubToken) return;
 
@@ -705,9 +836,6 @@ router.post("/sessions/:id/lanes/:laneId/handoff", async (req, res) => {
           logger.debug({ sessionId, laneId }, "handoff safe_to_merge: no repoUrl in session fingerprint — skipping PR");
           return;
         }
-
-        const headBranch = getLaneBranchName(sessionId, lane.memberIdentifier);
-        const baseBranch = getSessionBranchName(sessionId);
 
         const prTitle = `[MIZI] ${lane.memberIdentifier} — safe to merge into session branch`;
         const prBody = [
@@ -731,7 +859,7 @@ router.post("/sessions/:id/lanes/:laneId/handoff", async (req, res) => {
           broadcastCoordinationUpdate(sessionId, prUrl);
         }
       } catch (err) {
-        logger.warn({ err, handoffId: handoff.id }, "PR creation for safe_to_merge handoff failed (non-fatal)");
+        logger.warn({ err, handoffId: handoff.id }, "safe_to_merge processing failed (non-fatal)");
       }
     })();
   }
