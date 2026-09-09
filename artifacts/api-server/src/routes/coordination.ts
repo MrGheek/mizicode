@@ -536,7 +536,9 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
   if (preserveHistory) {
     // History-preserving path: atomically deactivate any existing active claim and insert a fresh row.
     // Wrapped in a transaction so the resource is never left without an active claim if the insert
-    // fails, and concurrent preserve-history calls cannot race on the partial-unique index.
+    // fails. The insert is conflict-tolerant: if a concurrent preserve-history call already inserted
+    // a fresh active row (both deactivated the old one, then raced the insert), we refresh that row
+    // instead of erroring on the partial-unique index — exactly one active claim always survives.
     claim = await db.transaction(async (tx) => {
       await tx.update(laneClaimsTable)
         .set({ active: false })
@@ -556,6 +558,16 @@ router.post("/sessions/:id/lanes/:laneId/claim", async (req, res) => {
         expiresAt,
         claimStrength,
         active: true,
+      }).onConflictDoUpdate({
+        target: [laneClaimsTable.laneId, laneClaimsTable.pathOrSymbol],
+        targetWhere: eq(laneClaimsTable.active, true),
+        set: {
+          claimType: claimType ?? sql`${laneClaimsTable.claimType}`,
+          claimStrength,
+          claimSymbols: resolvedSymbols as unknown as Record<string, unknown> | null,
+          lastHeartbeatAt: now,
+          expiresAt,
+        },
       }).returning();
       return inserted;
     });

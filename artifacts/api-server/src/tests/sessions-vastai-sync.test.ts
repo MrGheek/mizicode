@@ -15,7 +15,7 @@
  * - Team member ideUrl reconstruction
  */
 
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { db, gpuProfilesTable, sessionsTable, TeamMemberRecord } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
@@ -79,8 +79,7 @@ beforeAll(async () => {
       gpuName: "A100",
       numGpus: 1,
       totalVram: 80,
-      dockerImageTag: "test:latest",
-      defaultQuant: "Q4_K_M",
+      dockerImageTag: "test:latest",      defaultQuant: "Q4_K_M",
       quantSizeGb: 10,
       diskSizeGb: 50,
       estimatedSpeedMin: 20,
@@ -96,6 +95,11 @@ beforeAll(async () => {
 afterAll(async () => {
   await cleanup();
   vi.restoreAllMocks();
+});
+
+// Reset mock call counts between tests so "not called" assertions are isolated.
+beforeEach(() => {
+  vi.clearAllMocks();
 });
 
 // ─── Tests ─────────────────────────────────────────────────────────────────────
@@ -395,8 +399,8 @@ describe("syncSessionFromVastai State Machine", () => {
     await request(app).get(`/api/sessions/${sessionId}`);
 
     const [updated] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, sessionId));
-    // Should NOT auto-transition; stay in current state
-    expect(updated.status).toBe("provisioning");
+    // Should NOT auto-mark ready under 30 min; the sync moves provisioning → starting.
+    expect(updated.status).toBe("starting");
   });
 
   it("reconstructs team member ideUrl from theiaUrl", async () => {

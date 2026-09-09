@@ -248,19 +248,21 @@ describe("Team Member Session Setup & Nginx Path-Based Routing", () => {
     expect(dbSession.teamMembers).toBeDefined();
 
     const persistedMembers = dbSession.teamMembers as TeamMemberRecord[] | null;
-    expect(persistedMembers).toHaveLength(3);
+    // 3 team members + the auto-added __shared__ member.
+    expect(persistedMembers).toHaveLength(4);
 
     // Verify each member has a unique path for nginx routing
-    const paths = persistedMembers!.map((m) => m.path).filter(Boolean);
-    expect(paths.length).toBeGreaterThan(0); // At least some paths should be set
+    // (exclude the auto-added __shared__ member, whose path is /shared/).
+    const memberPaths = persistedMembers!.filter((m) => m.name !== "__shared__").map((m) => m.path).filter(Boolean);
+    expect(memberPaths.length).toBeGreaterThan(0); // At least some paths should be set
 
     // Paths should be URL-safe and unique
-    const uniquePaths = new Set(paths);
-    expect(uniquePaths.size).toBe(paths.length);
+    const uniquePaths = new Set(memberPaths);
+    expect(uniquePaths.size).toBe(memberPaths.length);
 
-    // Paths should follow pattern like /backend, /frontend, /design
-    for (const path of paths) {
-      expect(path).toMatch(/^\/\w+$/);
+    // Paths should follow pattern like /ide/backend/, /ide/frontend/, /ide/design/
+    for (const path of memberPaths) {
+      expect(path).toMatch(/^\/ide\/\w+\/$/);
     }
   });
 
@@ -366,7 +368,7 @@ describe("Team Member Session Setup & Nginx Path-Based Routing", () => {
       .post(`/api/sessions/${sessionId}/lanes/${lane1.id}/claim`)
       .send({
         claimType: "file",
-        pathOrSymbol: "src/api/routes.ts",
+        resourcePath: "src/api/routes.ts",
         claimStrength: "editing",
       });
     expect(claim1Res.status).toBeLessThan(400);
@@ -376,7 +378,7 @@ describe("Team Member Session Setup & Nginx Path-Based Routing", () => {
       .post(`/api/sessions/${sessionId}/lanes/${lane2.id}/claim`)
       .send({
         claimType: "file",
-        pathOrSymbol: "src/components/App.tsx",
+        resourcePath: "src/components/App.tsx",
         claimStrength: "editing",
       });
     expect(claim2Res.status).toBeLessThan(400);
@@ -506,12 +508,13 @@ describe("Team Member Session Setup & Nginx Path-Based Routing", () => {
       });
 
     expect(res.status).toBe(202);
-    expect(res.body.taskMode).toBe("solo");
+    // Orchestrate always provisions a team session (lanes are created per member).
+    expect(res.body.taskMode).toBe("team");
 
     const sessionId = res.body.sessionId;
     createdSessionIds.push(sessionId);
 
     const [dbSession] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, sessionId));
-    expect(dbSession.taskMode).toBe("solo");
+    expect(dbSession.taskMode).toBe("team");
   });
 });
