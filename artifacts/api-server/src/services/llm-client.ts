@@ -52,6 +52,11 @@ function ollamaRoot(): string {
   return (process.env["OLLAMA_BASE_URL"] || DEFAULT_OLLAMA_ROOT).replace(/\/+$/, "");
 }
 
+/** True when the configured Ollama points at the hosted cloud, not a local daemon. */
+function isOllamaCloud(): boolean {
+  return (process.env["OLLAMA_BASE_URL"] ?? "").includes("ollama.com");
+}
+
 /** True when a model id is one of the routed-local Ollama candidates. */
 export function isLocalOllamaModelId(model: string): boolean {
   return LOCAL_OLLAMA_MODEL_IDS.has(model);
@@ -69,6 +74,8 @@ let localProbedAt = 0;
 const LOCAL_LIVE_TTL_MS = 30_000;
 
 async function probeLocalOllamaLive(): Promise<boolean> {
+  // Ollama Cloud is a hosted remote, not a local daemon peer — never probe.
+  if (isOllamaCloud()) return false;
   const now = Date.now();
   if (localLiveCache !== null && now - localProbedAt < LOCAL_LIVE_TTL_MS) return localLiveCache;
   try {
@@ -101,6 +108,13 @@ export function getLlmClientConfig(overrideModel?: string): LlmClientConfig | nu
     const apiKey = process.env[info.envKey];
     if (!apiKey) continue;
     return { baseUrl: info.apiBase, apiKey, model, provider: key };
+  }
+
+  // Ollama Cloud (hosted remote — distinct from the local daemon peers).
+  // https://ollama.com/v1 is OpenAI-compatible; the same OLLAMA_API_KEY works.
+  const ollamaKey = process.env["OLLAMA_API_KEY"];
+  if (ollamaKey && process.env["OLLAMA_BASE_URL"]?.includes("ollama.com")) {
+    return { baseUrl: "https://ollama.com/v1", apiKey: ollamaKey, model, provider: "ollama-cloud" };
   }
 
   const baseUrl = process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"];
@@ -242,10 +256,14 @@ export async function callLlm(opts: LlmCallOptions): Promise<string | null> {
     }
 
     const data = await resp.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{ message?: { content?: string; reasoning?: string } }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
-    const content = data.choices?.[0]?.message?.content?.trim() ?? null;
+    // Ollama Cloud / reasoning models (deepseek-v4-*, gpt-oss, qwen3.5) return the
+    // answer in a `reasoning` field with content:''. Fall back to `reasoning` so
+    // those models work through the same client.
+    const rawContent = data.choices?.[0]?.message?.content?.trim() || data.choices?.[0]?.message?.reasoning?.trim() || null;
+    const content = rawContent;
     logger.debug({ tag: opts.logTag, promptVersion: opts.promptVersion, hasContent: content !== null }, "[llm-client] LLM call succeeded");
 
     // Cache the result for later byte-identical prompts (TTL per task).
