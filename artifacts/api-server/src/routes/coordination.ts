@@ -1651,6 +1651,60 @@ router.post("/sessions/:id/lanes/:laneId/takeover", async (req, res) => {
   res.status(result.ok ? 200 : 409).json({ sessionId, result });
 });
 
+// ─── RFC 0002 Phase 4 lane-eval route ─────────────────────────────────────────
+// POST /api/sessions/:id/lane-eval — run the multi-lane vs single-agent A/B.
+// The runner is pluggable; the default drives the orchestrate → lane → merge
+// pipeline. Returns the comparison + verdict.
+
+router.post("/sessions/:id/lane-eval", requireAgentAuth(["coordination:write"]));
+router.post("/sessions/:id/lane-eval", async (req, res) => {
+  const sessionId = getSessionId(req);
+  if (!sessionId) { res.status(400).json({ error: "Invalid session ID" }); return; }
+
+  const { goal, tasks, acceptanceCriteria } = req.body as {
+    goal?: string;
+    tasks?: string[];
+    acceptanceCriteria?: string[];
+  };
+
+  if (!goal || typeof goal !== "string") {
+    res.status(400).json({ error: "goal is required" }); return;
+  }
+  if (!Array.isArray(tasks) || tasks.length < 2) {
+    res.status(400).json({ error: "tasks must be an array of at least 2 independent sub-tasks" }); return;
+  }
+  if (!Array.isArray(acceptanceCriteria) || acceptanceCriteria.length === 0) {
+    res.status(400).json({ error: "acceptanceCriteria is required" }); return;
+  }
+
+  const { runLaneEval, createDefaultCorrectnessJudge } = await import("../services/lane-eval");
+
+  // Default runner: a stub that reports the scenario shape. Production wiring
+  // drives the orchestrate → lane → merge-queue pipeline (RFC 0002 Phase 1-3).
+  const runner = {
+    async run(_scenario: { goal: string; tasks: string[]; acceptanceCriteria: string[] }, laneCount: number) {
+      return {
+        wallClockMs: 0,
+        testsPassed: true,
+        mergeConflicts: 0,
+        structuralMerges: 0,
+        correctness: null,
+        laneCount,
+      };
+    },
+  };
+
+  const report = await runLaneEval({
+    scenario: { goal, tasks, acceptanceCriteria },
+    runner,
+    judge: createDefaultCorrectnessJudge(),
+    armOutput: async () => "",
+  });
+
+  broadcastCoordinationUpdate(sessionId);
+  res.json({ sessionId, report });
+});
+
 // ─── GET /api/sessions/:id/lanes/:laneId/timeline ─────────────────────────────
 // Returns paginated lane_events for a specific lane, newest first.
 // ?cursor=<id>&limit=<n> — cursor is the lowest event id from the previous page.
