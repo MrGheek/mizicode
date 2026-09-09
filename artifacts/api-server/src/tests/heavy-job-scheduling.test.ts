@@ -310,7 +310,8 @@ describe("Heavy Job Priority Scheduling Under Load", () => {
     // Even with laneWeight boost, explicit priority matters
     expect(lane2Job?.priority).toBeGreaterThan((lane1Job?.priority || 0) * 2);
 
-    // Cleanup
+    // Cleanup — delete child rows before the lane (FK-safe order).
+    await db.delete(laneHeavyJobsTable).where(eq(laneHeavyJobsTable.laneId, lane2.id));
     await db.delete(sessionLanesTable).where(eq(sessionLanesTable.id, lane2.id));
   });
 

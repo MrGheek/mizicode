@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import request from "supertest";
 import app from "../app";
-import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneHandoffsTable, laneHeavyJobsTable, laneEventsTable, claimPurgeLogsTable, provisionedResourcesTable, orchestrationIdempotencyTable } from "@workspace/db";
+import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneHandoffsTable, laneHeavyJobsTable, laneEventsTable, claimPurgeLogsTable, provisionedResourcesTable, orchestrationIdempotencyTable, laneMergeQueueTable, laneConflictResolutionsTable, laneGovernanceTable } from "@workspace/db";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { sweepExpiredClaims, expireStaleClaimsForSession } from "../services/claim-sweeper";
 import { LANE_HEARTBEAT_WINDOW_SECONDS } from "../services/lane-policy";
@@ -33,6 +33,10 @@ async function cleanupSession(sessionId: number) {
   await db.delete(orchestrationIdempotencyTable).where(eq(orchestrationIdempotencyTable.sessionId, sessionId));
 
   if (laneIds.length > 0) {
+    // RFC 0002 tables reference lanes/handoffs — delete in FK-safe order.
+    await db.delete(laneMergeQueueTable).where(inArray(laneMergeQueueTable.laneId, laneIds));
+    await db.delete(laneConflictResolutionsTable).where(eq(laneConflictResolutionsTable.sessionId, sessionId));
+    await db.delete(laneGovernanceTable).where(inArray(laneGovernanceTable.laneId, laneIds));
     await db.delete(laneClaimsTable).where(inArray(laneClaimsTable.laneId, laneIds));
     await db.delete(laneHandoffsTable).where(inArray(laneHandoffsTable.laneId, laneIds));
     await db.delete(sessionLanesTable).where(eq(sessionLanesTable.sessionId, sessionId));

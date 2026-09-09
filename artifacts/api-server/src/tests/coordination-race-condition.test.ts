@@ -12,10 +12,10 @@
  * unique constraint violation.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import request from "supertest";
 import app from "../app";
-import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable } from "@workspace/db";
+import { db, gpuProfilesTable, sessionsTable, sessionLanesTable, laneClaimsTable, laneHandoffsTable, laneEventsTable, laneMergeQueueTable, laneGovernanceTable, laneConflictResolutionsTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
@@ -74,10 +74,16 @@ async function setup() {
 
 async function cleanup() {
   if (testLaneId) {
+    // RFC 0002 tables reference lanes/handoffs — delete in FK-safe order.
+    await db.delete(laneMergeQueueTable).where(eq(laneMergeQueueTable.laneId, testLaneId));
+    await db.delete(laneGovernanceTable).where(eq(laneGovernanceTable.laneId, testLaneId));
     await db.delete(laneClaimsTable).where(eq(laneClaimsTable.laneId, testLaneId));
+    await db.delete(laneHandoffsTable).where(eq(laneHandoffsTable.laneId, testLaneId));
     await db.delete(sessionLanesTable).where(eq(sessionLanesTable.id, testLaneId));
   }
   if (testSessionId) {
+    await db.delete(laneEventsTable).where(eq(laneEventsTable.sessionId, testSessionId));
+    await db.delete(laneConflictResolutionsTable).where(eq(laneConflictResolutionsTable.sessionId, testSessionId));
     await db.delete(sessionsTable).where(eq(sessionsTable.id, testSessionId));
   }
   if (testProfileId) {
@@ -87,6 +93,18 @@ async function cleanup() {
 
 beforeAll(async () => {
   await setup();
+});
+
+// Each test starts with a clean claim slate so claims don't accumulate across
+// tests on the shared lane (including claims on lanes created mid-test).
+beforeEach(async () => {
+  if (testSessionId) {
+    const lanes = await db.select({ id: sessionLanesTable.id }).from(sessionLanesTable).where(eq(sessionLanesTable.sessionId, testSessionId));
+    const ids = lanes.map((l) => l.id);
+    if (ids.length > 0) {
+      await db.delete(laneClaimsTable).where(inArray(laneClaimsTable.laneId, ids));
+    }
+  }
 });
 
 afterAll(async () => {
@@ -110,14 +128,14 @@ describe("Concurrent Claim Upsert — Race Condition Prevention", () => {
         .post(`/api/sessions/${testSessionId}/lanes/${testLaneId}/claim`)
         .send({
           claimType,
-          pathOrSymbol: resourcePath,
+          resourcePath: resourcePath,
           claimStrength: "editing",
         }),
       request(app)
         .post(`/api/sessions/${testSessionId}/lanes/${testLaneId}/claim`)
         .send({
           claimType,
-          pathOrSymbol: resourcePath,
+          resourcePath: resourcePath,
           claimStrength: "editing",
         }),
     ];
@@ -125,14 +143,17 @@ describe("Concurrent Claim Upsert — Race Condition Prevention", () => {
     // Wait for both to complete
     const [res1, res2] = await Promise.all(promises);
 
-    // Both should return either 200 (success) or 409 (conflict/duplicate)
+    // Both should return either 200/201 (success) or 409 (conflict/duplicate)
     // NOT 500 (internal error)
     expect([res1.status, res2.status]).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/^(200|201|409)$/),
-        expect.stringMatching(/^(200|201|409)$/),
+        expect.any(Number),
+        expect.any(Number),
       ]),
     );
+    for (const status of [res1.status, res2.status]) {
+      expect([200, 201, 409]).toContain(status);
+    }
 
     // At least one should succeed (200 or 201)
     const successCount = [res1, res2].filter((r) => r.status >= 200 && r.status < 300).length;
@@ -162,7 +183,7 @@ describe("Concurrent Claim Upsert — Race Condition Prevention", () => {
       .post(`/api/sessions/${testSessionId}/lanes/${testLaneId}/claim`)
       .send({
         claimType,
-        pathOrSymbol: resourcePath,
+        resourcePath: resourcePath,
         claimStrength: "editing",
       });
 
@@ -175,7 +196,7 @@ describe("Concurrent Claim Upsert — Race Condition Prevention", () => {
         .post(`/api/sessions/${testSessionId}/lanes/${testLaneId}/claim`)
         .send({
           claimType,
-          pathOrSymbol: resourcePath,
+          resourcePath: resourcePath,
           claimStrength: "editing",
           preserveHistory: true,
         }),
@@ -183,7 +204,7 @@ describe("Concurrent Claim Upsert — Race Condition Prevention", () => {
         .post(`/api/sessions/${testSessionId}/lanes/${testLaneId}/claim`)
         .send({
           claimType,
-          pathOrSymbol: resourcePath,
+          resourcePath: resourcePath,
           claimStrength: "editing",
           preserveHistory: true,
         }),
@@ -217,7 +238,7 @@ describe("Concurrent Claim Upsert — Race Condition Prevention", () => {
         .post(`/api/sessions/${testSessionId}/lanes/${testLaneId}/claim`)
         .send({
           claimType: "file",
-          pathOrSymbol: path,
+          resourcePath: path,
           claimStrength: "editing",
         }),
     );
@@ -246,7 +267,7 @@ describe("Concurrent Claim Upsert — Race Condition Prevention", () => {
       .post(`/api/sessions/${testSessionId}/lanes/${testLaneId}/claim`)
       .send({
         claimType: "file",
-        pathOrSymbol: resourcePath,
+        resourcePath: resourcePath,
         claimStrength: "watching",
       });
 
@@ -274,14 +295,14 @@ describe("Concurrent Claim Upsert — Race Condition Prevention", () => {
         .post(`/api/sessions/${testSessionId}/lanes/${testLaneId}/claim`)
         .send({
           claimType: "file",
-          pathOrSymbol: resourcePath,
+          resourcePath: resourcePath,
           claimStrength: "watching",
         }),
       request(app)
         .post(`/api/sessions/${testSessionId}/lanes/${testLaneId}/claim`)
         .send({
           claimType: "file",
-          pathOrSymbol: resourcePath,
+          resourcePath: resourcePath,
           claimStrength: "watching",
         }),
     ];
@@ -316,7 +337,7 @@ describe("Concurrent Claim Upsert — Race Condition Prevention", () => {
       .post(`/api/sessions/${testSessionId}/lanes/${testLaneId}/claim`)
       .send({
         claimType: "symbol",
-        pathOrSymbol: resourcePath,
+        resourcePath: resourcePath,
         claimSymbols: symbols1,
         claimStrength: "editing",
       });
@@ -338,7 +359,7 @@ describe("Concurrent Claim Upsert — Race Condition Prevention", () => {
       .post(`/api/sessions/${testSessionId}/lanes/${lane2.id}/claim`)
       .send({
         claimType: "symbol",
-        pathOrSymbol: resourcePath,
+        resourcePath: resourcePath,
         claimSymbols: symbols2,
         claimStrength: "watching",
       });
@@ -347,15 +368,20 @@ describe("Concurrent Claim Upsert — Race Condition Prevention", () => {
     expect(res1.status).toBeLessThan(400);
     expect(res2.status).toBeLessThan(400);
 
-    // Verify both claims exist as active
+    // Verify both claims exist as active (scoped to the two lanes in this test)
     const allClaims = await db
       .select()
       .from(laneClaimsTable)
-      .where(and(eq(laneClaimsTable.pathOrSymbol, resourcePath), eq(laneClaimsTable.active, true)));
+      .where(and(
+        inArray(laneClaimsTable.laneId, [testLaneId, lane2.id]),
+        eq(laneClaimsTable.pathOrSymbol, resourcePath),
+        eq(laneClaimsTable.active, true),
+      ));
 
     expect(allClaims).toHaveLength(2);
 
-    // Cleanup lane2
+    // Cleanup lane2 — delete its claims first (FK-safe order).
+    await db.delete(laneClaimsTable).where(eq(laneClaimsTable.laneId, lane2.id));
     await db.delete(sessionLanesTable).where(eq(sessionLanesTable.id, lane2.id));
   });
 });

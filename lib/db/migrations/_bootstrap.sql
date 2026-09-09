@@ -2248,6 +2248,79 @@ ALTER TABLE ONLY public.project_tasks
 ALTER TABLE ONLY public.sessions
     ADD COLUMN IF NOT EXISTS plan_id integer REFERENCES public.project_plans(id) ON DELETE SET NULL;
 
+-- RFC 0002 Phase 1 — risk-sequenced lane merge queue
+CREATE TABLE IF NOT EXISTS public.lane_merge_queue (
+    id serial PRIMARY KEY NOT NULL,
+    session_id integer NOT NULL,
+    lane_id integer NOT NULL,
+    handoff_id integer,
+    status text NOT NULL DEFAULT 'queued',
+    risk_score real NOT NULL DEFAULT 0.5,
+    head_branch text NOT NULL,
+    base_branch text NOT NULL,
+    head_sha text,
+    result jsonb,
+    error_details text,
+    created_at timestamp NOT NULL DEFAULT now(),
+    started_at timestamp,
+    completed_at timestamp
+);
+
+ALTER TABLE ONLY public.lane_merge_queue
+    ADD CONSTRAINT lane_merge_queue_session_id_sessions_id_fk
+    FOREIGN KEY (session_id) REFERENCES public.sessions(id) NOT VALID;
+
+ALTER TABLE ONLY public.lane_merge_queue
+    ADD CONSTRAINT lane_merge_queue_lane_id_session_lanes_id_fk
+    FOREIGN KEY (lane_id) REFERENCES public.session_lanes(id) NOT VALID;
+
+ALTER TABLE ONLY public.lane_merge_queue
+    ADD CONSTRAINT lane_merge_queue_handoff_id_lane_handoffs_id_fk
+    FOREIGN KEY (handoff_id) REFERENCES public.lane_handoffs(id) NOT VALID;
+
+-- RFC 0002 Phase 2 — conflict-resolution notes
+CREATE TABLE IF NOT EXISTS public.lane_conflict_resolutions (
+    id serial PRIMARY KEY NOT NULL,
+    session_id integer NOT NULL,
+    merge_job_id integer,
+    file_path text NOT NULL,
+    outcome text NOT NULL DEFAULT 'preserved_both',
+    summary text NOT NULL,
+    intent_event_ids jsonb,
+    test_verified boolean NOT NULL DEFAULT false,
+    created_at timestamp NOT NULL DEFAULT now()
+);
+
+ALTER TABLE ONLY public.lane_conflict_resolutions
+    ADD CONSTRAINT lane_conflict_resolutions_session_id_sessions_id_fk
+    FOREIGN KEY (session_id) REFERENCES public.sessions(id) NOT VALID;
+
+ALTER TABLE ONLY public.lane_conflict_resolutions
+    ADD CONSTRAINT lane_conflict_resolutions_merge_job_id_lane_merge_queue_id_fk
+    FOREIGN KEY (merge_job_id) REFERENCES public.lane_merge_queue(id) NOT VALID;
+
+-- RFC 0002 Phase 3 — lane governance (breaker state + takeover incidents)
+CREATE TABLE IF NOT EXISTS public.lane_governance (
+    id serial PRIMARY KEY NOT NULL,
+    session_id integer,
+    lane_id integer NOT NULL,
+    breaker_state jsonb,
+    takeover_from_lane_id integer,
+    takeover_reason text,
+    takeover_evidence jsonb,
+    created_at timestamp NOT NULL DEFAULT now()
+);
+
+ALTER TABLE ONLY public.lane_governance
+    ADD CONSTRAINT lane_governance_session_id_sessions_id_fk
+    FOREIGN KEY (session_id) REFERENCES public.sessions(id) NOT VALID;
+
+ALTER TABLE ONLY public.lane_governance
+    ADD CONSTRAINT lane_governance_lane_id_session_lanes_id_fk
+    FOREIGN KEY (lane_id) REFERENCES public.session_lanes(id) NOT VALID;
+
+CREATE UNIQUE INDEX IF NOT EXISTS lane_governance_lane_unique_idx
+    ON public.lane_governance USING btree (lane_id);
 
 --
 -- PostgreSQL database dump complete
