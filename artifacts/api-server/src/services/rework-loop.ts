@@ -15,6 +15,7 @@ import type { Product, WorkOrder, Station, StationRole } from "@workspace/db";
 import type { FactoryStore } from "./factory";
 import { rejectToRework, effectiveStationWipLimit } from "./factory-dispatcher";
 import { inspectDeliverable, type Deliverable, type DeliverableInspection } from "./deliverable-contract";
+import { triggerPipeline } from "./factory-pipeline";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -85,6 +86,12 @@ export async function submitDeliverable(
     });
     // Clear rework items — the order has cleared the loop.
     await store.clearReworkItems(deliverable.workOrderId);
+    // Trigger the product pipeline (Phase 3).
+    try {
+      await triggerPipeline(store, existing.productId, deliverable.workOrderId);
+    } catch (err) {
+      logger.warn({ workOrderId: deliverable.workOrderId }, "[rework-loop] pipeline trigger failed (non-fatal)");
+    }
     logger.info({ workOrderId: deliverable.workOrderId, stationId: deliverable.stationId }, "[rework-loop] deliverable accepted");
     return { accepted: true, inspection, workOrder: order };
   }

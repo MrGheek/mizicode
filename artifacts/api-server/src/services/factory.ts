@@ -11,10 +11,10 @@
  * the products / work_orders / stations tables.
  */
 
-import { db, productsTable, workOrdersTable, stationsTable, reworkItemsTable } from "@workspace/db";
+import { db, productsTable, workOrdersTable, stationsTable, reworkItemsTable, pipelineRunsTable, factoryMetricsTable } from "@workspace/db";
 import { eq, and, inArray, desc, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
-import type { Product, WorkOrder, Station, ReworkItem, WorkOrderStatus, WorkOrderPriority, StationRole } from "@workspace/db";
+import type { Product, WorkOrder, Station, ReworkItem, PipelineRun, FactoryMetrics, WorkOrderStatus, WorkOrderPriority, StationRole, PipelineStage, PipelineStatus } from "@workspace/db";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -63,6 +63,14 @@ export interface FactoryStore {
   createReworkItem(params: { workOrderId: number; stationId: number; defectClass: string; cycle: number }): Promise<ReworkItem>;
   listReworkItems(workOrderId: number): Promise<ReworkItem[]>;
   clearReworkItems(workOrderId: number): Promise<void>;
+  // pipeline runs
+  createPipelineRun(params: { productId: number; triggerWorkOrderId?: number | null; stage: PipelineStage }): Promise<PipelineRun>;
+  getPipelineRun(id: number): Promise<PipelineRun | null>;
+  listPipelineRuns(productId: number, stage?: PipelineStage): Promise<PipelineRun[]>;
+  updatePipelineRun(id: number, patch: Partial<PipelineRun>): Promise<PipelineRun | null>;
+  // factory metrics
+  insertFactoryMetrics(params: { productId: number; snapshot: Record<string, unknown> }): Promise<FactoryMetrics>;
+  listFactoryMetrics(productId: number, limit?: number): Promise<FactoryMetrics[]>;
 }
 
 // ── In-memory store (tests) ───────────────────────────────────────────────────
@@ -76,6 +84,10 @@ export class MemoryFactoryStore implements FactoryStore {
   private stations: Station[] = [];
   private reworkItems: ReworkItem[] = [];
   private nextReworkItem = 1;
+  private pipelineRuns: PipelineRun[] = [];
+  private nextPipelineRun = 1;
+  private factoryMetrics: FactoryMetrics[] = [];
+  private nextFactoryMetrics = 1;
 
   async createProduct(params: CreateProductParams): Promise<Product> {
     const now = new Date();
@@ -215,15 +227,76 @@ export class MemoryFactoryStore implements FactoryStore {
     }
   }
 
+  async createPipelineRun(params: { productId: number; triggerWorkOrderId?: number | null; stage: PipelineStage }): Promise<PipelineRun> {
+    const now = new Date();
+    const run: PipelineRun = {
+      id: this.nextPipelineRun++,
+      productId: params.productId,
+      triggerWorkOrderId: params.triggerWorkOrderId ?? null,
+      stage: params.stage,
+      status: "pending" as PipelineStatus,
+      startedAt: null,
+      completedAt: null,
+      artifactsJson: null,
+      gatePassed: false,
+      gateDetail: null,
+      createdAt: now,
+    };
+    this.pipelineRuns.push(run);
+    return run;
+  }
+
+  async getPipelineRun(id: number): Promise<PipelineRun | null> {
+    return this.pipelineRuns.find((r) => r.id === id) ?? null;
+  }
+
+  async listPipelineRuns(productId: number, stage?: PipelineStage): Promise<PipelineRun[]> {
+    return this.pipelineRuns
+      .filter((r) => r.productId === productId)
+      .filter((r) => (stage ? r.stage === stage : true))
+      .sort((a, b) => a.id - b.id);
+  }
+
+  async updatePipelineRun(id: number, patch: Partial<PipelineRun>): Promise<PipelineRun | null> {
+    const r = this.pipelineRuns.find((x) => x.id === id);
+    if (!r) return null;
+    Object.assign(r, patch);
+    return r;
+  }
+
+  async insertFactoryMetrics(params: { productId: number; snapshot: Record<string, unknown> }): Promise<FactoryMetrics> {
+    const now = new Date();
+    const m: FactoryMetrics = {
+      id: this.nextFactoryMetrics++,
+      productId: params.productId,
+      snapshotTime: now,
+      snapshotJson: params.snapshot,
+      createdAt: now,
+    };
+    this.factoryMetrics.push(m);
+    return m;
+  }
+
+  async listFactoryMetrics(productId: number, limit?: number): Promise<FactoryMetrics[]> {
+    const items = this.factoryMetrics
+      .filter((m) => m.productId === productId)
+      .sort((a, b) => b.snapshotTime.getTime() - a.snapshotTime.getTime() || b.id - a.id);
+    return limit ? items.slice(0, limit) : items;
+  }
+
   clear(): void {
     this.products = [];
     this.workOrders = [];
     this.stations = [];
     this.reworkItems = [];
+    this.pipelineRuns = [];
+    this.factoryMetrics = [];
     this.nextProduct = 1;
     this.nextWorkOrder = 1;
     this.nextStation = 1;
     this.nextReworkItem = 1;
+    this.nextPipelineRun = 1;
+    this.nextFactoryMetrics = 1;
   }
 }
 
@@ -321,6 +394,46 @@ export function createDbFactoryStore(): FactoryStore {
       await db.update(reworkItemsTable)
         .set({ clearedAt: new Date() })
         .where(and(eq(reworkItemsTable.workOrderId, workOrderId), sql`${reworkItemsTable.clearedAt} IS NULL`));
+    },
+    async createPipelineRun(params) {
+      const [row] = await db.insert(pipelineRunsTable).values({
+        productId: params.productId,
+        triggerWorkOrderId: params.triggerWorkOrderId ?? null,
+        stage: params.stage,
+      }).returning();
+      return row;
+    },
+    async getPipelineRun(id) {
+      const [row] = await db.select().from(pipelineRunsTable).where(eq(pipelineRunsTable.id, id));
+      return row ?? null;
+    },
+    async listPipelineRuns(productId, stage) {
+      if (stage) {
+        return db.select().from(pipelineRunsTable)
+          .where(and(eq(pipelineRunsTable.productId, productId), eq(pipelineRunsTable.stage, stage)))
+          .orderBy(pipelineRunsTable.id);
+      }
+      return db.select().from(pipelineRunsTable)
+        .where(eq(pipelineRunsTable.productId, productId))
+        .orderBy(pipelineRunsTable.id);
+    },
+    async updatePipelineRun(id, patch) {
+      const [row] = await db.update(pipelineRunsTable).set(patch).where(eq(pipelineRunsTable.id, id)).returning();
+      return row ?? null;
+    },
+    async insertFactoryMetrics(params) {
+      const [row] = await db.insert(factoryMetricsTable).values({
+        productId: params.productId,
+        snapshotJson: params.snapshot,
+      }).returning();
+      return row;
+    },
+    async listFactoryMetrics(productId, limit) {
+      const query = db.select().from(factoryMetricsTable)
+        .where(eq(factoryMetricsTable.productId, productId))
+        .orderBy(desc(factoryMetricsTable.snapshotTime), desc(factoryMetricsTable.id))
+        .limit(limit ?? 100);
+      return query;
     },
   };
 }

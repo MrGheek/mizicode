@@ -15,6 +15,8 @@ import { admitMerge } from "../services/factory-admission";
 import { submitDeliverable, stationTelemetry, productTelemetry } from "../services/rework-loop";
 import type { StationRole } from "@workspace/db";
 import type { Deliverable } from "../services/deliverable-contract";
+import { triggerPipeline, advancePipeline, latestPipelineSnapshot, type PipelineStageResult } from "../services/factory-pipeline";
+import { computeDashboard, snapshotMetrics, getMetricsHistory } from "../services/factory-telemetry";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -283,6 +285,82 @@ router.get("/factory/products/:id/telemetry", requireAgentAuth(["coordination:re
   const store = createDbFactoryStore();
   const telemetry = await productTelemetry(store, productId);
   res.json(telemetry);
+});
+
+// ── Pipeline + dashboard (Phase 3) ───────────────────────────────────────────
+
+router.post("/factory/products/:id/pipeline/trigger", requireAgentAuth(["coordination:write"]), async (req, res) => {
+  const productId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(productId)) { res.status(400).json({ error: "invalid product id" }); return; }
+  const workOrderId = parseInt(String((req.body as { workOrderId?: number }).workOrderId ?? ""), 10);
+  if (!Number.isFinite(workOrderId)) { res.status(400).json({ error: "workOrderId is required" }); return; }
+  try {
+    const run = await triggerPipeline(createDbFactoryStore(), productId, workOrderId);
+    res.status(201).json({ pipelineRun: run });
+  } catch (err) {
+    res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.post("/factory/pipeline-runs/:id/advance", requireAgentAuth(["coordination:write"]), async (req, res) => {
+  const runId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(runId)) { res.status(400).json({ error: "invalid pipeline run id" }); return; }
+  const body = req.body as {
+    stage?: PipelineStageResult["stage"];
+    status?: "passed" | "failed";
+    artifacts?: Array<{ name: string; url: string; hash: string }>;
+    evidence?: Array<{ taskType: string; status: "pass" | "fail"; detail?: string }>;
+  };
+  if (!body.stage || !body.status) {
+    res.status(400).json({ error: "stage and status are required" });
+    return;
+  }
+  const result = await advancePipeline(createDbFactoryStore(), runId, {
+    stage: body.stage,
+    status: body.status,
+    artifacts: body.artifacts ?? [],
+    evidence: body.evidence ?? [],
+  });
+  res.json(result);
+});
+
+router.get("/factory/products/:id/pipeline", requireAgentAuth(["coordination:read"]), async (req, res) => {
+  const productId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(productId)) { res.status(400).json({ error: "invalid product id" }); return; }
+  const store = createDbFactoryStore();
+  const snapshot = await latestPipelineSnapshot(store, productId);
+  const runs = await store.listPipelineRuns(productId);
+  res.json({ latest: snapshot, runs });
+});
+
+router.get("/factory/products/:id/dashboard", requireAgentAuth(["coordination:read"]), async (req, res) => {
+  const productId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(productId)) { res.status(400).json({ error: "invalid product id" }); return; }
+  try {
+    const dashboard = await computeDashboard(createDbFactoryStore(), productId);
+    res.json(dashboard);
+  } catch (err) {
+    res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.post("/factory/products/:id/metrics/snapshot", requireAgentAuth(["coordination:write"]), async (req, res) => {
+  const productId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(productId)) { res.status(400).json({ error: "invalid product id" }); return; }
+  try {
+    const metrics = await snapshotMetrics(createDbFactoryStore(), productId);
+    res.status(201).json({ metrics });
+  } catch (err) {
+    res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.get("/factory/products/:id/metrics", requireAgentAuth(["coordination:read"]), async (req, res) => {
+  const productId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(productId)) { res.status(400).json({ error: "invalid product id" }); return; }
+  const limit = parseInt(String(req.query["limit"] ?? "50"), 10);
+  const metrics = await getMetricsHistory(createDbFactoryStore(), productId, Math.min(Math.max(limit, 1), 1000));
+  res.json({ productId, total: metrics.length, metrics });
 });
 
 export default router;

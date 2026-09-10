@@ -2399,6 +2399,33 @@ CREATE TABLE IF NOT EXISTS public.rework_items (
 CREATE INDEX IF NOT EXISTS rework_items_work_order_idx ON public.rework_items(work_order_id);
 CREATE INDEX IF NOT EXISTS rework_items_station_idx ON public.rework_items(station_id);
 
+CREATE TABLE IF NOT EXISTS public.pipeline_runs (
+    id serial PRIMARY KEY,
+    product_id integer NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
+    trigger_work_order_id integer REFERENCES public.work_orders(id) ON DELETE SET NULL,
+    stage text NOT NULL,
+    status text NOT NULL DEFAULT 'pending',
+    started_at timestamp,
+    completed_at timestamp,
+    artifacts_json jsonb DEFAULT '[]',
+    gate_passed boolean DEFAULT false,
+    gate_detail text,
+    created_at timestamp NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS pipeline_runs_product_idx ON public.pipeline_runs(product_id);
+CREATE INDEX IF NOT EXISTS pipeline_runs_trigger_idx ON public.pipeline_runs(trigger_work_order_id);
+
+CREATE TABLE IF NOT EXISTS public.factory_metrics (
+    id serial PRIMARY KEY,
+    product_id integer NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
+    snapshot_time timestamp NOT NULL DEFAULT now(),
+    snapshot_json jsonb NOT NULL,
+    created_at timestamp NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS factory_metrics_product_time_idx ON public.factory_metrics(product_id, snapshot_time DESC);
+
 --
 -- PostgreSQL database dump complete
 --

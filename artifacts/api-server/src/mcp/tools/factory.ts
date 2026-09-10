@@ -6,6 +6,8 @@ import { admitMerge } from "../../services/factory-admission.js";
 import { submitDeliverable, productTelemetry } from "../../services/rework-loop.js";
 import type { Deliverable } from "../../services/deliverable-contract.js";
 import type { StationRole } from "@workspace/db";
+import { triggerPipeline, advancePipeline, latestPipelineSnapshot } from "../../services/factory-pipeline.js";
+import { computeDashboard } from "../../services/factory-telemetry.js";
 
 /**
  * RFC 0003 Phase 1 — factory MCP tools: create_product, dispatch_work_order,
@@ -180,6 +182,60 @@ export function registerFactoryTools(server: McpServer): void {
     try {
       const telemetry = await productTelemetry(createDbFactoryStore(), productId);
       return { content: [{ type: "text", text: JSON.stringify(telemetry, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }, null, 2) }] };
+    }
+  });
+
+  server.registerTool("trigger_pipeline", {
+    description: "[Write] Trigger the continuous build → test → stage → ship pipeline for a product after a work order completes (RFC 0003 Phase 3).",
+    inputSchema: z.object({
+      productId: z.number().int().describe("Product ID"),
+      workOrderId: z.number().int().describe("Work order that triggered the run"),
+    }),
+  }, async ({ productId, workOrderId }) => {
+    try {
+      const run = await triggerPipeline(createDbFactoryStore(), productId, workOrderId);
+      return { content: [{ type: "text", text: JSON.stringify({ pipelineRun: run }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }, null, 2) }] };
+    }
+  });
+
+  server.registerTool("advance_pipeline", {
+    description: "[Write] Complete a pipeline stage (passed/failed) and advance to the next stage (RFC 0003 Phase 3).",
+    inputSchema: z.object({
+      pipelineRunId: z.number().int().describe("Pipeline run ID"),
+      stage: z.enum(["build", "test", "stage", "ship"]).describe("Stage being completed"),
+      status: z.enum(["passed", "failed"]).describe("Stage result"),
+      artifacts: z.array(z.object({ name: z.string(), url: z.string(), hash: z.string() })).optional().describe("Staged artifacts"),
+      evidence: z.array(z.object({ taskType: z.string(), status: z.enum(["pass", "fail"]), detail: z.string().optional() })).optional().describe("Gate evidence"),
+    }),
+  }, async ({ pipelineRunId, stage, status, artifacts, evidence }) => {
+    try {
+      const result = await advancePipeline(createDbFactoryStore(), pipelineRunId, {
+        stage,
+        status,
+        artifacts: artifacts ?? [],
+        evidence: evidence ?? [],
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }, null, 2) }] };
+    }
+  });
+
+  server.registerTool("factory_dashboard", {
+    description: "[Read] Factory dashboard for a product: throughput, cycle time, defect/rework rate, station utilization, WIP occupancy, pipeline status (RFC 0003 Phase 3).",
+    inputSchema: z.object({
+      productId: z.number().int().describe("Product ID"),
+    }),
+  }, async ({ productId }) => {
+    try {
+      const store = createDbFactoryStore();
+      const dashboard = await computeDashboard(store, productId);
+      const pipeline = await latestPipelineSnapshot(store, productId);
+      return { content: [{ type: "text", text: JSON.stringify({ dashboard, pipeline }, null, 2) }] };
     } catch (err) {
       return { content: [{ type: "text", text: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }, null, 2) }] };
     }

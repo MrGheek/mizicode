@@ -91,6 +91,50 @@ export const reworkItemsTable = pgTable("rework_items", {
   clearedAt: timestamp("cleared_at"),
 });
 
+/**
+ * RFC 0003 Phase 3 — pipeline runs: one row per stage of a continuous
+ * build → test → stage → ship pipeline.
+ *
+ * The pipeline runs continuously per product (not per session). Each run is
+ * triggered by a completed work order. Staged artifacts are the product's
+ * shippable state; ship is gated on the product's quality_gate_config.
+ */
+export type PipelineStage = "build" | "test" | "stage" | "ship";
+export type PipelineStatus = "pending" | "running" | "passed" | "failed" | "skipped";
+
+export const pipelineRunsTable = pgTable("pipeline_runs", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id").notNull().references(() => productsTable.id, { onDelete: "cascade" }),
+  /** Work order that triggered this pipeline run. */
+  triggerWorkOrderId: integer("trigger_work_order_id").references(() => workOrdersTable.id, { onDelete: "set null" }),
+  stage: text("stage").notNull().$type<PipelineStage>(),
+  status: text("status").notNull().default("pending").$type<PipelineStatus>(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  /** Staged artifacts: array of { name, url, hash } objects. */
+  artifactsJson: jsonb("artifacts_json"),
+  /** Quality gate result for this stage. */
+  gatePassed: boolean("gate_passed").default(false),
+  gateDetail: text("gate_detail"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/**
+ * RFC 0003 Phase 3 — factory metrics: periodic time-series snapshots.
+ *
+ * A snapshot captures the factory's state at a point in time: throughput,
+ * cycle time, defect rate, rework rate, station utilization, WIP occupancy,
+ * cost per work order. Fed to the factory dashboard / status-bar surface.
+ */
+export const factoryMetricsTable = pgTable("factory_metrics", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id").notNull().references(() => productsTable.id, { onDelete: "cascade" }),
+  snapshotTime: timestamp("snapshot_time").notNull().defaultNow(),
+  /** Aggregate metrics snapshot (throughput, cycleTime, defectRate, ...). */
+  snapshotJson: jsonb("snapshot_json").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export type Product = typeof productsTable.$inferSelect;
 export type InsertProduct = typeof productsTable.$inferInsert;
 export type WorkOrder = typeof workOrdersTable.$inferSelect;
@@ -99,3 +143,7 @@ export type Station = typeof stationsTable.$inferSelect;
 export type InsertStation = typeof stationsTable.$inferInsert;
 export type ReworkItem = typeof reworkItemsTable.$inferSelect;
 export type InsertReworkItem = typeof reworkItemsTable.$inferInsert;
+export type PipelineRun = typeof pipelineRunsTable.$inferSelect;
+export type InsertPipelineRun = typeof pipelineRunsTable.$inferInsert;
+export type FactoryMetrics = typeof factoryMetricsTable.$inferSelect;
+export type InsertFactoryMetrics = typeof factoryMetricsTable.$inferInsert;
