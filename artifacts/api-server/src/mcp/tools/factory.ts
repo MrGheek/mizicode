@@ -3,6 +3,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createDbFactoryStore, FactoryRegistry } from "../../services/factory.js";
 import { dispatchWorkOrders, completeWorkOrder, rejectToRework } from "../../services/factory-dispatcher.js";
 import { admitMerge } from "../../services/factory-admission.js";
+import { submitDeliverable, productTelemetry } from "../../services/rework-loop.js";
+import type { Deliverable } from "../../services/deliverable-contract.js";
+import type { StationRole } from "@workspace/db";
 
 /**
  * RFC 0003 Phase 1 — factory MCP tools: create_product, dispatch_work_order,
@@ -136,5 +139,49 @@ export function registerFactoryTools(server: McpServer): void {
       };
     }));
     return { content: [{ type: "text", text: JSON.stringify({ products: status, total: status.length }, null, 2) }] };
+  });
+
+  server.registerTool("submit_deliverable", {
+    description: "[Write] Submit a lane's output for gate inspection (RFC 0003 Phase 2). Passes → work order done; fails → rework with defect class.",
+    inputSchema: z.object({
+      workOrderId: z.number().int().describe("Work order ID"),
+      stationId: z.number().int().describe("Station that produced the deliverable"),
+      stationRole: z.enum(["build", "review", "debug", "refactor", "explore", "team"]).describe("Station role (determines which gates apply)"),
+      diff: z.string().describe("Unified diff / patch content (must be non-empty)"),
+      intentEvents: z.array(z.string()).describe("RFC 0002 intent event IDs (must be non-empty)"),
+      tests: z.array(z.object({ suite: z.string(), passed: z.number().int(), failed: z.number().int(), status: z.enum(["pass", "fail"]) })).optional().describe("Test suite results"),
+      verification: z.array(z.object({ taskName: z.string(), taskType: z.enum(["compile", "lint", "typecheck", "test"]), status: z.enum(["pass", "fail"]), detail: z.string().optional() })).optional().describe("Verification evidence"),
+      worktreeClean: z.boolean().optional().describe("Clean worktree flag (default true)"),
+    }),
+  }, async (args) => {
+    try {
+      const deliverable: Deliverable = {
+        workOrderId: args.workOrderId,
+        stationId: args.stationId,
+        diff: args.diff,
+        intentEvents: args.intentEvents,
+        tests: args.tests ?? [],
+        verification: args.verification ?? [],
+        worktreeClean: args.worktreeClean ?? true,
+      };
+      const result = await submitDeliverable(createDbFactoryStore(), deliverable, args.stationRole as StationRole);
+      return { content: [{ type: "text", text: JSON.stringify({ accepted: result.accepted, inspection: result.inspection, workOrder: result.workOrder }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }, null, 2) }] };
+    }
+  });
+
+  server.registerTool("factory_telemetry", {
+    description: "[Read] Per-station defect rate, rework cycles, mean cycles-to-clear, defect classes, and effective WIP for a product (RFC 0003 Phase 2).",
+    inputSchema: z.object({
+      productId: z.number().int().describe("Product ID"),
+    }),
+  }, async ({ productId }) => {
+    try {
+      const telemetry = await productTelemetry(createDbFactoryStore(), productId);
+      return { content: [{ type: "text", text: JSON.stringify(telemetry, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }, null, 2) }] };
+    }
   });
 }

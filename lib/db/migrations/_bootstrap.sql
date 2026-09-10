@@ -2386,6 +2386,19 @@ CREATE TABLE IF NOT EXISTS public.stations (
     updated_at timestamp NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.rework_items (
+    id serial PRIMARY KEY,
+    work_order_id integer NOT NULL REFERENCES public.work_orders(id) ON DELETE CASCADE,
+    station_id integer NOT NULL REFERENCES public.stations(id) ON DELETE CASCADE,
+    defect_class text NOT NULL,
+    cycle integer NOT NULL DEFAULT 1,
+    created_at timestamp NOT NULL DEFAULT now(),
+    cleared_at timestamp
+);
+
+CREATE INDEX IF NOT EXISTS rework_items_work_order_idx ON public.rework_items(work_order_id);
+CREATE INDEX IF NOT EXISTS rework_items_station_idx ON public.rework_items(station_id);
+
 --
 -- PostgreSQL database dump complete
 --

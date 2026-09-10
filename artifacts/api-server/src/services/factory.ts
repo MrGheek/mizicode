@@ -11,10 +11,10 @@
  * the products / work_orders / stations tables.
  */
 
-import { db, productsTable, workOrdersTable, stationsTable } from "@workspace/db";
-import { eq, and, inArray, desc } from "drizzle-orm";
+import { db, productsTable, workOrdersTable, stationsTable, reworkItemsTable } from "@workspace/db";
+import { eq, and, inArray, desc, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
-import type { Product, WorkOrder, Station, WorkOrderStatus, WorkOrderPriority, StationRole } from "@workspace/db";
+import type { Product, WorkOrder, Station, ReworkItem, WorkOrderStatus, WorkOrderPriority, StationRole } from "@workspace/db";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -59,6 +59,10 @@ export interface FactoryStore {
   getStation(id: number): Promise<Station | null>;
   listStations(productId: number): Promise<Station[]>;
   updateStation(id: number, patch: Partial<Station>): Promise<Station | null>;
+  // rework items
+  createReworkItem(params: { workOrderId: number; stationId: number; defectClass: string; cycle: number }): Promise<ReworkItem>;
+  listReworkItems(workOrderId: number): Promise<ReworkItem[]>;
+  clearReworkItems(workOrderId: number): Promise<void>;
 }
 
 // ── In-memory store (tests) ───────────────────────────────────────────────────
@@ -70,6 +74,8 @@ export class MemoryFactoryStore implements FactoryStore {
   private products: Product[] = [];
   private workOrders: WorkOrder[] = [];
   private stations: Station[] = [];
+  private reworkItems: ReworkItem[] = [];
+  private nextReworkItem = 1;
 
   async createProduct(params: CreateProductParams): Promise<Product> {
     const now = new Date();
@@ -181,13 +187,43 @@ export class MemoryFactoryStore implements FactoryStore {
     return s;
   }
 
+  async createReworkItem(params: { workOrderId: number; stationId: number; defectClass: string; cycle: number }): Promise<ReworkItem> {
+    const now = new Date();
+    const r: ReworkItem = {
+      id: this.nextReworkItem++,
+      workOrderId: params.workOrderId,
+      stationId: params.stationId,
+      defectClass: params.defectClass,
+      cycle: params.cycle,
+      createdAt: now,
+      clearedAt: null,
+    };
+    this.reworkItems.push(r);
+    return r;
+  }
+
+  async listReworkItems(workOrderId: number): Promise<ReworkItem[]> {
+    return this.reworkItems.filter((r) => r.workOrderId === workOrderId);
+  }
+
+  async clearReworkItems(workOrderId: number): Promise<void> {
+    const now = new Date();
+    for (const r of this.reworkItems) {
+      if (r.workOrderId === workOrderId && r.clearedAt === null) {
+        r.clearedAt = now;
+      }
+    }
+  }
+
   clear(): void {
     this.products = [];
     this.workOrders = [];
     this.stations = [];
+    this.reworkItems = [];
     this.nextProduct = 1;
     this.nextWorkOrder = 1;
     this.nextStation = 1;
+    this.nextReworkItem = 1;
   }
 }
 
@@ -268,6 +304,23 @@ export function createDbFactoryStore(): FactoryStore {
     async updateStation(id, patch) {
       const [row] = await db.update(stationsTable).set({ ...patch, updatedAt: new Date() }).where(eq(stationsTable.id, id)).returning();
       return row ?? null;
+    },
+    async createReworkItem(params) {
+      const [row] = await db.insert(reworkItemsTable).values({
+        workOrderId: params.workOrderId,
+        stationId: params.stationId,
+        defectClass: params.defectClass,
+        cycle: params.cycle,
+      }).returning();
+      return row;
+    },
+    async listReworkItems(workOrderId) {
+      return db.select().from(reworkItemsTable).where(eq(reworkItemsTable.workOrderId, workOrderId)).orderBy(reworkItemsTable.cycle);
+    },
+    async clearReworkItems(workOrderId) {
+      await db.update(reworkItemsTable)
+        .set({ clearedAt: new Date() })
+        .where(and(eq(reworkItemsTable.workOrderId, workOrderId), sql`${reworkItemsTable.clearedAt} IS NULL`));
     },
   };
 }

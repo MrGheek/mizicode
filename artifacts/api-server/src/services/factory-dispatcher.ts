@@ -1,5 +1,6 @@
 /**
- * factory-dispatcher.ts — RFC 0003 Phase 1: WIP-bounded, topological scheduling.
+ * factory-dispatcher.ts — RFC 0003 Phase 1+2: WIP-bounded, topological scheduling
+ * with defect-adjusted capacity.
  *
  * Given a product's WIP limit, station capacities, work-order priorities, and
  * the work-order dependency DAG, decide *what to dispatch, when, and what to
@@ -7,6 +8,9 @@
  * WIP-bounded: a work order is only dispatched when the product's WIP and the
  * station's capacity allow it. Saturated WIP holds work orders instead of
  * spawning unbounded lanes (Little's law).
+ *
+ * Phase 2 adds defect-adjusted WIP: high-defect stations get lower WIP so
+ * the factory self-heals under load (RFC 0003 §10).
  *
  * The dispatcher is advisory by design (RFC 0003 non-goal: no central scheduler
  * as a single point of failure) — stations keep working when it is down.
@@ -40,6 +44,43 @@ export function stationWipUsed(orders: WorkOrder[], stationId: number): number {
   return orders.filter(
     (o) => o.assignedStationId === stationId && (o.status === "dispatched" || o.status === "in_progress"),
   ).length;
+}
+
+// ── Defect-adjusted WIP (Phase 2) ───────────────────────────────────────────
+
+/**
+ * Thresholds at which a station's effective WIP is reduced.
+ *
+ * - defectRate < LOW  → full WIP (no penalty)
+ * - LOW ≤ defectRate < HIGH → WIP − 1 (floor 1)
+ * - defectRate ≥ HIGH → WIP halved (floor 1)
+ */
+const DEFECT_LOW = 0.25;
+const DEFECT_HIGH = 0.5;
+
+/**
+ * Compute the effective WIP limit for a station given its defect rate.
+ * High-defect stations get lower WIP so the factory self-heals.
+ */
+export function effectiveStationWipLimit(
+  nominalWipLimit: number,
+  defectRate: number,
+): number {
+  if (defectRate >= DEFECT_HIGH) {
+    return Math.max(1, Math.floor(nominalWipLimit * 0.5));
+  }
+  if (defectRate >= DEFECT_LOW) {
+    return Math.max(1, nominalWipLimit - 1);
+  }
+  return nominalWipLimit;
+}
+
+/**
+ * Compute defect rate for a station: defects / (completed + defects).
+ */
+function stationDefectRate(station: Station, completedCount: number): number {
+  const total = completedCount + station.defectCount;
+  return total > 0 ? station.defectCount / total : 0;
 }
 
 /**
@@ -92,11 +133,21 @@ export async function dispatchWorkOrders(
   const productLimit = product.wipLimit;
   const productHeadroom = Math.max(0, productLimit - productUsed);
 
-  const stationWip: DispatchResult["stationWip"] = stations.map((s) => ({
-    stationId: s.id,
-    used: stationWipUsed(orders, s.id),
-    limit: s.wipLimit,
-  }));
+  const stationWip: DispatchResult["stationWip"] = stations.map((s) => {
+    const completedCount = orders.filter(
+      (o) => o.assignedStationId === s.id && (o.status === "done" || o.status === "skipped"),
+    ).length;
+    const defectRate = stationDefectRate(s, completedCount);
+    const effectiveLimit = effectiveStationWipLimit(s.wipLimit, defectRate);
+    return {
+      stationId: s.id,
+      used: stationWipUsed(orders, s.id),
+      limit: effectiveLimit,
+    };
+  });
+
+  // Build a map for quick effective-limit lookups.
+  const effectiveLimitMap = new Map(stationWip.map((sw) => [sw.stationId, sw.limit]));
 
   const ready = readyWorkOrders(orders);
   const dispatched: DispatchResult["dispatched"] = [];
@@ -115,10 +166,9 @@ export async function dispatchWorkOrders(
       continue;
     }
 
-    // Pick the least-loaded station with headroom. Prefer a station whose role
-    // matches the order's needs when the order carries a station hint.
+    // Pick the least-loaded station with headroom. Uses defect-adjusted WIP.
     const candidates = stations
-      .filter((s) => stationWipUsed(orders, s.id) < s.wipLimit)
+      .filter((s) => stationWipUsed(orders, s.id) < (effectiveLimitMap.get(s.id) ?? s.wipLimit))
       .sort((a, b) => stationWipUsed(orders, a.id) - stationWipUsed(orders, b.id));
 
     if (candidates.length === 0) {

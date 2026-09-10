@@ -70,9 +70,32 @@ export const stationsTable = pgTable("stations", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+/**
+ * RFC 0003 Phase 2 — rework items: one row per rejected deliverable.
+ *
+ * A work order that fails a station gate (or the deliverable contract) is
+ * routed to rework. Each rejection is recorded as a rework item so rework is a
+ * first-class, tracked, telemetry-bearing flow (defect class, producing
+ * station, cycle number, when it cleared).
+ */
+export const reworkItemsTable = pgTable("rework_items", {
+  id: serial("id").primaryKey(),
+  workOrderId: integer("work_order_id").notNull().references(() => workOrdersTable.id, { onDelete: "cascade" }),
+  stationId: integer("station_id").notNull().references(() => stationsTable.id, { onDelete: "cascade" }),
+  /** Defect class of the rejection (test_failure, lint_failure, forge_failure, ...). */
+  defectClass: text("defect_class").notNull(),
+  /** 1-based rework cycle this item represents. */
+  cycle: integer("cycle").notNull().default(1),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  /** When the work order cleared the rework loop (reached done). */
+  clearedAt: timestamp("cleared_at"),
+});
+
 export type Product = typeof productsTable.$inferSelect;
 export type InsertProduct = typeof productsTable.$inferInsert;
 export type WorkOrder = typeof workOrdersTable.$inferSelect;
 export type InsertWorkOrder = typeof workOrdersTable.$inferInsert;
 export type Station = typeof stationsTable.$inferSelect;
 export type InsertStation = typeof stationsTable.$inferInsert;
+export type ReworkItem = typeof reworkItemsTable.$inferSelect;
+export type InsertReworkItem = typeof reworkItemsTable.$inferInsert;

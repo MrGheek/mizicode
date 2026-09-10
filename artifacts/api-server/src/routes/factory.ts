@@ -12,6 +12,9 @@ import { requireAgentAuth } from "../middlewares/agent-auth";
 import { createDbFactoryStore, FactoryRegistry } from "../services/factory";
 import { dispatchWorkOrders, completeWorkOrder, rejectToRework } from "../services/factory-dispatcher";
 import { admitMerge } from "../services/factory-admission";
+import { submitDeliverable, stationTelemetry, productTelemetry } from "../services/rework-loop";
+import type { StationRole } from "@workspace/db";
+import type { Deliverable } from "../services/deliverable-contract";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -240,6 +243,46 @@ router.post("/factory/admission/check", requireAgentAuth(["coordination:read"]),
   }
   const decision = await admitMerge(createDbFactoryStore(), repoUrl, sessionId as number, laneCount ?? 1);
   res.json(decision);
+});
+
+// ── Deliverable contract + rework (Phase 2) ──────────────────────────────────
+
+router.post("/factory/work-orders/:id/deliver", requireAgentAuth(["coordination:write"]), async (req, res) => {
+  const workOrderId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(workOrderId)) { res.status(400).json({ error: "invalid work order id" }); return; }
+  const body = req.body as {
+    stationId?: number;
+    stationRole?: StationRole;
+    diff?: string;
+    intentEvents?: string[];
+    tests?: Array<{ suite: string; passed: number; failed: number; status: "pass" | "fail" }>;
+    verification?: Array<{ taskName: string; taskType: "compile" | "lint" | "typecheck" | "test"; status: "pass" | "fail"; detail?: string }>;
+    worktreeClean?: boolean;
+  };
+  if (!body.stationId || !body.stationRole || body.diff == null) {
+    res.status(400).json({ error: "stationId, stationRole, and diff are required" });
+    return;
+  }
+  const store = createDbFactoryStore();
+  const deliverable: Deliverable = {
+    workOrderId,
+    stationId: body.stationId,
+    diff: body.diff,
+    intentEvents: body.intentEvents ?? [],
+    tests: body.tests ?? [],
+    verification: body.verification ?? [],
+    worktreeClean: body.worktreeClean ?? true,
+  };
+  const result = await submitDeliverable(store, deliverable, body.stationRole);
+  res.json({ accepted: result.accepted, inspection: result.inspection, workOrder: result.workOrder });
+});
+
+router.get("/factory/products/:id/telemetry", requireAgentAuth(["coordination:read"]), async (req, res) => {
+  const productId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(productId)) { res.status(400).json({ error: "invalid product id" }); return; }
+  const store = createDbFactoryStore();
+  const telemetry = await productTelemetry(store, productId);
+  res.json(telemetry);
 });
 
 export default router;
