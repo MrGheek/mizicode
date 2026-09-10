@@ -494,29 +494,33 @@ export const PROVIDER_TOKEN_RATES: Record<string, number> = {
   vultr: 0.0000014,
 };
 
-export const PROVIDER_CONFIG: Record<string, { apiBase: string; envKey: string; displayName: string; pricingUrl: string }> = {
+export const PROVIDER_CONFIG: Record<string, { apiBase: string; envKey: string; displayName: string; pricingUrl: string; billing: "per-token" | "flat-rate" }> = {
   nvidia: {
     apiBase: "https://integrate.api.nvidia.com/v1",
     envKey: "NVIDIA_NIM_API_KEY",
     displayName: "NVIDIA NIM",
     pricingUrl: "https://build.nvidia.com",
+    billing: "flat-rate",
   },
   vultr: {
     apiBase: "https://api.vultrinference.com/v1",
     envKey: "VULTR_INFERENCE_API_KEY",
     displayName: "Vultr",
     pricingUrl: "https://www.vultr.com/products/cloud-inference/",
+    billing: "per-token",
   },
   together: {
     apiBase: "https://api.together.xyz/v1",
     envKey: "TOGETHER_API_KEY",
     displayName: "Together AI",
     pricingUrl: "https://www.together.ai/pricing",
+    billing: "per-token",
   },
   deepinfra: {
     apiBase: "https://api.deepinfra.com/v1/openai",
     envKey: "DEEPINFRA_API_KEY",
     displayName: "DeepInfra",
     pricingUrl: "https://deepinfra.com/pricing",
+    billing: "per-token",
   },
 };

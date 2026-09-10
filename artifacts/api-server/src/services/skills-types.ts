@@ -63,6 +63,45 @@ export interface TokenModeProfile {
   memoryContradictionSurfacing: "off" | "hint" | "full";
 }
 
+/**
+ * RFC 0004 Phase 2 — model-size class for compression-aware budgets.
+ *
+ * MoBA's scaling laws show the sparse-vs-full quality gap narrows as models
+ * scale: bigger models tolerate more context. The budget resolver keys the
+ * input budget off this class so large-context models get more headroom and
+ * small-context models get less.
+ */
+export type ModelSizeClass = "small" | "mid" | "large";
+
+/** Budget multiplier per model-size class (applied to the input budget). */
+export const MODEL_SIZE_BUDGET_FACTOR: Record<ModelSizeClass, number> = {
+  small: 0.85,
+  mid: 1.0,
+  large: 1.15,
+};
+
+/**
+ * Classify a model id into a size class from its context window.
+ * `contextLength` is a catalog string like "128K" / "64K" / "40K".
+ * Unknown/absent → "mid" (neutral, no budget change).
+ */
+export function classifyModelSize(contextLength: string | null | undefined): ModelSizeClass {
+  if (!contextLength) return "mid";
+  const m = contextLength.trim().match(/^(\d+(?:\.\d+)?)\s*[KkMm]?$/);
+  if (!m) return "mid";
+  const n = parseFloat(m[1]!);
+  if (Number.isNaN(n)) return "mid";
+  // "128K" → 128000; "1M" → 1000000.
+  const tokens = contextLength.trim().toLowerCase().endsWith("m")
+    ? n * 1_000_000
+    : contextLength.trim().toLowerCase().endsWith("k")
+      ? n * 1_000
+      : n;
+  if (tokens >= 128_000) return "large";
+  if (tokens < 32_000) return "small";
+  return "mid";
+}
+
 export const TOKEN_MODE_PROFILES: Record<TokenMode, TokenModeProfile> = {
   full: {
     mode: "full",

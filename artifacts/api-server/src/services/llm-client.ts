@@ -27,7 +27,7 @@ import {
   type BudgetTaskClass,
 } from "./token-budget";
 import { recordSaving, recordSpend } from "./token-accounting";
-import type { TokenMode } from "./skills-types";
+import { classifyModelSize, type TokenMode } from "./skills-types";
 
 export interface LlmClientConfig {
   baseUrl: string;
@@ -45,6 +45,28 @@ export interface LlmClientConfig {
  */
 const CHEAP_HOSTED_MODEL = "meta/llama-3.1-8b-instruct";
 const CHEAP_LOCAL_MODEL = "qwen2.5-coder:7b";
+
+/**
+ * RFC 0004 Phase 2 — static context-window map for model-size classification.
+ * Mirrors the catalog's `contextLength` strings so the budget resolver can key
+ * off the serving model without a DB lookup per call. Unknown models → "mid"
+ * (neutral). Keep in sync with nim-catalog.ts catalog entries.
+ */
+const MODEL_CONTEXT_LENGTH: Record<string, string> = {
+  "moonshotai/kimi-k2-instruct": "128K",
+  "moonshotai/kimi-k2-instruct-0905": "128K",
+  "moonshotai/kimi-k2-thinking": "128K",
+  "moonshotai/kimi-k2.6": "128K",
+  "deepseek-ai/deepseek-v4-pro": "128K",
+  "qwen/qwen3-coder-480b-a35b-instruct": "128K",
+  "meta/llama-3.3-70b-instruct": "128K",
+  "meta/llama-3.1-8b-instruct": "128K",
+  "minimaxai/minimax-m2.5": "128K",
+};
+
+function modelContextLength(model: string): string | null {
+  return MODEL_CONTEXT_LENGTH[model] ?? null;
+}
 
 const DEFAULT_OLLAMA_ROOT = "http://localhost:11434";
 
@@ -196,42 +218,53 @@ export async function resolveLlmConfig(opts: LlmCallOptions): Promise<LlmClientC
 }
 
 export async function callLlm(opts: LlmCallOptions): Promise<string | null> {
-  // RFC 0001 Avoid/Cache/Cap layers run before any provider resolution: a
+  // Resolve the serving model first so the RFC 0004 budget decision can key
+  // the input budget off the model's size class (large models tolerate more
+  // context — MoBA scaling laws). For the common path this is pure config
+  // lookup; only local/cheap candidates trigger a daemon probe.
+  const cfg = await resolveLlmConfig(opts);
+  if (!cfg) {
+    logger.warn({ tag: opts.logTag, promptVersion: opts.promptVersion }, "[llm-client] No LLM provider configured");
+    return null;
+  }
+
+  // RFC 0001 Avoid/Cache/Cap layers run before any network call: a
   // byte-identical prompt served from the TTL cache never touches the network.
   let budgetKey: string | null = null;
   if (opts.budget) {
+    const providerBilling = PROVIDER_CONFIG[cfg.provider]?.billing;
     const decision = await resolveTokenDecision(
       {
         taskClass: opts.budget.taskClass,
         sessionId: opts.budget.sessionId ?? opts.sessionId,
         tokenMode: opts.budget.tokenMode,
         phase: opts.budget.phase,
+        modelSize: classifyModelSize(modelContextLength(cfg.model)),
       },
-      { messages: opts.messages, promptVersion: opts.promptVersion, cacheTtlMs: opts.budget.cacheTtlMs },
+      { messages: opts.messages, promptVersion: opts.promptVersion, cacheTtlMs: opts.budget.cacheTtlMs, activeProviderBilling: providerBilling },
     );
 
     if (decision.skip) {
       if (decision.reason?.startsWith("cache-hit")) {
         logger.debug({ cacheKey: decision.cacheKey, taskClass: opts.budget.taskClass, tag: opts.logTag }, "[llm-client] result cache hit — no API call");
-        void recordSaving({
-          sessionId: opts.budget.sessionId ?? opts.sessionId,
-          kind: "cache_hit",
-          unit: "tokens",
-          amount: estimateMessageTokens(opts.messages),
-          meta: { cacheKey: decision.cacheKey, taskClass: opts.budget.taskClass },
-        });
+        // RFC 0004 Phase 3 — suppress savings claims on flat-rate providers.
+        // Tokens are free on flat-rate (e.g. NVIDIA NIM); claiming savings is
+        // misleading since there is no cost to avoid.
+        if (providerBilling !== "flat-rate") {
+          void recordSaving({
+            sessionId: opts.budget.sessionId ?? opts.sessionId,
+            kind: "cache_hit",
+            unit: "tokens",
+            amount: estimateMessageTokens(opts.messages),
+            meta: { cacheKey: decision.cacheKey, taskClass: opts.budget.taskClass },
+          });
+        }
         return decision.cachedResult;
       }
       logger.warn({ reason: decision.reason, taskClass: opts.budget.taskClass, tag: opts.logTag }, "[llm-client] budget gate blocked call");
       return null;
     }
     budgetKey = decision.cacheKey;
-  }
-
-  const cfg = await resolveLlmConfig(opts);
-  if (!cfg) {
-    logger.warn({ tag: opts.logTag, promptVersion: opts.promptVersion }, "[llm-client] No LLM provider configured");
-    return null;
   }
 
   try {

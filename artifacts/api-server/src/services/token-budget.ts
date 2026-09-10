@@ -15,7 +15,7 @@
 
 import { createHash } from "node:crypto";
 import { isTripwireTripped } from "./token-accounting";
-import { TOKEN_MODE_PROFILES, type TokenMode } from "./skills-types";
+import { TOKEN_MODE_PROFILES, MODEL_SIZE_BUDGET_FACTOR, type TokenMode, type ModelSizeClass } from "./skills-types";
 
 export type BudgetTaskClass =
   | "sidecar-verify"
@@ -35,6 +35,12 @@ export interface TokenTask {
   sessionId?: number | null;
   phase?: string;
   tokenMode?: TokenMode;
+  /**
+   * RFC 0004 Phase 2 — model-size class of the serving model. When set, the
+   * input budget is scaled by MODEL_SIZE_BUDGET_FACTOR (large → more headroom,
+   * small → less). Absent → "mid" (neutral).
+   */
+  modelSize?: ModelSizeClass;
 }
 
 export interface TokenDecision {
@@ -50,6 +56,8 @@ export interface TokenDecision {
   reason: string | null;
   cachedResult: string | null;
   cacheKey: string | null;
+  /** RFC 0004 Phase 3 — true when the flat-rate billing relaxation (×1.1) was applied. */
+  flatRateRelaxed: boolean;
 }
 
 export const RESULT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -80,6 +88,14 @@ export const TASK_INPUT_BUDGET_RATIO: Record<BudgetTaskClass, number> = {
   embed: 0.05,
   summarize: 0.3,
 };
+
+/**
+ * RFC 0004 Phase 3 — flat-rate budget relaxation factor. When the active
+ * provider charges a flat rate (e.g. NVIDIA NIM preview), tokens are free so
+ * aggressive compression risks quality for zero savings. A ×1.1 relaxation
+ * lets more context through. Conservative bound: quality impact < 5%.
+ */
+export const FLAT_RATE_BUDGET_RELAXATION = 1.1;
 
 export function shouldCacheForTask(taskClass: BudgetTaskClass): boolean {
   return taskClass !== "embed";
@@ -179,6 +195,12 @@ export interface BudgetResolveOptions {
   promptVersion?: string;
   /** TTL override for a specific task. */
   cacheTtlMs?: number;
+  /**
+   * RFC 0004 Phase 3 — billing model of the active provider. When "flat-rate",
+   * the input budget is relaxed (×1.1) because tokens are free; when "per-token"
+   * (or absent — neutral default), standard budgets apply.
+   */
+  activeProviderBilling?: "per-token" | "flat-rate";
 }
 
 /**
@@ -188,7 +210,10 @@ export interface BudgetResolveOptions {
 export async function resolveTokenDecision(task: TokenTask, opts: BudgetResolveOptions): Promise<TokenDecision> {
   const maxOutputTokens = TASK_MAX_OUTPUT_TOKENS[task.taskClass];
   const profile = TOKEN_MODE_PROFILES[task.tokenMode ?? "full"];
-  const inputBudgetTokens = Math.floor(profile.maxContextBudget * TASK_INPUT_BUDGET_RATIO[task.taskClass]);
+  const sizeFactor = MODEL_SIZE_BUDGET_FACTOR[task.modelSize ?? "mid"];
+  const flatRateRelaxed = opts.activeProviderBilling === "flat-rate";
+  const billingFactor = flatRateRelaxed ? FLAT_RATE_BUDGET_RELAXATION : 1.0;
+  const inputBudgetTokens = Math.floor(profile.maxContextBudget * TASK_INPUT_BUDGET_RATIO[task.taskClass] * sizeFactor * billingFactor);
 
   const key = budgetCacheKey({
     messages: opts.messages,
@@ -209,6 +234,7 @@ export async function resolveTokenDecision(task: TokenTask, opts: BudgetResolveO
       reason: "cache-hit",
       cachedResult: cached,
       cacheKey: key,
+      flatRateRelaxed,
     };
   }
 
@@ -224,6 +250,7 @@ export async function resolveTokenDecision(task: TokenTask, opts: BudgetResolveO
         reason: `tripwire:${trip.reason}`,
         cachedResult: null,
         cacheKey: key,
+        flatRateRelaxed,
       };
     }
   }
@@ -237,6 +264,7 @@ export async function resolveTokenDecision(task: TokenTask, opts: BudgetResolveO
     reason: null,
     cachedResult: null,
     cacheKey: shouldCacheForTask(task.taskClass) ? key : null,
+    flatRateRelaxed,
   };
 }
 

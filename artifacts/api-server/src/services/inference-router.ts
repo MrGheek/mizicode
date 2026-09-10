@@ -4,13 +4,17 @@
  * Phase-aware LLM model scoring (Task #300).
  *
  * Scoring formula (identical intent to intent.ts for consistency):
- *   score = sweBench × phaseQualityWeight × (1000 / latencyMs) × costFactor × throughputBonus(phase, throughputClass)
+ *   score = sweBench × phaseQualityWeight × (1000 / latencyMs) × costFactor × throughputBonus × compressionROI
  *
  * Each phase has a quality weight and a throughput-class bonus table so that
  * swarm phases reward high-throughput models and explore phases reward quality.
  * Live provider latency is probed from the PROVIDER_CONFIG endpoints (same
  * logic as getProviderLatencies() in intent.ts) so routing accounts for
  * real-time provider health — not just static catalog metadata.
+ *
+ * RFC 0004 Phase 3 — compression-ROI: per-token providers get a bonus in
+ * context-heavy phases (plan-generate, plan-decompose, swarm-step) because
+ * compression is monetizable there; flat-rate providers get a neutral term.
  *
  * Local Ollama models (ollama-local) are scored as cheap on-box candidates:
  * they carry a low SWE-bench score and a phase-dependent local bonus so they
@@ -87,6 +91,27 @@ const PHASE_COST_WEIGHTS: Record<SessionPhase, number> = {
   swarm:      1.40,  // cost-first: many workers → economy providers strongly preferred
   synthesise: 0.90,  // quality-first: summary accuracy matters
   review:     1.10,  // slightly cost-sensitive: final check can use economy tier
+};
+
+/**
+ * RFC 0004 Phase 3 — compression-ROI factor by session phase.
+ *
+ * Per-token providers get a bonus (×1.08) in context-heavy phases where
+ * compression saves real tokens (plan-generate, plan-decompose, swarm-step).
+ * Flat-rate providers get a neutral term (×1.0) in all phases — tokens are
+ * free, so compression ROI doesn't apply. This makes the router prefer
+ * per-token providers for compressible work and flat-rate for quality-critical
+ * work — a second-order effect of MoBA's "compute is cheap" insight.
+ *
+ * Values are bounded (±8%) so they don't dominate the score.
+ */
+const PHASE_COMPRESSION_ROI: Record<SessionPhase, number> = {
+  explore:    1.0,   // quality-first: compression ROI irrelevant
+  plan:       1.08,  // context-heavy: compression monetizable → per-token bonus
+  implement:  1.04,  // moderate: some compression benefit
+  swarm:      1.08,  // context-heavy: compression monetizable → per-token bonus
+  synthesise: 1.04,  // moderate: some compression benefit
+  review:     1.0,   // quality-first: compression ROI irrelevant
 };
 
 // ── Per-phase throughput-class bonus ─────────────────────────────────────────
@@ -169,6 +194,8 @@ export interface ScoredModel {
   qualityComponent: number;
   costComponent: number;
   throughputComponent: number;
+  /** RFC 0004 Phase 3 — compression-ROI term (per-token bonus in context-heavy phases). */
+  compressionROIComponent: number;
 }
 
 /** Local Ollama candidate — shaped like NimModel so callers can read nimModelId. */
@@ -181,7 +208,7 @@ export interface LocalOllamaModel {
 
 /**
  * Score a single model across its eligible providers using the live formula:
- *   score = sweBench × qualityWeight × (1000 / latencyMs) × costFactor × throughputBonus
+ *   score = sweBench × qualityWeight × (1000 / latencyMs) × costFactor × throughputBonus × compressionROI
  *
  * Returns the best {score, provider, latencyMs} or null if no live provider is found.
  * Falls back to a static catalog-only score when snapshots are unavailable.
@@ -192,7 +219,8 @@ function scoreModel(
   snapshots: Record<string, ProviderSnapshot>,
   configuredProviders: Record<string, boolean>,
 ): { score: number; provider: string; latencyMs: number | null;
-     qualityComponent: number; costComponent: number; throughputComponent: number } | null {
+     qualityComponent: number; costComponent: number; throughputComponent: number;
+     compressionROIComponent: number } | null {
   const qualityWeight = PHASE_QUALITY_WEIGHTS[phase];
   const tc: ThroughputClass = model.throughputClass ?? "standard";
   const throughputBonus = PHASE_THROUGHPUT_BONUS[phase][tc];
@@ -208,7 +236,8 @@ function scoreModel(
   ];
 
   let best: { score: number; provider: string; latencyMs: number | null;
-              qualityComponent: number; costComponent: number; throughputComponent: number } | null = null;
+              qualityComponent: number; costComponent: number; throughputComponent: number;
+              compressionROIComponent: number } | null = null;
 
   for (const provider of eligible) {
     const snap = snapshots[provider];
@@ -224,10 +253,19 @@ function scoreModel(
     const providerCostBase = provider === "nvidia" ? 0.95 : 1.05;
     const costFactor = 1.0 + (providerCostBase - 1.0) * PHASE_COST_WEIGHTS[phase];
 
+    // RFC 0004 Phase 3 — compression-ROI: per-token providers get a bonus in
+    // context-heavy phases where compression saves real tokens. Flat-rate
+    // providers get a neutral term (×1.0) because tokens are free.
+    const providerBilling = PROVIDER_CONFIG[provider]?.billing ?? "per-token";
+    const compressionROI = providerBilling === "per-token"
+      ? PHASE_COMPRESSION_ROI[phase]
+      : 1.0;
+
     let score: number;
     let qualityComponent: number;
     let costComponent: number;
     let throughputComponent: number;
+    let compressionROIComponent: number;
 
     if (live && latencyMs !== null) {
       // Full live formula — matches intent.ts semantics
@@ -235,7 +273,8 @@ function scoreModel(
       qualityComponent = sweBench * qualityWeight;
       costComponent = costFactor;
       throughputComponent = throughputBonus;
-      score = qualityComponent * latencyScore * costComponent * throughputComponent;
+      compressionROIComponent = compressionROI;
+      score = qualityComponent * latencyScore * costComponent * throughputComponent * compressionROIComponent;
     } else if (!live) {
       // Provider is down or unconfigured — skip unless it's the only option
       continue;
@@ -246,11 +285,12 @@ function scoreModel(
       qualityComponent = sweBench * qualityWeight;
       costComponent = costFactor;
       throughputComponent = throughputBonus;
-      score = qualityComponent * latencyScore * costComponent * throughputComponent;
+      compressionROIComponent = compressionROI;
+      score = qualityComponent * latencyScore * costComponent * throughputComponent * compressionROIComponent;
     }
 
     if (!best || score > best.score) {
-      best = { score, provider, latencyMs, qualityComponent, costComponent, throughputComponent };
+      best = { score, provider, latencyMs, qualityComponent, costComponent, throughputComponent, compressionROIComponent };
     }
   }
 
@@ -272,7 +312,8 @@ function scoreLocalModel(
   phase: SessionPhase,
   snapshots: Record<string, ProviderSnapshot>,
 ): { score: number; provider: string; latencyMs: number | null;
-      qualityComponent: number; costComponent: number; throughputComponent: number } | null {
+      qualityComponent: number; costComponent: number; throughputComponent: number;
+      compressionROIComponent: number } | null {
   const snap = snapshots["ollama-local"];
   if (!snap?.live) return null;
   const latencyMs = snap.latencyMs ?? 500;
@@ -284,9 +325,11 @@ function scoreLocalModel(
   const qualityComponent = model.sweBenchScore * qualityWeight;
   const costComponent = 1.0; // free — no per-token cost
   const throughputComponent = localBonus;
-  const score = qualityComponent * latencyScore * costComponent * throughputComponent;
+  // RFC 0004 Phase 3 — local Ollama: flat-rate (no per-token billing), neutral compression-ROI
+  const compressionROIComponent = 1.0;
+  const score = qualityComponent * latencyScore * costComponent * throughputComponent * compressionROIComponent;
 
-  return { score, provider: "ollama-local", latencyMs, qualityComponent, costComponent, throughputComponent };
+  return { score, provider: "ollama-local", latencyMs, qualityComponent, costComponent, throughputComponent, compressionROIComponent };
 }
 
 /**

@@ -15,6 +15,8 @@ import {
   sessionSpendSummary,
   setSessionTripwire,
 } from "../services/token-accounting";
+import { classifyModelSize, MODEL_SIZE_BUDGET_FACTOR } from "../services/skills-types";
+import { FLAT_RATE_BUDGET_RELAXATION } from "../services/token-budget";
 
 const messages = [
   { role: "system" as const, content: "You plan software." },
@@ -120,6 +122,87 @@ describe("estimateMessageTokens", () => {
   });
 });
 
+describe("classifyModelSize — RFC 0004 Phase 2", () => {
+  it("classifies by context window", () => {
+    expect(classifyModelSize("128K")).toBe("large");
+    expect(classifyModelSize("64K")).toBe("mid");
+    expect(classifyModelSize("40K")).toBe("mid");
+    expect(classifyModelSize("8K")).toBe("small");
+    expect(classifyModelSize("1M")).toBe("large");
+  });
+
+  it("treats unknown/absent as mid (neutral)", () => {
+    expect(classifyModelSize(null)).toBe("mid");
+    expect(classifyModelSize(undefined)).toBe("mid");
+    expect(classifyModelSize("")).toBe("mid");
+    expect(classifyModelSize("unknown")).toBe("mid");
+  });
+
+  it("budget factors are bounded and centered on mid", () => {
+    expect(MODEL_SIZE_BUDGET_FACTOR.mid).toBe(1.0);
+    expect(MODEL_SIZE_BUDGET_FACTOR.large).toBeGreaterThan(1.0);
+    expect(MODEL_SIZE_BUDGET_FACTOR.small).toBeLessThan(1.0);
+    expect(MODEL_SIZE_BUDGET_FACTOR.large).toBeLessThan(1.2);
+    expect(MODEL_SIZE_BUDGET_FACTOR.small).toBeGreaterThan(0.8);
+  });
+});
+
+describe("resolveTokenDecision — model-size-aware budgets (RFC 0004 Phase 2)", () => {
+  it("scales the input budget by the model-size factor", async () => {
+    const base = await resolveTokenDecision({ taskClass: "plan-decompose", tokenMode: "core" }, { messages });
+    const large = await resolveTokenDecision({ taskClass: "plan-decompose", tokenMode: "core", modelSize: "large" }, { messages });
+    const small = await resolveTokenDecision({ taskClass: "plan-decompose", tokenMode: "core", modelSize: "small" }, { messages });
+
+    expect(large.inputBudgetTokens).toBeGreaterThan(base.inputBudgetTokens);
+    expect(small.inputBudgetTokens).toBeLessThan(base.inputBudgetTokens);
+    // Bounded: large ≤ base × 1.15, small ≥ base × 0.85 (floor rounding).
+    expect(large.inputBudgetTokens).toBeLessThanOrEqual(Math.floor(base.inputBudgetTokens * 1.15) + 1);
+    expect(small.inputBudgetTokens).toBeGreaterThanOrEqual(Math.floor(base.inputBudgetTokens * 0.85) - 1);
+  });
+
+  it("defaults to mid (no change) when modelSize is absent", async () => {
+    const a = await resolveTokenDecision({ taskClass: "plan-generate", tokenMode: "full" }, { messages });
+    const b = await resolveTokenDecision({ taskClass: "plan-generate", tokenMode: "full", modelSize: "mid" }, { messages });
+    expect(a.inputBudgetTokens).toBe(b.inputBudgetTokens);
+  });
+});
+
+describe("resolveTokenDecision — flat-rate billing relaxation (RFC 0004 Phase 3)", () => {
+  it("relaxes the input budget on flat-rate providers", async () => {
+    const standard = await resolveTokenDecision({ taskClass: "plan-generate", tokenMode: "full" }, { messages });
+    const flatRate = await resolveTokenDecision({ taskClass: "plan-generate", tokenMode: "full" }, { messages, activeProviderBilling: "flat-rate" });
+
+    expect(flatRate.inputBudgetTokens).toBeGreaterThan(standard.inputBudgetTokens);
+    expect(flatRate.flatRateRelaxed).toBe(true);
+    // Bounded: flat-rate ≤ standard × 1.1 (floor rounding).
+    expect(flatRate.inputBudgetTokens).toBeLessThanOrEqual(Math.floor(standard.inputBudgetTokens * FLAT_RATE_BUDGET_RELAXATION) + 1);
+  });
+
+  it("does not relax on per-token providers", async () => {
+    const a = await resolveTokenDecision({ taskClass: "plan-generate", tokenMode: "full" }, { messages });
+    const b = await resolveTokenDecision({ taskClass: "plan-generate", tokenMode: "full" }, { messages, activeProviderBilling: "per-token" });
+    expect(a.inputBudgetTokens).toBe(b.inputBudgetTokens);
+    expect(b.flatRateRelaxed).toBe(false);
+  });
+
+  it("defaults to per-token (no relaxation) when billing is absent", async () => {
+    const d = await resolveTokenDecision({ taskClass: "plan-generate", tokenMode: "full" }, { messages });
+    expect(d.flatRateRelaxed).toBe(false);
+  });
+
+  it("combines flat-rate relaxation with model-size factor", async () => {
+    const base = await resolveTokenDecision({ taskClass: "plan-generate", tokenMode: "full" }, { messages });
+    const flatLarge = await resolveTokenDecision({ taskClass: "plan-generate", tokenMode: "full", modelSize: "large" }, { messages, activeProviderBilling: "flat-rate" });
+    const flatSmall = await resolveTokenDecision({ taskClass: "plan-generate", tokenMode: "full", modelSize: "small" }, { messages, activeProviderBilling: "flat-rate" });
+
+    expect(flatLarge.inputBudgetTokens).toBeGreaterThan(base.inputBudgetTokens);
+    expect(flatSmall.inputBudgetTokens).toBeGreaterThan(0);
+    // Both relaxed by flat-rate, then scaled by model-size.
+    expect(flatLarge.flatRateRelaxed).toBe(true);
+    expect(flatSmall.flatRateRelaxed).toBe(true);
+  });
+});
+
 describe("callLlm integration — cache write/read through the real budget path", () => {
   it("serves the second identical cacheable call with no network", async () => {
     const fetchSpy = vi.fn(async () =>
@@ -130,8 +213,8 @@ describe("callLlm integration — cache write/read through the real budget path"
 
     process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"] = "https://repl.it/v1";
     process.env["AI_INTEGRATIONS_OPENAI_API_KEY"] = "test-key";
-    // An nvidia provider is configured so resolveLlmConfig has a path.
-    process.env["NVIDIA_NIM_API_KEY"] = "nv-test";
+    // Use a per-token provider (replit) so savings claims are recorded.
+    // NVIDIA (flat-rate) would suppress savings — that's tested separately.
 
     // Temporarily set the module's fetch.
     const { callLlm } = await import("../services/llm-client");
@@ -164,7 +247,6 @@ describe("callLlm integration — cache write/read through the real budget path"
       expect((await sessionSpendSummary()).calls).toBe(1);
     } finally {
       globalThis.fetch = realFetch;
-      delete process.env["NVIDIA_NIM_API_KEY"];
     }
   });
 
@@ -183,6 +265,33 @@ describe("callLlm integration — cache write/read through the real budget path"
       expect(fetchSpy).toHaveBeenCalledTimes(2); // embed never caches
     } finally {
       globalThis.fetch = realFetch;
+    }
+  });
+
+  it("suppresses cache-hit savings claims on flat-rate providers (RFC 0004 Phase 3)", async () => {
+    // NVIDIA NIM is flat-rate — tokens are free, so a cache hit saves nothing.
+    process.env["NVIDIA_NIM_API_KEY"] = "nv-test";
+    const fetchSpy = vi.fn(async () =>
+      new Response(JSON.stringify({
+        choices: [{ message: { content: "FLAT-PLAN" } }],
+        usage: { prompt_tokens: 1200, completion_tokens: 300 },
+      }), { status: 200 }));
+
+    const { callLlm } = await import("../services/llm-client");
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      const first = await callLlm({ messages, promptVersion: "6.0", logTag: "plan.generate.flat", budget: { taskClass: "plan-generate" } });
+      expect(first).toBe("FLAT-PLAN");
+      const second = await callLlm({ messages, promptVersion: "6.0", logTag: "plan.generate.flat", budget: { taskClass: "plan-generate" } });
+      expect(second).toBe("FLAT-PLAN");
+      // Served from cache (single network call) but NO savings claimed.
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const savings = savingsSummary();
+      expect(savings.cacheHits).toBe(0);
+    } finally {
+      globalThis.fetch = realFetch;
+      delete process.env["NVIDIA_NIM_API_KEY"];
     }
   });
 });
