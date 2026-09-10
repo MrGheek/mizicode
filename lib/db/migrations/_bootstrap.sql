@@ -2343,6 +2343,49 @@ CREATE TABLE IF NOT EXISTS public.lane_prompt_snapshots (
     activated_at timestamp NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.products (
+    id serial PRIMARY KEY,
+    name text NOT NULL,
+    repo_url text NOT NULL UNIQUE,
+    roadmap_json jsonb NOT NULL DEFAULT '[]',
+    wip_limit integer NOT NULL DEFAULT 4,
+    quality_gate_config jsonb,
+    pipeline_config jsonb,
+    created_at timestamp NOT NULL DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.work_orders (
+    id serial PRIMARY KEY,
+    product_id integer NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
+    goal text NOT NULL,
+    priority text NOT NULL DEFAULT 'normal',
+    dependencies_json jsonb NOT NULL DEFAULT '[]',
+    acceptance_criteria jsonb,
+    assigned_station_id integer,
+    status text NOT NULL DEFAULT 'queued',
+    rework_count integer NOT NULL DEFAULT 0,
+    last_defect_class text,
+    session_id integer,
+    created_at timestamp NOT NULL DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT now(),
+    started_at timestamp,
+    completed_at timestamp
+);
+
+CREATE TABLE IF NOT EXISTS public.stations (
+    id serial PRIMARY KEY,
+    product_id integer NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
+    session_id integer,
+    role text NOT NULL DEFAULT 'build',
+    capacity integer NOT NULL DEFAULT 2,
+    wip_limit integer NOT NULL DEFAULT 2,
+    defect_count integer NOT NULL DEFAULT 0,
+    rework_cycles integer NOT NULL DEFAULT 0,
+    created_at timestamp NOT NULL DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT now()
+);
+
 --
 -- PostgreSQL database dump complete
 --

@@ -12,3 +12,4 @@ export * from "./operator-credentials";
 export * from "./session-model-switches";
 export * from "./provisioning";
 export * from "./project-plan";
+export * from "./factory";

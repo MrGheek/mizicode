@@ -18,6 +18,7 @@ import snapshotsRouter from "./snapshots";
 import metricsRouter from "./metrics";
 import sessionShortcutsRouter from "./session-shortcuts";
 import theiaCompatRouter from "./theia-compat";
+import factoryRouter from "./factory";
 import localRouter from "./local";
 
 /* ─── API Surface ─────────────────────────────────────────────────────────
@@ -129,6 +130,7 @@ router.use("/repo", repoGraphRouter);
 router.use("/sessions/repo", batchRepoRouter);
 router.use("/sessions/:sessionId/repo", repoRouter);
 router.use(coordinationRouter);
+router.use(factoryRouter);
 router.use(designIntelligenceRouter);
 router.use(ambientRouter);
 router.use(paletteIntentRouter);

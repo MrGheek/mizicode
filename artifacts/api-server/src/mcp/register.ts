@@ -25,6 +25,7 @@ import { registerModelCatalogTools } from "./tools/model-catalog.js";
 import { registerAmbientTools } from "./tools/ambient.js";
 import { registerDashboardTools } from "./tools/dashboard.js";
 import { registerHybridSearchTools } from "./tools/hybrid-search.js";
+import { registerFactoryTools } from "./tools/factory.js";
 import { registerResources } from "./resources.js";
 import type { ApiKeyRecord } from "../middlewares/agent-auth.js";
 
@@ -48,6 +49,7 @@ export function createMcpServer(getApiKey: () => ApiKeyRecord | undefined): McpS
   registerAmbientTools(server, getApiKey);
   registerDashboardTools(server);
   registerHybridSearchTools(server);
+  registerFactoryTools(server);
   registerResources(server);
 
   return server;

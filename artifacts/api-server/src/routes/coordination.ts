@@ -826,6 +826,19 @@ router.post("/sessions/:id/lanes/:laneId/handoff", async (req, res) => {
         const headBranch = getLaneBranchName(sessionId, lane.memberIdentifier);
         const baseBranch = getSessionBranchName(sessionId);
 
+        // RFC 0003 Phase 1 — merge-queue admission control. A lane's merge is
+        // admitted only when the product's WIP and the station's capacity allow
+        // it (prevents merge pileups). No product registered → admitted.
+        const fp = session?.repoFingerprintJson as Record<string, unknown> | null;
+        const repoUrl = fp && typeof fp["url"] === "string" ? fp["url"] : null;
+        const { createDbFactoryStore } = await import("../services/factory");
+        const { admitMerge } = await import("../services/factory-admission");
+        const admission = await admitMerge(createDbFactoryStore(), repoUrl, sessionId, 1);
+        if (!admission.admitted) {
+          logger.info({ handoffId: handoff.id, laneId, reason: admission.reason }, "Lane merge held by factory admission control");
+          return;
+        }
+
         // Enqueue the merge job. Risk is scored from the lane's diff stat when
         // the repo is reachable; otherwise a conservative default is used.
         const mergeQueue = new LaneMergeQueue(createDbMergeQueueStore(), createGitExecutor());
@@ -842,8 +855,6 @@ router.post("/sessions/:id/lanes/:laneId/handoff", async (req, res) => {
 
         if (!session?.hasGithubToken) return;
 
-        const fp = session.repoFingerprintJson as Record<string, unknown> | null;
-        const repoUrl = fp && typeof fp["url"] === "string" ? fp["url"] : null;
         if (!repoUrl) {
           logger.debug({ sessionId, laneId }, "handoff safe_to_merge: no repoUrl in session fingerprint — skipping PR");
           return;
