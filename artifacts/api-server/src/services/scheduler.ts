@@ -318,6 +318,7 @@ async function launchScheduledSession(profileId: number, teamMemberNames: string
       num_gpus: searchParams.num_gpus as number,
       min_gpu_ram: searchParams.min_gpu_ram as number,
       disk_space: profile.diskSizeGb,
+      modelSizeGb: profile.quantSizeGb ?? undefined,
       limit: 1,
     });
 

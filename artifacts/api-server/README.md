@@ -1,6 +1,27 @@
 # API Server
 
-MIZI Cloud Coding — API server (Fastify + TypeScript).
+MIZI Cloud Coding — API server (Express 5 + TypeScript).
+
+## Tech stack
+
+- **Framework**: Express 5 (`express@^5`) — the Express app is wrapped in a raw `http.Server` so the server can intercept WebSocket upgrades (claw bridge at `/api/bridge/:sessionId/:laneId`).
+- **HTTP**: `pino` / `pino-http` logging, `cors`, `http-proxy-middleware` (workspace proxy).
+- **Data**: `drizzle-orm` + `better-sqlite3` (memory store), `zod` validation.
+- **Realtime**: `ws` for the claw bridge WebSocket.
+- **MCP**: `@modelcontextprotocol/sdk` (v1.29+) — MIZI tools exposed at `/api/mcp`.
+- **Misc**: `playwright` (browser automation).
+
+## Local development
+
+- **Build**: `node ./build.mjs` (esbuild; the `[local-cloud-stub]` plugin replaces cloud-only modules in local builds) → `dist/index.mjs`.
+- **Dev**: `pnpm run dev` — builds, then runs `node --enable-source-maps ./dist/index.mjs` on `PORT` (default `8080`).
+- **Tests**: vitest — `pnpm test`.
+
+## Health endpoints
+
+- `GET /api/health` — liveness
+- `GET /api/healthz` — readiness (used by the Fly.io `http_checks` probe)
+- `GET /api/admin/status` — admin status
 
 ---
 

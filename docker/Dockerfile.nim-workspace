@@ -67,7 +67,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
 
 # Theia IDE (pre-built, downloaded from GH Actions artifact)
 # Built by .github/workflows/build-theia.yml.
-ARG THEIA_ARTIFACT_URL=https://github.com/gheeklabs/mizi/releases/download/theia/latest.tar.gz
+ARG THEIA_ARTIFACT_URL=https://github.com/MrGheek/mizicode/releases/download/theia/mizi-theia.tar.gz
 RUN curl -fsSL "${THEIA_ARTIFACT_URL}" -o /tmp/mizi-theia.tar.gz && \
     mkdir -p /opt/mizi-theia && \
     tar xzf /tmp/mizi-theia.tar.gz -C /opt/mizi-theia/ && \

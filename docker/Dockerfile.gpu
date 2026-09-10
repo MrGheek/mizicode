@@ -1,0 +1,154 @@
+# syntax=docker/dockerfile:1
+# ── MIZI GPU Workspace Dockerfile ─────────────────────────────────────────────
+# GPU image for self-orchestrated inference (Vast.ai / Vultr GPU hosts).
+# Registry: gheeklabs/mizi-gpu:{cuda12.4|a100|h100}
+#
+# Build and push (from workspace root):
+#   docker build -t gheeklabs/mizi-gpu:cuda12.4 \
+#       -f docker/Dockerfile.gpu \
+#       --build-arg CUDA_VERSION=12.4.1 \
+#       --build-arg LLAMA_CUDA_ARCH=all-major \
+#       docker/
+#   docker push gheeklabs/mizi-gpu:cuda12.4
+#
+# Difference vs the CPU workspace image (docker/Dockerfile):
+#   - CUDA 12.4 runtime base (nvidia/cuda) so vLLM wheels actually run.
+#   - vLLM pinned exact (see profiles.ts version-gating note) to satisfy all
+#     active model profiles (GLM-5.1 FP8, Qwen3-Coder-Next, MiniMax M2.5, and
+#     compressed-tensors MXFP4 models like Kimi-K3 require a recent build).
+#   - huggingface-cli + hf_transfer (Rust-accelerated parallel downloads).
+#   - Everything else (Theia, claw, bridge, nginx, repo-intelligence) matches
+#     the CPU image so onstart.sh works identically on both.
+#
+# onstart.sh branches at boot: if NIM_MODEL_ID is set it uses hosted inference
+# (nim-proxy); otherwise it downloads MODEL_REPO and serves vLLM locally. This
+# image supports both paths, so a GPU host can also act as a workspace for
+# hosted-inference sessions.
+# ───────────────────────────────────────────────────────────────────────────────
+
+ARG CUDA_VERSION=12.4.1
+ARG UBUNTU_VERSION=22.04
+ARG VLLM_VERSION=0.19.0
+
+# ── Stage 1: build claw binary from bundled Rust source (same as CPU image) ──
+FROM ubuntu:${UBUNTU_VERSION} AS claw-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl pkg-config libssl-dev ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSf --retry 5 --retry-all-errors \
+        https://sh.rustup.rs -o /tmp/rustup.sh && \
+    sh /tmp/rustup.sh -y --default-toolchain stable && \
+    rm /tmp/rustup.sh
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+COPY docker/claw-code-src/claw-code-main /opt/claw-code-src
+RUN cd /opt/claw-code-src/rust && \
+    CARGO_PROFILE_RELEASE_OPT_LEVEL=0 \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256 \
+    cargo build --release && \
+    cp target/release/claw /usr/local/bin/claw
+
+# ── Stage 2: CUDA runtime image ───────────────────────────────────────────────
+# nvidia/cuda runtime images bundle the CUDA libs vLLM wheels need without the
+# full dev toolchain (keeps image ~1.5 GB lighter than devel).
+FROM nvidia/cuda:${CUDA_VERSION}-cudnn-runtime-ubuntu${UBUNTU_VERSION}
+
+ARG CUDA_VERSION
+ARG LLAMA_CUDA_ARCH=all-major
+ARG VLLM_VERSION
+ARG TARGETARCH
+ENV TORCH_CUDA_ARCH_LIST="${LLAMA_CUDA_ARCH}"
+ENV HF_HUB_ENABLE_HF_TRANSFER=0
+ENV VLLM_VERSION="${VLLM_VERSION}"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    git \
+    nginx \
+    openssh-server \
+    apache2-utils \
+    python3 \
+    python3-pip \
+    python3-dev \
+    build-essential \
+    make \
+    g++ \
+    ca-certificates \
+    vim \
+    nano \
+    htop \
+    tmux \
+    jq \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# LLM stack: vLLM (CUDA wheels by default on Linux x86_64/aarch64), huggingface
+# CLI + hf_transfer for accelerated downloads, litellm proxy for Anthropic
+# compatibility. hf_transfer ships manylinux wheels on this toolchain; if a
+# platform lacks them pip falls back to source (needs Rust) and onstart.sh
+# degrades gracefully to the plain downloader when the module is missing.
+#
+# For local builds on slow links, build.sh vendors the exact vLLM wheel into
+# docker/vendor/ and it is bind-mounted read-only below (VLLM_WHEEL build arg);
+# it is never COPY'd so it does not bloat image layers.
+ARG VLLM_WHEEL=
+RUN --mount=type=bind,source=docker/vendor,target=/opt/vendor,readonly \
+    if [ -n "$VLLM_WHEEL" ]; then \
+        pip3 install --no-cache-dir --timeout 120 --retries 10 \
+            "/opt/vendor/${VLLM_WHEEL}" \
+            huggingface_hub hf_transfer fastapi uvicorn httpx litellm; \
+    else \
+        pip3 install --no-cache-dir --timeout 120 --retries 10 \
+            "vllm==${VLLM_VERSION}" \
+            huggingface_hub hf_transfer fastapi uvicorn httpx litellm; \
+    fi && \
+    pip3 install --no-cache-dir --timeout 120 --retries 10 'litellm[proxy]' && \
+    pip3 cache purge
+
+# Node.js 20 + pnpm (claw-runner.js, claw-bridge.mjs, bolt.diy dev server)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g pnpm@9 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Theia IDE (pre-built, downloaded from GH Actions artifact) — same as CPU image.
+ARG THEIA_ARTIFACT_URL=https://github.com/MrGheek/mizicode/releases/download/theia/mizi-theia.tar.gz
+RUN curl -fsSL "${THEIA_ARTIFACT_URL}" -o /tmp/mizi-theia.tar.gz && \
+    mkdir -p /opt/mizi-theia && \
+    tar xzf /tmp/mizi-theia.tar.gz -C /opt/mizi-theia/ && \
+    rm /tmp/mizi-theia.tar.gz
+
+# Claw binary from stage 1
+COPY --from=claw-builder /usr/local/bin/claw /usr/local/bin/claw
+
+# Claw source tree (claw-runner.js tooling reference)
+COPY docker/claw-code-src/claw-code-main /opt/claw-code
+
+RUN mkdir -p /run/sshd /workspace/models /workspace/projects /var/log && \
+    git config --global --add safe.directory /workspace/projects && \
+    git config --global --add safe.directory '*'
+
+COPY docker/onstart.sh /opt/onstart.sh
+COPY docker/claw-bridge.mjs /opt/claw-bridge.mjs
+COPY docker/claw-runner.js /opt/claw-runner.js
+COPY docker/scripts/ /opt/repo-intelligence/
+# python3+make+g++ are already installed above so better-sqlite3 compiles cleanly.
+RUN cd /opt/repo-intelligence && npm install --production --prefer-offline && \
+    node -e "require('better-sqlite3'); console.log('[repo-intelligence] better-sqlite3 OK')" 2>/dev/null || \
+    echo "[repo-intelligence] WARN: native modules may be missing — fallback mode"
+RUN chmod +x /opt/onstart.sh
+
+# Verify the CUDA stack actually imports (fails the build early on arch mismatches).
+RUN python3 -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)" && \
+    python3 -c "import vllm; print('vllm', vllm.__version__)" || \
+    echo "[WARN] vLLM import check skipped — runtime probe will surface issues"
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -sf http://localhost:8081/health/liveliness || exit 1
+
+EXPOSE 8080 8081 5181 22
+
+CMD ["/opt/onstart.sh"]

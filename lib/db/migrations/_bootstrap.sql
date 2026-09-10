@@ -166,6 +166,10 @@ CREATE TABLE IF NOT EXISTS public.custom_lane_types (
     description text DEFAULT ''::text NOT NULL,
     max_concurrent_claims integer DEFAULT 20 NOT NULL,
     heavy_job_slots integer DEFAULT 2 NOT NULL,
+    overlay_skill_ids_json jsonb,
+    retrieval_emphasis_json jsonb,
+    policy_token_mode text,
+    design_categories_json jsonb,
     created_at timestamp without time zone DEFAULT now() NOT NULL,
     updated_at timestamp without time zone DEFAULT now() NOT NULL
 );
@@ -599,6 +603,8 @@ CREATE TABLE IF NOT EXISTS public.operator_credentials (
     id integer NOT NULL,
     provider text NOT NULL,
     access_token_encrypted text NOT NULL,
+    refresh_token_encrypted text,
+    refresh_token_expires_at timestamp without time zone,
     github_login text,
     github_avatar_url text,
     created_at timestamp without time zone DEFAULT now() NOT NULL,
@@ -1005,6 +1011,7 @@ CREATE TABLE IF NOT EXISTS public.sessions (
     template_hash text,
     status text DEFAULT 'pending'::text NOT NULL,
     status_message text,
+    theia_url text,
     bolt_diy_url text,
     code_server_url text,
     preview_url text,
@@ -1034,10 +1041,14 @@ CREATE TABLE IF NOT EXISTS public.sessions (
     nim_model_id text,
     has_github_token boolean DEFAULT false NOT NULL,
     fly_machine_id text,
+    workspace_user text,
+    workspace_password text,
     current_phase text,
     active_nim_model_id text,
     active_nim_provider text,
-    model_routing_mode text DEFAULT 'auto'::text
+    model_routing_mode text DEFAULT 'auto'::text,
+    nim_tokens_in integer,
+    nim_tokens_out integer
 );
 
 
@@ -2321,6 +2332,16 @@ ALTER TABLE ONLY public.lane_governance
 
 CREATE UNIQUE INDEX IF NOT EXISTS lane_governance_lane_unique_idx
     ON public.lane_governance USING btree (lane_id);
+
+CREATE TABLE IF NOT EXISTS public.lane_prompt_snapshots (
+    id serial PRIMARY KEY,
+    session_id integer NOT NULL REFERENCES public.sessions(id) ON DELETE CASCADE,
+    lane_id integer NOT NULL REFERENCES public.session_lanes(id) ON DELETE CASCADE,
+    prompt_hash text NOT NULL,
+    skill_ids_json jsonb NOT NULL,
+    system_prompt_fragment text,
+    activated_at timestamp NOT NULL DEFAULT now()
+);
 
 --
 -- PostgreSQL database dump complete

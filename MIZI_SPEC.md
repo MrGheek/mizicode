@@ -1,6 +1,6 @@
 # MIZI — Product Specification
 
-> GPU-powered cloud coding platform. Spin up a private AI coding environment on rented GPUs in minutes — open-source model running locally on your instance, full VS Code in the browser, no API costs.
+> AI coding platform. Spin up a private AI coding environment on a CPU-only workspace machine in minutes — a fully agentic workspace (Eclipse Theia, Claw Runner, memory, coordination) where all model inference is **hosted** on NVIDIA NIM (or any OpenAI-compatible endpoint) via an in-container proxy. No GPU rental, no local model download.
 
 ---
 
@@ -10,7 +10,7 @@
 2. [Architecture](#2-architecture)
 3. [Monorepo Structure](#3-monorepo-structure)
 4. [Database Schema](#4-database-schema)
-5. [GPU Profiles & Models](#5-gpu-profiles--models)
+5. [Session Profiles & Hosted Models](#5-session-profiles--hosted-models)
 6. [Session Lifecycle](#6-session-lifecycle)
 7. [What Runs on the Instance](#7-what-runs-on-the-instance)
 8. [Team Sessions](#8-team-sessions)
@@ -32,28 +32,29 @@
 
 ## 1. Product Overview
 
-MIZI lets you rent raw GPU compute from [Vast.ai](https://vast.ai), boot a pre-configured AI coding environment on it, and access everything through a hosted dashboard — without managing servers, Kubernetes, or cloud accounts yourself.
+MIZI provisions a CPU-only workspace machine on [Fly.io](https://fly.io) via the Fly Machines API, boots a pre-configured AI coding environment on it, and surfaces everything through a hosted dashboard — without managing servers, Kubernetes, or cloud accounts yourself.
 
-Each **session** is a rented GPU machine running:
-- A frontier open-source LLM (Kimi K2.6, Qwen3-Coder-Next, DeepSeek V3.2, etc.)
-- **vLLM** for high-throughput GPU inference
-- **litellm proxy** for Anthropic-compatible API (so claw-code CLI works out of the box)
-- **Eclipse Theia** — extensible browser-based IDE with AI plugins (`@theia/ai-core`, `@theia/ai-chat-ui`, `@theia/ai-vercel-ai`, etc.)
+Each **session** is a CPU-only Fly Machine (app `mizi-workspace`) running:
+- **nim-proxy.py** (port 8081) — forwards all model requests to hosted NVIDIA NIM (or any OpenAI-compatible endpoint)
+- **Eclipse Theia** — extensible browser-based IDE with AI plugins (`@theia/ai-core`, `@theia/ai-chat-ui`, `@theia/ai-mcp`, etc.)
+- **Claw Runner + claw-bridge** — the agent process and its outbound WebSocket bridge to the API server
 - **nginx** — routes traffic, handles basic auth
 - **SSH** — key-based access for terminal use or port forwarding
+- **Bolt.diy** — React full-stack app generator (port 5180)
 
-The hosted dashboard (this app) handles instance provisioning, status tracking, cost tracking, memory persistence, scheduled auto-launch/stop, repo intelligence indexing, and team lane coordination.
+The hosted dashboard (Fly app `mizicode`) handles workspace provisioning, status tracking, cost tracking, memory persistence, scheduled auto-launch/stop, repo intelligence indexing, plan board, ambient agent, and team lane coordination.
 
 ### Key properties
 
-- **No shared API** — the LLM runs entirely on your rented GPU. Zero per-token cost beyond the GPU hourly rate.
+- **No GPU in the workspace** — inference is hosted. `nim-proxy.py` in the container forwards every request to NVIDIA NIM (or any OpenAI-compatible endpoint). Cost = Fly machine hourly rate + per-token API cost.
 - **Ephemeral by default** — sessions are destroyed when you stop them; `/workspace` is local to the machine.
 - **Persistent memory** — the dashboard maintains a SQLite FTS5 memory store that records what the AI agent did across sessions, injectable into future sessions as context.
-- **Team-capable** — one session can host multiple isolated IDEs for team members + a shared workspace, all proxied through nginx with per-user credentials.
-- **Swarm-aware** — each GPU profile carries a `swarmWorkerCap` limiting the number of concurrent vLLM requests the Claw Runner can schedule, preventing KV-cache exhaustion.
+- **Team-capable** — one session can host multiple isolated lanes for team members + a shared workspace, all coordinated through the API server.
+- **Swarm-aware** — each session profile carries a `swarmWorkerCap` limiting the number of concurrent worker agents the Claw Runner can schedule, preventing resource exhaustion.
 - **Repo Intelligence** — sessions can index a Git repository on-instance, producing symbol graphs, embeddings, blast-radius maps, and natural-language summaries searchable from the dashboard.
 - **Design Intelligence** — curated UI/UX patterns and design guidelines are ingested from GitHub and surfaced via a queryable API linked to the skill system.
 - **Lane Coordination** — team sessions get per-member work lanes with claim-based file ownership, conflict detection, handoffs, and a weighted heavy-job scheduler.
+- **Theia integration** — 27 `@mizi/theia-extensions` make the intelligence layer (plan view, phase/token-mode status, NIM model switch, MCP tools, memory panel, ambient approvals, repo context) visible and controllable from inside the IDE.
 
 ---
 
@@ -62,44 +63,41 @@ The hosted dashboard (this app) handles instance provisioning, status tracking, 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          MIZI Dashboard                                    │
-│                    (React + Vite, hosted on Replit)                          │
-│                                                                              │
+│               (React 19 + Vite + Tailwind 4, Fly app `mizicode`)            │
+│                                                                             │
 │  Pages: Dashboard / Sessions / Cockpit / Templates / Memory /                │
-│         Design Intelligence / Coordination / Skills                          │
+│         Design Intelligence / Coordination / Skills / Plan / Ambient         │
 └────────────────────────────┬───────────────────────────────────────────────┘
                              │ HTTP (React Query, Orval-generated hooks)
 ┌────────────────────────────▼───────────────────────────────────────────────┐
-│                          API Server                                          │
-│                   (Express 5, hosted on Replit)                              │
-│                                                                              │
-│  Routes: /sessions  /profiles  /scheduler  /memory  /offers                 │
+│                          API Server (Fly app `mizi-api`)                    │
+│                   (Express 5, Node.js, TypeScript)                          │
+│                                                                             │
+│  Routes: /sessions  /profiles  /nim  /scheduler  /memory  /offers           │
 │          /design-intelligence  /repo  /coordination  /skills  /evals        │
-│  Services: vastai · profiles · scheduler · memory · curated-sources         │
-│            skills-bundler · lane-policy · heavy-job-scheduler               │
-│            claim-sweeper  (via coordination route)                           │
-│  DB: PostgreSQL + Drizzle ORM                                                │
+│          /plan  /ambient  /safety  /palette-intent  /mcp                    │
+│  Services: fly · nim-catalog · vastai · profiles · scheduler                │
+│            memory · curated-sources · skills-bundler · lane-policy          │
+│            heavy-job-scheduler · claim-sweeper · inference-router           │
+│  DB: PostgreSQL + Drizzle ORM                                               │
 │  Memory: SQLite FTS5 (configurable via MEM_DATA_DIR)                        │
 └──────────┬───────────────────────────────┬────────────────────────────────┘
-           │ Vast.ai REST API               │ Status/phase callbacks
-           │                               │ (POST /sessions/:id/status)
-           │                               │ (POST /sessions/:id/repo/sync)
+           │ Fly Machines API              │ WebSocket bridge (outbound, auth:
+           │ (FLY_API_TOKEN)               │ MIZI_MEM_TOKEN) → /api/bridge/...
 ┌──────────▼───────────────────────────────▼────────────────────────────────┐
-│                       Vast.ai GPU Instance                                   │
-│              (rented bare-metal, your Docker image)                          │
-│                                                                              │
-│  onstart.sh runs at boot:                                                    │
-│    Phase 1 (immediate): Theia IDE · nginx · SSH                             │
-│      → Compiles Smart Skills bundle                                          │
-│      → Starts Repo Intelligence indexer                                      │
-│      → POSTs services_ready callback                                         │
-│    Phase 2 (background): model download · vLLM · litellm                    │
-│      → POSTs phase callbacks (downloading / starting_llm / llm_ready)       │
-│                                                                              │
-│  Exposed ports (Vast.ai maps to random external ports):                      │
-│    8080 → Eclipse Theia (via nginx)                                          │
-│    8081 → litellm proxy (OpenAI + Anthropic API)                             │
-│    5181 → Claw Runner                                                        │
-│    22   → SSH                                                                │
+│                    Workspace Machine (Fly app `mizi-workspace`, CPU-only)   │
+│                                                                             │
+│  onstart.sh runs at boot:                                                   │
+│    Theia (internal 8788) · nginx · SSH                                      │
+│    Claw Runner (5182, proxied 5181) · claw-bridge (WS out) · Bolt.diy 5180  │
+│    nim-proxy.py (8081) → hosted NVIDIA NIM / OpenAI-compatible endpoint     │
+│    POSTs phase callbacks (services_ready / skills_ready / llm_ready)        │
+│                                                                             │
+│  Exposed TCP (Fly): 3000, 5180, 5181, 8080, 8081                            │
+│    8080 → Theia (via nginx, basic auth)                                     │
+│    8081 → nim-proxy (OpenAI-compatible)                                     │
+│    5181 → Claw Runner (via nginx)                                           │
+│    8789 → nginx internal (6PN only, no auth → API server proxy)             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -107,18 +105,18 @@ The hosted dashboard (this app) handles instance provisioning, status tracking, 
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React 19.1.0, Vite 7, Tailwind CSS, shadcn/ui, Wouter, TanStack Query |
-| API server | Express 5, Node.js 24, TypeScript 5.9 |
+| Frontend | React 19, Vite 8, Tailwind CSS 4, shadcn/ui, Wouter, TanStack Query |
+| API server | Express 5, Node.js, TypeScript |
 | Database | PostgreSQL (Drizzle ORM), SQLite FTS5 (memory) |
 | Build | esbuild (API), Vite (frontend) |
-| Validation | Zod v3.25.x, drizzle-zod |
+| Validation | Zod, drizzle-zod |
 | API contract | OpenAPI 3.1 → Orval codegen → React Query hooks + Zod schemas |
 | Monorepo | pnpm workspaces |
-| GPU compute | Vast.ai REST API |
-| LLM inference | vLLM (pinned ==0.19.0) + litellm proxy |
-| IDE | code-server (VS Code in browser) |
+| Workspace compute | Fly Machines API (app `mizi-workspace`, CPU-only) |
+| LLM inference | Hosted NVIDIA NIM (or OpenAI-compatible) via nim-proxy.py |
+| IDE | Eclipse Theia (27 MIZI extensions) |
 | Coding UI | Bolt.diy |
-| Proxy | nginx (basic auth + path-based team routing) |
+| Proxy | nginx (basic auth + 6PN internal) |
 
 ---
 
@@ -129,12 +127,13 @@ mizi/
 ├── artifacts/
 │   ├── api-server/               # Express API server
 │   │   └── src/
-│   │       ├── index.ts          # Entry point, port binding, profile seeding
+│   │       ├── index.ts          # Entry point, port binding, startup jobs
 │   │       ├── routes/
 │   │       │   ├── sessions.ts         # Session CRUD, sync, status callback, swarm
-│   │       │   ├── profiles.ts         # GPU profile listing
+│   │       │   ├── profiles.ts         # Session profile listing (nim-workspace + legacy GPU)
+│   │       │   ├── nim.ts              # NIM catalog / provider / health
 │   │       │   ├── templates.ts        # Vast.ai template management
-│   │       │   ├── offers.ts           # Live GPU marketplace search
+│   │       │   ├── offers.ts           # Live GPU marketplace search (Vast.ai provider)
 │   │       │   ├── scheduler.ts        # Scheduler config CRUD
 │   │       │   ├── dashboard.ts        # Summary stats
 │   │       │   ├── memory.ts           # Memory proxy routes
@@ -142,10 +141,18 @@ mizi/
 │   │       │   ├── repo.ts             # Repo Intelligence (per-session + batch)
 │   │       │   ├── coordination.ts     # Lane coordination, claims, handoffs, heavy jobs
 │   │       │   ├── skills.ts           # Skill management + bundles
+│   │       │   ├── plan.ts             # Plan board, decompose, auto-advance
+│   │       │   ├── ambient.ts          # Ambient agent control
+│   │       │   ├── safety.ts           # Approval / deny actions
+│   │       │   ├── palette-intent.ts   # LLM-mapped palette generation
+│   │       │   ├── auth.ts             # Agent API keys
+│   │       │   ├── health.ts           # /health, /healthz, /admin/status
 │   │       │   └── evals.ts            # Eval run management
 │   │       └── services/
+│   │           ├── fly.ts              # Fly Machines API client (provision/destroy/proxy)
+│   │           ├── nim-catalog.ts      # Hosted NIM model catalog + SWE-bench scores
 │   │           ├── vastai.ts           # Vast.ai API client
-│   │           ├── profiles.ts         # Profile seeding & lookup (K2.6 + legacy)
+│   │           ├── profiles.ts         # Profile seeding & lookup (nim-workspace + GPU tiers)
 │   │           ├── scheduler.ts        # Auto-launch/stop + design sync scheduler
 │   │           ├── memory.ts           # SQLite FTS5 memory service (backup/restore)
 │   │           ├── curated-sources.ts  # Design Intelligence ingest from GitHub
@@ -158,9 +165,13 @@ mizi/
 │           ├── pages/
 │           │   ├── dashboard.tsx           # Home — active session + stats
 │           │   ├── sessions/
-│           │   │   ├── index.tsx           # All sessions list (swarm pills)
-│           │   │   └── [id].tsx            # Session cockpit
-│           │   ├── templates.tsx           # Template management
+│           │   │   ├── index.tsx           # All sessions list (swarm pills, TeamFilter)
+│           │   │   └── [id].tsx            # Session cockpit (Overview/Team/Memory/Repo/Swarm/Coordination)
+│           │   ├── plan.tsx                # Living plan board
+│           │   ├── ambient.tsx             # Ambient agent control + safety approvals
+│           │   ├── api-keys.tsx            # Agent API key management
+│           │   ├── settings.tsx            # Platform settings
+│           │   ├── templates.tsx           # Template management (Vast.ai provider)
 │           │   ├── memory.tsx              # Global memory search
 │           │   ├── design-intelligence.tsx # Design patterns explorer
 │           │   └── skills/                 # Skill browser + bundle management
@@ -169,9 +180,14 @@ mizi/
 │               ├── swarm-status-pill.tsx
 │               └── repo-intelligence-panel.tsx
 ├── docker/
-│   ├── Dockerfile               # CUDA 12.4 runtime, vLLM==0.19.0 pinned
-│   ├── onstart.sh               # Parameterized startup script
+│   ├── Dockerfile               # CPU-only workspace image (registry.fly.io/mizi-workspace)
+│   ├── Dockerfile.nim-workspace # CPU-only, no GPU/vLLM/CUDA (build target)
+│   ├── onstart.sh               # Parameterized startup script (Theia, nginx, claw, nim-proxy)
+│   ├── nim-proxy.py             # OpenAI-compatible inference gateway → NIM
 │   ├── claw-runner.js           # Claw Runner (Node.js)
+│   ├── claw-bridge.mjs          # Outbound WebSocket bridge → API server
+│   ├── mizi-theia/              # 27 @mizi/theia-extensions (plan view, MCP, status bar, ...)
+│   ├── fly.workspace.toml       # Fly app config for mizi-workspace
 │   └── scripts/                 # Repo Intelligence indexer scripts
 ├── lib/
 │   ├── api-spec/openapi.yaml    # Single source of truth for API contract
@@ -194,7 +210,7 @@ mizi/
 ## 4. Database Schema
 
 ### `gpu_profiles`
-Defines what GPU tier to rent and which model to run. Seeded automatically at API server startup.
+Defines how to provision a session. Seeded automatically at API server startup. The primary profile is **`nim-workspace`** — a CPU-only profile (`numGpus: 0`, `isNimWorkspace: true`) used by every NIM session; the GPU tiers (K2.6, Qwen3, MiniMax, GLM, DeepSeek) remain in the seed data for the Vast.ai provider path.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -221,27 +237,31 @@ Defines what GPU tier to rent and which model to run. Seeded automatically at AP
 | `swarmWorkerCap` | integer | **New** — max concurrent swarm workers this profile supports. Injected as `SWARM_MAX_WORKERS` into the container. `null` = swarm not configured. |
 
 ### `sessions`
-One row per instance launched.
+One row per launched workspace machine.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | serial PK | |
 | `profileId` | integer FK → gpu_profiles | |
-| `vastInstanceId` | integer | Vast.ai contract/instance ID |
-| `vastOfferId` | integer | Offer selected at launch |
-| `templateHash` | text | Vast.ai template hash used |
-| `status` | text | `pending` → `provisioning` → `downloading` → `starting` → `ready` → `stopped` / `error` |
+| `provider` | text | `nim` / `vastai` / `ollama-local`, default `vastai` |
+| `nimProvider` | text | NIM provider: `nvidia` / `vultr` / `together` / `deepinfra` |
+| `nimModelId` | text | Hosted model ID (e.g. `moonshotai/kimi-k2.6`) |
+| `flyMachineId` | text | Fly Machine ID hosting the workspace |
+| `vastInstanceId` | integer | Vast.ai contract/instance ID (Vast.ai provider) |
+| `vastOfferId` | integer | Offer selected at launch (Vast.ai provider) |
+| `templateHash` | text | Vast.ai template hash used (Vast.ai provider) |
+| `status` | text | `pending` → `provisioning` → `starting` → `ready` → `stopped` / `error` |
 | `statusMessage` | text | Human-readable current state |
 | `boltDiyUrl` | text | Public URL for Bolt.diy |
-| `codeServerUrl` | text | Public URL for code-server |
-| `previewUrl` | text | Public URL for nginx preview proxy |
+| `theiaUrl` | text | Public URL for Theia (via `/api/sessions/:id/workspace`) |
+| `previewUrl` | text | Public URL for the preview proxy |
 | `sshHost` | text | Public IP |
-| `sshPort` | integer | Mapped SSH port |
-| `publicIp` | text | Instance public IP |
-| `costPerHour` | real | Actual $/hr from Vast.ai (`dph_total`) |
+| `sshPort` | integer | SSH port |
+| `publicIp` | text | Machine public IP |
+| `costPerHour` | real | Estimated $/hr (Fly machine + inference) |
 | `totalCost` | real | Running total spend in $ |
-| `gpuName` | text | Denormalized GPU label |
-| `numGpus` | integer | Denormalized GPU count |
+| `gpuName` | text | Denormalized GPU label (0 for nim-workspace) |
+| `numGpus` | integer | Denormalized GPU count (0 for nim-workspace) |
 | `teamMembers` | jsonb | `TeamMemberRecord[]` — `{name, password, path, ideUrl}` |
 | `taskMode` | text | **New** — `build`, `review`, `debug`, etc. (set at launch) |
 | `tokenMode` | text | **New** — `core`, `full`, or `extended` (controls skill bundle size) |
@@ -250,7 +270,7 @@ One row per instance launched.
 | `routingStatsJson` | jsonb | **New** — `SessionRoutingStats` (bytes avoided/shielded by the skill router) |
 | `swarmSnapshotJson` | jsonb | **New** — latest swarm worker snapshot pushed from the Claw Runner |
 | `ownerToken` | text | **New** — bearer secret issued at session creation; required for destructive owner actions (e.g. swarm abort). Redacted from list/active endpoints; exposed only on `GET /sessions/:id`. |
-| `startedAt` | timestamp | When instance was provisioned |
+| `startedAt` | timestamp | When machine was provisioned |
 | `stoppedAt` | timestamp | When session was destroyed |
 
 ### `templates`
@@ -399,11 +419,36 @@ Managed by the Smart Skills system. Seeded via skill import; bundles are compile
 
 ---
 
-## 5. GPU Profiles & Models
+## 5. Session Profiles & Hosted Models
 
-Profiles are seeded at server startup from `services/profiles.ts`. Stale profiles (removed from code) are auto-deleted. All profiles carry a `swarmWorkerCap` that limits concurrent Claw Runner workers to prevent KV-cache exhaustion.
+Profiles are seeded at server startup from `services/profiles.ts`. Stale profiles (removed from code) are auto-deleted. All profiles carry a `swarmWorkerCap` that limits concurrent Claw Runner workers.
 
-### Kimi K2.6 (unsloth/Kimi-K2.6-GGUF) — **Primary / Recommended**
+### `nim-workspace` — the CPU profile (current runtime)
+
+Every session in the current runtime uses the **`nim-workspace`** profile: a CPU-only Fly Machine (`numGpus: 0`, `isNimWorkspace: true`) that hosts the workspace tooling. It carries the workspace Docker image, a ~$0.05–$0.15/hr machine estimate, and a ~2-minute startup (no model download).
+
+### Hosted model catalog (`nim_catalog`)
+
+Which model a session runs is chosen from the **NIM catalog** (`routes/nim.ts`, `services/nim-catalog.ts`), auto-synced at server startup from the NIM API (or a partner provider). Models are tagged with a `NimTier` (`free` / `partner`), a throughput class (`high` / `standard` / `economy`), context length, and an SWE-bench score used for intent-driven selection:
+
+| Model ID | SWE-bench Verified | Notes |
+|----------|-------------------|-------|
+| `minimaxai/minimax-m2.5` | 80.2 | Current leader |
+| `deepseek-ai/deepseek-v4-pro` | 67.0 | |
+| `moonshotai/kimi-k2.6` | 65.8 | |
+| `moonshotai/kimi-k2-instruct-0905` | 63.6 | |
+| `moonshotai/kimi-k2-thinking` | 63.6 | |
+| `qwen/qwen3-coder-480b-a35b-instruct` | 62.0 | |
+| `qwen/qwen3.5-397b-a17b` | 60.0 | |
+| `z-ai/glm-5.1` | 58.4 (Pro) | |
+| `mistralai/devstral-2-123b-instruct-2512` | 58.0 | |
+| `deepseek-ai/deepseek-v4-flash` | 55.0 | |
+
+### Vast.ai GPU tiers (available when using the Vast.ai provider)
+
+The following GPU profile tables and vLLM flags are seeded in `profiles.ts` for the Vast.ai provider path. They are used when sessions are launched via Vast.ai rather than NIM.
+
+### Kimi K2.6 (unsloth/Kimi-K2.6-GGUF) — Legacy
 Mixture-of-experts GGUF. 2T total / 32B active parameters.
 
 | Profile | GPU | Count | VRAM | ctx | tok/s | $/hr est | swarmWorkerCap |
@@ -418,7 +463,7 @@ Mixture-of-experts GGUF. 2T total / 32B active parameters.
 - Pro: `--enable-expert-parallel --kv-cache-dtype fp8` + chunked-prefill + priority scheduling
 - Ultra: same as Pro + `--gpu-memory-utilization 0.95` (raised from default 0.92)
 
-### Kimi K2.5 (unsloth/Kimi-K2.5-GGUF) — Legacy (kept for existing sessions)
+### Kimi K2.5 (unsloth/Kimi-K2.5-GGUF) — Vast.ai provider
 
 | Profile | GPU | Count | VRAM | ctx | tok/s | $/hr est | swarmWorkerCap |
 |---------|-----|-------|------|-----|-------|---------|----------------|
@@ -476,73 +521,68 @@ Applied to Pro/Ultra MoE profiles (vLLM ≥ 0.19.0):
 ## 6. Session Lifecycle
 
 ```
-[User clicks Launch]
+[User clicks Launch (with a NIM model)]
         │
         ▼
   status: pending
   (session row created, ownerToken generated, activeBundleId compiled)
         │
-  POST /bundles/ → Vast.ai
-  Select cheapest matching offer
+  Provider key validated (NVIDIA NIM / Vultr / Together / DeepInfra)
+  │
+  POST https://api.machines.dev/v1/apps/mizi-workspace/machines  (Fly Machines API)
+  (machine config from services/fly.ts: CPU image, env, mount /data, services)
         │
         ▼
   status: provisioning
-  (Vast.ai creates instance, boots Docker image)
+  (Fly Machine boots the workspace image)
         │
-  Vast.ai actual_status: "loading" / "creating"
-        │
-        ▼ (Vast.ai: "running" → instance booted)
-  onstart.sh Phase 1 starts
+        ▼ (machine starts)
+  onstart.sh runs:
   ├── SSH server
-  ├── code-server
-  ├── Claw Runner
-  ├── Bolt.diy
-  ├── nginx
+  ├── Theia (internal 8788, served via nginx :8080 with basic auth)
+  ├── Claw Runner (5182) + nginx proxy (5181)
+  ├── claw-bridge (outbound WebSocket to /api/bridge/:sessionId/:laneId)
+  ├── Bolt.diy (5180)
+  ├── nim-proxy.py (8081) → hosted NIM API
   └── (optional) Repo Intelligence indexer triggered if repoUrl provided
         │
   Instance POSTs /api/sessions/:id/status  {status: "services_ready"}
         ▼
   status: starting
-  statusMessage: "Tools ready — LLM model loading in background..."
+  statusMessage: "Tools ready — LLM proxy online..."
         │
   Instance POSTs {status: "skills_compiling"}
   → "Compiling Smart Skills bundle..."
   Instance POSTs {status: "skills_ready"}
-  → "Smart Skills loaded — LLM loading in background..."
+  → "Smart Skills loaded — LLM proxy online..."
         │
-  onstart.sh Phase 2 starts (background subshell)
-  ├── [if model not cached] huggingface-cli download
-  │     └── Instance POSTs {status: "downloading"}
-  │           ▼ status: downloading
-  ├── vLLM server starts (internal port 8082)
-  │     └── Instance POSTs {status: "starting_llm"}
-  │           ▼ status: starting
-  ├── litellm proxy starts (port 8081)
-  └── waits for /health on vLLM
+  nim-proxy.py health check passes (forwards to hosted NIM)
         │
   Instance POSTs /api/sessions/:id/status  {status: "llm_ready"}
         ▼
   status: ready
-  statusMessage: "Session is ready — vLLM online"
+  statusMessage: "Session is ready — NIM inference online"
         │
-  [User uses IDE / Bolt.diy / claw-code CLI]
+  [User uses Theia / Bolt.diy / claw-code CLI]
         │
   [User clicks Destroy or scheduler stops it]
         ▼
-  vastai.destroyInstance(vastInstanceId)
+  fly.destroyMachine(machineId)   (Fly Machines API)
   status: stopped
 ```
 
-**Fallback for old/offline instances**: If the instance callback never arrives, the sync checks `Vast.ai actual_status === "running"` + `status_msg` starts with `"success"` + instance has been running for >30 minutes → auto-marks as `ready`.
+There is no model-download phase: weights live on the hosted NIM side. Boot takes ~2 minutes.
 
-**Dashboard polling**: The cockpit page calls `GET /api/sessions/:id` every 5 seconds while active. Each call triggers a Vast.ai API sync.
+**Fallback for unreported machines**: `POST /api/sessions/:id/refresh` checks the Fly Machine's current state and re-syncs `status`/`statusMessage` from it (a 500 is returned if the machine can't be reached).
+
+**Dashboard polling**: the cockpit page calls `GET /api/sessions/:id` while active; the API proxy serves the Theia workspace over Fly's private 6PN network (`http://<machineId>.vm.mizi-workspace.internal:8789`).
 
 ### POST /sessions — extended request body
 
 ```json
 {
-  "profileId": 2,
-  "offerId": null,
+  "nimModelId": "moonshotai/kimi-k2.6",
+  "profileId": 1,
   "teamMembers": ["alice", "bob"],
   "taskMode": "build",
   "tokenMode": "core",
@@ -553,6 +593,7 @@ Applied to Pro/Ultra MoE profiles (vLLM ≥ 0.19.0):
 }
 ```
 
+- `nimModelId` — hosted model to use (from the NIM catalog); requires the matching provider key. Either `nimModelId` or `profileId` must be supplied (400 otherwise)
 - `teamMembers` — array of name strings (not objects); API generates passwords automatically
 - `taskMode` — `build`, `review`, `debug`, etc. Used to select the appropriate skill bundle
 - `tokenMode` — `core` (default, compact prompt injection), `full`, or `extended`
@@ -564,46 +605,36 @@ Applied to Pro/Ultra MoE profiles (vLLM ≥ 0.19.0):
 
 ## 7. What Runs on the Instance
 
-### Port layout (container-internal → Vast.ai maps to random external ports)
+### Port layout (container-internal → Fly TCP services)
 
 | Internal port | Service | Notes |
 |---------------|---------|-------|
 | 22 | SSH | Key-based auth only |
-| 8080 | code-server OR nginx team router | Solo: code-server direct. Team: nginx routes `/` |
-| 8081 | litellm proxy | OpenAI + Anthropic API. Used by claw-code and Bolt.diy |
-| 8082 | vLLM (internal) | OpenAI format only, not exposed externally |
-| 8090 | code-server owner (team) | Internal only, nginx proxies to `/` |
-| 8093-8096 | code-server per team member | Internal, nginx proxies to `/ide/<name>/` |
-| 8097 | code-server shared workspace | Internal, nginx proxies to `/shared/` |
-| 3000 | nginx preview proxy | Proxies localhost:5174 (dev server) |
-| 5173 | Bolt.diy (internal) | |
+| 8788 | Theia (backend) | Internal; served via nginx on 8080 |
+| 8080 | nginx → Theia | Basic auth (`mizi` / boot-generated password) |
+| 8081 | nim-proxy.py | OpenAI-compatible pass-through → hosted NIM |
 | 5180 | nginx → Bolt.diy | Exposed with basic auth |
 | 5181 | nginx → Claw Runner | |
 | 5182 | Claw Runner (Node.js) | |
+| 8789 | nginx (internal, 6PN only) | No auth — reached by the API server proxy over Fly private network |
+| 3000 | nginx preview proxy | Proxies app preview traffic |
+
+**Fly TCP services exposed**: 3000, 5180, 5181, 8080, 8081 (SSH 22 intentionally not declared — see `services/fly.ts`).
 
 ### Services
 
-**vLLM** (`python3 -m vllm.entrypoints.openai.api_server`)
-- Serves the model in OpenAI format on port 8082
-- Tensor-parallel across all GPUs (`--tensor-parallel-size $NUM_GPUS`)
-- Expert-parallel enabled for MoE models
-- FP8 KV cache on H100/H200 profiles
-- Speculative decoding (MTP) on GLM-5.1
-- `onstart.sh` performs runtime flag-gating: probes `python3 -m vllm.entrypoints.openai.api_server --help` and strips any unrecognised flags from `VLLM_EXTRA_ARGS`, keeping the image forward-compatible
+**nim-proxy.py** (port 8081)
+- Minimal OpenAI-compatible pass-through proxy forwarding `/v1/*` to the hosted NIM API base (`NIM_API_BASE`, default `https://integrate.api.nvidia.com/v1`) with the configured provider key
+- Exposes `default` and `swarm` model routes so claw-code keeps a standard OpenAI-compatible interface on localhost
+- Replaces the old litellm[proxy], which crashes on Python 3.10 without a `prisma` dependency
 
-**litellm proxy** (port 8081)
-- Wraps vLLM's OpenAI endpoint
-- Exposes both OpenAI `/v1/chat/completions` and Anthropic `/v1/messages`
-- Lets claw-code (Claude-compatible CLI) talk to local vLLM without code changes
-
-**code-server** (VS Code in browser)
-- Password-protected (auto-generated or team-assigned)
-- `/workspace/projects` as the root folder (solo) or per-user folder (team)
-- Env vars injected: `ANTHROPIC_BASE_URL=http://localhost:8081`, `ANTHROPIC_API_KEY=not-needed`
+**Theia IDE** (internal 8788)
+- Served through nginx on port 8080 with basic auth (username `mizi`; password generated at boot into `/workspace/.mizi-password`)
+- Env vars injected: `ANTHROPIC_BASE_URL=http://localhost:8081`, `ANTHROPIC_API_KEY=not-needed` (or `OPENAI_BASE_URL` equivalent)
 
 **Bolt.diy**
 - React full-stack app generator
-- Configured to use local litellm proxy as its AI backend
+- Configured to use the local nim-proxy as its AI backend
 - Accessed via nginx on port 5180 with basic auth
 
 **Claw Runner** (Node.js, port 5182)
@@ -611,10 +642,14 @@ Applied to Pro/Ultra MoE profiles (vLLM ≥ 0.19.0):
 - Enforces `SWARM_MAX_WORKERS` concurrency limit set from `gpu_profiles.swarmWorkerCap`
 - Accessed via nginx on port 5181 with basic auth
 
+**claw-bridge** (`docker/claw-bridge.mjs`)
+- Node.js process connecting **outbound** via WebSocket to `/api/bridge/:sessionId/:laneId` (auth: `MIZI_MEM_TOKEN`)
+- Spawns `claw prompt` per task, streams frames back, reconnects with exponential backoff
+
 **nginx**
-- Handles basic auth for Bolt.diy, Claw Runner, and the preview proxy
-- For team sessions: routes `/`, `/ide/<name>/`, `/shared/` to the correct code-server instance
-- Preview proxy on port 3000 proxies `localhost:5174`
+- Basic auth for Theia, Bolt.diy, and Claw Runner
+- Internal port 8789 (no auth) serves the API server's workspace proxy over Fly's private 6PN network
+- Preview proxy on port 3000
 
 ---
 
@@ -646,36 +681,13 @@ Set at launch and stored on `sessions.taskMode` / `sessions.tokenMode`. Control 
 ### Smart Skills bundle
 `activeBundleId` references the `skill_bundles` row compiled for this session. Bundle selection is based on `taskMode`, `tokenMode`, session type, repo languages, and model profile. Per-lane overlay bundles are compiled when lanes are created (see Section 20).
 
-### nginx routing (port 8080 on team sessions)
+### Team model: lanes on a shared workspace
 
-```nginx
-server {
-  listen 8080;
-
-  location / {
-    auth_basic "MIZI";
-    auth_basic_user_file /etc/nginx/.htpasswd;       # owner credentials
-    proxy_pass http://localhost:8090;                 # owner code-server
-  }
-
-  location /ide/alice/ {
-    auth_basic "MIZI - alice";
-    auth_basic_user_file /etc/nginx/.htpasswd-alice;  # alice's own creds
-    proxy_pass http://localhost:8093;
-  }
-
-  location /shared/ {
-    auth_basic "MIZI Shared";
-    auth_basic_user_file /etc/nginx/.htpasswd-shared; # all members combined
-    proxy_pass http://localhost:8097;                 # shared code-server
-  }
-}
-```
+In the current runtime, all team members share one workspace machine and one Theia instance. Collaboration happens through **lanes** (see [Section 20](#20-lane-coordination)): each member gets an isolated lane with its own skill overlay, file claims, git sub-branch, and a dedicated claw-bridge WebSocket connection (`/api/bridge/:sessionId/:laneId`). There is no multi-code-server nginx routing — the legacy per-member code-server topology (`8090`–`8097`) was removed with the GPU image.
 
 ### Workspaces
-- Owner: `/workspace/projects`
-- Alice: `/workspace/users/alice`
-- Shared: `/workspace/shared`
+- Workspace root: `/workspace` (local to the machine, ephemeral)
+- Repo projects: `/workspace/projects`
 
 ### Dashboard credential exposure
 - `GET /api/sessions` (list) — passwords **redacted**, `ownerToken` **redacted**
@@ -820,20 +832,20 @@ Base path: `/api`
 | GET | `/sessions/active` | Get the currently active session (ownerToken redacted) |
 | GET | `/sessions/swarm-status-batch?ids=1,2,3` | **New** — batch swarm status for the sessions list (returns map of id → `{availability, snapshot}`) |
 | GET | `/sessions/:id` | Get session detail (includes team passwords and ownerToken) |
-| DELETE | `/sessions/:id` | Destroy session and Vast.ai instance |
-| POST | `/sessions/:id/sync` | Force a Vast.ai API sync |
+| DELETE | `/sessions/:id` | Destroy session and underlying machine |
+| POST | `/sessions/:id/sync` | Force a provider sync (Fly Machine / Vast.ai instance) |
 | POST | `/sessions/:id/status` | **Instance callback** — update status from onstart.sh (authenticated via Bearer token) |
 
 #### Instance callback status values
 
 | `status` field | DB status → | statusMessage |
 |----------------|-------------|---------------|
-| `services_ready` | `starting` | "Tools ready — LLM model loading in background..." |
-| `downloading` | `downloading` | "Downloading model weights..." |
-| `starting_llm` | `starting` | "Loading model into GPU memory..." |
+| `services_ready` | `starting` | "Tools ready — LLM proxy online..." |
+| `downloading` | `downloading` | Vast.ai provider path (model download) |
+| `starting_llm` | `starting` | Vast.ai provider path (loading into GPU) |
 | `skills_compiling` | `starting` | "Compiling Smart Skills bundle..." |
-| `skills_ready` | `starting` | "Smart Skills loaded — LLM loading in background..." |
-| `llm_ready` | `ready` | "Session is ready — vLLM online" |
+| `skills_ready` | `starting` | "Smart Skills loaded — LLM proxy online..." |
+| `llm_ready` | `ready` | "Session is ready — NIM inference online" |
 
 ### GPU Profiles
 
@@ -923,8 +935,9 @@ Key additions from recent tasks:
 |--------|------|-------------|
 | DELETE | `/sessions/:id/lanes/:laneId` | Destroy a lane; emits `lane_destroyed` event; history preserved |
 | GET | `/sessions/:id/lanes/:laneId/timeline` | Cursor-paginated lane event history (newest first) |
-| GET | `/sessions/:id/lanes/types` | List custom lane types |
-| POST | `/sessions/:id/lanes/types` | Register a custom lane type |
+| GET | `/coordination/lane-types` | List custom lane types |
+| POST | `/coordination/lane-types` | Register a custom lane type |
+| PATCH / DELETE | `/coordination/lane-types/:id` | Update / delete a custom lane type |
 
 ### Test Environment Provisioning
 
@@ -967,7 +980,7 @@ Key additions from recent tasks:
 |--------|------|-------------|
 | POST | `/admin/sweep-claims` | Manually trigger `sweepExpiredClaims()`; returns `{deactivated, sweptAt}`. Protected by `X-Admin-Token: <ADMIN_SWEEP_TOKEN>` header equality check when `ADMIN_SWEEP_TOKEN` is set |
 
-### Claw Runner internal HTTP server (port 8080, instance-local)
+### Claw Runner internal HTTP server (port 5182, instance-local, bound to 127.0.0.1)
 
 The Claw Runner exposes a small local HTTP server for in-process tooling:
 
@@ -976,7 +989,7 @@ The Claw Runner exposes a small local HTTP server for in-process tooling:
 | GET | `/swarm/status` | Current `swarmState` snapshot (phase, workers, progress) |
 | POST | `/swarm/abort` | Emergency abort — sets `abortRequested=true`, kills in-flight workers |
 
-These are **not** proxied through the API server. The dashboard reaches them via code-server's proxy or the session's direct IP.
+These are **not** proxied through the API server. In the current workspace the Claw Runner is reachable through nginx on 5181 (basic auth) or directly on the machine via SSH.
 
 ---
 
@@ -1002,7 +1015,7 @@ These are **not** proxied through the API server. The dashboard reaches them via
 
 **Overview tab:**
 - "Your coding environment is ready" panel with "Open Coding Environment" button
-- Hardware & Access card: GPU, Public IP, SSH command
+- Hardware & Access card: Public IP, SSH command, model/provider label
 - Cost & Timing card
 - Repo Intelligence panel: index status, symbol count, confidence level, search
 
@@ -1046,49 +1059,62 @@ These are **not** proxied through the API server. The dashboard reaches them via
 
 ### API server
 
+Set on the `mizi-api` Fly app via `fly secrets set KEY="value" --config artifacts/api-server/fly.toml`. Source of truth: `.env.example`.
+
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `VASTAI_API_KEY` | Yes | Vast.ai API key for all instance operations |
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `DATABASE_URL` | Production | PostgreSQL connection string (auto-set by `fly postgres attach`) |
+| `MIZI_ENCRYPTION_KEY` | Production | 64-hex key (`openssl rand -hex 32`) — encrypts stored connection strings |
+| `MIZI_MEM_TOKEN` | Production | 64-hex operator token (`openssl rand -hex 32`) — Bearer auth for memory/ambient/admin and the bridge |
+| `FLY_API_TOKEN` | Production | Fly.io deploy token (`fly tokens create deploy -x 999999h`) — Fly Machines API |
+| `FLY_WORKSPACE_APP_NAME` | Production | Workspace Fly app to provision machines into (e.g. `mizi-workspace`; `FLY_APP_NAME` accepted as legacy fallback) |
+| `NVIDIA_NIM_API_KEY` | NIM | NVIDIA NIM API key (`nvapi-...`) — enables NIM catalog + sessions |
+| `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` | Optional | GitHub "Connect GitHub to work" OAuth flow |
+| `DASHBOARD_URL` | Optional | Dashboard origin (e.g. `https://mizicode.fly.dev`) for OAuth redirects |
+| `VASTAI_API_KEY` | Vast.ai | Vast.ai API key for the Vast.ai provider path |
+| `AI_INTEGRATIONS_OPENAI_API_KEY` / `AI_INTEGRATIONS_OPENAI_BASE_URL` | Optional | OpenAI-compatible key used for ambient features and memory embeddings |
+| `VULTR_INFERENCE_API_KEY` | Optional | Vultr Inference provider key; enables the `vultr` NIM provider |
+| `TOGETHER_API_KEY` | Optional | Together AI provider key; enables the `together` NIM provider |
+| `DEEPINFRA_API_KEY` | Optional | DeepInfra provider key; enables the `deepinfra` NIM provider |
+| `BRAVE_SEARCH_API_KEY` / `SERPER_API_KEY` | Optional | Agent web-search — at least one required for `POST /sessions/:id/tools/web-search` (503 if both absent) |
+| `SAFETY_EMAIL_TO` / `SAFETY_EMAIL_WEBHOOK_URL` / `SAFETY_EMAIL_WEBHOOK_AUTH` | Optional | Safety alert e-mail delivery (webhook-backed) |
+| `MIZI_MEM_USER_ID` | Optional | User ID recorded as the operator in memory observations (default: `operator`); `MIZI_MEM_PROXY_URL` is also read as the callback base |
+| `AMBIENT_ACCOUNT_ID` | Optional | Account ID used by the ambient scheduler (default: `default`) |
+| `MEM_DATA_DIR` | Optional | SQLite memory DB directory (default: `~/mizi-memory`; Fly: `/data/memory`) |
+| `CLAIM_RETENTION_DAYS` | Optional | Days to retain inactive lane claims before purging (default 7) |
+| `CLAIM_CLEANUP_INTERVAL_MS` | Optional | Inactive-claim purge interval (default 3600000 / 1h) |
 | `PORT` | No | API server port (default: 8080) |
-| `MIZI_MEM_TOKEN` | No | Bearer token for memory API (open in dev if not set). Also used to authenticate instance callbacks on `/sessions/:id/status` and `/sessions/:id/repo/*` |
-| `MIZI_MEM_PROXY_URL` | No | Public URL of this API server. Defaults to `https://$REPLIT_DEV_DOMAIN` |
-| `MIZI_MEM_USER_ID` | No | Memory user scope (default: `operator`) |
-| `MEM_DATA_DIR` | No | **New** — Override for SQLite memory DB directory (default: `~/mizi-memory`) |
-| `REPLIT_DEV_DOMAIN` | Auto | Set by Replit. Used to construct callback and memory proxy URLs |
-| `DESIGN_SYNC_INTERVAL_MS` | No | **New** — Design Intelligence full-sync interval (default: 6 hours = 21 600 000 ms) |
-| `ADMIN_SWEEP_TOKEN` | No | **New** — Secret value checked via `X-Admin-Token` request header (header equality, not Bearer) to protect the `/admin/sweep-claims` endpoint |
-| `GITHUB_TOKEN` | No | Optional GitHub PAT to increase API rate limits during design intelligence ingest |
-| `VULTR_INFERENCE_API_KEY` | No | Vultr Inference provider key; enables the `vultr` NIM provider |
-| `TOGETHER_API_KEY` | No | Together AI provider key; enables the `together` NIM provider |
-| `DEEPINFRA_API_KEY` | No | DeepInfra provider key; enables the `deepinfra` NIM provider |
-| `NEON_API_KEY` | No | Neon API key; enables cloud Postgres branch provisioning for test environments |
-| `NEON_PROJECT_ID` | No | Neon project ID to branch from when creating test databases |
 
-### Injected into each Vast.ai instance via onstart script
+Also read by code: `DESIGN_SYNC_INTERVAL_MS` (design-sync interval, default 6 h), `GITHUB_TOKEN` (rate-limit headroom for GitHub API calls), `NEON_API_KEY` / `NEON_PROJECT_ID` (legacy Neon Postgres branch strategy — not in `.env.example`), `ADMIN_SWEEP_TOKEN` (optional gate on `/admin/sweep-claims` via `X-Admin-Token` header).
+
+### Injected into each workspace machine (Fly machine env + generated onstart script)
 
 | Variable | Description |
 |----------|-------------|
-| `MODEL_REPO` | HuggingFace repo to download |
-| `MODEL_QUANT` | Cache directory name |
-| `SERVED_MODEL_NAME` | vLLM and litellm model alias |
-| `VLLM_MAX_MODEL_LEN` | Max context length |
-| `VLLM_MAX_NUM_SEQS` | Max concurrent sequences |
-| `VLLM_EXTRA_ARGS` | Extra vLLM flags |
-| `NUM_GPUS` | GPU count |
-| `SWARM_MAX_WORKERS` | **New** — Max concurrent Claw Runner workers (from `gpu_profiles.swarmWorkerCap`) |
-| `VLLM_API_KEY` | **New** — Optional key for the vLLM server's built-in auth (when set, all litellm → vLLM calls must include it) |
-| `MIZI_MEM_PROXY_URL` | Memory API base URL |
-| `MIZI_MEM_AUTH_TOKEN` | Memory API bearer token |
-| `MIZI_MEM_USER_ID` | Memory user scope |
+| `VLLM_PORT` | `8081` — port nim-proxy.py binds (var name retained from the Vast.ai era) |
+| `THEIA_PORT` | `8788` — Theia backend port, served via nginx on 8080 |
+| `NGINX_AUTH_USER` / `NGINX_AUTH_PASS` | Theia/Claw basic-auth credentials (user `mizi`; password generated per session) |
+| `SWARM_MAX_WORKERS` | Max concurrent Claw Runner workers (from `gpu_profiles.swarmWorkerCap`) |
+| `MIZI_CALLBACK_URL` | Status callback URL (`POST /sessions/:id/status`) |
+| `MIZI_MEM_AUTH_TOKEN` | Bearer token for callbacks (from `MIZI_MEM_TOKEN`) |
 | `MIZI_SESSION_ID` | Session ID for status callbacks |
-| `MIZI_CALLBACK_URL` | Full URL for status callbacks |
-| `TEAM_MEMBERS_JSON` | JSON array of team members (team sessions only) |
-| `GITHUB_LANE_BRANCHES_ENABLED` | `1` when `enableLaneBranches` is true; signals to in-session tooling that per-member branches are active |
+| `MIZI_ACTIVE_BUNDLE_B64` | Compiled Smart Skills bundle (base64) |
+| `NIM_API_BASE` / `NIM_API_KEY` | nim-proxy upstream base + provider key |
+| `SWARM_MODEL_ID` / `SWARM_PROVIDER` / `SWARM_API_BASE` / `SWARM_API_KEY` | Swarm inference routing |
+| `GITHUB_TOKEN` | GitHub PAT for per-member git branches and draft PRs |
+| `GITHUB_LANE_BRANCHES_ENABLED` | `1` when per-member branches are active |
+| `TEAM_MEMBERS_JSON` | JSON array of team members (team sessions; legacy) |
+| `MODEL_REPO` / `MODEL_QUANT` / `SERVED_MODEL_NAME` / `VLLM_MAX_MODEL_LEN` / `VLLM_MAX_NUM_SEQS` / `NUM_GPUS` | Legacy profile vars retained for image compatibility (inert for NIM) |
 
 ---
 
 ## 14. Vast.ai Integration
+
+Vast.ai is a **first-class GPU provider peer** to hosted inference (NIM/partner,
+Ollama Cloud) and local Ollama. Sessions route by capability via the provider
+resolver (`providers/resolver.ts`): pasted HF URLs and uncensored/wide-lane
+requirements provision Vast.ai (or Vultr) GPU instances, while hosted catalog
+picks provision Fly.io workspaces whose inference brain is the hosted API.
 
 All interaction goes through `artifacts/api-server/src/services/vastai.ts`.
 
@@ -1129,99 +1155,91 @@ All interaction goes through `artifacts/api-server/src/services/vastai.ts`.
 
 ## 15. Docker Image
 
-`gheeklabs/coding-env:latest` (CUDA 12.4 cudnn-runtime base)
+`registry.fly.io/mizi-workspace:latest` — the **CPU-only** workspace image for Fly NIM sessions. No CUDA, no GPU stack, no vLLM, no llama.cpp. Inference is hosted: `nim-proxy.py` inside the container forwards to the NVIDIA NIM API (or any OpenAI-compatible endpoint).
 
 ### What's pre-installed
 
-- CUDA 12.4 + cuDNN (cudnn-runtime base)
-- Python 3 + pip
-- **vLLM == 0.19.0** (exact pin; CUDA 12.4 wheels from PyPI `--extra-index-url https://download.pytorch.org/whl/cu124`)
-- **transformers >= 5.3.0** (required by GLM-5.1 FP8 tokeniser and GLM-4 tool-call parser; also benefits Qwen3 and MiniMax M2.5)
-- **DeepGEMM** (optional FP8 GEMM kernel from `deepseek-ai/DeepGEMM` at pinned SHA via build arg `DEEPGEMM_SHA`; installed with `pip install --no-cache-dir git+https://github.com/deepseek-ai/DeepGEMM@<SHA>`. Falls back gracefully if CUDA compilation fails — vLLM's built-in triton FP8 kernels remain fully functional)
-- litellm
-- huggingface-cli
-- code-server
+- Ubuntu 22.04 base
 - Node.js 20 + pnpm 9
-- Bolt.diy (`/opt/bolt-diy`)
-- claw-code binary (`/usr/local/bin/claw`) — built from bundled Rust source in a separate builder stage
-- Claw Runner (`/opt/claw-runner.js`)
+- Python 3 + pip (fastapi, uvicorn, httpx, litellm installed; the **active gateway is `nim-proxy.py`**, written at boot — litellm[proxy] crashes on Python 3.10 without the `prisma` package)
+- **Eclipse Theia** — pre-built, downloaded from the GitHub Actions artifact release (`THEIA_ARTIFACT_URL` ARG, default `https://github.com/MrGheek/mizicode/releases/download/theia/mizi-theia.tar.gz`) to `/opt/mizi-theia/`; includes the 27 `@mizi/theia-extensions`
+- **Bolt.diy** — React full-stack app generator
+- **claw-code binary** (`/usr/local/bin/claw`) — compiled from bundled Rust source (`docker/claw-code-src/`) in the builder stage
+- Claw Runner (`/opt/claw-runner.js`) + claw-bridge (`/opt/claw-bridge.mjs`)
 - Repo Intelligence scripts (`/opt/repo-intelligence/`) — Node.js + better-sqlite3
-- nginx + apache2-utils
-- SSH server (openssh-server)
+- nginx + apache2-utils, openssh-server
 - jq, tmux, htop, vim, nano
 
 ### Build stages
+
 The Dockerfile uses a two-stage build:
-1. **`claw-builder`** (`ubuntu:22.04`) — installs Rust toolchain, compiles `claw` from `docker/claw-code-src/` into `/usr/local/bin/claw`
-2. **Runtime** (`nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04`) — installs all services and copies `claw` from the builder
+1. **`claw-builder`** (`ubuntu:22.04`) — installs Rust toolchain, compiles `claw` from `docker/claw-code-src/claw-code-main/rust` into `/usr/local/bin/claw`
+2. **Runtime** (`ubuntu:22.04`) — installs all services, downloads the Theia artifact, and copies `claw` from the builder
 
 ### Build args
 - `UBUNTU_VERSION` (default `22.04`)
-- `CUDA_VERSION` (default `12.4.1`)
-- `DEEPGEMM_SHA` (default `a7b3d1e`) — pin to a specific DeepGEMM commit for reproducible FP8 kernel builds
+- `THEIA_ARTIFACT_URL` — pre-built Theia tarball URL (GitHub release `theia` / actions artifact)
+
+### Variants
+- `Dockerfile.nim-workspace` — slim build, same services, no litellm / bolt.diy layers
+- `Dockerfile.nim-bolt-patch` — incremental patch layering a pre-built Bolt.diy production build onto an existing deployment image
+- `Dockerfile.nim-patch` — incremental nim-proxy patch layer
+
+### Health check
+`/health/liveliness` on port 8081 (nim-proxy).
 
 ### Model weights
-Not included in the image — downloaded at runtime by `huggingface-cli` into `/workspace/models/$MODEL_QUANT/`.
+Not included in the image — inference is hosted, so there is nothing to download at runtime.
 
 ---
 
 ## 16. Boot Script (onstart.sh)
 
-The `buildOnStartScript()` function in `vastai.ts` generates a wrapper that sets environment variables (including the new `SWARM_MAX_WORKERS` and optionally `VLLM_API_KEY`) and then calls `/opt/onstart.sh`.
+The API server generates an onstart wrapper per session (env vars + `/opt/onstart.sh` invocation) and passes it as the Fly Machine init command (`/bin/bash -c <script>`). When `NIM_MODEL_ID` is set, onstart runs in **NIM fast-boot mode**: hosted inference, no model download, no vLLM.
 
 ### Generated wrapper structure
 
 ```bash
 #!/bin/bash
-export MODEL_REPO="unsloth/Kimi-K2.6-GGUF"
-export MODEL_QUANT="kimi-k2.6"
-export SERVED_MODEL_NAME="kimi-k2-6"
-export VLLM_MAX_MODEL_LEN="32768"
-export VLLM_MAX_NUM_SEQS="768"
-export VLLM_EXTRA_ARGS="--enable-expert-parallel"
-export NUM_GPUS="4"
-export SWARM_MAX_WORKERS="48"         # from gpu_profiles.swarmWorkerCap
-# export VLLM_API_KEY="..."           # optional, omitted if not set
-export MIZI_MEM_PROXY_URL="https://your-api.replit.dev"
-export MIZI_MEM_AUTH_TOKEN=""
-export MIZI_MEM_USER_ID="operator"
+export NIM_MODEL_ID="moonshotai/kimi-k2.6"
+export NIM_API_BASE="https://integrate.api.nvidia.com/v1"
+export NIM_API_KEY="nvapi-..."
+export SWARM_MODEL_ID="qwen/qwen3-coder-480b-a35b-instruct"
+export SWARM_API_BASE="https://integrate.api.nvidia.com/v1"
+export SWARM_API_KEY="..."
+export VLLM_PORT="8081"            # nim-proxy listen port
+export THEIA_PORT="8788"           # Theia backend port
+export NGINX_AUTH_USER="mizi"      # Theia basic-auth user
+export NGINX_AUTH_PASS="<random>"  # Theia basic-auth password
+export SWARM_MAX_WORKERS="4"       # from gpu_profiles.swarmWorkerCap
 export MIZI_SESSION_ID="42"
-export MIZI_CALLBACK_URL="https://your-api.replit.dev/api/sessions/42/status"
-# (team sessions only):
-export TEAM_MEMBERS_JSON='[{"name":"__shared__","password":"abc","path":"/shared/"},{"name":"alice","password":"xyz","path":"/ide/alice/"}]'
+export MIZI_CALLBACK_URL="https://mizi-api.fly.dev/api/sessions/42/status"
+export MIZI_MEM_AUTH_TOKEN="..."
+export MIZI_ACTIVE_BUNDLE_B64="<compiled skill bundle>"
 /opt/onstart.sh
 ```
 
 ### onstart.sh phases
 
-**Phase 1** (sequential, completes in ~30 seconds):
-1. Generate code-server password
-2. Start SSH server
-3. Start code-server (owner, port 8080 solo or 8090 team)
-4. Start Claw Runner (port 5182; picks up `SWARM_MAX_WORKERS` to enforce concurrency limit)
-5. Start Bolt.diy (port 5173)
-6. Configure nginx htpasswd + server blocks
-7. Start nginx
-8. (Team only) Build per-member nginx config, start per-member code-server instances
-9. Compile Smart Skills bundle → `report_status skills_compiling` / `skills_ready`
-10. (If `repoUrl` provided) Kick off Repo Intelligence indexer → `report_status services_ready`
-11. `report_status services_ready` → POSTs to `MIZI_CALLBACK_URL`
+**Phase 1** (sequential, ~30 s):
+1. Generate nginx basic-auth password, start SSH server
+2. Start Theia on internal port `THEIA_PORT` (8788) with AI config pointed at `http://localhost:8081/v1`
+3. Start Claw Runner (port 5182; enforces `SWARM_MAX_WORKERS`) and proxy it through nginx on 5181
+4. Start claw-bridge (outbound WebSocket to `/api/bridge/:sessionId/:laneId`)
+5. Start Bolt.diy (proxied on 5180; public URL `https://<app>.fly.dev:<BOLT_PORT>`)
+6. Configure nginx htpasswd + server blocks (8080 → Theia, 5180 → Bolt, 5181 → Claw, 8789 internal)
+7. Apply the `MIZI_ACTIVE_BUNDLE_B64` skills bundle env; kick off Repo Intelligence indexer if `repoUrl` provided
+8. `report_status services_ready`
 
-**Phase 2** (background subshell, takes 10–45 min):
-1. Check model cache at `/workspace/models/$MODEL_QUANT/`
-2. If not cached: `report_status downloading` → `huggingface-cli download`
-3. `report_status starting_llm` → start vLLM on port 8082 (with runtime flag-gating)
-4. Start litellm proxy on port 8081
-5. Wait for `/health` on vLLM (polls every 5s, up to 600s)
-6. Configure `/etc/environment` + `/root/.bashrc` with `ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY`
-7. `report_status llm_ready`
-8. Watchdog loop: restart vLLM if it dies (checks every 30s)
+**Phase 2 — NIM fast-boot** (background, ~10 s):
+1. Overwrite `/opt/nim-proxy.py` with the patched inline version (applies the double-`/v1` URL fix even on images that predate it)
+2. Start nim-proxy on `VLLM_PORT` (8081), forwarding `/v1/*` to `NIM_API_BASE` (default `https://integrate.api.nvidia.com/v1`) with `NIM_API_KEY`
+3. Expose `default` (→ `NIM_MODEL_ID`) and `swarm` (→ `SWARM_MODEL_ID`, upstream `SWARM_API_BASE`/`SWARM_API_KEY`) model aliases
+4. `report_status starting_llm` → probe `/health/liveliness` until the upstream responds (90-iteration liveliness loop) → `report_status llm_ready`
+5. Mid-session model switches (via the Theia NIM provider extension) restart the proxy with the new model env
 
 ### `report_status` helper
 Calls `MIZI_CALLBACK_URL` with `Authorization: Bearer $MIZI_MEM_AUTH_TOKEN`. Safe no-op if URL is not set. On failure it logs a warning but does not abort the boot sequence.
-
-### Runtime flag-gating
-`onstart.sh` probes `python3 -m vllm.entrypoints.openai.api_server --help` before starting and removes any `VLLM_EXTRA_ARGS` flags not present in the help output. This keeps the image forward-compatible with future vLLM versions that may rename or remove flags.
 
 ---
 
@@ -1301,12 +1319,14 @@ Only `reviewStatus="approved"` skills appear in the skill map.
 
 ## 18. Swarm Orchestration
 
-Swarm Orchestration lets the Claw Runner spawn multiple concurrent LLM sub-agents (workers) for parallelised agentic tasks, while enforcing per-profile concurrency limits to prevent KV-cache exhaustion.
+Swarm Orchestration lets the Claw Runner spawn multiple concurrent worker agents for parallelised agentic tasks, while enforcing per-profile concurrency limits (`swarmWorkerCap`) to prevent resource exhaustion. Inference is hosted (NIM), so the cap protects the agent loop's responsiveness and API budget rather than KV-cache.
 
 ### swarmWorkerCap
 Each `gpu_profiles` row carries `swarmWorkerCap` (integer, nullable). This value is injected into the container as `SWARM_MAX_WORKERS`. The Claw Runner reads `SWARM_MAX_WORKERS` at startup and uses it as a hard ceiling on concurrent worker goroutines — no model-awareness required on the instance side.
 
 ### Per-profile guidance
+
+The current runtime profile (`nim-workspace`) carries `swarmWorkerCap: 200`. The following values belong to the **Vast.ai GPU tiers**:
 
 | Profile tier | swarmWorkerCap | Notes |
 |---|---|---|
@@ -1404,7 +1424,7 @@ Two abort paths exist:
 
 **API server (dashboard-initiated):** `POST /api/sessions/:id/swarm/abort` — requires `Authorization: Bearer <ownerToken>`. The API server validates the token, updates `sessions.swarmSnapshotJson` to phase `aborted`, clears the in-memory cache, and returns the aborted snapshot. The Claw Runner picks up the abort when it next polls `swarm-status`.
 
-**Claw Runner local HTTP (in-process):** `POST /swarm/abort` on port 8080 — sets `swarmState.abortRequested = true` directly. In-flight workers finish their current inference call but are not retried. After all in-flight calls complete, the swarm phase is set to `aborted` and a `swarm_aborted` event is emitted.
+**Claw Runner local HTTP (in-process):** `POST /swarm/abort` on port 5182 (127.0.0.1) — sets `swarmState.abortRequested = true` directly. In-flight workers finish their current inference call but are not retried. After all in-flight calls complete, the swarm phase is set to `aborted` and a `swarm_aborted` event is emitted.
 
 The dashboard reads `ownerToken` from `GET /api/sessions/:id` (the only endpoint that exposes it) and sends it as `Authorization: Bearer <ownerToken>` on the API server abort call.
 
@@ -1574,7 +1594,8 @@ The effective policy for any lane — built-in or custom — is resolved via `ge
 | `priority` | Integer; lower = higher priority (5 = normal, 3 = eval) |
 | `ageWeight` | Increases over time to prevent starvation |
 | `laneWeight` | Fairness weight across lanes (default 1.0) |
-| `effectiveScore` | Computed: `priority × ageWeight × laneWeight` |
+| `effectiveScore` | Computed: `priorityNorm + ageWeight + laneWeight + classFloor` (see `docs/coordination.md`) |
+| `classFloor` | Per-class floor: `indexing` 0.5, `blast_radius` 0.4, `compile` 0.35, `embedding` 0.3, `eval` 0.2, `other` 0.1 |
 
 ### Claim strength mapping
 
@@ -1647,8 +1668,9 @@ The resulting `prUrl` is stored on the `lane_handoffs` row and broadcast via `co
 | POST | `/sessions/:id/lanes/:laneId/handoff` | Create handoff signal. `safe_to_merge` triggers async PR creation. |
 | GET | `/sessions/:id/lanes/:laneId/timeline` | Paginated lane event history (newest first; `?cursor=` for pagination) |
 | GET | `/sessions/:id/lanes/:laneId/conflicts` | Active conflicts for a lane |
-| GET | `/sessions/:id/lanes/types` | List custom lane types |
-| POST | `/sessions/:id/lanes/types` | Register a custom lane type |
+| GET | `/coordination/lane-types` | List custom lane types |
+| POST | `/coordination/lane-types` | Register a custom lane type |
+| PATCH / DELETE | `/coordination/lane-types/:id` | Update / delete a custom lane type |
 | POST | `/sessions/:id/heavy-jobs` | Enqueue a heavy job |
 | GET | `/sessions/:id/heavy-jobs` | List heavy jobs (filterable by status/class) |
 | POST | `/sessions/:id/heavy-jobs/:jobId/running` | Mark job running |
@@ -1672,6 +1694,25 @@ When the tab regains visibility (`visibilitychange` event), the hook re-runs and
 ## 21. GitHub CI/CD
 
 All CI/CD is defined in `.github/workflows/`. Supporting GitHub config lives in `.github/` (CODEOWNERS, Dependabot, issue/PR templates, labels).
+
+### `deploy.yml` — Deploy API server + dashboard to Fly.io
+
+Deploys on push to `main` (concurrency group `fly-deploy` so pushes queue rather than cancel).
+
+- **`deploy-api`**: `flyctl apps create mizi-api` (idempotent) + `flyctl deploy --config artifacts/api-server/fly.toml`, then health-checks `https://mizi-api.fly.dev/api/healthz`
+- **`deploy-dashboard`**: `flyctl apps create mizicode` + `flyctl deploy --config artifacts/dashboard/fly.toml --build-arg VITE_API_BASE_URL=https://mizi-api.fly.dev`, then health-checks the dashboard origin
+
+### `build-theia.yml` — Build MIZI Theia artifact
+
+On push to `main` touching `docker/mizi-theia/**` (and PRs touching it):
+
+1. `pnpm install` + `npx tsc` (compile the 27 `@mizi/theia-extensions`)
+2. `npx theia build`
+3. Package the build as `mizi-theia-<sha>`, upload it as an Actions artifact, and (on `main`) create/update the GitHub release `theia` with the tarball — this is what `THEIA_ARTIFACT_URL` in the workspace Dockerfile downloads
+
+### `build-electron.yml` — Build Mac app
+
+On version tags: builds the macOS DMG (`pnpm build:electron`, `ELECTRON_SKIP_BINARY_DOWNLOAD=1`), signs with an Apple Developer ID certificate, and uploads `mizi-mac-dmg` as an Actions artifact.
 
 ### `ci-all.yml` — Main CI trigger
 Fires on `pull_request`, `push` to `main`, and `merge_group` events.
@@ -1703,17 +1744,21 @@ GitHub CodeQL static analysis for JavaScript/TypeScript. Triggers:
 Push-to-main and scheduled scans use a unique `run_id` concurrency key so they are never cancelled.
 
 ### `docker-build.yml`
-Builds and pushes `docker/Dockerfile` to Docker Hub automatically on every push to `main` that touches `docker/**`, and on `workflow_dispatch`. Additionally, any pull request that touches `docker/**` triggers a build-only validation job so broken Dockerfiles are caught before merge.
+Two jobs:
+
+**`build-push`** — builds and pushes `docker/Dockerfile.gpu` (GPU workspace image: CUDA 12.4 + vLLM, see `docker/build.sh`) to Docker Hub automatically on every push to `main` that touches `docker/**`, and on `workflow_dispatch`. Additionally, any pull request that touches `docker/**` triggers a build-only validation job so broken Dockerfiles are caught before merge.
+
+**`build-workspace-image`** — builds and pushes the **CPU-only workspace image** to Fly's private registry as `registry.fly.io/mizi-workspace:latest` (using `flyctl auth docker` + Docker Buildx, not `flyctl deploy`). This is the image the API server provisions for NIM sessions.
 
 **PR validation**: on `pull_request` events the workflow runs the full build (no push) without logging in to Docker Hub and without writing to the registry cache. This ensures the Dockerfile compiles correctly before the PR is merged, without publishing any image or polluting the build cache.
 
 **Publish gate**: the Docker Hub login, image push (`push: true`), registry cache writes, and SLSA attestation steps are all conditioned on `github.event_name != 'pull_request'`, so they only execute on `push` to `main` or `workflow_dispatch`.
 
-**Tags published on each run**: `gheeklabs/coding-env:cuda12.4`, `:a100`, `:h100`, `:latest` (all pointing to the same image digest). Registry-based layer caching (`gheeklabs/coding-env:buildcache`) is used instead of the GHA cache to avoid the 10 GB GHA cache limit.
+**Tags published on each run**: `gheeklabs/mizi-gpu:cuda12.4`, `:a100`, `:h100`, `:latest` (all pointing to the same image digest). Registry-based layer caching (`gheeklabs/mizi-gpu:buildcache`) is used instead of the GHA cache to avoid the 10 GB GHA cache limit.
 
 **SLSA provenance**: on every non-PR workflow run (both `push` to `main` and `workflow_dispatch`) the workflow attests build provenance via `actions/attest-build-provenance` (OIDC token), producing a signed SLSA Level 2 attestation attached to the registry image. Verify with:
 ```
-gh attestation verify oci://docker.io/gheeklabs/coding-env:latest --owner gheeklabs
+gh attestation verify oci://docker.io/gheeklabs/mizi-gpu:latest --owner gheeklabs
 ```
 
 Docker Hub credentials are supplied via `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets. All `uses:` references are commit-SHA pinned (supply-chain hardening).

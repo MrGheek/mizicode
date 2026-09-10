@@ -2,158 +2,174 @@
 
 ## Overview
 
-MIZI Cloud Coding Platform — a full-stack app that lets users spin up GPU-powered AI coding sessions on Vast.ai. The system provisions remote GPU machines running Bolt.diy (coding UI), llama.cpp with Kimi K2.6 GGUF models (default; K2.5 kept as legacy option), code-server (VS Code), and nginx preview proxy.
+MIZI is a full-stack platform for spinning up AI coding sessions. A session
+provisions a lightweight **CPU-only** workspace (Eclipse Theia IDE) on a Fly.io
+machine in the `mizi-workspace` app, and all model inference is routed to
+**hosted NVIDIA NIM** (or any OpenAI-compatible endpoint) through an in-container
+`nim-proxy.py`. There are no GPU machines, no vLLM/llama.cpp, and no local model
+downloads.
 
-Built as a pnpm workspace monorepo using TypeScript.
+Built as a pnpm workspace monorepo using TypeScript. Two distributions are
+compiled from the same tree, gated by `MIZI_DISTRIBUTION`:
+
+- **cloud** (default) — full PostgreSQL-backed feature set. Fly apps: `mizi-api`
+  (API server), `mizicode` (dashboard), `mizi-workspace` (per-session machines).
+- **local** — SQLite-backed subset (`~/.mizi/local.db`) with all cloud
+  (vastai/fly/vLLM/NIM) imports tree-shaken out of the esbuild bundle at build
+  time. Packaged as an Electron desktop app (`artifacts/electron-app`).
 
 ## Stack
 
-- **Monorepo tool**: pnpm workspaces
-- **Node.js version**: 24
-- **Package manager**: pnpm
-- **TypeScript version**: 5.9
-- **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
+- **Monorepo tool**: pnpm workspaces (`packageManager` `pnpm@10.26.1`)
+- **Node.js**: 20 (Docker runtime images)
+- **TypeScript**: `~6.0.3` (root `devDependencies`)
+- **API framework**: Express 5 (`artifacts/api-server`)
+- **Database (cloud)**: PostgreSQL + Drizzle ORM
+- **Database (local / memory / safety)**: SQLite via better-sqlite3 + drizzle
 - **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
-- **Frontend**: React + Vite + Tailwind CSS + shadcn/ui components
-- **External API**: Vast.ai REST API for GPU instance management
+- **API codegen**: Orval (from OpenAPI spec in `lib/api-spec`)
+- **Build**: esbuild (CJS bundle → `dist/index.mjs`)
+- **Frontend**: React 19 + Vite + Tailwind 4 + TanStack Query (dashboard)
+- **Workspace IDE**: Eclipse Theia (`docker/mizi-theia`, 27 MIZI extensions)
+- **Model inference**: hosted NVIDIA NIM via `nim-proxy.py` (port 8081), or any
+  OpenAI-compatible endpoint
+- **Workspace orchestration**: Fly Machines API (`mizi-workspace` app)
 
 ## Structure
 
 ```text
-artifacts-monorepo/
-├── artifacts/              # Deployable applications
-│   ├── api-server/         # Express API server (Vast.ai integration)
-│   └── dashboard/          # React frontend (dark theme dashboard)
-├── docker/                 # Docker files for Vast.ai instances
-│   ├── Dockerfile          # Pre-built GPU coding environment image
-│   ├── onstart.sh          # Parameterized startup script
-│   ├── mizi-theia/          # Eclipse Theia IDE application
-├── lib/                    # Shared libraries
-│   ├── api-spec/           # OpenAPI spec + Orval codegen config
-│   ├── api-client-react/   # Generated React Query hooks
-│   ├── api-zod/            # Generated Zod schemas from OpenAPI
-│   └── db/                 # Drizzle ORM schema + DB connection
-├── scripts/                # Utility scripts
-├── pnpm-workspace.yaml     # pnpm workspace config
-├── tsconfig.base.json      # Shared TS options
-├── tsconfig.json           # Root TS project references
-└── package.json            # Root package
+mizi/
+├── artifacts/                 # Deployable applications
+│   ├── api-server/            # Express 5 API server (builds to dist/index.mjs)
+│   ├── dashboard/             # React 19 + Vite + Tailwind 4 dashboard (mizicode)
+│   ├── electron-app/          # Desktop wrapper for the local distribution
+│   └── mockup-sandbox/        # UI mockups
+├── docker/                    # CPU-only workspace image
+│   ├── Dockerfile             # mizi-workspace image (theia, claw, nginx, nim-proxy)
+│   ├── onstart.sh             # Boot script (phased status callbacks to dashboard)
+│   ├── nim-proxy.py           # OpenAI-compatible pass-through proxy → hosted NIM
+│   ├── claw-runner.js         # Claw task runner (port 5182, behind nginx on 5181)
+│   ├── claw-bridge.mjs        # Outbound WebSocket bridge to the API server
+│   ├── mizi-theia/            # Eclipse Theia IDE + 27 MIZI extensions
+│   ├── claw-code-src/         # Vendored Rust claw runner (claw-code-main)
+│   └── scripts/               # Repo-intelligence daemon (indexer, graph, shield)
+├── lib/                       # Shared libraries
+│   ├── api-spec/              # OpenAPI spec + Orval codegen config
+│   ├── api-client-react/      # Generated React Query hooks
+│   ├── api-zod/               # Generated Zod schemas from OpenAPI
+│   ├── db/                    # Drizzle ORM schema + migrations (PG cloud / SQLite local)
+│   └── integrations-openai-ai-server/  # OpenAI-compatible AI integration
+├── local/                     # Local distribution service files (launchd/systemd)
+├── scripts/                   # Build/package helpers (package-local.sh, install-local-deps.sh)
+├── docs/                      # API reference, coordination, runbook, GitHub ops
+├── pnpm-workspace.yaml        # pnpm workspace config
+├── tsconfig.base.json         # Shared TS options (composite projects)
+└── package.json               # Root scripts (build / build:local / package:local / typecheck)
 ```
 
 ## Database Schema
 
-- **gpu_profiles** — GPU tier definitions (Starter/Standard/Pro/Ultra) with Vast.ai search params, model quant configs, and llama.cpp settings
-- **sessions** — Coding session records with Vast.ai instance IDs, status tracking, service URLs, cost tracking. New: `taskMode`, `tokenMode`, `activeBundleId`, `repoFingerprintJson`
-- **templates** — Vast.ai template records with Docker image, on-start script, and env vars
-- **skill_sources** — GitHub repos imported as skill sources (url, branch, commit SHA, license, trust level)
-- **skills** — Individual skills with `trustTier` (mizi_native|reviewed|user_approved|experimental), `installRisk` (virtual|config|hooked|binary|networked), `reviewStatus` (pending|approved|rejected)
-- **skill_versions** — Versioned manifest snapshots per skill (manifest JSON, extracted rules, version hash)
-- **skill_bundles** — Named skill sets with task/session/model/token mode metadata; 4 default bundles seeded at startup
-- **session_skills** — Records which skills were activated for each session (bundle, token mode, activation mode)
-- **skill_feedback** — Per-session helpful/unhelpful feedback on skills, with token delta and task success score
-- **repo_graph_jobs** — Tracks repo indexing jobs for context-aware skill ranking (Phase 2)
-- **session_lanes** — Per-member lane overlays for team sessions (laneType, status, currentTask, tokenMode)
-- **lane_claims** — Soft ownership claims on files/modules/symbols/tasks with TTL-expiry and heartbeat refresh
-- **lane_handoffs** — Handoff signals between lanes (task_complete, blocking, file_ready, review_ready, info)
-- **lane_heavy_jobs** — GPU-expensive job queue with weighted fair scheduler (priority + age weight + lane fairness + job class floor)
-- **eval_runs** — Async eval run queue (status: queued→preparing→running→scoring→completed|error). Stores runType, taskMode, sessionType, tokenMode, modelProfile, costCap, actualCostUsd, configVersion (SHA-256 fingerprint), scoringWeightsJson (per-run override), bundleVersionHash
-- **eval_run_variants** — One row per variant per run (variantType: baseline|treatment|ablated). Stores skillIdsIncluded/Excluded JSON, raw metrics JSON, compositeScore, liftVsBaseline, scoringWeightsJson
-- **skill_evals** — Aggregated per-skill eval performance (compositeScore, liftOverBaseline, evalCount, lastEvalAt, byTaskMode JSON)
-- **bundle_evals** — Aggregated per-bundle eval performance (avgLift, winRate, ablationLiftScores JSON, byTaskMode JSON)
+### Cloud (PostgreSQL)
 
-## GPU Profiles
+- **gpu_profiles** — profile tiers. Primary entry is `nim-workspace` (CPU-only,
+  hosted NIM, `isNimWorkspace=true`); `kimi-k2-6-*` / `kimi-k2-5-*` GPU profiles
+  are Vast.ai provider profiles kept for GPU-backed sessions.
+- **sessions** — session records with Fly machine IDs, status tracking, workspace
+  URLs, cost tracking, and `taskMode` / `tokenMode` / `activeBundleId` /
+  `repoFingerprintJson`.
+- **templates** — session templates with Docker image, on-start script, and env vars.
+- **nim_catalog** — cached NVIDIA NIM model catalog (SWE-bench scores, types,
+  partner providers), synced from the NIM API every 6h.
+- **skills** / **skill_sources** / **skill_versions** / **skill_bundles** /
+  **session_skills** / **skill_feedback** — skills system: trust tiers
+  (`mizi_native|reviewed|user_approved|experimental`), install risk
+  (`virtual|config|hooked|binary|networked`), review status, bundles, per-session
+  activations, and helpful/unhelpful feedback.
+- **repo_graph_jobs** / **session_repo_context** — repo indexing + per-session
+  symbol-graph context (edges JSON used by blast-radius overlap).
+- **session_lanes** / **lane_claims** / **lane_handoffs** / **lane_heavy_jobs** /
+  **lane_events** / **lane_prompt_snapshots** / **custom_lane_types** — lane
+  coordination: overlays, soft claims with TTL/heartbeat, handoff signals,
+  weighted-fair heavy-job queue, event log.
+- **eval_runs** / **eval_run_variants** / **skill_evals** / **bundle_evals** —
+  async skills eval pipeline (baseline/treatment/ablated variants, lift scores).
+- **api_keys** — scoped M2M API keys (SHA-256 hashed) for agent authentication.
+- **operator_credentials** — encrypted third-party credentials (GitHub OAuth,
+  provider keys) via `MIZI_ENCRYPTION_KEY`.
+- Supporting tables: **project_plans** / **project_tasks** / **schema_templates** /
+  **palette_intents** / **session_model_switches** / **provisioned_resources** /
+  **orchestration_idempotency** / **scheduler_config** / **claim_purge_logs** /
+  **design_intelligence_entries** / **design_intelligence_bookmarks** /
+  **skill_design_categories**.
 
-| Profile | GPU | Count | VRAM | Model Quant | Cost/hr |
-|---------|-----|-------|------|-------------|---------|
-| Starter | RTX 4090 | 1 | 24GB | UD-TQ1_0 | $0.13-$0.20 |
-| Standard | RTX 4090 | 4 | 96GB | UD-TQ1_0 | $0.50-$0.80 |
-| Pro | A100 80GB | 4 | 320GB | Q3_K_M | $2.00-$4.00 |
-| Ultra | H100 80GB | 8 | 640GB | IQ4_XS | $8.00-$16.00 |
+### SQLite
+
+- `~/.mizi/local.db` — local distribution database (SQLite-backed subset).
+- `${MEM_DATA_DIR}/mem.db` — memory store (SQLite FTS5, defaults to
+  `~/mizi-memory/mem.db` — outside the workspace, not tracked by git).
+- `${MEM_DATA_DIR}/ambient.db` — safety subsystem tables (see Ambient Mode below).
+
+## Workspace image (docker/)
+
+The `mizi-workspace` Fly app is provisioned **at runtime** by the API server via
+the Fly Machines API — no GPU (`performance-1x`, 4096 MB RAM). Each machine runs:
+
+| Service | Port | Notes |
+|---------|------|-------|
+| Eclipse Theia | 8080 | behind nginx basic auth |
+| nginx | 5181 | auth-gated proxy → claw-runner (5182) |
+| nginx (internal) | 8789 | no-auth proxy → Theia 8788; reachable only over Fly 6PN |
+| nim-proxy.py | 8081 | OpenAI-compatible pass-through → hosted NIM |
+| claw-runner | 5182 | Claw task runner (Node.js) |
+| claw-bridge | — | outbound WebSocket → API `/api/bridge/:sessionId/:laneId` |
+| bolt.diy | 5180 | coding UI |
+| SSH | 22 | key-based auth |
+
+The workspace proxy route (`/api/sessions/:id/workspace`, incl. WebSocket
+upgrades) forwards directly to the correct machine over Fly's 6PN private network
+(see `artifacts/api-server/src/services/fly.ts`).
 
 ## Intent Classification API
 
-- `POST /api/intent/classify` — Classify user intent into `nim` | `gpu` | `choice` | `repo` paths. Accepts `{ intentText, repoUrl }`. Returns `nimSuggestion`, `gpuSuggestion`, `repoSuggestion` based on scored NIM models (SWE-bench weighted), provider latency, and task complexity. Repo path triggered by github.com/gitlab.com URLs or keywords like "my repo", "working on", "existing project", etc.
-
-## Dashboard UX
-
-Intent-first single-surface Home page (no tabs on first view):
-- **Intent field** — hero element; auto-detects github URLs + repo keywords → shows inline `RepoPanel` (URL + PAT with localStorage memory). ⌘↵ or "Ask MIZI" classifies intent.
-- **Classify result** — shows NIM launch card (direct session creation) and/or GPU profile picker inline
-- **ActiveSessionBanner** — live session status + "Open cockpit" shortcut above intent field
-- **Memory cards** — 2-col grid of recent stopped sessions below intent field
-- **Stats row** — compact 4-stat strip at bottom
-
-Cockpit (`sessions/[id].tsx`) — calm primary view:
-- **GlassBootBar** — fluid gradient progress bar (cyan→violet) with elapsed timer, human phase label, disk-full CTA, collapsible log. Replaces verbose BootTimeline.
-- **Glass cockpit bar** — replaces 6-tab bar. Shows intent text left; badge chips (memory, conflict, swarm) + "Details →" button right.
-- **Details Sheet** — slides in from right (`Sheet` component) with sub-tab nav: Memory, Skills, Repo, Coordination, Swarm. Closing returns to calm primary view.
+- `POST /api/intent/classify` — Classify user intent into `nim` | `gpu` | `choice`
+  paths. Accepts `{ intentText, repoUrl }`. Returns `nimSuggestion`,
+  `gpuSuggestion`, `repoSuggestion` based on scored NIM catalog models
+  (SWE-bench weighted), configured provider latency, and task complexity. Repo
+  path is triggered by github.com/gitlab.com URLs or keywords like "my repo",
+  "working on", "existing project", etc.
 
 ## API Endpoints
 
-- `GET /api/profiles` — List GPU profiles
-- `GET /api/profiles/:id` — Get profile details
-- `GET /api/sessions` — List all sessions
-- `POST /api/sessions` — Create session (provisions Vast.ai instance)
-- `GET /api/sessions/:id` — Get session details
-- `DELETE /api/sessions/:id` — Destroy session
-- `GET /api/sessions/active` — Get active session
-- `POST /api/sessions/:id/refresh` — Poll Vast.ai for status update
-- `GET /api/templates` — List templates
-- `POST /api/templates` — Create template on Vast.ai
-- `PUT /api/templates/:id` — Update template
-- `DELETE /api/templates/:id` — Delete template
-- `GET /api/offers` — Search GPU offers on Vast.ai marketplace
-- `GET /api/dashboard/summary` — Dashboard summary stats
-- `POST /api/sessions` — Now accepts `taskMode`, `tokenMode`, `bundleId` — auto-compiles Smart Skills bundle on launch
+Route groups (registered in `artifacts/api-server/src/routes/index.ts`, relative
+to `/api`):
 
-### Smart Skills API
+| Router | Paths |
+|--------|-------|
+| sessions (cloud `sessions.ts` / local `sessions-local.ts`) | `/sessions/*` — CRUD, memory, plan, swarm, messages, model, files, workspace proxy |
+| offers / templates / orchestrate / bridge / nim / profiles (cloud only) | `/offers/*`, `/templates/*`, `/orchestrate/*`, `/bridge/*`, `/nim/*`, `/profiles/*` |
+| auth | `/auth/*` — API keys, GitHub OAuth |
+| health | `/health`, `/healthz`, `/admin/status` |
+| dashboard | `/dashboard/*` — dashboard API proxy |
+| scheduler | `/scheduler/*` — cron job scheduling |
+| memory | `/mem/*` — memory CRUD, governance, passive recall, conflict management |
+| skills | `/skills/*`, `/skill-bundles/*`, `/admin/*`, `/sessions/:id/skills/*` |
+| repo | `/repo/*`, `/sessions/repo`, `/sessions/:id/repo` |
+| coordination | `/coordination/*` — lanes, claims, handoffs, heavy jobs |
+| design-intelligence | `/design-intelligence/*` — curated patterns |
+| ambient | `/ambient/*`, `/safety/*`, `/dashboard/ambient/*`, `/dashboard/safety/*` |
+| palette-intent | `/palette/intent` |
+| intent | `/intent/*` |
+| schema-templates | `/schema-templates/*` |
+| plan | `/plan/*`, `/plans/*`, `/sessions/:id/plan`, `/sessions/:id/decompose` |
+| tools | `/sessions/:id/tools/*` — web search, fetch |
+| metrics | `/metrics/*` — GPU/token/latency/cost |
+| snapshots | `/snapshots/*` — snapshot/rollback |
+| session-shortcuts | `/session/*` |
+| local (local only) | `/local/*` — hardware probe, Ollama, ACP |
 
-- `GET /api/skills` — List all skills (imported + builtins summary)
-- `POST /api/skills/import` — Import skills from a GitHub repo URL
-- `GET /api/skills/:id` — Get skill details and version history
-- `PUT /api/skills/:id/review` — Approve, reject, or disable a skill
-- `GET /api/skill-bundles` — List all skill bundles
-- `POST /api/skill-bundles` — Create a custom bundle
-- `POST /api/skill-bundles/seed` — Seed the 4 default bundles
-- `GET /api/skill-bundles/:id` — Get bundle details
-- `PUT /api/skill-bundles/:id` — Update a bundle
-- `POST /api/skill-bundles/:id/activate` — Mark bundle as active for next session launch (next-launch semantics, v1)
-- `POST /api/skills/compile-preview` — Preview bundle compilation against a given context
-- `GET /api/sessions/:id/skills` — Get skill activations for a session
-- `POST /api/sessions/:id/skills/feedback` — Submit helpful/unhelpful feedback on a skill
-- `GET /api/skills/discover` — (501, Phase 4) Discovery feed
-- `GET /api/skills/leaderboard` — Skill leaderboard with liftOverBaseline, regressionRisk tiers, byRepoKind/byModelFamily breakdowns
-- `GET /api/skill-bundles/leaderboard` — Bundle leaderboard (overall + byTaskMode + byTokenMode + byRepoKind + byModelFamily)
-- `GET /api/skills/:id/performance` — Per-skill eval stats (evalAppearances, positiveLiftCount, confidenceScore, estimatedContribution, recentRuns)
-- `GET /api/skill-bundles/:id/performance` — Per-bundle eval stats (avgLift, avgCompositeScore, avgBaselineScore, confidenceScore, bestTaskMode, recentRuns)
-- `POST /api/skills/evals/run` — Schedule async eval run (runType: baseline|skill|bundle|bundle_variant; supports scoringWeightsOverride)
-- `GET /api/skills/evals/runs` — List eval runs (filterable by status, runType, targetSkillId, targetBundleId, taskMode)
-- `GET /api/skills/evals/:runId` — Get eval run + all variants
-- `POST /api/skills/evals/:runId/variants` — Record an eval variant manually
-- `POST /api/skills/evals/:runId/finalize` — Finalize run and compute lift scores
-- `POST /api/skills/evals/process-next` — Process next queued eval run (also called by scheduler every 60s)
-- `GET /api/skills/evals/scoring-presets` — Get per-taskMode scoring weight presets and budget config
-
-### Coordination API (Team Lane Intelligence)
-
-- `GET /api/sessions/:id/lanes` — List all lanes with claims and policies
-- `POST /api/sessions/:id/lanes` — Create a new member lane (laneType: ux/debug/backend/review/general)
-- `PUT /api/sessions/:id/lanes/:laneId` — Update lane status, type, or current task
-- `POST /api/sessions/:id/lanes/:laneId/claim` — Softly claim a file/module/symbol/task with overlap detection
-- `DELETE /api/sessions/:id/lanes/:laneId/claim/:claimId` — Release a claim or refresh heartbeat (?heartbeat=true)
-- `POST /api/sessions/:id/lanes/:laneId/handoff` — Signal a handoff state (task_complete/blocking/file_ready/review_ready/info)
-- `GET /api/sessions/:id/coordination` — Full coordination state (lanes, claims, handoffs, job counts)
-- `GET /api/sessions/:id/conflicts` — Pairwise overlap + blast-radius conflict detection across active lanes
-- `POST /api/sessions/:id/heavy-jobs` — Enqueue a GPU-expensive job in the weighted fair queue
-- `GET /api/sessions/:id/heavy-jobs` — List heavy jobs (filterable by status)
-- `PATCH /api/sessions/:id/heavy-jobs/:jobId` — Update job status (running/completed/failed/deferred)
-
-**Lane types**: `ux`, `debug`, `backend`, `review`, `general` — each with its own policy (maxConcurrentClaims, heavyJobSlots, maxBlastRadiusFiles, claimTtlSeconds, allowed claim types, shared/private memory scopes).
-
-**Heavy-job scheduler**: Weighted fair queue scoring `priority + ageWeight + laneFairnessWeight + jobClassFloor` — `indexing` class gets +0.5 floor, `embedding` +0.3, `eval` +0.2, others 0.0.
+MCP tools are served at `/api/mcp` (mounted in `app.ts`, outside the router
+index) via `@modelcontextprotocol/sdk` — 53 tools across 13 tool files under
+`artifacts/api-server/src/mcp/tools/`.
 
 ### Memory API (SQLite FTS5 — no external deps)
 
@@ -164,77 +180,150 @@ Cockpit (`sessions/[id].tsx`) — calm primary view:
 - `GET /api/mem/observations?userId=` — List recent tool observations
 - `GET /api/mem/sessions?userId=` — List past sessions with summaries
 
-Memory is scoped per `userId` (default: `"operator"`, override via `MIZI_MEM_USER_ID`). Optionally auth-gated via `MIZI_MEM_TOKEN` env var (required in `NODE_ENV=production`; warned-but-open in development). SQLite DB stored at `MEM_DATA_DIR` (defaults to `~/mizi-memory/mem.db` — outside workspace, not tracked by git).
+Memory is scoped per `userId` (default: `"operator"`, override via
+`MIZI_MEM_USER_ID`). Optionally auth-gated via `MIZI_MEM_TOKEN` env var
+(required in `NODE_ENV=production`; warned-but-open in development).
 
-Dashboard accesses memory via session-scoped proxy routes (`GET /api/sessions/:id/memory/sessions`, `/observations`, and `/search?q=`) and global proxy routes (`GET /api/memory/sessions` and `/api/memory/search?q=`) — no bearer token required for dashboard access.
+Dashboard accesses memory via session-scoped proxy routes (`GET
+/api/sessions/:id/memory/sessions`, `/observations`, `/search?q=`) and global
+proxy routes (`GET /api/memory/sessions`, `/api/memory/search?q=`) — no bearer
+token required for dashboard access.
 
-The `searchMemory(userId, query)` service function in `artifacts/api-server/src/services/memory.ts` uses FTS5 full-text search on tool observations and LIKE on session summaries, returning `{ observations, sessions }`.
+The `searchMemory(userId, query)` service function in
+`artifacts/api-server/src/services/memory.ts` uses FTS5 full-text search on tool
+observations and LIKE on session summaries, returning `{ observations, sessions }`.
 
-## Docker Images
+### Coordination highlights
 
-Docker images are tagged by GPU architecture:
-- `miziabs/coding-env:cuda12.4` — RTX 4090 (CUDA 12.4)
-- `miziabs/coding-env:a100` — A100 GPUs
-- `miziabs/coding-env:h100` — H100 GPUs
+- **Lane types**: `ux`, `debug`, `backend`, `review`, `general` — each with its
+  own policy (maxConcurrentClaims, heavyJobSlots, maxBlastRadiusFiles,
+  claimTtlSeconds, allowed claim types, shared/private memory scopes). Defined in
+  `services/lane-policy.ts`.
+- **Heavy-job scheduler** (`services/heavy-job-scheduler.ts`): weighted-fair
+  queue scoring `priority + ageWeight + laneFairnessWeight + jobClassFloor` —
+  `indexing` class gets +0.5 floor, `embedding` +0.3, `eval` +0.2, others 0.0.
 
-Each instance runs:
-- llama.cpp server (port 8081) — Kimi K2.6 GGUF model inference (default; K2.5 legacy profiles still available)
-- Bolt.diy (port 5173) — AI coding UI
-- code-server (port 8080) — VS Code in browser
-- nginx preview proxy (port 3000) — Proxies app previews
-- SSH (port 22) — Remote access
+## Environment Secrets
+
+See [`.env.example`](.env.example) for the full commented list. This section is
+the documentation home for environment variables — the PR checklist requires new
+env vars or secrets to be documented here.
+
+### Required in production (cloud)
+
+- `DATABASE_URL` — PostgreSQL connection string (auto-provisioned by
+  `fly postgres attach`)
+- `MIZI_ENCRYPTION_KEY` — 64-hex-char key encrypting stored operator credentials.
+  Generate: `openssl rand -hex 32`
+- `MIZI_MEM_TOKEN` — bearer token for memory/ambient/safety routes + the instance
+  status callback; also derives the GitHub OAuth token encryption key.
+  Generate: `openssl rand -hex 32`
+- `FLY_API_TOKEN` — Fly.io token used to create/destroy workspace machines.
+  Generate: `fly tokens create deploy -x 999999h`
+- `FLY_WORKSPACE_APP_NAME` — name of the workspace Fly app (e.g. `mizi-workspace`).
+  Falls back to `FLY_APP_NAME` (deprecated).
+- At least one model provider key: `NVIDIA_NIM_API_KEY` (recommended) or
+  `AI_INTEGRATIONS_OPENAI_API_KEY` / `VULTR_INFERENCE_API_KEY` /
+  `TOGETHER_API_KEY` / `DEEPINFRA_API_KEY`.
+
+### Optional
+
+- `PORT` — Express port (default 8080 on Fly; required — no silent default)
+- `DASHBOARD_URL` — full dashboard origin (e.g. `https://mizicode.fly.dev`);
+  required for cross-origin GitHub OAuth redirects
+- `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` — GitHub OAuth app
+- `BRAVE_SEARCH_API_KEY` / `SERPER_API_KEY` — web-search for swarm agents (at
+  least one required for `/sessions/:id/tools/web-search`)
+- `SAFETY_EMAIL_TO` / `SAFETY_EMAIL_WEBHOOK_URL` / `SAFETY_EMAIL_WEBHOOK_AUTH` —
+  safety approval email channel (webhook-based)
+- `MEM_DATA_DIR` — directory for the SQLite memory DBs (default `~/mizi-memory`).
+  Must match the Fly volume mount destination on cloud
+- `MIZI_MEM_USER_ID` — operator user id for memory observations (default `operator`)
+- `AMBIENT_ACCOUNT_ID` — account id used by the ambient scheduler (default `default`)
+- `CLAIM_RETENTION_DAYS` (default 7) / `CLAIM_CLEANUP_INTERVAL_MS`
+  (default `3600000`) — inactive lane-claim purge tuning
+- `MIZI_DISTRIBUTION` — `local` or `cloud` (default). Gated at esbuild time
+
+### Local distribution
+
+Local mode skips all cloud secret checks. See `config.env.template` for the
+local config template (`~/.mizi/config.env`): `PORT`, `API_PORT`, `MIZI_LOCAL_DB_PATH`
+(default `~/.mizi/local.db`), `MIZI_LOCAL_WORKSPACE`, `ACP_PORT`, `OLLAMA_BASE_URL`,
+`LOG_LEVEL`. Zero cloud API keys required.
 
 ## M2M API Key Auth
 
-Remote orchestration agents authenticate via scoped API keys rather than the shared `MIZI_MEM_TOKEN` secret.
+Remote orchestration agents authenticate via scoped API keys rather than the
+shared `MIZI_MEM_TOKEN` secret.
 
-- **Schema**: `api_keys` table (`lib/db/src/schema/api-keys.ts`) — stores SHA-256 key hash, label, scopes (JSONB), expiry, last-used, revoked timestamps.
+- **Schema**: `api_keys` table (`lib/db/src/schema/api-keys.ts`) — stores SHA-256
+  key hash, label, scopes (JSONB), expiry, last-used, revoked timestamps.
 - **Migration**: `lib/db/migrations/0019_api_keys.sql`
 - **Key management routes** (`artifacts/api-server/src/routes/auth.ts`):
   - `POST /api/auth/keys` — create key; plaintext returned once, hash stored
   - `GET /api/auth/keys` — list active (non-revoked) keys; values never returned
   - `DELETE /api/auth/keys/:id` — revoke a key
-- **Middleware** (`artifacts/api-server/src/middlewares/agent-auth.ts`): `requireAgentAuth(scopes[])` — validates `Authorization: Bearer <key>`, checks expiry/revocation, enforces required scopes, records `last_used_at` async. Dev-mode bypass (no `MIZI_MEM_TOKEN` set) mirrors memory/ambient posture. `MIZI_MEM_TOKEN` bearer accepted as pass-through for internal callers.
-- **Protected routes**: `POST /api/sessions` (requires `sessions:write`), `GET|POST|PUT /api/sessions/:id/lanes` (requires `coordination:read`).
+- **Middleware** (`artifacts/api-server/src/middlewares/agent-auth.ts`):
+  `requireAgentAuth(scopes[])` — validates `Authorization: Bearer <key>`, checks
+  expiry/revocation, enforces required scopes, records `last_used_at` async.
+  Dev-mode bypass (no `MIZI_MEM_TOKEN` set) mirrors memory/ambient posture.
+  `MIZI_MEM_TOKEN` bearer accepted as pass-through for internal callers.
+- **Protected routes**: `POST /api/sessions` (requires `sessions:write`),
+  `GET|POST|PUT /api/sessions/:id/lanes` (requires `coordination:read`).
 - **Tests**: `artifacts/api-server/src/tests/agent-auth.test.ts`
-
-## Environment Secrets
-
-- `VASTAI_API_KEY` — Vast.ai API key for instance management
-- `DATABASE_URL` — PostgreSQL connection string (auto-provisioned)
 
 ## TypeScript & Composite Projects
 
-Every package extends `tsconfig.base.json` which sets `composite: true`. The root `tsconfig.json` lists all packages as project references.
+Every package extends `tsconfig.base.json` which sets `composite: true`. The root
+`tsconfig.json` lists all packages as project references.
 
 ## Root Scripts
 
 - `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages
-- `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly`
+- `pnpm run build:local` — typecheck + build with `MIZI_DISTRIBUTION=local`
+- `pnpm run package:local` — `scripts/package-local.sh`; produces
+  `mizi-local-<os>-<arch>-<version>.tar.gz` for linux/darwin x64+arm64
+- `pnpm run build:electron` — local distribution build + Electron packaging
+- `pnpm run typecheck` — `tsc --build` for libs, then per-package typecheck
 
 ## Packages
 
 ### `artifacts/api-server` (`@workspace/api-server`)
 
-Express 5 API server with Vast.ai integration. Routes in `src/routes/`, services in `src/services/`.
+Express 5 API server (Express 5, pino, drizzle-orm, better-sqlite3, ws,
+@modelcontextprotocol/sdk). esbuild bundle → `dist/index.mjs`.
 
-- Entry: `src/index.ts` — reads `PORT`, starts Express, seeds GPU profiles
-- Routes: profiles, sessions, templates, offers, dashboard, memory, skills
-- Services: `vastai.ts` (Vast.ai API wrapper), `profiles.ts` (profile management + seeding), `memory.ts` (SQLite FTS5 session memory), `skills-types.ts` (types + token mode profiles), `default-skills.ts` (11 built-in skills + 4 default bundles), `skills-normalizer.ts` (GitHub repo → MiziSkillManifest[]), `skills-import.ts` (GitHub import pipeline), `skills-ranker.ts` (multi-factor skill scorer), `skills-bundler.ts` (bundle compiler + env payload builder)
+- Entry: `src/index.ts` — validates `PORT`, production secret guards
+  (`MIZI_ENCRYPTION_KEY`, `MIZI_MEM_TOKEN`, `FLY_API_TOKEN`,
+  `FLY_WORKSPACE_APP_NAME`), validates `MEM_DATA_DIR`, runs local SQLite
+  migrations, mounts the HTTP server + WebSocket bridge, and starts cloud
+  startup jobs (profile/template/bundle seeding, NIM catalog sync, claim
+  sweeper + purger, eval scheduler, memory disk monitor, plan auto-advance,
+  plan decompose, ambient runner).
+- Routes in `src/routes/` (see API Endpoints table), services in `src/services/`.
+- Run: `pnpm --filter @workspace/api-server run dev` (builds + serves on `PORT`).
 
 ### `artifacts/dashboard` (`@workspace/dashboard`)
 
-React + Vite frontend with dark theme. Pages: Dashboard, Sessions, Session Detail, Templates, Memory.
+React 19 + Vite + Tailwind 4 SPA. Pages under `src/pages/`: sessions (incl.
+cockpit + boot timeline), memory, skills, ambient, design-intelligence,
+intelligence, schema-templates, settings, api-keys, templates. The memory page
+provides a global searchable notes view across all AI sessions (FTS5,
+debounced 350ms); the session detail cockpit has a per-session memory tab.
 
-Memory page (`artifacts/dashboard/src/pages/memory.tsx`) provides a global searchable notes view across all AI sessions — session summaries displayed as note blocks, full-text search via FTS5 (debounced, 350ms). Session Detail memory tab (`artifacts/dashboard/src/pages/sessions/[id].tsx`) also has per-session search and shows summaries prominently as a styled block below each session row header.
+### `artifacts/electron-app` (`@workspace/electron-app`)
+
+Desktop wrapper (Electron + electron-builder) for the local distribution.
 
 ### `lib/db` (`@workspace/db`)
 
-Database layer with Drizzle ORM. Schemas: gpu_profiles, sessions, templates.
+Database layer with Drizzle ORM. PG cloud schema + SQLite local schema;
+migrations under `lib/db/migrations/`. Run migrations: `pnpm --filter @workspace/db migrate`.
 
 ### `lib/api-spec` (`@workspace/api-spec`)
 
-OpenAPI 3.1 spec and Orval codegen config. Run codegen: `pnpm --filter @workspace/api-spec run codegen`
+OpenAPI 3.1 spec + Orval codegen config. Run codegen:
+`pnpm --filter @workspace/api-spec run codegen`
 
 ### `lib/api-zod` (`@workspace/api-zod`)
 
@@ -244,29 +333,77 @@ Generated Zod schemas from the OpenAPI spec.
 
 Generated React Query hooks and fetch client.
 
-### Remote CLI Bridge (Task #278)
+### Remote CLI Bridge
 
-Enables agents to send prompts to `claw` processes running on GPU instances over WebSocket.
+Enables agents to send prompts to `claw` processes running on workspace
+machines over WebSocket.
 
-- **Registry**: `artifacts/api-server/src/services/bridge-registry.ts` — in-memory Map keyed by `sessionId:laneId`
+- **Registry**: `artifacts/api-server/src/services/bridge-registry.ts` — in-memory
+  Map keyed by `sessionId:laneId`
 - **Routes**: `artifacts/api-server/src/routes/bridge.ts`
-  - `WS  /api/bridge/:sessionId/:laneId` — claw instance connects outbound; upgrade handled in `src/index.ts`
+  - `WS /api/bridge/:sessionId/:laneId` — claw instance connects outbound; upgrade
+    handled in `src/index.ts`
   - `GET /api/sessions/:id/lanes/:laneId/bridge/status` — readiness check (`connected`/`disconnected`)
-  - `POST /api/sessions/:id/lanes/:laneId/exec` — accept `{ prompt }`, relay frames from bridge as SSE (`observation`/`done`/`error`)
-- **Auth**: `MIZI_MEM_TOKEN` Bearer OR `?token=` query param on WS upgrade; dev bypass when token not set
-- **claw-side client**: `docker/claw-bridge.mjs` — outbound WS with exponential-backoff reconnect, spawns `claw prompt`, streams back frames
+  - `POST /api/sessions/:id/lanes/:laneId/exec` — accept `{ prompt }`, relay frames
+    from bridge as SSE (`observation`/`done`/`error`)
+- **Auth**: `MIZI_MEM_TOKEN` Bearer OR `?token=` query param on WS upgrade; dev
+  bypass when token not set
+- **claw-side client**: `docker/claw-bridge.mjs` — outbound WS with
+  exponential-backoff reconnect, spawns `claw prompt`, streams back frames
 - **Startup**: `docker/onstart.sh` starts bridge client when `MIZI_BRIDGE_URL` is set
-- **Tests**: `artifacts/api-server/src/tests/bridge.test.ts` — 17 tests covering registry, status, exec dispatch, SSE relay, 400/503 error paths
-- **Key gotcha**: use `res.on("close")` (not `req.on("close")`) to detect caller disconnect in SSE handlers — `req` close fires when the HTTP client half-closes the request body, prematurely removing the message listener.
+- **Tests**: `artifacts/api-server/src/tests/bridge.test.ts` — registry, status,
+  exec dispatch, SSE relay, 400/503 error paths
+- **Key gotcha**: use `res.on("close")` (not `req.on("close")`) to detect caller
+  disconnect in SSE handlers — `req` close fires when the HTTP client half-closes
+  the request body, prematurely removing the message listener.
 
-### Ambient Mode + Safety Subsystem (Task #227)
+### Ambient Mode + Safety Subsystem
 
 Always-on background agent with reusable safety/approval rails.
 
-- `artifacts/api-server/src/services/safety.ts` — standalone safety subsystem. Separate sqlite db at `${MEM_DATA_DIR}/ambient.db`. Tables: `safety_actions`, `safety_transcript`, `safety_policies`, `safety_notifications`, `ambient_config` (with persisted `next_wake_at`), `ambient_cycles` (with `gpu_minutes_used`), `ambient_lock` (PRIMARY KEY = `account_id` for per-account singleton semantics). Three default policy bundles: `local-only` (default; gates external surface + irreversible), `team-coord`, `external-comm`. Pluggable notification channels via `registerNotificationChannel(name, fn)` — built-ins: `dashboard` (no-op, polled), `log`, `email` (stub). Core API: `requestPermission`, `classifyAction`, `decideAction`, `awaitDecision`, `markExecuted`, `listPendingApprovals`, `listTranscript`, `listPolicies`/`setPolicy`. Lightweight migrations for upgrades from earlier prototypes via `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`.
-- `artifacts/api-server/src/services/ambient.ts` — ambient runner & agent. The runner ticks every 15s, iterates `listAllConfigs()`, and for every enabled account whose persisted `next_wake_at` has elapsed it acquires the per-account lock and runs a cycle. Multiple processes coexist safely (lock is keyed by account_id). Wake schedule survives restarts because every cycle calls `persistNextWake` to write the next due time into `ambient_config`. Each cycle does scout → garden → work with mid-cycle `checkpoint()` calls between every phase (and inside garden) so an interactive session causes the runner to abort within seconds, not just between cycles. Per-cycle wall-clock cap (≤25% of remaining budget) is also enforced inside `checkpoint`. Token, GPU-minute, and wall-clock budgets are all enforced via `isBudgetExhausted` over the rolling window. Adaptive backoff per account on errors.
-- `artifacts/api-server/src/routes/ambient.ts` — endpoints: `GET/PUT /api/ambient/config`, `GET /api/ambient/status|timeline|metrics`, `POST /api/ambient/cycle|kill`, `GET /api/safety/pending|actions|transcript|policies`, `POST /api/safety/actions/:id/approve|deny`, `PUT /api/safety/policies/:bundle`.
-- Wired into `src/index.ts` after `startEvalScheduler` via `initSafetySubsystem()` + `startAmbientRunner()`. Defaults are dark-launched (`enabled=0`, `featureFlag=0`); cycles only run when both are true (or `force: true`).
-- Dashboard surface at `/ambient` (`artifacts/dashboard/src/pages/ambient.tsx`): kill switch + enable + feature flag toggles, budget panel with token / wall-clock / GPU-minute progress bars, 24h metrics, pending approvals with approve/deny inline, expandable activity timeline, budget/policy editor.
-- Notification bell integration: `notification-store.ts` has a new `approval_request` type and `notification-watchers.tsx` mounts an `ApprovalRequestWatcher` that polls `/api/safety/pending` every 10s and emits a notification for any newly-seen pending action so it surfaces globally (not only on the Ambient page). Sidebar entry in `app-layout.tsx` shows a badge with pending-approval count.
-
+- `artifacts/api-server/src/services/safety.ts` — standalone safety subsystem.
+  Separate sqlite db at `${MEM_DATA_DIR}/ambient.db`. Tables: `safety_actions`,
+  `safety_transcript`, `safety_policies`, `safety_notifications`,
+  `ambient_config` (with persisted `next_wake_at`), `ambient_cycles` (with
+  `gpu_minutes_used`), `ambient_lock` (PRIMARY KEY = `account_id` for per-account
+  singleton semantics). Three default policy bundles: `local-only` (default;
+  auto-allow local/sandbox scopes, gate external surface + irreversible),
+  `team-coord` (also auto-allows team scope + `coord_handoff_post` /
+  `coord_lane_note` kinds), `external-comm` (permissive; auto-allows external
+  scope, still gates irreversible). Pluggable notification channels via
+  `registerNotificationChannel(name, fn)` — built-ins: `dashboard` (no-op,
+  polled), `log`, `email` (delivers via `SAFETY_EMAIL_WEBHOOK_URL`; explicit
+  failure if `SAFETY_EMAIL_TO` set without a webhook). Core API:
+  `requestPermission`, `classifyAction`, `decideAction`, `awaitDecision`,
+  `markExecuted`, `drainApprovedActions`, `listPendingApprovals`,
+  `listTranscript`, `listPolicies`/`setPolicy`. Lightweight migrations for
+  upgrades from earlier prototypes via `PRAGMA table_info` + `ALTER TABLE ADD COLUMN`.
+- `artifacts/api-server/src/services/ambient.ts` — ambient runner & agent. The
+  runner ticks every 15s, iterates `listAllConfigs()`, and for every enabled
+  account whose persisted `next_wake_at` has elapsed it acquires the per-account
+  lock and runs a cycle. Multiple processes coexist safely (lock is keyed by
+  account_id). Wake schedule survives restarts because every cycle calls
+  `persistNextWake` to write the next due time into `ambient_config`. Each cycle
+  does scout → garden → work with mid-cycle `checkpoint()` calls between every
+  phase (and inside garden) so an interactive session causes the runner to abort
+  within seconds. Per-cycle wall-clock cap (≤25% of remaining budget) is also
+  enforced inside `checkpoint`. Token, GPU-minute, and wall-clock budgets are all
+  enforced via `isBudgetExhausted` over the rolling window. Adaptive backoff per
+  account on errors.
+- `artifacts/api-server/src/routes/ambient.ts` — endpoints:
+  `GET/PUT /api/ambient/config`, `GET /api/ambient/status|timeline|metrics`,
+  `POST /api/ambient/cycle|kill`, `GET /api/safety/pending|actions|transcript|policies`,
+  `POST /api/safety/actions/:id/approve|deny`, `PUT /api/safety/policies/:bundle`.
+- Wired into `src/index.ts` (cloud distribution) via `initSafetySubsystem()`,
+  `registerAmbientExecutors()`, `drainApprovedActions()`, `startAmbientRunner()`.
+  Defaults are dark-launched (`enabled=0`, `featureFlag=0`); cycles only run when
+  both are true (or `force: true`).
+- Dashboard surface at `/ambient` (`artifacts/dashboard/src/pages/ambient.tsx`):
+  kill switch + enable + feature flag toggles, budget panel with token /
+  wall-clock / GPU-minute progress bars, 24h metrics, pending approvals with
+  approve/deny inline, expandable activity timeline, budget/policy editor.
+- Notification bell integration: `notification-store.ts` has an `approval_request`
+  type and `notification-watchers.tsx` mounts an `ApprovalRequestWatcher` that
+  polls `/api/safety/pending` every 10s and emits a notification for any
+  newly-seen pending action so it surfaces globally (not only on the Ambient
+  page). Sidebar entry in `app-layout.tsx` shows a badge with pending-approval count.

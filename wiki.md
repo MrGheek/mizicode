@@ -1,6 +1,6 @@
 # MIZI Code — Platform Wiki
 
-MIZI Code is a GPU cloud coding platform that provisions AI-powered development environments on demand. Users get a fully agentic workspace: a remote machine running a coding UI, VS Code, model inference, memory, coordination, and a skill overlay system — all accessible from the browser.
+MIZI Code is an AI coding platform that provisions AI-powered development environments on demand. Each session is a CPU-only Fly.io workspace machine running a coding UI (Theia), a local agent (claw-runner), memory, coordination, and a skill overlay system — all accessible from the browser. All model inference is **hosted**: a small proxy inside the workspace forwards every request to NVIDIA NIM (or any OpenAI-compatible endpoint). No GPU, no vLLM, no llama.cpp, and no local model download.
 
 ---
 
@@ -8,7 +8,7 @@ MIZI Code is a GPU cloud coding platform that provisions AI-powered development 
 
 1. [Architecture overview](#1-architecture-overview)
 2. [Session types](#2-session-types)
-3. [GPU profiles](#3-gpu-profiles)
+3. [Session profiles](#3-session-profiles)
 4. [The agentic stack](#4-the-agentic-stack)
 5. [Smart Skills](#5-smart-skills)
 6. [Session Memory](#6-session-memory)
@@ -31,110 +31,92 @@ MIZI Code is a GPU cloud coding platform that provisions AI-powered development 
 ## 1. Architecture overview
 
 ```
-Browser (dashboard)
+Browser (dashboard / Theia)
        │
        ▼
-  Express API server  ──►  PostgreSQL (Drizzle ORM)
-       │                    SQLite FTS5 (memory)
-       ├──► Vast.ai API  ──►  GPU Machine (Docker container)
-       │                        ├── llama.cpp / vLLM  :8081
-       │                        ├── Bolt.diy           :5173
-       │                        ├── code-server        :8080
-       │                        ├── nginx preview      :3000
-       │                        ├── claw-runner        (agent process)
-       │                        └── claw-bridge        (WS bridge)
+  Express API server (Fly app `mizi-api`)  ──►  PostgreSQL (Drizzle ORM)
+       │                                          SQLite FTS5 (memory)
        │
-       └──► Fly.io Machines API  ──►  Fly Machine (NIM sessions)
-                                        ├── code-server        :8080
-                                        ├── litellm proxy      :5180
-                                        ├── claw-runner        (agent process)
-                                        └── claw-bridge        (WS bridge)
+       └──► Fly Machines API  ──►  workspace machine (Fly app `mizi-workspace`)
+                                    ├── Theia IDE            :8080 (via nginx basic auth)
+                                    ├── nginx                :8080 / :5181 / :8789 (internal)
+                                    ├── claw-runner          :5182 (agent process, proxied :5181)
+                                    ├── claw-bridge          (outbound WebSocket)
+                                    ├── nim-proxy.py         :8081 ──► NVIDIA NIM API
+                                    ├── bolt.diy             :5180
+                                    └── SSH                  :22
 ```
+
+Workspace machines are CPU-only. Inference never runs on them — `nim-proxy.py` forwards all model traffic to hosted NVIDIA NIM (or any OpenAI-compatible endpoint).
 
 The monorepo is a pnpm workspace with TypeScript throughout:
 
 | Package | Description |
 |---|---|
-| `artifacts/api-server` | Express 5 API server |
-| `artifacts/dashboard` | React + Vite frontend |
+| `artifacts/api-server` | Express 5 API server (pino, drizzle-orm, ws, MCP SDK) |
+| `artifacts/dashboard` | React 19 + Vite + Tailwind 4 SPA (Fly app `mizicode`) |
+| `artifacts/electron-app` | Desktop wrapper (local distribution) |
+| `docker` | Workspace image (Theia, claw-runner/bridge, nim-proxy, nginx) + 27 Theia extensions |
 | `lib/db` | Drizzle ORM schema + DB connection |
 | `lib/api-spec` | OpenAPI 3.1 spec |
 | `lib/api-client-react` | Generated React Query hooks |
 | `lib/api-zod` | Generated Zod schemas |
+| `lib/integrations-openai-ai-server` | OpenAI-compatible integration |
 
 ---
 
 ## 2. Session types
 
-MIZI supports two session types, chosen at launch time based on whether a NIM model is selected.
+Every session is a **NIM workspace**: a CPU-only Fly.io Machine in the `mizi-workspace` app that hosts the workspace tooling — Theia, claw-runner, claw-bridge, nim-proxy, bolt.diy, nginx, SSH. All inference is hosted: `nim-proxy.py` forwards requests to NVIDIA NIM or another OpenAI-compatible endpoint using the configured provider key.
 
-### GPU sessions (Vast.ai)
+**Lifecycle**: `pending → provisioning → starting → ready` (terminal `stopped` / `error`). The workspace posts `services_ready` / `skills_ready` / `llm_ready` callbacks; the API maps them to `starting` / `ready`.
 
-The default. A GPU instance is rented from the Vast.ai marketplace, the Docker container is started, and a local model (Kimi K2.6 GGUF) is loaded into VRAM. GPU sessions support:
+Because no model weights are downloaded, boot is fast (~2 minutes): the workspace is ready to serve tasks well before the first inference call.
 
-- Full offline inference (model runs on the rented GPU)
-- All four GPU tiers (Starter → Ultra)
-- Swarm worker agents that can use the local vLLM server
+- Fixed estimated cost: ~$0.05–$0.15/hr (Fly Machine only, no GPU charge)
+- Supported providers: NVIDIA NIM, Vultr, Together, DeepInfra, or any OpenAI-compatible endpoint
 
-**Lifecycle**: `pending → provisioning → downloading → starting → ready → stopped`
+**Fly TCP services exposed per machine**: 3000, 5180, 5181, 8080, 8081 (SSH on 22 is intentionally not declared — see `services/fly.ts`).
 
-The `downloading` phase means the GGUF weights are being pulled; `starting` means the LLM server is loading the model. Total boot time: ~20–35 minutes on first launch.
-
-### NIM sessions (Fly.io)
-
-When a NIM model is selected, no GPU is rented. Instead, a lightweight Fly.io Machine (shared-CPU-1x) is provisioned to host the workspace tooling (code-server, claw-runner, claw-bridge, litellm proxy). Inference calls go to a hosted NIM API endpoint. This gives:
-
-- Fast boot: ~2 minutes (no model download)
-- Fixed estimated cost: ~$0.08/hr (Fly Machine only)
-- Access to the full agentic stack without renting a GPU
-- Supported providers: NVIDIA NIM, OpenAI-compatible endpoints
-
-**Fly TCP services exposed**: 22 (SSH), 3000, 5180, 5181, 8080, 8081.
+The Vast.ai GPU session path (rented GPUs running vLLM/llama.cpp on GGUF weights) is a first-class peer provider alongside NIM/Fly, plus a local Ollama option for cost-sensitive phases. This wiki focuses on the NIM/Fly architecture.
 
 ---
 
-## 3. GPU profiles
+## 3. Session profiles
 
-Four built-in tiers for GPU sessions. The right tier depends on model size and team size.
+The `gpu_profiles` table is seeded at server startup (`services/profiles.ts`). The primary profile is **`nim-workspace`** — a CPU-only profile (`numGpus: 0`, `isNimWorkspace: true`) used for every hosted-inference session. It carries the workspace Docker image, a ~$0.05–$0.15/hr estimate, and a ~2-minute startup time.
 
-| Profile | GPU | Count | VRAM | Model quant | Est. cost/hr |
-|---|---|---|---|---|---|
-| **Starter** | RTX 4090 | 1 | 24 GB | UD-TQ1_0 | $0.13–$0.20 |
-| **Standard** | RTX 4090 | 4 | 96 GB | UD-TQ1_0 | $0.50–$0.80 |
-| **Pro** | A100 80 GB | 4 | 320 GB | Q3_K_M | $2.00–$4.00 |
-| **Ultra** | H100 80 GB | 8 | 640 GB | IQ4_XS | $8.00–$16.00 |
-
-Profiles control: Docker image tag, GPU search params, llama.cpp context size, batch size, number of GPUs, swarm worker cap, and startup time estimate.
+The GPU tiers (Starter → Ultra: RTX 4090 / A100 / H100 with GGUF quants and vLLM settings) are present in the seed data for the Vast.ai provider path.
 
 ---
 
 ## 4. The agentic stack
 
-Every MIZI session (GPU or NIM) runs the same agentic stack:
+Every MIZI session runs the same agentic stack inside its workspace machine:
 
 ### claw-runner
 
-The primary agent process. Receives tasks via the prompt bridge, executes tools (file read/write, shell, browser), and writes observations to the memory system. It reads its skill bundle from the `ACTIVE_BUNDLE_B64` env var on startup.
+The primary agent process. Receives tasks via the prompt bridge, executes tools (file read/write, shell, browser), and writes observations to the memory system. It reads its skill bundle from the `MIZI_ACTIVE_BUNDLE_B64` env var on startup and enforces the `SWARM_MAX_WORKERS` concurrency ceiling (default 4).
 
 ### claw-bridge (`docker/claw-bridge.mjs`)
 
-A lightweight Node.js process that connects outbound to the API server via WebSocket (`/api/bridge/:sessionId/:laneId`). It spawns `claw prompt` for each incoming task, streams back frames, and reconnects with exponential backoff.
+A lightweight Node.js process that connects outbound to the API server via WebSocket (`/api/bridge/:sessionId/:laneId`, authenticated with `MIZI_MEM_TOKEN`). It spawns `claw prompt` for each incoming task, streams back frames, and reconnects with exponential backoff.
 
-### litellm proxy (NIM sessions)
+### nim-proxy.py
 
-Routes inference calls from claw-runner to the configured NIM API endpoint, normalizing the OpenAI-compatible wire format.
+The inference gateway (port 8081). A minimal OpenAI-compatible pass-through proxy that forwards `/v1/*` requests to the hosted NIM API base (default `https://integrate.api.nvidia.com/v1`) using the configured provider key. It exposes `default` and `swarm` model routes so the agent keeps a standard OpenAI-compatible interface on localhost. It replaces the old litellm[proxy], which crashes on Python 3.10 without a `prisma` dependency.
 
-### llama.cpp / vLLM (GPU sessions)
+### Theia IDE
 
-Runs on port 8081, serving the GGUF model. vLLM is used for high-throughput GPU profiles; llama.cpp for Starter.
+Eclipse Theia runs on internal port 8788 and is served through nginx on port 8080 with basic auth (username `mizi`; password generated at boot into `/workspace/.mizi-password`). The API server proxies it via `/api/sessions/:id/workspace` over Fly's private 6PN network to nginx port 8789 (no auth — auth is enforced at the API layer).
 
-### code-server
+### nginx
 
-VS Code in the browser, running on port 8080. Accessible via the session detail page.
+Reverse proxy + auth gate: port 8080 (Theia), port 5181 (Claw Runner), and internal port 8789 (6PN → Theia).
 
-### nginx preview proxy
+### bolt.diy
 
-Port 3000. Proxies app preview traffic so users can see their running apps without port forwarding.
+React full-stack app generator, proxied on port 5180.
 
 ---
 
@@ -146,7 +128,7 @@ Skills are versioned instruction overlays injected into the agent's system promp
 
 1. Skills are imported from GitHub repos (YAML/JSON manifests).
 2. They are reviewed and assigned a trust tier.
-3. At session launch, the API server compiles a bundle: selects relevant skills based on task mode, token mode, repo fingerprint, and model family, then base64-encodes the payload into `ACTIVE_BUNDLE_B64`.
+3. At session launch, the API server compiles a bundle: selects relevant skills based on task mode, token mode, repo fingerprint, and model family, then base64-encodes the payload into `MIZI_ACTIVE_BUNDLE_B64`.
 4. claw-runner reads this env var on boot and injects the skills into its context.
 
 ### Trust tiers
@@ -224,7 +206,7 @@ A lane is a per-member workspace slot. Each lane has:
 
 ### Custom lane types
 
-Operators can register custom lane types beyond the five built-ins via `POST /api/sessions/:id/lanes/types`. Each custom type defines its own policy overrides (claim TTL, blast-radius limit, allowed claim types) and is stored in `custom_lane_types`. The system resolves the effective policy for any lane — built-in or custom — via `getLanePolicyAsync()`.
+Operators can register custom lane types beyond the five built-ins via `POST /api/coordination/lane-types`. Each custom type defines its own policy overrides (claim TTL, blast-radius limit, allowed claim types) and is stored in `custom_lane_types`. The system resolves the effective policy for any lane — built-in or custom — via `getLanePolicyAsync()`. Custom names must match `[a-z][a-z0-9_-]{0,49}`.
 
 ### File claims (soft ownership)
 
@@ -275,22 +257,24 @@ Every significant lane lifecycle event is recorded to the `lane_events` table an
 | `claim_expired` | Claim expired via TTL sweep |
 | `handoff_sent` | Handoff signal dispatched |
 | `handoff_acknowledged` | Target lane acknowledged a handoff |
-| `heavy_job_started` | GPU-expensive job began |
-| `heavy_job_completed` | GPU-expensive job finished |
+| `heavy_job_started` | Background heavy job began |
+| `heavy_job_completed` | Background heavy job finished |
 
 The dashboard Team tab has a **Timeline** sub-tab (`GET /sessions/:id/lanes/:laneId/timeline`) showing a cursor-paginated, newest-first list of events. Events stream in real time via SSE while the panel is open. Deleted lanes' history remains queryable.
 
 ### Heavy-job scheduler
 
-GPU-expensive jobs (indexing, embedding, eval) are queued in a weighted fair scheduler. Score = `priority + ageWeight + laneFairnessWeight + jobClassFloor`.
+Background coordination jobs (indexing, embedding, eval, blast_radius, compile, other) are queued in a weighted fair scheduler. They are plain API/background work — they do not allocate model-serving or accelerator resources. Score = `priorityNorm + ageWeight + laneWeight + classFloor` (see `docs/coordination.md`).
 
-Job class floors: `indexing` +0.5, `embedding` +0.3, `eval` +0.2.
+Job class floors: `indexing` +0.5, `blast_radius` +0.4, `compile` +0.35, `embedding` +0.3, `eval` +0.2, `other` +0.1.
 
 ---
 
 ## 8. Orchestration API
 
 For automated multi-agent workflows, the orchestration API provisions a fully-configured team session in a single call.
+
+> **Note**: this endpoint follows the Vast.ai GPU provider path (it rents a GPU instance). Single-session workspaces are created via `POST /api/sessions` with a `nimModelId`.
 
 ### `POST /sessions/orchestrate`
 
@@ -327,7 +311,7 @@ The dashboard shows live swarm activity via SSE:
 - `GET /api/sessions/:id/swarm-stream` — real-time swarm status
 - `GET /api/sessions/swarm-status-batch?ids=` — batch swarm status for the sessions list
 
-Swarm worker cap is set per GPU profile (`swarmWorkerCap`) and enforced server-side.
+Swarm worker cap is set per session profile (`swarmWorkerCap`) and enforced server-side.
 
 ---
 
@@ -361,7 +345,7 @@ All ambient actions that could have side effects go through the safety subsystem
 
 ### Dashboard
 
-`/ambient` page: kill switch, enable toggle, feature flag, budget progress bars (token / wall-clock / GPU-minute), pending approvals with approve/deny, activity timeline, policy editor.
+`/ambient` page: kill switch, enable toggle, feature flag, budget progress bars (token / wall-clock), pending approvals with approve/deny, activity timeline, policy editor.
 
 ---
 
@@ -505,7 +489,7 @@ When `MIZI_MEM_TOKEN` is not set (local development), agent auth is open. In pro
 
 ### Session detail tabs
 
-- **Cockpit**: live terminal output, soft-interrupt chat panel, boot timeline, GPU hardware info, relaunch button
+- **Cockpit**: live terminal output, soft-interrupt chat panel, boot timeline, hardware/access card (public IP, SSH command, model/provider label), relaunch button
 - **Memory**: per-session observation log and summary, FTS search
 - **Repo**: indexing status, blast-radius explorer, symbol search, FTS
 - **Team**: lane status, claims, handoff signals, conflict report; **Overview** sub-tab shows current state, **Timeline** sub-tab shows paginated event history with live SSE append; draft PR links on `safe_to_merge` handoffs
@@ -516,23 +500,33 @@ When `MIZI_MEM_TOKEN` is not set (local development), agent auth is open. In pro
 
 ## 17. Environment variables & secrets
 
+Set on the `mizi-api` Fly app via `fly secrets set KEY="value" --config artifacts/api-server/fly.toml`. Source of truth: `.env.example`.
+
 | Variable | Required | Description |
 |---|---|---|
-| `VASTAI_API_KEY` | GPU sessions | Vast.ai API key for instance management |
-| `DATABASE_URL` | Always | PostgreSQL connection string |
-| `NVIDIA_NIM_API_KEY` | NIM sessions | NVIDIA NIM API key |
-| `FLY_API_TOKEN` | NIM sessions | Fly.io personal access token |
-| `FLY_APP_NAME` | NIM sessions | Fly.io app name to provision machines into |
-| `MIZI_MEM_TOKEN` | Production | Bearer token for memory + ambient endpoints |
-| `MIZI_MEM_USER_ID` | Optional | Override default memory user ID (default: `operator`) |
-| `MEM_DATA_DIR` | Optional | SQLite storage path (default: `~/mizi-memory`) |
+| `DATABASE_URL` | Production | PostgreSQL connection string (auto-set by `fly postgres attach`) |
+| `MIZI_ENCRYPTION_KEY` | Production | 64-hex key (`openssl rand -hex 32`) — encrypts stored connection strings |
+| `MIZI_MEM_TOKEN` | Production | 64-hex operator token (`openssl rand -hex 32`) — Bearer auth for memory/ambient/admin and the bridge |
+| `FLY_API_TOKEN` | Production | Fly.io deploy token (`fly tokens create deploy -x 999999h`) — Fly Machines API |
+| `FLY_WORKSPACE_APP_NAME` | Production | Workspace Fly app to provision machines into (e.g. `mizi-workspace`) |
+| `NVIDIA_NIM_API_KEY` | NIM | NVIDIA NIM API key (`nvapi-...`) — enables NIM catalog + sessions |
+| `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` | Optional | GitHub "Connect GitHub to work" OAuth flow |
+| `DASHBOARD_URL` | Optional | Dashboard origin (e.g. `https://mizicode.fly.dev`) for OAuth redirects |
+| `VASTAI_API_KEY` | Vast.ai | Vast.ai API key for the Vast.ai provider path |
+| `AI_INTEGRATIONS_OPENAI_API_KEY` / `AI_INTEGRATIONS_OPENAI_BASE_URL` | Optional | OpenAI-compatible key used for ambient features and memory embeddings |
 | `VULTR_INFERENCE_API_KEY` | Optional | Vultr Inference provider key for NIM sessions |
 | `TOGETHER_API_KEY` | Optional | Together AI provider key for NIM sessions |
 | `DEEPINFRA_API_KEY` | Optional | DeepInfra provider key for NIM sessions |
-| `NEON_API_KEY` | Optional | Neon API key for cloud Postgres branch provisioning (test env) |
-| `NEON_PROJECT_ID` | Optional | Neon project to branch from for test DB provisioning |
-| `ADMIN_SWEEP_TOKEN` | Optional | Secret for `X-Admin-Token` header on admin endpoints |
-| `PORT` | Auto | HTTP port (assigned by Replit) |
+| `BRAVE_SEARCH_API_KEY` / `SERPER_API_KEY` | Optional | Agent web-search — at least one required for `POST /sessions/:id/tools/web-search` (503 if both absent) |
+| `SAFETY_EMAIL_TO` / `SAFETY_EMAIL_WEBHOOK_URL` / `SAFETY_EMAIL_WEBHOOK_AUTH` | Optional | Safety alert e-mail delivery (webhook-backed) |
+| `MIZI_MEM_USER_ID` | Optional | User ID recorded as the operator in memory observations (default: `operator`) |
+| `AMBIENT_ACCOUNT_ID` | Optional | Account ID used by the ambient scheduler (default: `default`) |
+| `MEM_DATA_DIR` | Optional | SQLite memory storage path (default: `~/mizi-memory`; Fly: `/data/memory`) |
+| `CLAIM_RETENTION_DAYS` | Optional | Days to retain inactive lane claims before purging (default 7) |
+| `CLAIM_CLEANUP_INTERVAL_MS` | Optional | Inactive-claim purge interval (default 3600000 / 1h) |
+| `PORT` | Auto | HTTP port (default 8080) |
+
+`NEON_API_KEY` / `NEON_PROJECT_ID` are still read by `services/neon.ts` for the test-env Postgres branch strategy but are not in `.env.example`.
 
 ---
 
@@ -540,7 +534,7 @@ When `MIZI_MEM_TOKEN` is not set (local development), agent auth is open. In pro
 
 | Table | Purpose |
 |---|---|
-| `gpu_profiles` | GPU tier definitions — search params, model quant, llama.cpp settings |
+| `gpu_profiles` | Session profiles — the CPU `nim-workspace` profile plus Vast.ai GPU tiers (search params, model quant, vLLM settings) |
 | `sessions` | Session records — status, URLs, cost, vastInstanceId, flyMachineId |
 | `templates` | Vast.ai Docker template records |
 | `api_keys` | Scoped M2M keys (SHA-256 hash stored) |
@@ -554,7 +548,7 @@ When `MIZI_MEM_TOKEN` is not set (local development), agent auth is open. In pro
 | `session_lanes` | Per-member lane overlays |
 | `lane_claims` | Soft file/symbol ownership claims with TTL |
 | `lane_handoffs` | Cross-lane handoff signals (includes `pr_url` for auto-opened draft PRs) |
-| `lane_heavy_jobs` | GPU-expensive job queue |
+| `lane_heavy_jobs` | Background heavy-job queue (indexing, embedding, eval, blast radius, compile) |
 | `custom_lane_types` | Operator-defined lane types extending the five built-ins |
 | `lane_events` | Timestamped audit log of lane lifecycle events; backs the Timeline tab |
 | `provisioned_resources` | Test Postgres/Redis resources created on demand per session |
@@ -578,19 +572,19 @@ Migrations live in `lib/db/migrations/`. Use `pnpm --filter @workspace/db run pu
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/sessions` | List all sessions |
-| `POST` | `/api/sessions` | Create a session (GPU or NIM) |
+| `POST` | `/api/sessions` | Create a session (NIM workspace) |
 | `GET` | `/api/sessions/:id` | Get session details |
 | `DELETE` | `/api/sessions/:id` | Destroy session and underlying machine |
 | `GET` | `/api/sessions/active` | Get the current active session |
-| `POST` | `/api/sessions/:id/refresh` | Poll Vast.ai / Fly.io for status update |
-| `POST` | `/api/sessions/orchestrate` | Single-call team provisioning |
+| `POST` | `/api/sessions/:id/refresh` | Re-sync session status from the underlying Fly Machine |
+| `POST` | `/api/sessions/orchestrate` | Single-call team provisioning (Vast.ai provider path) |
 | `GET` | `/api/sessions/:id/orchestration-status` | Poll team session boot progress |
 
 ### Profiles & offers
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/profiles` | List GPU profiles |
+| `GET` | `/api/profiles` | List session profiles |
 | `GET` | `/api/profiles/:id` | Get profile details |
 | `GET` | `/api/offers` | Search Vast.ai GPU marketplace |
 
@@ -621,9 +615,10 @@ Migrations live in `lib/db/migrations/`. Use `pnpm --filter @workspace/db run pu
 | `GET` | `/api/sessions/:id/coordination` | Full coordination state |
 | `GET` | `/api/sessions/:id/coordination/stream` | SSE stream of coordination updates |
 | `GET` | `/api/sessions/:id/conflicts` | Conflict detection report |
-| `POST` | `/api/sessions/:id/heavy-jobs` | Enqueue a GPU-expensive job |
-| `GET` | `/api/sessions/:id/lanes/types` | List custom lane types for the session |
-| `POST` | `/api/sessions/:id/lanes/types` | Register a custom lane type |
+| `POST` | `/api/sessions/:id/heavy-jobs` | Enqueue a background heavy job |
+| `GET` | `/api/coordination/lane-types` | List custom lane types |
+| `POST` | `/api/coordination/lane-types` | Register a custom lane type |
+| `PATCH` / `DELETE` | `/api/coordination/lane-types/:id` | Update / delete a custom lane type |
 
 ### Memory
 

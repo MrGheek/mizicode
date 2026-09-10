@@ -17,6 +17,7 @@ import toolsRouter from "./tools";
 import snapshotsRouter from "./snapshots";
 import metricsRouter from "./metrics";
 import sessionShortcutsRouter from "./session-shortcuts";
+import theiaCompatRouter from "./theia-compat";
 import localRouter from "./local";
 
 /* ─── API Surface ─────────────────────────────────────────────────────────
@@ -119,6 +120,10 @@ router.use(healthRouter);
 router.use(dashboardRouter);
 router.use(schedulerRouter);
 router.use(memoryRouter);
+// Mount early — plan.ts registers a router-level optionalAgentAuth guard that
+// would otherwise shadow the owner-token-resolved compat/shortcut routes.
+router.use("/session", sessionShortcutsRouter);
+router.use(theiaCompatRouter);
 router.use(skillsRouter);
 router.use("/repo", repoGraphRouter);
 router.use("/sessions/repo", batchRepoRouter);
@@ -133,7 +138,6 @@ router.use(planRouter);
 router.use(toolsRouter);
 router.use(metricsRouter);
 router.use(snapshotsRouter);
-router.use("/session", sessionShortcutsRouter);
 
 if (IS_LOCAL_DISTRIBUTION) {
   router.use(localRouter);

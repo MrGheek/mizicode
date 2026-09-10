@@ -1,5 +1,5 @@
 import { db, gpuProfilesTable, type InsertGpuProfile } from "@workspace/db";
-import { eq, notInArray } from "drizzle-orm";
+import { eq, notInArray, sql } from "drizzle-orm";
 
 // defaultQuant is used as the model cache subdirectory name under /workspace/models/
 // modelRepo        → HuggingFace repo to download (passed as MODEL_REPO env var)
@@ -70,7 +70,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "RTX 4090",
     numGpus: 1,
     totalVram: 24,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:cuda12.4",
     defaultQuant: "kimi-k2.6",
     quantSizeGb: 245,
     diskSizeGb: 400,
@@ -97,7 +97,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "RTX 4090",
     numGpus: 4,
     totalVram: 96,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:cuda12.4",
     defaultQuant: "kimi-k2.6",
     quantSizeGb: 245,
     diskSizeGb: 800,
@@ -125,7 +125,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "A100 80GB",
     numGpus: 4,
     totalVram: 320,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:a100",
     defaultQuant: "kimi-k2.6",
     quantSizeGb: 490,
     diskSizeGb: 1000,
@@ -153,7 +153,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "H100 80GB",
     numGpus: 8,
     totalVram: 640,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:h100",
     defaultQuant: "kimi-k2.6",
     quantSizeGb: 547,
     diskSizeGb: 1200,
@@ -185,7 +185,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "RTX 4090",
     numGpus: 1,
     totalVram: 24,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:cuda12.4",
     defaultQuant: "kimi-k2.5",
     quantSizeGb: 245,
     diskSizeGb: 400,
@@ -212,7 +212,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "RTX 4090",
     numGpus: 4,
     totalVram: 96,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:cuda12.4",
     defaultQuant: "kimi-k2.5",
     quantSizeGb: 245,
     diskSizeGb: 800,
@@ -239,7 +239,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "A100 80GB",
     numGpus: 4,
     totalVram: 320,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:a100",
     defaultQuant: "kimi-k2.5",
     quantSizeGb: 490,
     diskSizeGb: 1000,
@@ -266,7 +266,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "H100 80GB",
     numGpus: 8,
     totalVram: 640,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:h100",
     defaultQuant: "kimi-k2.5",
     quantSizeGb: 547,
     diskSizeGb: 1200,
@@ -298,7 +298,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "A100 80GB",
     numGpus: 4,
     totalVram: 320,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:a100",
     defaultQuant: "qwen3-coder-next",
     quantSizeGb: 85,
     diskSizeGb: 250,
@@ -325,7 +325,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "A100 80GB",
     numGpus: 8,
     totalVram: 640,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:a100",
     defaultQuant: "qwen3-coder-next",
     quantSizeGb: 85,
     diskSizeGb: 250,
@@ -356,7 +356,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "H100 80GB",
     numGpus: 8,
     totalVram: 640,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:h100",
     defaultQuant: "minimax-m2.5",
     quantSizeGb: 235,
     diskSizeGb: 600,
@@ -387,7 +387,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "H100 80GB",
     numGpus: 8,
     totalVram: 640,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:h100",
     defaultQuant: "glm-5.1-fp8",
     quantSizeGb: 760,
     diskSizeGb: 1500,
@@ -418,7 +418,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "H200 141GB",
     numGpus: 8,
     totalVram: 1128,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:h100",
     defaultQuant: "glm-5.1-fp8",
     quantSizeGb: 760,
     diskSizeGb: 1500,
@@ -463,7 +463,7 @@ const DEFAULT_PROFILES: InsertGpuProfile[] = [
     gpuName: "H200 141GB",
     numGpus: 8,
     totalVram: 1128,
-    dockerImageTag: "gheeklabs/coding-env:latest",
+    dockerImageTag: "gheeklabs/mizi-gpu:h100",
     defaultQuant: "deepseek-v3.2",
     quantSizeGb: 680,
     diskSizeGb: 1400,
@@ -559,4 +559,18 @@ export async function getProfileByName(name: string) {
 
 export async function getNimWorkspaceProfile() {
   return getProfileByName("nim-workspace");
+}
+
+/**
+ * Default GPU profile for custom-HF (pasted HuggingFace URL) sessions when the
+ * caller omits profileId. Prefers the highest-capability real GPU profile,
+ * skipping the nim-workspace (CPU) placeholder.
+ */
+export async function getDefaultGpuProfile() {
+  const profiles = await db
+    .select()
+    .from(gpuProfilesTable)
+    .where(notInArray(gpuProfilesTable.name, ["nim-workspace"]))
+    .orderBy(sql`${gpuProfilesTable.id} asc`);
+  return profiles[0] || null;
 }

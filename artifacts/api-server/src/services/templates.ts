@@ -4,7 +4,7 @@ import * as vastai from "./vastai";
 import { logger } from "../lib/logger";
 
 const DEFAULT_TEMPLATE_NAME = "MIZI Coding Environment";
-const DEFAULT_IMAGE = "gheeklabs/coding-env:cuda12.4";
+const DEFAULT_IMAGE = "gheeklabs/mizi-gpu:cuda12.4";
 
 const DEFAULT_ONSTART = `#!/bin/bash
 # MIZI Coding Environment - parameterized via env vars

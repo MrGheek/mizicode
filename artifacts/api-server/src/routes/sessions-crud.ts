@@ -5,7 +5,7 @@ import type { TeamMemberRecord } from "@workspace/db";
 import { logger } from "../lib/logger";
 import * as vastai from "../services/vastai";
 import type { VastOffer } from "../services/vastai";
-import { getProfileById, getNimWorkspaceProfile } from "../services/profiles";
+import { getProfileById, getNimWorkspaceProfile, getDefaultGpuProfile } from "../services/profiles";
 import { getStoredGitHubToken } from "./auth";
 import { autoEnqueueRepoIndexIfNeeded } from "./repo";
 import { requireAgentAuth, permitBearer } from "../middlewares/agent-auth";
@@ -15,6 +15,7 @@ import type { SessionContext } from "../services/skills-types";
 import * as neonService from "../services/neon";
 import * as fly from "../services/fly";
 import { addObservation } from "../services/memory";
+import { resolveModel, type GpuProvisionPlan, type ModelDeployment, ModelResolveError } from "../providers";
 import {
   ACTIVE_STATUSES,
   CALLBACK_TOKEN,
@@ -539,7 +540,7 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
     return;
   }
 
-  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider, githubToken: rawGithubToken, modelRoutingMode: rawModelRoutingMode, enableLaneBranches: rawEnableLaneBranches, planId: requestedPlanId } = req.body;
+  const { profileId, offerId, teamMembers: teamMemberNames, taskMode, tokenMode, bundleId: requestedBundleId, repoUrl, repoBranch, repoFingerprint, intentText: rawIntentText, nimModelId, nimProvider, githubToken: rawGithubToken, modelRoutingMode: rawModelRoutingMode, enableLaneBranches: rawEnableLaneBranches, planId: requestedPlanId, hfUrl: rawHfUrl } = req.body;
   const modelRoutingMode: "auto" | "pinned" = rawModelRoutingMode === "pinned" ? "pinned" : "auto";
 
   // If no PAT was passed from the dashboard, attempt to load the stored OAuth token.
@@ -566,14 +567,21 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
     }
   }
 
-  if (!profileId && !nimModelId) {
-    res.status(400).json({ error: "profileId or nimModelId is required" });
+  const hfUrl = typeof rawHfUrl === "string" && rawHfUrl.trim() ? rawHfUrl.trim() : undefined;
+
+  if (!profileId && !nimModelId && !hfUrl) {
+    res.status(400).json({ error: "profileId, nimModelId, or hfUrl is required" });
     return;
   }
 
   let profile = profileId ? await getProfileById(profileId) : null;
   if (!profile && nimModelId) {
     profile = await getNimWorkspaceProfile();
+  }
+  // Custom HuggingFace model sessions: no profileId required — the resolver sizes
+  // the instance from the HF repo metadata and overrides the profile's model fields.
+  if (!profile && hfUrl) {
+    profile = await getDefaultGpuProfile();
   }
   if (!profile) {
     res.status(400).json({ error: "Invalid profile" });
@@ -636,17 +644,75 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
 
   let insertedSessionId: number | undefined;
 
+  // Resolve the deployment BEFORE any DB writes so invalid/unsupported models
+  // fail fast with a clear error. Both hosted picks (nim/ollama-cloud/openai)
+  // and custom HF weights route through the capability resolver — the provider
+  // decision is capability-based, not "nim vs everything else".
+  let hfDeployment: ModelDeployment | undefined;
+  let gpuPlan: GpuProvisionPlan | undefined;
+  let hostedDeployment: ModelDeployment | undefined;
   try {
-    // NIM sessions provision on Fly.io — skip Vast.ai offer search entirely.
-    let selectedOfferId: number | undefined = nimModelId ? undefined : offerId;
+    if (hfUrl) {
+      hfDeployment = await resolveModel({ hfUrl });
+      if (hfDeployment.kind !== "gpu" || !hfDeployment.gpu) {
+        res.status(400).json({ error: `Model "${hfUrl}" resolved to a non-GPU deployment` });
+        return;
+      }
+      gpuPlan = hfDeployment.gpu;
+      if (gpuPlan.provider !== "vast" && gpuPlan.provider !== "vultr") {
+        res.status(400).json({ error: `Provider "${gpuPlan.provider}" cannot host custom HuggingFace models` });
+        return;
+      }
+      // Override the selected profile with resolver-derived sizing + image. The
+      // profile still supplies CPU/ctx/batch defaults the user picked.
+      const searchParams = (profile.searchParams as Record<string, unknown>) || {};
+      profile = {
+        ...profile,
+        modelRepo: gpuPlan.modelRepo,
+        defaultQuant: gpuPlan.defaultQuant,
+        servedModelName: gpuPlan.servedModelName,
+        diskSizeGb: gpuPlan.diskGb,
+        numGpus: gpuPlan.numGpus,
+        dockerImageTag: gpuPlan.image,
+        searchParams: {
+          ...searchParams,
+          num_gpus: gpuPlan.numGpus,
+          min_gpu_ram: gpuPlan.vramGb,
+        },
+      };
+      logger.info({ sessionId: null, hfRepo: gpuPlan.repoId, image: gpuPlan.image, diskGb: gpuPlan.diskGb, numGpus: gpuPlan.numGpus }, "HF model resolved — overriding profile sizing");
+    } else if (nimModelId) {
+      hostedDeployment = await resolveModel({ nimModelId });
+      if (hostedDeployment.kind !== "hosted" || !hostedDeployment.hosted) {
+        res.status(400).json({ error: `Model "${nimModelId}" resolved to a non-hosted deployment` });
+        return;
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof ModelResolveError ? err.message : `Failed to resolve model: ${err instanceof Error ? err.message : String(err)}`;
+    res.status(400).json({ error: msg });
+    return;
+  }
 
-    if (!nimModelId && !selectedOfferId) {
+  // Hosted sessions (nim/ollama-cloud/openai) provision a Fly.io workspace whose
+  // brain is the hosted API; GPU sessions (Vast.ai) rent a GPU instance. Both are
+  // first-class provider paths — the resolver chose the deployment above.
+  const isHostedSession = hostedDeployment?.kind === "hosted" || !!nimModelId;
+
+  try {
+    // Hosted sessions provision on Fly.io — skip Vast.ai offer search entirely.
+    let selectedOfferId: number | undefined = isHostedSession ? undefined : offerId;
+
+    if (!isHostedSession && !selectedOfferId) {
       const searchParams = (profile.searchParams as Record<string, unknown>) || {};
       const offers = await vastai.searchOffers({
         gpu_name: searchParams.gpu_name as string,
         num_gpus: searchParams.num_gpus as number,
         min_gpu_ram: searchParams.min_gpu_ram as number,
         disk_space: profile.diskSizeGb,
+        // For custom HF sessions the model size drives bandwidth-aware ranking;
+        // catalog profiles fall back to their precomputed quantSizeGb.
+        modelSizeGb: gpuPlan?.info.sizeGb ?? profile.quantSizeGb ?? undefined,
         limit: 1,
       });
 
@@ -774,9 +840,11 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
         vastOfferId: selectedOfferId,
         templateHash: templateHash || null,
         status: "provisioning",
-        statusMessage: nimModelId
+        statusMessage: isHostedSession
           ? "Provisioning workspace container — NIM API will be ready in ~2 min..."
-          : "Finding GPU and provisioning instance...",
+          : hfUrl
+            ? "Inspected model — finding GPU with sufficient VRAM and provisioning instance..."
+            : "Finding GPU and provisioning instance...",
         gpuName: profile.gpuName,
         numGpus: profile.numGpus,
         teamMembers: teamMemberRecords.length > 0 ? teamMemberRecords : null,
@@ -785,7 +853,7 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
         activeBundleId: requestedBundleId || null,
         repoFingerprintJson,
         intentText,
-        provider: nimModelId ? "nim" : "vastai",
+        provider: isHostedSession ? "nim" : "vastai",
         nimProvider: nimModelId ? String(nimProvider ?? "nvidia") : null,
         nimModelId: nimModelId ? String(nimModelId) : null,
         // Owner token: a random secret issued at session creation. Required by
@@ -950,7 +1018,7 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
     let provisionedWorkspaceUser: string | undefined;
     let provisionedWorkspacePassword: string | undefined;
 
-    if (nimModelId) {
+    if (isHostedSession) {
       // Generate nginx basic-auth credentials so the dashboard can display them.
       // Username is fixed; password is a random 16-char alphanumeric string.
       const nimWorkspaceUser = "mizi";
@@ -1023,7 +1091,7 @@ router.post("/sessions", permitBearer([], { optional: true }), async (req, res) 
         vastInstanceId: provisionedVastInstanceId ?? null,
         flyMachineId: provisionedFlyMachineId ?? null,
         status: "provisioning",
-        statusMessage: nimModelId
+        statusMessage: isHostedSession
           ? "Fly.io workspace machine started — NIM fast-boot running (~60s)"
           : "Instance created — waiting for startup and model download...",
         startedAt: new Date(),

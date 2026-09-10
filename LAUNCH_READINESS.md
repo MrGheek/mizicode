@@ -1,6 +1,6 @@
 # MIZI Launch Readiness
 
-Last review: Task #233.
+Last review: Aug 2026 (post v0.13.x).
 
 This document tracks the launch-readiness posture of the MIZI coding
 environment: what's covered, where the seams are, and the verifications
@@ -12,16 +12,19 @@ operators must run before opening the product to outside users.
 
 | Check                                                 | State |
 | ----------------------------------------------------- | ----- |
-| `PORT` required at startup (no silent default)        | ✅ index.ts:62-72 |
-| Memory data dir validated before `app.listen()`       | ✅ index.ts:78-83 |
-| Passive-recall backfill runs in the background        | ✅ index.ts:152-161 |
-| Backfill no longer crashes on a fresh DB              | ✅ memory.ts:`runPassiveRecallBackfill` calls `getDb()` first |
-| Claim sweeper + purger + eval scheduler armed at boot | ✅ index.ts:135-138 |
-| Disk monitor armed                                    | ✅ index.ts:138 (`startMemoryDiskMonitor`) |
+| `PORT` required at startup (no silent default)        | ✅ index.ts:62-74 |
+| Memory data dir validated before `app.listen()` (cloud) | ✅ index.ts:80-88 |
+| Production secret guards fail fast on boot            | ✅ index.ts:98-141 (`MIZI_ENCRYPTION_KEY`, `MIZI_MEM_TOKEN`, `FLY_API_TOKEN`, `FLY_WORKSPACE_APP_NAME`) |
+| Passive-recall backfill runs in the background        | ✅ index.ts:368-376, 419-429 |
+| Claim sweeper + purger + eval scheduler armed at boot | ✅ index.ts:345-366 |
+| Disk monitor armed                                    | ✅ index.ts:370-376 (`startMemoryDiskMonitor`) |
+| Plan auto-advance + plan decompose                    | ✅ index.ts:378-390 |
+| Ambient runner + safety subsystem started             | ✅ index.ts:405-415 |
+| NIM catalog synced at boot, re-synced every 6h        | ✅ index.ts:392-403 |
 
-### Why the passive-recall fix matters
+### Why the passive-recall backfill matters
 
-Before Task #233, the boot log emitted:
+A past boot bug emitted:
 
 > `Passive recall backfill failed (non-fatal): SqliteError: no such table: mem_items`
 
@@ -40,27 +43,24 @@ memoises the handle, so this is free on warm boots.
 ## 2. Authn / authz posture
 
 All control-plane surfaces share the same Bearer token: `MIZI_MEM_TOKEN`.
+In production the API server **refuses to boot** without it (index.ts:107-110),
+so there is no "silently open" failure mode on a misconfigured deploy.
 
 | Surface                                                | Production guard | Dev mode |
 | ------------------------------------------------------ | ---------------- | -------- |
-| `/api/memory/*`                                        | ✅ throws if unset (`memory.ts:73`) | warns and serves open |
-| `/api/ambient/*`, `/api/safety/*`                      | ✅ throws if unset (`ambient.ts:48`) | warns and serves open |
-| `/api/sessions/:id/status` (instance callback)         | ✅ throws if unset (`sessions.ts:181`) — **fixed in #233** | warns and serves open |
+| `/api/memory/*`                                        | ✅ fails fast at boot if `MIZI_MEM_TOKEN` unset | warns and serves open |
+| `/api/ambient/*`, `/api/safety/*`                      | ✅ fails fast at boot if `MIZI_MEM_TOKEN` unset | warns and serves open |
+| `/api/sessions/:id/status` (instance callback)         | ✅ fails fast at boot (index.ts) **and** throws at import time (`sessions-common.ts:70-74`) | warns and serves open |
 | `/api/dashboard/ambient/*`, `/api/dashboard/safety/*`  | Read-only mirror; no mutating routes registered | same |
-
-Before Task #233 the instance-status callback was the one hole: a
-production deploy without `MIZI_MEM_TOKEN` would silently accept any
-internet host POSTing arbitrary status transitions for any session id.
-Now all three token-gated routes fail fast on boot if the env var is
-missing in production.
 
 ### Operator checklist
 
 - `MIZI_MEM_TOKEN` must be a high-entropy random string (≥ 32 bytes).
-- Same value must be passed to every Vast.ai instance as
-  `MIZI_MEM_AUTH_TOKEN` — see `sessions.ts` instance launch path.
+- Same value must be passed to every workspace machine as
+  `MIZI_MEM_AUTH_TOKEN` — injected by the API server at machine creation
+  (see `docker/README.md` env table).
 - Rotating the token requires restarting the API server **and** any
-  in-flight instances (they cache it in `/etc/environment`).
+  in-flight machines.
 
 ---
 
@@ -72,29 +72,29 @@ The Team tab and lane coordination logic depend on two overlap signals:
 2. **Blast-radius overlap** (`estimateBlastRadiusOverlap`) — graph-adjacent
    files reached via the repo edges produced by the indexer.
 
+Both live in `artifacts/api-server/src/services/lane-policy.ts`.
+
 ### State
 
 | Endpoint | Path overlap | Blast radius |
 | -------- | ------------ | ------------ |
 | `GET /api/sessions/:id/conflicts`                                    | ✅ | ✅ (loads `sessionRepoContextTable.edgesJson`) |
-| `POST /api/sessions/:id/lanes/:laneId/claim`                         | ✅ | ✅ — **fixed in #233** (was hardcoded `0`) |
+| `POST /api/sessions/:id/lanes/:laneId/claim`                         | ✅ | ✅ (`estimateBlastRadiusOverlap` on graph edges) |
 
-The claim-time fix means a soft-claim that doesn't directly collide with
-another lane's claims, but does share a transitive dependency, now
-surfaces a `warn` recommendation instead of `no_conflict`. This matches
-the `/conflicts` endpoint's behaviour and removes a class of
-"two lanes accidentally race on the same upstream" bugs.
+A soft-claim that doesn't directly collide with another lane's claims, but
+does share a transitive dependency, surfaces a `warn` recommendation instead
+of `no_conflict`. This matches the `/conflicts` endpoint's behaviour and
+removes a class of "two lanes accidentally race on the same upstream" bugs.
 
 ---
 
 ## 4. Boot-phase failure classification
 
-The session cockpit renders a 7-step Boot Timeline. Before Task #233 it
-only knew about success transitions and a single literal sentinel
-(`no space left on device`). Generic `error` statuses collapsed onto
-the last-observed phase with no actionable hint.
-
-### After #233
+The cockpit renders a Boot Timeline. NIM (hosted-inference) sessions use a
+condensed **3-phase** timeline (container → NIM proxy → bolt.diy ready);
+legacy GPU sessions use the 7-phase timeline. Before structured failures were
+introduced, generic `error` statuses collapsed onto the last-observed phase
+with no actionable hint.
 
 `docker/onstart.sh` now emits structured failures via `report_failure`:
 
@@ -103,24 +103,30 @@ the last-observed phase with no actionable hint.
 | `provisioning_failed`   | container       | top-level `ERR` trap during Phase 1 |
 | `disk_full`             | weights         | onstart log contains "no space left on device", OR `df -P` reports any of `/workspace`, `/var/log`, `/tmp` with ≤1MB available |
 | `skills_compile_failed` | skills          | `MIZI_ACTIVE_BUNDLE_B64` decode failure |
-| `download_failed`       | weights         | `huggingface-cli download` retry exhaustion (non-stall errors) |
-| `download_stalled`      | weights         | size-progress watchdog: no new bytes in `MODEL_DIR` for `DOWNLOAD_STALL_TIMEOUT_SEC` (default 180s) |
-| `vllm_warmup_failed`    | llm             | vLLM /health does not return within 600s |
+| `download_failed`       | weights         | `huggingface-cli download` retry exhaustion (legacy GPU path) |
+| `download_stalled`      | weights         | size-progress watchdog: no new bytes in `MODEL_DIR` for `DOWNLOAD_STALL_TIMEOUT_SEC` (default 180s) (legacy GPU path) |
+| `vllm_warmup_failed`    | llm             | vLLM /health does not return within 600s (legacy GPU path) |
 
-The API server's `INSTANCE_STATUS_MAP` (`sessions.ts`) maps each cause
-to `status="error"` with a `boot_failure:<cause>` marker baked into
-`statusMessage`. The dashboard's `parseBootFailure` (`boot-phases.ts`)
-extracts that marker and the BootTimeline component renders a
-"Suggested next step" row beneath the failed phase.
+> NIM (hosted-inference) sessions only reach `provisioning_failed`,
+> `skills_compile_failed`, and `disk_full` — there is no model download or
+> vLLM warmup. The `download_*` / `vllm_warmup_failed` causes remain in the
+> failure map for legacy GPU sessions.
+
+The API server's `INSTANCE_STATUS_MAP` (`sessions-common.ts:88-102`) maps each
+cause to `status="error"` with a `boot_failure:<cause>` marker baked into
+`statusMessage` via `buildFailureStatusMessage` (`sessions-common.ts:257-261`).
+The dashboard's `parseBootFailure` (`boot-phases.ts:74-86`) extracts that
+marker and the BootTimeline component renders a "Suggested next step" row
+beneath the failed phase.
 
 ### What this gives operators
 
-- A user whose vLLM warmup times out sees:
-  `"vLLM did not come online within the warmup window — VRAM may be insufficient for this profile. Try a smaller quant or larger GPU profile."`
+- A user whose session fails to provision sees:
+  `"Container provisioning failed before services came up — destroy this session and retry on a different host."`
   instead of a red "Booting" badge with no explanation.
-- Disk-full failures keep their existing "Destroy & Retry" CTA but now
-  also fire when the structured cause arrives, not just when "no space
-  left on device" appears literally in the log.
+- Disk-full failures keep their existing "Destroy & Retry" CTA but now also
+  fire when the structured cause arrives, not just when "no space left on
+  device" appears literally in the log.
 
 ---
 
@@ -133,38 +139,32 @@ runtime/, tools/) and a Rust workspace (`rust/`).
 **MIZI ships only the Rust binary.** The Dockerfile builds
 `rusty-claude-cli` from `/opt/claw-code-src/rust` and exposes it as the
 canonical `claw` CLI. The Python tree is included for upstream-compat
-reasons but is not invoked at runtime.
-
-This was previously a footgun for new contributors: it looked like there
-were two competing implementations and no documentation said which one
-mattered. Task #233 adds `docker/claw-code-src/README.md` clarifying
-the layout and pointing future upgraders at the Rust workspace.
+reasons but is not invoked at runtime. See
+`docker/claw-code-src/README.md` — it documents the layout and points future
+upgraders at the Rust workspace.
 
 ---
 
 ## 6. Test coverage delta
 
-New tests added in Task #233:
+`artifacts/api-server/src/tests/launch-readiness.test.ts` covers:
 
-- `artifacts/api-server/src/tests/launch-readiness.test.ts`:
-  - Passive-recall backfill on a fresh DB (regression for the boot bug).
-  - Coordination claim creation surfaces blast-radius overlap when
-    paths are graph-adjacent but not directly overlapping.
-  - Instance-status callback accepts all six structured failure phases
-    and persists the `boot_failure:<cause>` marker.
-  - Instance-status callback rejects unknown phases (400).
-  - Instance-status callback rejects unauthenticated requests (401).
-  - The structured-failure callback assertions exercise the realistic
-    `{status, message}` payload shape that `docker/onstart.sh` actually
-    sends, and verify both the `boot_failure:<cause>` marker AND the
-    human message survive the persisted `statusMessage`. This is what
-    the dashboard's `parseBootFailure` depends on.
+- Passive-recall backfill on a fresh DB (regression for the boot bug).
+- Coordination claim creation surfaces blast-radius overlap when paths are
+  graph-adjacent but not directly overlapping.
+- Instance-status callback accepts all six structured failure phases and
+  persists the `boot_failure:<cause>` marker.
+- Instance-status callback rejects unknown phases (400).
+- Instance-status callback rejects unauthenticated requests (401).
+- The structured-failure callback assertions exercise the realistic
+  `{status, message}` payload shape that `docker/onstart.sh` actually sends,
+  and verify both the `boot_failure:<cause>` marker AND the human message
+  survive the persisted `statusMessage`. This is what the dashboard's
+  `parseBootFailure` depends on.
 
-`artifacts/dashboard` does not have a vitest runner configured, so the
-dashboard-side `parseBootFailure` / `inferBootPhase` rendering is
-covered indirectly through the API server's structured-failure tests
-plus manual visual inspection. Wiring vitest into the dashboard is
-tracked as a follow-up.
+The dashboard also has a vitest runner (`vitest run --config
+vitest.config.ts`); `artifacts/dashboard/src/tests/` covers boot-phase and
+repo-grouped-list rendering on the frontend side.
 
 Run with:
 
@@ -188,61 +188,55 @@ Run before opening to outside users:
       return 401 without the bearer.
 - [ ] Boot the API server fresh against an empty `MEM_DATA_DIR` and
       confirm the boot log no longer contains "no such table: mem_items".
-- [ ] In a real session, simulate the structured failure callbacks:
-      `curl -X POST /api/sessions/<id>/status -H "Authorization: Bearer $TOKEN" -d '{"status":"vllm_warmup_failed"}'`
+- [ ] In a real session, simulate a structured failure callback:
+      `curl -X POST /api/sessions/<id>/status -H "Authorization: Bearer $TOKEN" -d '{"status":"skills_compile_failed"}'`
       and confirm the cockpit shows the suggested-next-step row.
-- [ ] Verify `MIZI_MEM_TOKEN` is also exported into the Vast.ai
-      onstart environment as `MIZI_MEM_AUTH_TOKEN` so callbacks
-      from the running instance authenticate.
-- [ ] Smoke-test the Team tab: create two lanes, claim graph-adjacent
-      files in each, confirm the second claim's response includes a
-      non-zero `blastRadiusOverlap`.
-- [ ] Confirm `claw --version` inside the running container reports the
-      Rust binary's version, not the Python package metadata.
-- [ ] Read `docker/claw-code-src/README.md` and confirm it matches the
-      reality of the current Dockerfile.
+- [ ] Verify `MIZI_MEM_TOKEN` is also injected into Fly workspace machines as
+      `MIZI_MEM_AUTH_TOKEN` so callbacks from the running machine authenticate.
+- [ ] Smoke-test the Team tab: create two lanes, claim graph-adjacent files
+      in each, confirm the second claim's response includes a non-zero
+      `blastRadiusOverlap`.
+- [ ] Confirm `claw --version` inside the running container reports the Rust
+      binary's version, not the Python package metadata.
+- [ ] Read `docker/claw-code-src/README.md` and confirm it matches the reality
+      of the current Dockerfile.
 
 ---
 
 ## 8. Known seams (not regressions, but worth knowing)
 
-- **Embeddings backfill is best-effort.** If `OPENAI_BASE_URL` is unset
-  the pipeline falls back to lexical TF-IDF cosine; recall quality is
-  reduced but the system never crashes.
-- **vLLM warmup budget is 600s.** Hosts with cold model caches and slow
-  disks can exceed this. The `vllm_warmup_failed` cause now surfaces
-  this clearly instead of the session sitting at "starting" forever.
-- **SSH and code-server stay reachable on `vllm_warmup_failed`.** This
-  is intentional — operators can SSH in and inspect
-  `/var/log/vllm-server.log` without destroying the instance.
-- **`sessions.ts` callback failure phases are advisory.** Failure
-  callbacks set `status="error"` but do not auto-destroy the Vast.ai
-  instance. The user (or operator) decides whether to retry.
+- **Embeddings backfill is best-effort.** If no embedding provider is
+  reachable — `NVIDIA_NIM_API_KEY` / `AI_INTEGRATIONS_OPENAI_*` unset and no
+  local Hailo/Ollama backend — the pipeline falls back to lexical TF-IDF
+  cosine (`memory-semantic.ts`). Recall quality is reduced but the system
+  never crashes.
+- **NIM sessions skip model download/warmup.** Hosted-inference sessions come
+  up in seconds (container → NIM proxy → ready). The legacy `download_*` /
+  `vllm_warmup_failed` causes only apply to old GPU-based sessions.
+- **Theia and tools stay reachable on `provisioning_failed`.** This is
+  intentional where possible — operators can SSH in and inspect
+  `/var/log/onstart.log` without destroying the instance.
+- **Callback failure phases are advisory.** Failure callbacks set
+  `status="error"` but do not auto-destroy the workspace machine. The user
+  (or operator) decides whether to retry.
 
 ---
 
-## 9. Explicitly out of scope for Task #233
+## 9. Explicitly out of scope
 
-The following launch-related items were **not** part of Task #233's
-assigned scope and are tracked separately. Listing them here so an
-operator reading this doc knows where the seams are:
+The following launch-related items are **not** part of the current release
+scope and are tracked separately. Listing them here so an operator reading
+this doc knows where the seams are:
 
 - **End-to-end ambient safety enforcement UX.** The token-gating and
-  fail-fast posture for `/api/safety/*` and `/api/ambient/*` is
-  covered (section 2), but the in-flow approval prompt that blocks
-  agent execution mid-run is owned by the ambient runner work.
-- **Passive recall affecting live agent replies with per-session
-  toggle.** This task fixed the boot-time backfill bug and added a
-  fresh-DB regression test; the runtime "recall actually changes the
-  next reply" loop and the per-session on/off control sit in the
-  memory/recall product surface and have their own tests.
-- **Dashboard E2E test harness** (relaunch flow, command palette +
-  shortcuts, recall round-trip). `artifacts/dashboard` has no test
-  runner configured and wiring one in is a separate task — see the
-  follow-up. Today the boot-phase classifier is exercised through
-  the API server's structured-failure tests instead.
-- **Pre-existing typecheck debt** in `dashboard` and `api-server`
-  (missing `queryKey`, stale `Session.ownerToken`/`swarmWorkerCap`,
-  `benchmarkCallout` not in profiles schema, `claimPurgeLogsTable`
-  not re-exported from `@workspace/db`). None touch the files
-  changed by #233 and are tracked as a separate cleanup follow-up.
+  fail-fast posture for `/api/safety/*` and `/api/ambient/*` is covered
+  (section 2), but the in-flow approval prompt that blocks agent execution
+  mid-run is owned by the ambient runner work.
+- **Passive recall affecting live agent replies with per-session toggle.**
+  The boot-time backfill bug is fixed and regression-tested; the runtime
+  "recall actually changes the next reply" loop and the per-session on/off
+  control sit in the memory/recall product surface and have their own tests.
+- **Dashboard E2E harness** (relaunch flow, command palette + shortcuts,
+  recall round-trip). The dashboard now has a vitest runner and unit-level
+  coverage for boot-phase classification and repo-grouped-list rendering, but
+  full browser E2E flows are still a follow-up.

@@ -74,6 +74,7 @@ export function registerModelCatalogTools(server: McpServer): void {
               num_gpus: ps.num_gpus as number,
               min_gpu_ram: ps.min_gpu_ram as number,
               disk_space: profile.diskSizeGb,
+              modelSizeGb: profile.quantSizeGb ?? undefined,
             };
           }
         }

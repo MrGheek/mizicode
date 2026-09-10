@@ -94,6 +94,7 @@ export function registerSessionTools(server: McpServer, getApiKey: () => ApiKeyR
           num_gpus: searchParams["num_gpus"] as number | undefined,
           min_gpu_ram: searchParams["min_gpu_ram"] as number | undefined,
           disk_space: profile.diskSizeGb,
+          modelSizeGb: profile.quantSizeGb ?? undefined,
           limit: 1,
         });
         if (!offers || offers.length === 0) {

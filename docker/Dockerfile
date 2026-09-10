@@ -74,7 +74,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # litellm proxy: accepts OpenAI /v1/chat/completions and Anthropic /v1/messages,
 # forwarding to the NIM API. Lets claw-code use Anthropic format seamlessly.
 # Install base first (heavy) then [proxy] extras (lighter) so layer caching is efficient.
-RUN pip3 install --no-cache-dir fastapi uvicorn httpx litellm
+RUN pip3 install --no-cache-dir fastapi uvicorn httpx litellm hf_transfer
 RUN pip3 install --no-cache-dir 'litellm[proxy]'
 
 # Node.js 20 + pnpm (claw-runner.js, claw-bridge.mjs, bolt.diy dev server)
@@ -88,8 +88,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
 # Theia IDE (pre-built, downloaded from GH Actions artifact)
 # Built by .github/workflows/build-theia.yml.
 # THEIA_ARTIFACT_URL should point to a GitHub release or actions artifact URL.
-# Example: https://github.com/gheeklabs/mizi/releases/download/theia/latest.tar.gz
-ARG THEIA_ARTIFACT_URL=https://github.com/gheeklabs/mizi/releases/download/theia/latest.tar.gz
+# Example: https://github.com/MrGheek/mizicode/releases/download/theia/mizi-theia.tar.gz
+ARG THEIA_ARTIFACT_URL=https://github.com/MrGheek/mizicode/releases/download/theia/mizi-theia.tar.gz
 RUN curl -fsSL "${THEIA_ARTIFACT_URL}" -o /tmp/mizi-theia.tar.gz && \
     mkdir -p /opt/mizi-theia && \
     tar xzf /tmp/mizi-theia.tar.gz -C /opt/mizi-theia/ && \

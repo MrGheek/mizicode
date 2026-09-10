@@ -274,14 +274,14 @@ SHAs were obtained directly from the GitHub release pages for each action. Depen
 **Verifying an attestation:**
 
 ```bash
-gh attestation verify oci://docker.io/gheeklabs/coding-env:latest \
+gh attestation verify oci://docker.io/gheeklabs/mizi-gpu:latest \
   --owner gheeklabs
 ```
 
 Expected output:
 
 ```
-Loaded digest sha256:<digest> for oci://docker.io/gheeklabs/coding-env:latest
+Loaded digest sha256:<digest> for oci://docker.io/gheeklabs/mizi-gpu:latest
 Successfully verified 1 attestation(s).
 
 The following attestations matched the predicate type "https://slsa.dev/provenance/v1":

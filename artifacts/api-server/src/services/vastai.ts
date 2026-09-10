@@ -104,16 +104,75 @@ export interface VastSearchParams {
   limit?: number;
   type?: string;
   extra?: Record<string, unknown>;
+  /**
+   * Model size in GB (decimal). When set, offers are re-ranked by effective
+   * boot cost — `dph_total × download_hours` — instead of price alone, so a
+   * slightly pricier host with 10× the download bandwidth wins for large
+   * models. Effective cost is monotonically `dph_total × sizeGb / inet_down`.
+   */
+  modelSizeGb?: number;
+  /**
+   * Cap on inet_down treated as usable (Mbps). Guards against offers whose
+   * advertised bandwidth is unreachable in practice; defaults to none.
+   */
+  maxInetDownMbps?: number;
+}
+
+/**
+ * Parse Vast.ai's inet_down/inet_up field into Mbps. The API returns a
+ * numeric Mbps value or a string like "10240 Mbps" / "10 Gbps".
+ */
+export function parseBandwidthMbps(value: unknown): number {
+  if (typeof value === "number") return value > 0 ? value : 0;
+  if (typeof value === "string") {
+    const m = value.trim().match(/^([\d.]+)\s*(Mbps|Gbps|gbps|mbps|Gbit|Mbit)?$/i);
+    if (!m) return 0;
+    const n = parseFloat(m[1]);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    const unit = (m[2] || "mbps").toLowerCase();
+    return unit.startsWith("g") ? n * 1000 : n;
+  }
+  return 0;
+}
+
+/**
+ * Estimated hours to download `sizeGb` at `inetDownMbps`, or Infinity when
+ * the bandwidth is unknown/unusable.
+ */
+export function estimateDownloadHours(sizeGb: number, inetDownMbps: number): number {
+  if (!sizeGb || sizeGb <= 0) return 0;
+  if (inetDownMbps <= 0) return Number.POSITIVE_INFINITY;
+  return (sizeGb * 8000) / inetDownMbps / 3600;
+}
+
+/**
+ * Effective boot cost = hourly rate × download hours. A host with unknown
+ * bandwidth is treated as infinitely expensive to boot (we refuse to guess),
+ * so it sinks below hosts whose download time we can estimate.
+ */
+export function effectiveBootCost(offer: Pick<VastOffer, "dph_total" | "inet_down">, sizeGb: number): number {
+  const mbps = parseBandwidthMbps(offer.inet_down);
+  if (mbps <= 0) return Number.POSITIVE_INFINITY;
+  const hours = estimateDownloadHours(sizeGb, mbps);
+  const dph = typeof offer.dph_total === "number" ? offer.dph_total : 0;
+  return dph * hours;
 }
 
 export async function searchOffers(params: VastSearchParams) {
+  // When ranking by effective boot cost we need a wider candidate pool than the
+  // final limit, because Vast returns them sorted by dph_total (price alone).
+  const requestedLimit = params.limit || 20;
+  const fetchLimit = params.modelSizeGb && params.modelSizeGb > 0
+    ? Math.min(Math.max(requestedLimit * 10, 100), 500)
+    : requestedLimit;
+
   const query: Record<string, unknown> = {
     verified: { eq: true },
     rentable: { eq: true },
     rented: { eq: false },
     type: params.type || "ask",
     order: [[params.order || "dph_total", "asc"]],
-    limit: params.limit || 20,
+    limit: fetchLimit,
   };
 
   if (params.gpu_name) {
@@ -137,7 +196,27 @@ export async function searchOffers(params: VastSearchParams) {
     body: JSON.stringify(query),
   });
 
-  return data.offers || [];
+  const offers = data.offers || [];
+
+  // Re-rank by effective boot cost (rate × download time) when a model size is
+  // supplied. Bandwidth above maxInetDownMbps is clamped so unrealistic
+  // advertised speeds can't dominate the ranking.
+  if (params.modelSizeGb && params.modelSizeGb > 0 && offers.length > 1) {
+    const clamp = params.maxInetDownMbps && params.maxInetDownMbps > 0
+      ? params.maxInetDownMbps
+      : Number.POSITIVE_INFINITY;
+    const ranked = offers
+      .map((o) => {
+        const mbps = Math.min(parseBandwidthMbps(o.inet_down), clamp);
+        const cost = effectiveBootCost({ dph_total: o.dph_total, inet_down: mbps }, params.modelSizeGb!);
+        return { o, cost };
+      })
+      .sort((a, b) => (a.cost === b.cost ? 0 : a.cost - b.cost))
+      .map(({ o }) => o);
+    return ranked.slice(0, requestedLimit);
+  }
+
+  return offers;
 }
 
 export interface VastCreateInstanceParams {

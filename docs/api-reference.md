@@ -1,78 +1,91 @@
 # API Reference
 
-Authentication flows, request/response examples, and error codes for the MIZI API.
+Authentication flows, the full route catalog, MCP surface, and error semantics for the MIZI API server.
 
-Base URL: `https://<your-domain>` (dev: `http://localhost:8080`)
+Base URL: `https://<api-domain>/api` (dev: `http://localhost:8080/api`).
+All JSON. Errors are `{ "error": "...", "code": "..." }` (404s use `code: "NOT_FOUND"`).
 
 ---
 
 ## Authentication
 
-MIZI uses four auth mechanisms depending on the endpoint:
+MIZI uses four credential tiers. Resolution order is fixed.
 
-### 1. No auth (dashboard / public)
+### 1. No auth (dev mode)
 
-Most GET endpoints are unauthenticated (dev mode) or require no auth for basic reads:
-- `GET /sessions` — list sessions
-- `GET /profiles` — list GPU profiles
-- `GET /skills` — list skills
+When `MIZI_MEM_TOKEN` is **not set** and `NODE_ENV !== "production"`, endpoints without a
+Bearer header pass through open. This is the local-development posture only.
 
-In production, these may be behind a dashboard auth layer. In dev mode (no `MIZI_MEM_TOKEN` set), all endpoints are open.
+### 2. MIZI_MEM_TOKEN (operator / internal)
 
-### 2. MIZI_MEM_TOKEN (internal / operator)
-
-Required for:
-- Session status callbacks (`POST /sessions/:id/status`)
-- Claw Runner callbacks (`POST /sessions/:id/plan-push`, `POST /sessions/:id/swarm-push`)
-- Runtime telemetry (`POST /sessions/:id/token-usage`, `POST /sessions/:id/routing-stats`)
-- Operator key management (`POST /auth/keys`, `GET /auth/keys`, `DELETE /auth/keys/:id`)
-- Admin endpoints (`POST /admin/sweep-claims`)
+The operator token (`openssl rand -hex 32`). Passed as `Authorization: Bearer <token>`.
 
 ```
-Authorization: Bearer mizi_mem_abc123def456... (64 hex chars)
+Authorization: Bearer 9f2c4b7a...e6d1
 ```
 
-### 3. Agent auth scopes (per-endpoint)
+It bypasses all scope checks and is required (in production) for:
 
-Agent API keys are created via `POST /auth/keys` (requires operator token) and carry scopes:
+- Key management: `POST|GET /auth/keys`, `DELETE /auth/keys/:id`
+- GitHub OAuth status/disconnect: `GET|DELETE /auth/github`, `GET /auth/github/status`, `GET /auth/github/repos`
+- Ambient + safety: `/ambient/*`, `/safety/*`
+- Internal callbacks and telemetry: `POST /sessions/:id/status`, `POST /sessions/:id/plan-push`,
+  `POST /sessions/:id/swarm-push`, `POST /sessions/:id/token-usage`, `POST /sessions/:id/routing-stats`
+- MCP transport: `/api/mcp` (any valid operator or API key)
 
-| Scope | Access | Example endpoints |
-|-------|--------|-------------------|
-| `coordination:read` | Read lane/claim/handoff state | `GET /sessions/:id/lanes` |
-| `coordination:write` | Create/release claims, handoffs | `POST /sessions/:id/lanes/:laneId/claim` |
-| `sessions:read` | Read session state | `GET /sessions/:id/lanes/:laneId/prompt-snapshot` |
-| `sessions:write` | Create sessions | `POST /sessions` |
+### 3. Agent API keys (scoped, M2M)
 
-Keys can have multiple scopes:
+Created via `POST /auth/keys` with `MIZI_MEM_TOKEN`. Plaintext is returned once. Format:
+`mizi_<64 hex>`. Stored as a SHA-256 hash. Keys carry scopes:
+
+| Scope | Access |
+|-------|--------|
+| `sessions:read` | Read session state, files, resources, memory, tools, repo graph |
+| `sessions:write` | Create sessions, orchestrate, provision resources, schema templates |
+| `coordination:read` | Read lanes, claims, conflicts, heavy jobs, bridge status, coordination stream |
+| `coordination:write` | Create/release claims, handoffs, heavy jobs, lane CRUD, bridge exec |
+
+A key may hold multiple scopes. Scope enforcement is additive: an endpoint requiring
+`coordination:read` is rejected with `403` unless the key carries that scope.
+
+### 4. Session owner token / raw bearer
+
+Session-scoped endpoints accept the session `ownerToken` (returned by `POST /sessions`) as a
+Bearer token. The auth middleware stores unknown bearer values in `req.rawBearer`; handlers
+compare it against `session.ownerToken` before acting.
+
+### Auth resolution order (per request)
+
+1. Dev bypass (no token configured, no bearer, not production) → open.
+2. `MIZI_MEM_TOKEN` match → operator pass-through.
+3. Valid API key with required scopes → `req.apiKey` populated.
+4. Unknown bearer → stored in `req.rawBearer` (handler-level ownership check).
+5. Missing bearer on a strict route → `401 { error: "Missing Bearer token" }`.
+
+### MCP discovery manifest
+
+`GET /.well-known/mcp` (no `/api` prefix) returns the MCP discovery document:
+
 ```json
 {
-  "scopes": ["coordination:read", "coordination:write", "sessions:read"]
+  "schema_version": "2025-03-26",
+  "name": "mizi",
+  "mcp_url": "/api/mcp",
+  "auth": { "type": "bearer", "hint": "Pass your MIZI API key as 'Authorization: Bearer <key>'" },
+  "privilege_tiers": {
+    "Read": "Safe, no side effects (list, get, search, status).",
+    "Write": "Creates or modifies resources.",
+    "Admin": "High-impact or irreversible actions — requires an API key with the `admin` scope."
+  }
 }
 ```
-
-### 4. Session owner token / member password
-
-Required for sensitive session operations:
-- `POST /sessions/:id/swarm/abort` — Bearer owner token
-- `GET /sessions/:id/swarm-stream?token=` — owner token or member password in query param
-- `PATCH /sessions/:id/phase` — Bearer owner token
-- `PATCH /sessions/:id/model` — Bearer owner token
-- `PUT /sessions/:id/files/content` — Bearer owner token
-
-Auth resolution order:
-1. Check `Authorization: Bearer <token>` against `MIZI_MEM_TOKEN` (internal bypass)
-2. Check against agent API keys (scoped auth)
-3. For session-specific endpoints: check against `ownerToken` or member passwords
 
 ---
 
 ## Error responses
 
-All errors follow this shape:
 ```json
-{
-  "error": "Human-readable description of the problem"
-}
+{ "error": "Human-readable description", "code": "NOT_FOUND" }
 ```
 
 ### Common status codes
@@ -80,672 +93,490 @@ All errors follow this shape:
 | Code | Meaning | When it occurs |
 |------|---------|----------------|
 | 200 | OK | Successful GET/PUT/PATCH |
-| 201 | Created | Successful POST (resource created) |
+| 201 | Created | Resource created (`POST /sessions`, `POST /auth/keys`, claims, handoffs, jobs) |
 | 204 | No Content | Successful DELETE |
-| 400 | Bad Request | Missing required field, invalid value, already-expired expiry |
-| 401 | Unauthorized | Missing or invalid Authorization header |
-| 403 | Forbidden | Valid key but insufficient scope, read-only key on write endpoint |
-| 404 | Not Found | Session/lane/claim/handoff ID doesn't exist |
-| 409 | Conflict | Duplicate resource, lane busy, claim blocked by conflict |
-| 413 | Payload Too Large | Upload exceeds size limit (default 200 MB) |
+| 400 | Bad Request | Missing/invalid field, invalid expiresAt, invalid ID |
+| 401 | Unauthorized | Missing/invalid Bearer token, revoked or expired API key |
+| 403 | Forbidden | Valid key, insufficient scope; plan ownership mismatch |
+| 404 | Not Found | Unknown ID (`code: "NOT_FOUND"`) |
+| 409 | Conflict | Duplicate resource, lane busy with another exec, already-revoked key |
+| 503 | Service Unavailable | Bridge not connected; NIM provider key not configured; key management unconfigured in prod |
 | 500 | Internal Server Error | Unexpected server failure |
-| 502 | Bad Gateway | External API (Vast.ai, GitHub, NIM) returned error |
-| 503 | Service Unavailable | Bridge not connected, dependency unavailable |
-| 504 | Gateway Timeout | Bridge exec timed out |
 
 ---
 
-## Session lifecycle
+## Route catalog
 
-### Create a session
+All paths below are relative to `/api`. `cloud` = cloud distribution only (removed from local
+builds by esbuild); `local` = local distribution only.
 
-```http
-POST /sessions
-Content-Type: application/json
+### Health
 
-{
-  "intentText": "Build user authentication system",
-  "profileId": 42,
-  "repoUrl": "https://github.com/org/repo.git",
-  "teamMembers": [
-    { "role": "backend" },
-    { "role": "frontend" }
-  ]
-}
-```
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/health` | Memory DB (SQLite) probe + Postgres `SELECT 1`. `200 ok` / `503 degraded` |
+| GET | `/healthz` | Production secret completeness (`FLY_API_TOKEN`, `FLY_WORKSPACE_APP_NAME`) + DB. Fly.io http_check target |
+| GET | `/admin/status` | Memory disk health + claim sweeper health |
 
-**Response** `201 Created`:
-```json
-{
-  "sessionId": 1,
-  "status": "pending",
-  "statusMessage": null,
-  "ownerToken": "ses_abc123...",
-  "profileId": 42,
-  "teamMembers": [
-    { "id": "backend", "laneId": 1 },
-    { "id": "frontend", "laneId": 2 }
-  ],
-  "createdAt": "2026-06-24T12:00:00Z"
-}
-```
+### Auth
 
-**Error responses:**
-```json
-// 400 — Missing required field
-{ "error": "intentText is required" }
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| POST | `/auth/keys` | MIZI_MEM_TOKEN | Create key. Body: `{ label, scopes?, expiresAt? }` → `201 { id, key, ... }` |
+| GET | `/auth/keys` | MIZI_MEM_TOKEN | List active keys (values never returned) |
+| DELETE | `/auth/keys/:id` | MIZI_MEM_TOKEN | Revoke key |
+| GET | `/auth/github` | none (browser) | Initiate OAuth flow, redirects to GitHub |
+| GET | `/auth/github/callback` | none (browser) | OAuth callback, redirects to dashboard with `?github_oauth=connected|denied|error` |
+| GET | `/auth/github/status` | MIZI_MEM_TOKEN | `{ connected, login, avatarUrl }` |
+| GET | `/auth/github/repos` | MIZI_MEM_TOKEN | Browse/search operator repos (`?q=`, `?page=`) |
+| DELETE | `/auth/github` | MIZI_MEM_TOKEN | Disconnect, delete stored token |
 
-// 400 — Invalid profile
-{ "error": "GPU profile not found: 42" }
+### Sessions — CRUD & lifecycle (`sessions.ts` + `sessions-crud.ts`)
 
-// 500 — Provisioning failure
-{ "error": "Provisioning failed: No suitable GPU offer found" }
-```
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| POST | `/sessions` | permitBearer optional | Create session. Cloud: `profileId` or `nimModelId` + provider key required. Local: `localModelId` or default `qwen2.5-coder:7b`. Returns `ownerToken` (cloud) |
+| GET | `/sessions` | permitBearer optional | List sessions |
+| GET | `/sessions/active` | — | Active sessions |
+| GET | `/sessions/:sessionId` | — | Session detail |
+| GET | `/sessions/:sessionId/clone` | — | Clone session |
+| PATCH | `/sessions/:sessionId` | — | Update session (name, etc.) |
+| DELETE | `/sessions/:sessionId` | — | Stop session + cleanup workspace machine |
+| POST | `/sessions/:sessionId/status` | MIZI_MEM_TOKEN | Workspace callback — status transitions |
+| POST | `/sessions/:sessionId/refresh` | — | Re-sync state from provider |
+| GET | `/sessions/:id/workspace/...` | — | Reverse proxy to the session's Theia workspace via Fly machine (requires `FLY_WORKSPACE_APP_NAME`) |
 
-### Check session status (polling)
+### Sessions — memory
 
-```http
-GET /sessions/1
-```
+| Method | Path |
+|--------|------|
+| GET | `/sessions/:sessionId/memory/observations` |
+| GET | `/sessions/:sessionId/memory/sessions` |
+| GET | `/sessions/:sessionId/memory/stream` (SSE) |
+| GET | `/sessions/:sessionId/memory/search` |
+| PATCH | `/sessions/:sessionId/memory/sessions/:memSessionId/summary` |
 
-**Response** `200 OK`:
-```json
-{
-  "id": 1,
-  "status": "ready",
-  "statusMessage": "Theia IDE is ready",
-  "intentText": "Build authentication system",
-  "theiaUrl": "http://workspace:3000",
-  "totalCost": 0.42,
-  "createdAt": "2026-06-24T12:00:00Z",
-  "readyAt": "2026-06-24T12:03:15Z"
-}
-```
+### Sessions — messages, telemetry
 
-Status transitions: `pending → provisioning → downloading → starting → ready | error`
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/sessions/:sessionId/messages` | Push a message |
+| GET | `/sessions/:sessionId/messages` | List messages |
+| POST | `/sessions/:sessionId/messages/:msgId/injected` | Mark injected |
+| GET | `/sessions/:sessionId/messages/stream` (SSE) | Stream |
+| POST | `/sessions/:sessionId/telemetry/soft-interrupts` | Soft interrupt telemetry |
+| POST | `/sessions/:sessionId/routing-stats` | Push routing stats |
+| GET | `/sessions/:sessionId/routing-stats` | Read routing stats |
+| POST | `/sessions/:sessionId/token-usage` | Push token usage |
 
-### Session status callback (instance → API)
+### Sessions — model & phase
 
-```http
-POST /sessions/1/status
-Authorization: Bearer mizi_mem_abc123... (64 hex chars)
-Content-Type: application/json
+| Method | Path | Notes |
+|--------|------|-------|
+| PATCH | `/sessions/:sessionId/phase` | Change phase |
+| PATCH | `/sessions/:sessionId/model` | Change model (owner token) |
+| GET | `/sessions/:sessionId/model-history` | Model switch history |
+| GET | `/sessions/:sessionId/swarm-model` | Swarm's active model |
+| PATCH | `/sessions/:sessionId/routing-mode` | `auto` \| `pinned` |
+| GET | `/sessions/:sessionId/inference-ranking` | Inference ranking |
 
-{
-  "status": "llm_ready",
-  "theiaUrl": "http://10.0.0.1:3000",
-  "phase": "starting_llm"
-}
-```
+### Sessions — files & resources
 
-**Possible status values** (sent by workspace instance):
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| GET | `/sessions/:sessionId/resources` | sessions:read (optional) | Provisioned resource list |
+| GET | `/sessions/:sessionId/resources/:resourceId/connection-string` | sessions:read | Reveal connection string |
+| POST | `/sessions/:sessionId/provision` | sessions:write (optional) | Provision a resource |
+| GET | `/sessions/:id/files` | — | File tree |
+| GET | `/sessions/:id/files/content` | — | Read file |
+| PUT | `/sessions/:id/files/content` | — | Write file (owner token) |
+| GET | `/sessions/:id/files/tree` | — | Full file tree |
 
-| Status | Meaning |
-|--------|---------|
-| `services_ready` | Container services initialized |
-| `downloading` | Downloading model weights |
-| `starting_llm` | Starting language model |
-| `skills_compiling` | Compiling skill bundles |
-| `skills_ready` | Skills compiled |
-| `llm_ready` | LLM is ready |
-| `theia_ready` | Theia IDE is ready — open your coding environment |
-| `provisioning_failed` | Provisioning error |
-| `download_failed` | Model download failed |
-| `download_stalled` | Download stalled (no progress) |
-| `vllm_warmup_failed` | vLLM warmup failed |
-| `disk_full` | Workspace disk full |
+### Sessions — plan & swarm
 
-### Delete session
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/sessions/:sessionId/plan-push` | Claw Runner → API (MIZI_MEM_TOKEN) |
+| POST | `/sessions/:sessionId/plan-status` | Alias of plan-push |
+| GET | `/sessions/:sessionId/plan-status` | Poll plan status |
+| GET | `/sessions/:sessionId/plan-stream` (SSE) | Live plan updates |
+| POST | `/sessions/:sessionId/swarm-push` | Claw Runner → API (MIZI_MEM_TOKEN) |
+| POST | `/sessions/:sessionId/swarm-status` | Alias of swarm-push |
+| GET | `/sessions/:sessionId/swarm-status` | Poll swarm status |
+| GET | `/sessions/:sessionId/swarm-stream` (SSE) | Live swarm updates (`?token=` owner token) |
+| POST | `/sessions/:sessionId/swarm/abort` | Abort swarm (owner token) |
+| GET | `/sessions/swarm-status-batch` | Batch status for multiple sessions |
 
-```http
-DELETE /sessions/1
-```
+### Coordination (lanes, claims, conflicts, heavy jobs)
 
-**Response** `200 OK`:
-```json
-{
-  "sessionId": 1,
-  "status": "stopped",
-  "totalCost": 1.23
-}
-```
+All endpoints under `/sessions/:id/...` require `coordination:read` or `coordination:write`.
+
+| Method | Path | Scope |
+|--------|------|-------|
+| GET | `/sessions/:id/lanes` | coordination:read |
+| GET | `/sessions/:id/lanes/:laneId` | coordination:read |
+| POST | `/sessions/:id/lanes` | coordination:write |
+| PUT | `/sessions/:id/lanes/:laneId` | coordination:write |
+| DELETE | `/sessions/:id/lanes/:laneId` | coordination:write |
+| POST | `/sessions/:id/lanes/:laneId/claim` | coordination:write |
+| DELETE | `/sessions/:id/lanes/:laneId/claim/:claimId` | coordination:write |
+| POST | `/sessions/:id/lanes/:laneId/handoff` | coordination:write |
+| PATCH | `/sessions/:id/lanes/:laneId/handoff/:handoffId` | coordination:write |
+| GET | `/sessions/:id/coordination` | coordination:read |
+| GET | `/sessions/:id/coordination/stream` (SSE) | coordination:read |
+| GET | `/sessions/:id/conflicts` | coordination:read |
+| GET | `/sessions/:id/lanes/:laneId/timeline` | coordination:read |
+| POST | `/sessions/:id/heavy-jobs` | coordination:write |
+| GET | `/sessions/:id/heavy-jobs` | coordination:read |
+| GET | `/sessions/:id/heavy-jobs/next` | coordination:read |
+| PATCH | `/sessions/:id/heavy-jobs/:jobId` | coordination:write |
+| GET | `/admin/claim-cleanup-stats` | coordination:read |
+| POST | `/admin/sweep-claims` | coordination:write |
+| POST | `/coordination/lane-types` | coordination:write |
+| PATCH | `/coordination/lane-types/:id` | coordination:write |
+| DELETE | `/coordination/lane-types/:id` | coordination:write |
+| GET | `/coordination/lane-types` | — |
+
+Claim conflict severity is computed from overlap + blast-radius scores — see
+[`coordination.md`](coordination.md) for thresholds.
+
+### Plan board
+
+| Method | Path | Auth |
+|--------|------|------|
+| POST | `/plan/generate` | optionalAgentAuth |
+| POST | `/plan/reassess` | requireAgentAuth |
+| GET | `/plans` | optionalAgentAuth |
+| GET | `/plans/:planId` | optionalAgentAuth |
+| POST | `/plan/:planId/approve` | optionalAgentAuth |
+| GET | `/plans/:planId/export` | optionalAgentAuth |
+| POST | `/plans/:planId/tasks` | optionalAgentAuth |
+| PATCH | `/plans/:planId/tasks/:taskId` | optionalAgentAuth |
+| DELETE | `/plans/:planId` | optionalAgentAuth |
+| DELETE | `/plans/:planId/tasks/:taskId` | optionalAgentAuth |
+| GET | `/sessions/:sessionId/plan` | optionalAgentAuth |
+| POST | `/sessions/:sessionId/decompose` | requireAgentAuth |
+| PATCH | `/sessions/:sessionId/plan` | requireAgentAuth |
+
+### Memory core (`/mem/*`)
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/mem/init` | Initialize a user memory |
+| POST | `/mem/observation` | Record an observation |
+| POST | `/mem/summarize` | Summarize a memory session |
+| GET | `/mem/context/:userId` | Build context index for a user |
+| GET | `/mem/observations` | List observations |
+| GET | `/mem/sessions` | List memory sessions |
+| GET | `/mem/observations/stream` (SSE) | Stream observations |
+| GET | `/mem/index` | System memory shortlist |
+| GET | `/mem/search` | Semantic search (`?q=`, `?userId=`, `?scope=`, `?limit=`) |
+| GET | `/mem/item/:itemId` | Get item |
+| POST | `/mem/item` | Save item |
+| POST | `/mem/injected` | Mark item injected |
+| POST | `/mem/symbol-stale` | Mark symbol stale |
+| GET | `/mem/conflicts` | Memory conflicts |
+| PATCH | `/mem/conflicts/:groupId` | Resolve a conflict group |
+| GET | `/mem/stale` | Stale items |
+| GET | `/mem/promotions` | Promotion candidates |
+| PATCH | `/mem/item/:itemId/promote` | Promote item |
+| GET | `/mem/stats` | Memory stats |
+| GET | `/mem/items` | List items |
+| POST | `/mem/turn` | Record a turn |
+| GET | `/mem/recall` | Passive recall |
+| POST | `/mem/recall/inject` | Inject recall |
+| POST | `/mem/edges` | Create memory edge |
+| GET | `/mem/edges/:itemId` | Edges for item |
+| POST | `/mem/passive-config` | Update passive recall config |
+| GET | `/mem/recall/audit` | Recall audit |
+| GET | `/mem/recall/metrics` | Recall metrics |
+
+Additional memory routes on `/memory/*`: `search`, `sessions`, `governance-stats`, `backup`,
+`review-count`, `sweep`, `stale`, `recall-audit`, `recall-metrics`, `passive-config` (GET/POST),
+`governance/conflicts`, `stale/bulk` (PATCH), `restore`.
+
+### Skills & skill bundles
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/skills` | List skills |
+| GET | `/skills/sources` | Skill sources |
+| POST | `/skills/discover` | Run discovery |
+| GET | `/skills/leaderboard` | Leaderboard |
+| GET | `/skills/feedback-scores` | Feedback scores |
+| GET | `/skills/evals` | Eval runs |
+| POST | `/skills/evals/run` | Start an eval |
+| POST | `/skills/evals/process-next` | Process next eval |
+| GET | `/skills/evals/scoring-presets` | Scoring presets |
+| GET | `/skills/evals/:runId` | Eval detail |
+| POST | `/skills/evals/:runId/variants` | Add variant |
+| POST | `/skills/evals/:runId/finalize` | Finalize eval |
+| PATCH | `/skills/evals/:runId/status` | Update eval status |
+| GET | `/skills/:skillId` | Skill detail |
+| GET | `/skills/:skillId/feedback` | Feedback list |
+| POST | `/skills/:skillId/feedback` | Submit feedback |
+| DELETE | `/skills/:skillId/feedback` | Clear feedback |
+| DELETE | `/skills/:skillId/feedback/:feedbackId` | Delete one feedback |
+| GET | `/skills/:skillId/performance` | Performance |
+| POST | `/skills/:skillId/review` | Review skill |
+| POST | `/skills/:skillId/enable` | Enable |
+| POST | `/skills/:skillId/disable` | Disable |
+| GET | `/skills/:skillId/design-categories` | Design categories |
+| POST | `/skills/:skillId/design-categories` | Assign categories |
+| DELETE | `/skills/:skillId/design-categories/:category` | Remove category |
+| POST | `/skills/import` | Import skill |
+| POST | `/skills/compile-preview` | Compile preview |
+| POST | `/admin/seed-ecc` | Seed ECC skills |
+| GET | `/skill-bundles/leaderboard` | Bundle leaderboard |
+| GET | `/skill-bundles` | List bundles |
+| POST | `/skill-bundles/seed` | Seed bundles |
+| POST | `/skill-bundles/compile` | Compile a bundle |
+| GET | `/skill-bundles/:bundleId` | Bundle detail |
+| GET | `/skill-bundles/:bundleId/performance` | Bundle performance |
+| POST | `/skill-bundles/:bundleId/activate` | Activate bundle |
+| POST | `/skill-bundles` | Create bundle |
+| PUT | `/skill-bundles/:bundleId` | Update bundle |
+| GET | `/sessions/:sessionId/skills` | Session skills |
+| POST | `/sessions/:sessionId/skills/feedback` | Session skill feedback |
+| POST | `/sessions/:sessionId/skills/complete-feedback` | Complete feedback cycle |
+
+### Repo graph & intelligence
+
+Per-session repo router mounted at `/sessions/:sessionId/repo`; standalone graph at `/repo`;
+batch status at `/sessions/repo`.
+
+| Method | Path (per-session) | Notes |
+|--------|------|-------|
+| POST | `/index` | Trigger/await repo indexing |
+| GET | `/fingerprint` | Repo fingerprint |
+| GET | `/summary` | Repo summary (languages, frameworks) |
+| GET | `/search` | Symbol search |
+| GET | `/blast-radius` | Blast-radius analysis |
+| GET | `/symbol` | Symbol detail |
+| GET | `/jobs/pending` | Pending indexing jobs |
+| GET | `/jobs/:jobId` | Job status |
+| POST | `/sync` | Sync repo graph |
+
+### Tools (agent research)
+
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| POST | `/sessions/:id/tools/web-search` | sessions:read | Brave/Serper search (503 if neither key set) |
+| POST | `/sessions/:id/tools/fetch-url` | sessions:read | SSRF-protected fetch |
+| POST | `/sessions/:id/tools/screenshot-url` | sessions:read | Playwright screenshot |
+| GET | `/sessions/:id/tools/status` | sessions:read | Tool status |
+| POST | `/sessions/:id/tools/...` | sessions:read | Other tool calls |
+
+### Snapshot & rollback
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/sessions/:id/snapshots` | List snapshots (`?laneId=`) |
+| POST | `/sessions/:id/snapshots/:sha/rollback` | Rollback (`?laneId=`) |
+
+### Bridge (remote CLI)
+
+| Method | Path | Scope | Notes |
+|--------|------|-------|-------|
+| GET | `/sessions/:id/lanes/:laneId/bridge/status` | coordination:read | Bridge readiness |
+| POST | `/sessions/:id/lanes/:laneId/exec` | coordination:write | Send prompt, relay claw output over SSE |
+| WS | `/bridge/:sessionId/:laneId` | MIZI_MEM_TOKEN | Persistent bridge socket (Bearer or `?token=`). Wired in `src/index.ts`, not Express. |
+
+Bridge exec: creates a git snapshot checkpoint first (fail-open, 8s bound), enforces a
+single-active-exec lock per lane (`409` if busy), and streams frames until a `done`/`error`
+frame. `503` if no bridge is connected.
+
+### Ambient & safety (operator-only)
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/ambient/status` | Ambient cycle status |
+| GET | `/ambient/config` | Ambient config |
+| PUT | `/ambient/config` | Update ambient config |
+| POST | `/ambient/kill` | Kill switch |
+| POST | `/ambient/cycle` | Trigger a cycle |
+| GET | `/ambient/timeline` | Cycle history |
+| GET | `/ambient/metrics` | Ambient metrics |
+| GET | `/safety/pending` | Pending approvals |
+| GET | `/safety/actions` | Safety actions |
+| GET | `/safety/actions/:id` | Action detail |
+| POST | `/safety/actions/:id/approve` | Approve |
+| POST | `/safety/actions/:id/deny` | Deny |
+| GET | `/safety/transcript` | Safety transcript |
+| GET | `/safety/policies` | Policy bundles |
+| PUT | `/safety/policies/:bundle` | Update a policy bundle |
+
+Also `/dashboard/ambient/*` and `/dashboard/safety/*` (dashboard proxy variants).
+
+### NIM model catalog
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/nim/catalog` | Model catalog snapshot |
+| GET | `/nim/providers` | Provider config (nvidia/vultr/together/deepinfra) |
+| GET | `/nim/health` | NIM connectivity health |
+| POST | `/nim/catalog/sync` | Sync catalog |
+
+### Profiles, offers, templates (cloud)
+
+| Method | Path |
+|--------|------|
+| GET | `/profiles` |
+| GET | `/profiles/:profileId` |
+| GET | `/offers` (cloud) |
+| GET | `/templates` (cloud) |
+| GET | `/templates/:templateId` (cloud) |
+| POST | `/templates` (cloud) |
+| PUT | `/templates/:templateId` (cloud) |
+| DELETE | `/templates/:templateId` (cloud) |
+
+### Orchestrate (cloud)
+
+| Method | Path | Scope |
+|--------|------|-------|
+| POST | `/sessions/orchestrate` | sessions:write |
+| GET | `/sessions/:sessionId/orchestration-status` | sessions:write |
+
+### Design intelligence
+
+| Method | Path |
+|--------|------|
+| GET | `/design-intelligence` |
+| GET | `/design-intelligence/categories` |
+| GET | `/design-intelligence/skill-map` |
+| GET | `/design-intelligence/sources` |
+| GET | `/design-intelligence/lane-config` |
+| POST | `/design-intelligence/sync` |
+| GET | `/design-intelligence/bookmarks` |
+| POST | `/design-intelligence/bookmarks/:entryId` |
+| DELETE | `/design-intelligence/bookmarks/:entryId` |
+| GET | `/design-intelligence/bookmarks/ids` |
+
+### Intent, palette, schema templates, shortcuts
+
+| Method | Path |
+|--------|------|
+| POST | `/palette/intent` |
+| POST | `/intent/classify` |
+| GET | `/schema-templates` (sessions:read optional) |
+| GET | `/schema-templates/:id` (sessions:read optional) |
+| POST | `/schema-templates` (sessions:write) |
+| DELETE | `/schema-templates/:id` (sessions:write) |
+| GET | `/session/id` |
+| GET | `/session/health` |
+| PATCH | `/session/model` |
+| PATCH | `/session/routing-mode` |
+| PATCH | `/session/phase` |
+| GET | `/session/inference-ranking` |
+| GET | `/session/swarm-model` |
+| GET | `/session/model-history` |
+
+### Dashboard, scheduler, metrics
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/dashboard/summary` | Dashboard aggregate |
+| GET | `/scheduler` | Cron job list |
+| PUT | `/scheduler` | Update cron schedule |
+| GET | `/metrics` | Prometheus-format GPU/token/latency/cost metrics |
+
+### Local distribution (`/local/*`, local only)
+
+| Method | Path |
+|--------|------|
+| GET | `/local/hardware` |
+| POST | `/local/hardware/refresh` |
+| GET | `/local/recommendations` |
+| GET | `/local/ollama/health` |
+| GET | `/local/ollama/models` |
+| POST | `/local/ollama/pull` |
+| DELETE | `/local/ollama/models/:modelId` |
+| POST | `/local/ollama/chat` |
+| GET | `/local/hf-models` |
+| POST | `/local/hf-pull` |
+| GET | `/local/acp/health` |
+| POST | `/local/acp/run` |
+| GET | `/local/acp/status/:taskId` |
+| POST | `/local/acp/abort/:taskId` |
+| GET | `/local/templates` |
+| GET | `/local/chat` |
 
 ---
 
-## Coordination
+## MCP server
 
-### List lanes
+Mounted at `/api/mcp` behind `requireAgentAuth([])` (any operator token or API key). Streaming
+SSE/HTTP transport via `@modelcontextprotocol/sdk`. Discovery at `/.well-known/mcp`.
 
-```http
-GET /sessions/1/lanes
-Authorization: Bearer mizi_key_abc... (coordination:read scope)
-```
+### Tools (53)
 
-**Response** `200 OK`:
-```json
-{
-  "lanes": [
-    {
-      "id": 1,
-      "laneType": "backend",
-      "memberIdentifier": "agent-1",
-      "status": "active",
-      "taskMode": "build",
-      "tokenMode": "full",
-      "currentTask": "Implement auth middleware",
-      "claims": [
-        {
-          "id": 10,
-          "pathOrSymbol": "src/middleware/auth.ts",
-          "claimStrength": "owner",
-          "symbols": ["authenticateUser", "validateToken"],
-          "active": true,
-          "expiresAt": "2026-06-24T13:00:00Z"
-        }
-      ],
-      "policy": {
-        "maxConcurrentClaims": 30,
-        "heavyJobSlots": 3
-      }
-    }
-  ]
-}
-```
+| Group | Tools |
+|-------|-------|
+| Sessions | `list_sessions`, `get_session`, `create_session`, `delete_session`, `classify_intent` |
+| Memory | `memory_index`, `memory_search`, `memory_get_item`, `memory_init`, `memory_save_item` |
+| Skills | `list_skills`, `get_skills_leaderboard`, `run_skill_eval` |
+| Lanes | `list_lanes`, `create_lane`, `claim_resource`, `lane_handoff` |
+| Bridge | `bridge_status`, `bridge_exec` |
+| Safety | `list_pending_approvals`, `get_safety_transcript`, `get_safety_policies`, `approve_action`, `deny_action`, `update_safety_policy` |
+| Planning | `list_plans`, `get_plan`, `get_session_plan`, `generate_plan`, `update_task`, `add_task`, `reassess_plan` |
+| Repo | `get_repo_status`, `repo_search`, `get_blast_radius`, `trigger_repo_index` |
+| Agent tools | `web_search`, `fetch_url`, `screenshot_url` |
+| Design | `query_design_patterns`, `list_design_categories`, `get_design_lane_config` |
+| Model catalog | `list_nim_catalog`, `get_nim_health`, `list_gpu_offers`, `list_profiles` |
+| Ambient | `get_ambient_status`, `get_ambient_timeline`, `get_ambient_metrics`, `get_ambient_config`, `update_ambient_config`, `trigger_ambient_cycle` |
+| Dashboard | `get_dashboard_summary` |
 
-### Claim a file
+### Resources
 
-```http
-POST /sessions/1/lanes/1/claim
-Authorization: Bearer mizi_key_abc... (coordination:write scope)
-Content-Type: application/json
-
-{
-  "resourcePath": "src/services/auth.ts",
-  "strength": 0.8,
-  "ttlSeconds": 1800,
-  "symbols": ["authenticateUser", "validateToken"]
-}
-```
-
-**Response** `201 Created`:
-```json
-{
-  "claim": {
-    "id": 10,
-    "laneId": 1,
-    "pathOrSymbol": "src/services/auth.ts",
-    "claimStrength": "owner",
-    "active": true,
-    "expiresAt": "2026-06-24T12:30:00Z"
-  },
-  "overlaps": [
-    {
-      "laneId": 2,
-      "overlapScore": 0.1,
-      "blastRadiusScore": 0.0,
-      "effectiveScore": 0.1,
-      "severity": "no_conflict"
-    }
-  ],
-  "overallRecommendation": "no_conflict"
-}
-```
-
-**Severity thresholds:**
-
-| Score | Severity | Effect |
-|-------|----------|--------|
-| >= 0.75 | `block` | Claim rejected with 409 Conflict |
-| >= 0.4 | `warn` | Claim created, client warned |
-| < 0.4 | `no_conflict` | Normal |
-
-**Error responses:**
-```json
-// 400 — Invalid strength
-{ "error": "strength must be between 0 and 1" }
-
-// 404 — Lane not found
-{ "error": "Lane not found" }
-
-// 409 — Blocked by conflict
-{ "error": "Claim blocked: overlap score 0.85 with lane 2 (backend)" }
-```
-
-### Release a claim
-
-```http
-DELETE /sessions/1/lanes/1/claim/10
-Authorization: Bearer mizi_key_abc... (coordination:write scope)
-```
-
-**Response** `204 No Content`
-
-### Claim heartbeat (extend)
-
-```http
-DELETE /sessions/1/lanes/1/claim/10?heartbeat=true&ttlSeconds=3600
-Authorization: Bearer mizi_key_abc... (coordination:write scope)
-```
-
-Refreshes `lastHeartbeatAt` and `expiresAt`. Must be called every 4-5 minutes to prevent expiry.
-
-### Check conflicts
-
-```http
-GET /sessions/1/conflicts
-Authorization: Bearer mizi_key_abc... (coordination:read scope)
-```
-
-**Response** `200 OK`:
-```json
-{
-  "conflicts": [
-    {
-      "laneA": { "id": 1, "memberIdentifier": "agent-1" },
-      "laneB": { "id": 2, "memberIdentifier": "agent-2" },
-      "overlapScore": 0.6,
-      "blastRadiusOverlap": 0.3,
-      "effectiveScore": 0.6,
-      "severity": "warn",
-      "message": "Lane 'backend' overlaps with 'frontend' on src/services/auth.ts"
-    }
-  ],
-  "totalConflicts": 1,
-  "highSeverity": 0
-}
-```
-
-### Send a handoff
-
-```http
-POST /sessions/1/lanes/1/handoff
-Authorization: Bearer mizi_key_abc... (coordination:write scope)
-Content-Type: application/json
-
-{
-  "handoffType": "needs_review",
-  "notes": "Refactored auth middleware, please check src/middleware/auth.ts",
-  "watchFiles": ["src/middleware/auth.ts"]
-}
-```
-
-**Response** `201 Created`:
-```json
-{
-  "handoff": {
-    "id": 5,
-    "handoffType": "needs_review",
-    "status": "pending",
-    "notes": "Refactored auth middleware...",
-    "createdAt": "2026-06-24T12:05:00Z"
-  }
-}
-```
-
-Handoff types: `blocked`, `needs_review`, `safe_to_merge`, `watch_files`, `related_lane`
-
-### Enqueue a heavy job
-
-```http
-POST /sessions/1/heavy-jobs
-Authorization: Bearer mizi_key_abc... (coordination:write scope)
-Content-Type: application/json
-
-{
-  "jobClass": "indexing",
-  "priority": 8,
-  "payload": {
-    "paths": ["src/middleware/", "src/services/"]
-  }
-}
-```
-
-**Response** `201 Created`:
-```json
-{
-  "job": {
-    "id": 100,
-    "jobClass": "indexing",
-    "status": "queued",
-    "priority": 8,
-    "effectiveScore": 1.6,
-    "createdAt": "2026-06-24T12:06:30Z"
-  }
-}
-```
-
-### Get next job (peek)
-
-```http
-GET /sessions/1/heavy-jobs/next
-Authorization: Bearer mizi_key_abc... (coordination:read scope)
-```
-
-**Response** `200 OK`:
-```json
-{
-  "id": 100,
-  "jobClass": "blast_radius",
-  "priority": 5,
-  "effectiveScore": 2.3,
-  "status": "queued"
-}
-```
-
-Returns the queued job with the highest `effectiveScore`.
-
-### Update job status
-
-```http
-PATCH /sessions/1/heavy-jobs/100
-Authorization: Bearer mizi_key_abc... (coordination:write scope)
-Content-Type: application/json
-
-{
-  "status": "running"
-}
-```
-
-Valid status transitions: `queued → running → completed | failed` or `queued → deferred → queued`
+| URI | Contents |
+|-----|----------|
+| `mizi://sessions` | Live session list (max 100) |
+| `mizi://memory/index` | System-level memory shortlist + disk health |
+| `mizi://plans` | 50 most recent project plans |
+| `mizi://nim/catalog` | NIM model catalog snapshot |
+| `mizi://profiles` | Hardware profile list |
+| `mizi://safety/pending` | Pending approval queue |
+| `mizi://ambient/status` | Ambient cycle state |
 
 ---
 
-## Orchestration
+## WebSocket bridge
 
-### One-call team provisioning
-
-```http
-POST /sessions/orchestrate
-Content-Type: application/json
-
-{
-  "goal": "Build user authentication for a web app",
-  "profileId": 42,
-  "teamMembers": [
-    { "role": "backend", "claimPaths": ["src/services/auth.ts", "src/middleware/auth.ts"] },
-    { "role": "frontend", "claimPaths": ["src/components/Login.tsx"] }
-  ],
-  "repoUrl": "https://github.com/org/repo.git"
-}
+```
+GET /api/bridge/:sessionId/:laneId
+Authorization: Bearer <MIZI_MEM_TOKEN>
 ```
 
-**Response** `202 Accepted`:
-```json
-{
-  "sessionId": 1,
-  "status": "provisioning",
-  "estimatedWaitSeconds": 120
-}
-```
-
-Poll progress:
-```http
-GET /sessions/1/orchestration-status
-```
-
-```json
-{
-  "status": "provisioning",
-  "bootPhase": "launching_instance",
-  "bootMessage": "Provisioning GPU instance on Vast.ai",
-  "allLanesConnected": false,
-  "lanes": [
-    { "id": 1, "role": "backend", "connected": false },
-    { "id": 2, "role": "frontend", "connected": false }
-  ]
-}
-```
-
-This is **idempotent**: calling twice with the same `(goal, profileId, teamMembers)` returns the same session. Key is SHA-256 hashed with a 5-minute TTL.
+Auth: `MIZI_MEM_TOKEN` in `Authorization` header or `?token=` query param (query form is used
+by `onstart.sh`). After connecting the server sends a `{ "type": "registered", sessionId, laneId }`
+welcome frame, then pings every 30s. Message frames relay between caller and claw process:
+`{ type: "exec", prompt }` and streamed `{ type, ... }` frames until `done`/`error`.
 
 ---
 
-## Swarm
+## Session status transitions
 
-### Push swarm status (Claw Runner → API)
+Workspace instances report status via `POST /sessions/:id/status`:
 
-```http
-POST /sessions/1/swarm-push
-Authorization: Bearer mizi_mem_abc123...
-Content-Type: application/json
+`pending → provisioning → ready | error`
 
-{
-  "phase": "active",
-  "orchestratorReason": "Files are independent — no shared dependencies",
-  "totalWorkers": 4,
-  "doneCount": 2,
-  "failedCount": 0,
-  "workers": [
-    { "id": "worker-1", "status": "done" },
-    { "id": "worker-2", "status": "running" },
-    { "id": "worker-3", "status": "running" },
-    { "id": "worker-4", "status": "pending" }
-  ],
-  "timestamp": "2026-06-24T12:10:00Z"
-}
-```
-
-### Poll swarm status (dashboard → API)
-
-```http
-GET /sessions/1/swarm-status
-```
-
-**Response** `200 OK`:
-```json
-{
-  "availability": "live",
-  "snapshot": {
-    "phase": "active",
-    "totalWorkers": 4,
-    "doneCount": 2,
-    "failedCount": 0,
-    "workers": [
-      { "id": "worker-1", "status": "done" },
-      { "id": "worker-2", "status": "running" }
-    ]
-  }
-}
-```
-
-Availability states:
-- `live` — in-memory cache is fresh (< 5 min old)
-- `stale` — snapshot exists but cache is old
-- `starting` — session not ready yet
-- `unavailable` — no snapshot ever received
-
-### SSE live stream
-
-```http
-GET /sessions/1/swarm-stream?token=ses_abc123...
-```
-
-Server-Sent Events format:
-```
-event: swarm_update
-data: {"phase":"active","doneCount":2,"totalWorkers":4}
-
-event: swarm_update
-data: {"phase":"synthesising","doneCount":4,"totalWorkers":4}
-```
-
-Keep-alive pings every 20 seconds:
-```
-: keep-alive
-```
-
-### Emergency abort
-
-```http
-POST /sessions/1/swarm/abort
-Authorization: Bearer ses_abc123... (owner token)
-```
-
-**Response** `200 OK`:
-```json
-{
-  "ok": true,
-  "message": "Abort signal sent to workers"
-}
-```
+Additional internal statuses reported by the instance lifecycle include `downloading`,
+`starting_llm`, `skills_compiling`, `skills_ready`, `llm_ready`, `theia_ready`, and failure
+statuses (`provisioning_failed`, `download_failed`, `download_stalled`, `vllm_warmup_failed`,
+`disk_full`). On the current CPU-only/NIM architecture no model weights are downloaded in the
+workspace, so the download-family statuses are vestigial.
 
 ---
 
-## Health checks
+## Configuration
 
-```http
-GET /api/health
-```
+Production-required secrets (see `fly.toml` and `.env.example`):
 
-**Response** `200 OK`:
-```json
-{
-  "status": "ok",
-  "memDb": "ok",
-  "dbPath": "/data/memory/memory.db"
-}
-```
-
-```http
-GET /api/healthz
-```
-
-Fly.io load-balancer health check. Returns 503 if production secrets are missing.
-
-```http
-GET /api/admin/status
-```
-
-**Response** `200 OK`:
-```json
-{
-  "status": "ok",
-  "sweeper": {
-    "lastRunAt": "2026-06-24T12:15:00Z",
-    "lastCleared": 3,
-    "totalCleared": 142,
-    "intervalMs": 30000
-  },
-  "memoryDisk": {
-    "status": "ok",
-    "freeBytes": 1073741824
-  }
-}
-```
-
----
-
-## Agent memory operations
-
-### Record an observation
-
-```http
-POST /sessions/1/memory/observe
-Authorization: Bearer mizi_key_abc... (sessions:read scope)
-Content-Type: application/json
-
-{
-  "type": "tool_call",
-  "content": "Refactored auth middleware to use JWT",
-  "scope": "session_core",
-  "category": "code_change",
-  "tags": ["auth", "middleware"]
-}
-```
-
-### Search relevant memories
-
-```http
-GET /sessions/1/memory/relevant?q=JWT%20authentication&limit=5
-Authorization: Bearer mizi_key_abc... (sessions:read scope)
-```
-
-**Response** `200 OK`:
-```json
-{
-  "results": [
-    {
-      "id": 42,
-      "content": "Refactored auth middleware to use JWT",
-      "category": "code_change",
-      "similarity": 0.89,
-      "createdAt": "2026-06-24T12:00:00Z"
-    }
-  ]
-}
-```
-
----
-
-## Agent tool calls
-
-### Web search
-
-```http
-POST /sessions/1/tools/web-search
-Authorization: Bearer mizi_key_abc... (sessions:read scope)
-Content-Type: application/json
-
-{
-  "query": "latest TypeScript best practices 2026"
-}
-```
-
-### Fetch URL
-
-```http
-POST /sessions/1/tools/fetch-url
-Authorization: Bearer mizi_key_abc... (sessions:read scope)
-Content-Type: application/json
-
-{
-  "url": "https://www.typescriptlang.org/docs/"
-}
-```
-
-Protected against SSRF via `SsrfBlockedError`. Respects `robots.txt`.
-
----
-
-## Snapshot and rollback
-
-### List snapshots
-
-```http
-GET /sessions/1/snapshots?laneId=1
-```
-
-**Response** `200 OK`:
-```json
-{
-  "snapshots": [
-    { "sha": "abc123def456", "tool": "refactor", "timestamp": "2026-06-24T12:30:00Z" },
-    { "sha": "def789abc012", "tool": "fix_bug", "timestamp": "2026-06-24T11:00:00Z" }
-  ],
-  "laneBusy": false
-}
-```
-
-```json
-// 409 — Lane busy with another exec
-{ "error": "Lane 1 is busy. Cannot list snapshots during active exec" }
-```
-
-### Rollback
-
-```http
-POST /sessions/1/snapshots/abc123def456/rollback?laneId=1
-```
-
-**Response** `200 OK`:
-```json
-{
-  "sha": "abc123def456",
-  "success": true
-}
-```
-
-```json
-// 504 — Bridge exec timeout
-{ "error": "Rollback command timed out after 15000ms" }
-```
+- `DATABASE_URL` — PostgreSQL (auto-set by `fly postgres attach`)
+- `MIZI_ENCRYPTION_KEY` — 64 hex chars (`openssl rand -hex 32`); encrypts stored connection strings
+- `MIZI_MEM_TOKEN` — 64 hex chars (`openssl rand -hex 32`); operator token + OAuth token key derivation
+- `FLY_API_TOKEN` — deploy token (`fly tokens create deploy -x 999999h`)
+- `FLY_WORKSPACE_APP_NAME` — workspace Fly app (default `mizi-workspace`)
+- `NVIDIA_NIM_API_KEY` (or another provider key) — model inference
+- `GITHUB_OAUTH_CLIENT_ID`/`GITHUB_OAUTH_CLIENT_SECRET` + `DASHBOARD_URL` — optional GitHub connect
+- `VASTAI_API_KEY` — optional Vast.ai provider

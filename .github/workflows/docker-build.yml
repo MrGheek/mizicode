@@ -67,24 +67,26 @@ jobs:
         id: push
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v6.2.0
         with:
-          context: docker/
-          file: docker/Dockerfile
+          context: .
+          file: docker/Dockerfile.gpu
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
-            gheeklabs/coding-env:cuda12.4
-            gheeklabs/coding-env:a100
-            gheeklabs/coding-env:h100
-            gheeklabs/coding-env:latest
+            gheeklabs/mizi-gpu:cuda12.4
+            gheeklabs/mizi-gpu:a100
+            gheeklabs/mizi-gpu:h100
+            gheeklabs/mizi-gpu:latest
           build-args: |
             CUDA_VERSION=12.4.1
-          cache-from: ${{ github.event_name != 'pull_request' && 'type=registry,ref=gheeklabs/coding-env:buildcache' || '' }}
-          cache-to: ${{ github.event_name != 'pull_request' && 'type=registry,ref=gheeklabs/coding-env:buildcache,mode=max' || '' }}
+            LLAMA_CUDA_ARCH=all-major
+            VLLM_VERSION=0.19.0
+          cache-from: ${{ github.event_name != 'pull_request' && 'type=registry,ref=gheeklabs/mizi-gpu:buildcache' || '' }}
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=registry,ref=gheeklabs/mizi-gpu:buildcache,mode=max' || '' }}
 
       - name: Attest build provenance
         if: github.event_name != 'pull_request'
         uses: actions/attest-build-provenance@1c608d11d69870c2092266b3f9a6f3abbf17002c # v2.2.0
         with:
-          subject-name: index.docker.io/gheeklabs/coding-env
+          subject-name: index.docker.io/gheeklabs/mizi-gpu
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 

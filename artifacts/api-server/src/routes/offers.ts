@@ -7,10 +7,13 @@ const router = Router();
 
 router.get("/offers", async (req, res) => {
   try {
-    const { profileId, gpuName, numGpus, maxPrice, limit } = req.query;
+    const { profileId, gpuName, numGpus, maxPrice, limit, modelSizeGb } = req.query;
 
     let searchParams: vastai.VastSearchParams = {
       limit: limit ? parseInt(limit as string) : 20,
+      // When a model size is known (e.g. a pasted HF URL), rank offers by
+      // effective boot cost = hourly rate × download time, not price alone.
+      modelSizeGb: modelSizeGb ? parseFloat(modelSizeGb as string) : undefined,
     };
 
     if (profileId) {
@@ -23,6 +26,8 @@ router.get("/offers", async (req, res) => {
           num_gpus: profileSearch.num_gpus as number,
           min_gpu_ram: profileSearch.min_gpu_ram as number,
           disk_space: profile.diskSizeGb,
+          // Fall back to the profile's model size when the caller didn't pass one.
+          modelSizeGb: searchParams.modelSizeGb ?? profile.quantSizeGb ?? undefined,
         };
       }
     }

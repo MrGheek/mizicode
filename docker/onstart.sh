@@ -835,11 +835,28 @@ NIMPROXY_EOF
             du -sb "$1" 2>/dev/null | awk '{print $1+0}' || echo 0
         }
 
+        # ── Accelerated download: hf_transfer (Rust) parallelises a single model
+        # file across many connections — typically 5-10× faster than the plain
+        # Python downloader. Falls back to the built-in downloader when the
+        # package is missing (e.g. older images), so this is safe on any image.
+        # HF_HUB_ENABLE_HF_TRANSFER is ignored unless hf_transfer is importable.
+        _DL_EXTRA_ARGS=""
+        if python3 -c "import hf_transfer" > /dev/null 2>&1; then
+            log "hf_transfer available — using accelerated parallel download"
+            HF_HUB_ENABLE_HF_TRANSFER=1
+            # hf_transfer drops individual file progress events; the stall
+            # watchdog below still works because it polls on-disk bytes.
+            _DL_EXTRA_ARGS="--max-workers 16"
+        else
+            log "hf_transfer not installed — using default huggingface-cli downloader"
+        fi
+
         # Launch download in background; capture pid for the watchdog.
         retry huggingface-cli download "$MODEL_REPO" \
             --local-dir "$MODEL_DIR" \
             --local-dir-use-symlinks False \
-            --resume-download &
+            --resume-download \
+            ${_DL_EXTRA_ARGS:-} &
         _DL_PID=$!
 
         _last_size=$(_measure_dir_bytes "$MODEL_DIR")
