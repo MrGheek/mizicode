@@ -16,12 +16,12 @@ export async function loadCodeContextBlock(
   sessionId: number | null | undefined,
   query: string,
   budgetTokens = 600,
-  opts: { taskText?: string } = {},
+  opts: { taskText?: string; seedFiles?: string[] } = {},
 ): Promise<string> {
   if (!sessionId) return "";
   try {
     const { codeContextForTask } = await import("../routes/repo.js");
-    const ctx = await codeContextForTask(sessionId, query, { budgetTokens, taskText: opts.taskText });
+    const ctx = await codeContextForTask(sessionId, query, { budgetTokens, taskText: opts.taskText, seedFiles: opts.seedFiles });
     if (!ctx || ctx.signatures.length === 0) return "";
     return [
       ...ctx.signatures,

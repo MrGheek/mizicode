@@ -3,7 +3,7 @@ import { db, repoGraphJobsTable, sessionRepoContextTable, sessionsTable } from "
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { markSymbolsStaleForSession } from "../services/memory";
-import { pageRankFiles, fitToBudget, estimateTokens } from "../services/repo-rank";
+import { pageRankFiles, fitToBudget, estimateTokens, reserveWorkingSet } from "../services/repo-rank";
 import { taskRelativeRerank } from "../services/task-relative-rerank";
 
 export const batchRepoRouter = Router();
@@ -467,6 +467,10 @@ export interface CodeContextForTask {
   totalSymbolsIndexed: number;
   rankingSeedFiles: string[];
   query: string;
+  /** RFC 0004 — working-set symbols (task-touched files) always injected. */
+  workingSetFiles: string[];
+  /** Tokens reserved for the working set (never compressed away). */
+  workingSetTokens: number;
 }
 
 /**
@@ -495,6 +499,8 @@ export async function codeContextForTask(
     totalSymbolsIndexed: 0,
     rankingSeedFiles: [],
     query,
+    workingSetFiles: [],
+    workingSetTokens: 0,
   };
   if (!ctx) return empty;
 
@@ -550,7 +556,18 @@ export async function codeContextForTask(
     fittedCandidates = relativized.filter((r) => r.admitted).map((r) => r.item.orig);
   }
 
-  const fitted = fitToBudget(fittedCandidates, budgetTokens);
+  // RFC 0004 Phase 1 — guaranteed working-set injection. The task-touched
+  // files (seedFiles) are the prompt-side analogue of MoBA's "always attend to
+  // the current block": they are reserved a budget slice and injected first,
+  // in full, before any ranked symbol competes for the remaining budget. If the
+  // working set alone exceeds its reservation it is elided to signatures —
+  // never dropped entirely. The ranked fit then runs over the leftover budget.
+  const workingSetFiles = (opts.seedFiles?.filter(Boolean) ?? []).slice(0, 8);
+  const { fitted, workingSetTokens } = reserveWorkingSet(
+    fittedCandidates.map((c) => ({ ...c, path: c.item.path })),
+    workingSetFiles,
+    budgetTokens,
+  );
 
   const fileMap = new Map<string, string[]>();
   for (const { item } of fitted) {
@@ -571,6 +588,8 @@ export async function codeContextForTask(
     totalSymbolsIndexed: Array.isArray(ctx.symbolsJson) ? ctx.symbolsJson.length : 0,
     rankingSeedFiles: seedFiles,
     query,
+    workingSetFiles,
+    workingSetTokens,
   };
 }
 

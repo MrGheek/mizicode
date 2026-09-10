@@ -159,3 +159,40 @@ export function fitToBudget<T extends { text: string }>(
   }
   return ranked.slice(0, Math.max(best, 1));
 }
+
+/**
+ * RFC 0004 Phase 1 — guaranteed working-set injection.
+ *
+ * Splits a ranked, text-valued candidate list into a reserved working set
+ * (task-touched files) and the ranked remainder, then fits each to its own
+ * budget slice. The working set is always injected first, in full, before any
+ * ranked symbol competes for the remaining budget — the prompt-side analogue of
+ * MoBA's "always attend to the current block". If the working set alone exceeds
+ * its reservation it is elided to the best-fitting prefix (never dropped
+ * entirely). Returns the combined list (working set first) plus the reserved
+ * token count.
+ */
+export function reserveWorkingSet<T extends { text: string; path?: string }>(
+  ranked: T[],
+  workingSetFiles: string[],
+  budgetTokens: number,
+  reservedFraction = 0.35,
+): { fitted: T[]; workingSetTokens: number } {
+  const ws = new Set(workingSetFiles.filter(Boolean));
+  if (ws.size === 0) {
+    return { fitted: fitToBudget(ranked, budgetTokens), workingSetTokens: 0 };
+  }
+
+  const workingSetCandidates = ranked.filter((c) => ws.has(c.path ?? ""));
+  const rankedOnly = ranked.filter((c) => !ws.has(c.path ?? ""));
+
+  const reservedBudget = Math.floor(budgetTokens * reservedFraction);
+  const workingSetFitted = fitToBudget(workingSetCandidates, reservedBudget);
+  const workingSetTokens = workingSetFitted.reduce((s, f) => s + estimateTokens(f.text), 0);
+  const remainingBudget = Math.max(0, budgetTokens - workingSetTokens);
+
+  return {
+    fitted: [...workingSetFitted, ...fitToBudget(rankedOnly, remainingBudget)],
+    workingSetTokens,
+  };
+}
