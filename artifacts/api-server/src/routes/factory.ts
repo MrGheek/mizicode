@@ -17,6 +17,8 @@ import type { StationRole } from "@workspace/db";
 import type { Deliverable } from "../services/deliverable-contract";
 import { triggerPipeline, advancePipeline, latestPipelineSnapshot, type PipelineStageResult } from "../services/factory-pipeline";
 import { computeDashboard, snapshotMetrics, getMetricsHistory } from "../services/factory-telemetry";
+import { getFactoryResourcePool, resetFactoryResourcePool } from "../services/factory-resource-pool";
+import { runFactoryEval, simulateFactoryRun, type FactoryEvalScenario, type FactoryEvalConfig } from "../services/factory-eval";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -169,7 +171,7 @@ router.post("/factory/work-orders/:id/complete", requireAgentAuth(["coordination
   const id = parseInt(String(req.params["id"] ?? ""), 10);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "invalid work order id" }); return; }
   const status = (req.body as { status?: string }).status === "skipped" ? "skipped" : "done";
-  const order = await completeWorkOrder(createDbFactoryStore(), id, status);
+  const order = await completeWorkOrder(createDbFactoryStore(), id, status, getFactoryResourcePool());
   if (!order) { res.status(404).json({ error: "work order not found" }); return; }
   res.json({ workOrder: serializeWorkOrder(order) });
 });
@@ -178,7 +180,7 @@ router.post("/factory/work-orders/:id/rework", requireAgentAuth(["coordination:w
   const id = parseInt(String(req.params["id"] ?? ""), 10);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "invalid work order id" }); return; }
   const defectClass = (req.body as { defectClass?: string }).defectClass ?? "gate_failure";
-  const order = await rejectToRework(createDbFactoryStore(), id, defectClass);
+  const order = await rejectToRework(createDbFactoryStore(), id, defectClass, getFactoryResourcePool());
   if (!order) { res.status(404).json({ error: "work order not found" }); return; }
   res.json({ workOrder: serializeWorkOrder(order) });
 });
@@ -226,6 +228,7 @@ router.post("/factory/products/:id/dispatch", requireAgentAuth(["coordination:wr
   try {
     const result = await dispatchWorkOrders(createDbFactoryStore(), productId, {
       maxDispatch: typeof maxDispatch === "number" && maxDispatch > 0 ? maxDispatch : undefined,
+      pool: getFactoryResourcePool(),
     });
     res.json(result);
   } catch (err) {
@@ -275,7 +278,7 @@ router.post("/factory/work-orders/:id/deliver", requireAgentAuth(["coordination:
     verification: body.verification ?? [],
     worktreeClean: body.worktreeClean ?? true,
   };
-  const result = await submitDeliverable(store, deliverable, body.stationRole);
+  const result = await submitDeliverable(store, deliverable, body.stationRole, getFactoryResourcePool());
   res.json({ accepted: result.accepted, inspection: result.inspection, workOrder: result.workOrder });
 });
 
@@ -361,6 +364,48 @@ router.get("/factory/products/:id/metrics", requireAgentAuth(["coordination:read
   const limit = parseInt(String(req.query["limit"] ?? "50"), 10);
   const metrics = await getMetricsHistory(createDbFactoryStore(), productId, Math.min(Math.max(limit, 1), 1000));
   res.json({ productId, total: metrics.length, metrics });
+});
+
+// ── Resource pool + factory eval (Phase 4) ───────────────────────────────────
+
+router.get("/factory/resources", requireAgentAuth(["coordination:read"]), async (_req, res) => {
+  const pool = getFactoryResourcePool();
+  res.json({ status: pool.status(), config: pool.configSnapshot() });
+});
+
+router.post("/factory/resources/caps", requireAgentAuth(["coordination:write"]), async (req, res) => {
+  const { productId, cap, reset } = req.body as { productId?: number; cap?: number; reset?: boolean };
+  const pool = getFactoryResourcePool();
+  if (reset) {
+    const fresh = resetFactoryResourcePool();
+    res.json({ status: fresh.status(), config: fresh.configSnapshot() });
+    return;
+  }
+  if (!Number.isFinite(productId) || !Number.isFinite(cap) || (cap as number) <= 0) {
+    res.status(400).json({ error: "productId and cap (>0) are required" });
+    return;
+  }
+  pool.setProductCap(productId as number, cap as number);
+  res.json({ productId, status: pool.status(), config: pool.configSnapshot() });
+});
+
+router.post("/factory/evals/run", requireAgentAuth(["coordination:write"]), async (req, res) => {
+  const body = req.body as {
+    scenario: FactoryEvalScenario;
+    configA: FactoryEvalConfig;
+    configB: FactoryEvalConfig;
+  };
+  if (!body?.scenario?.tasks?.length || !body?.configA || !body?.configB) {
+    res.status(400).json({ error: "scenario.tasks, configA, and configB are required" });
+    return;
+  }
+  const report = await runFactoryEval({
+    scenario: body.scenario,
+    runner: simulateFactoryRun,
+    configA: body.configA,
+    configB: body.configB,
+  });
+  res.json(report);
 });
 
 export default router;

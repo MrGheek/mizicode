@@ -19,12 +19,15 @@
 import { logger } from "../lib/logger";
 import type { Product, WorkOrder, Station, WorkOrderStatus } from "@workspace/db";
 import type { FactoryStore } from "./factory";
+import type { ResourcePool, ResourceAllowance } from "./factory-resource-pool";
 
 export interface DispatchResult {
   dispatched: Array<{ workOrderId: number; stationId: number }>;
   held: Array<{ workOrderId: number; reason: string }>;
   productWip: { used: number; limit: number };
   stationWip: Array<{ stationId: number; used: number; limit: number }>;
+  /** Per-product resource allowance from the shared pool (Phase 4). */
+  resourceAllowance: ResourceAllowance | null;
 }
 
 const PRIORITY_ORDER: Record<string, number> = { high: 0, normal: 1, low: 2 };
@@ -112,11 +115,17 @@ export function readyWorkOrders(orders: WorkOrder[]): WorkOrder[] {
 export interface DispatchOptions {
   /** Cap on how many work orders to dispatch in one pass (default: no cap). */
   maxDispatch?: number;
+  /** Shared GPU pool for cross-product arbitration (Phase 4). */
+  pool?: ResourcePool | null;
 }
 
 /**
  * Dispatch ready work orders to stations, respecting product WIP and station
  * capacity. Returns what was dispatched and what was held (with reasons).
+ *
+ * Phase 4: when a pool is supplied, orders are additionally gated on the
+ * shared resource pool — a product may only run as many orders as its
+ * per-product cap allows, and the shared pool headroom is honored.
  */
 export async function dispatchWorkOrders(
   store: FactoryStore,
@@ -155,6 +164,9 @@ export async function dispatchWorkOrders(
 
   let budget = opts.maxDispatch ?? Number.POSITIVE_INFINITY;
   let remainingProductHeadroom = productHeadroom;
+  let resourceAllowance: ResourceAllowance | null = opts.pool
+    ? opts.pool.canReserve(productId, 1)
+    : null;
 
   for (const order of ready) {
     if (budget <= 0) {
@@ -163,6 +175,10 @@ export async function dispatchWorkOrders(
     }
     if (remainingProductHeadroom <= 0) {
       held.push({ workOrderId: order.id, reason: `product WIP saturated (${productUsed}/${productLimit})` });
+      continue;
+    }
+    if (opts.pool && resourceAllowance && !resourceAllowance.allowed) {
+      held.push({ workOrderId: order.id, reason: resourceAllowance.reason ?? "resource pool exhausted" });
       continue;
     }
 
@@ -182,6 +198,10 @@ export async function dispatchWorkOrders(
       assignedStationId: station.id,
       startedAt: new Date(),
     });
+    if (opts.pool) {
+      opts.pool.reserve(productId, order.id, 1);
+      resourceAllowance = opts.pool.canReserve(productId, 1);
+    }
     dispatched.push({ workOrderId: order.id, stationId: station.id });
     remainingProductHeadroom -= 1;
     budget -= 1;
@@ -197,20 +217,25 @@ export async function dispatchWorkOrders(
     held,
     productWip: { used: productUsed, limit: productLimit },
     stationWip,
+    resourceAllowance,
   };
 }
 
 /**
  * Mark a work order done (or skipped) and release its station slot. Returns
- * the updated order.
+ * the updated order. When a pool is supplied, its reservation is released.
  */
 export async function completeWorkOrder(
   store: FactoryStore,
   workOrderId: number,
   status: "done" | "skipped",
+  pool?: ResourcePool | null,
 ): Promise<WorkOrder | null> {
   const order = await store.getWorkOrder(workOrderId);
   if (!order) return null;
+  if (pool) {
+    pool.release(order.productId, workOrderId);
+  }
   return store.updateWorkOrder(workOrderId, {
     status,
     completedAt: new Date(),
@@ -220,15 +245,20 @@ export async function completeWorkOrder(
 /**
  * Reject a work order at a station gate → route to rework. Increments the
  * rework counter, records the defect class on the station, and returns the
- * order to queued so the next dispatch pass can re-assign it.
+ * order to queued so the next dispatch pass can re-assign it. The pool
+ * reservation is released so rework re-acquires on the next dispatch.
  */
 export async function rejectToRework(
   store: FactoryStore,
   workOrderId: number,
   defectClass: string,
+  pool?: ResourcePool | null,
 ): Promise<WorkOrder | null> {
   const order = await store.getWorkOrder(workOrderId);
   if (!order) return null;
+  if (pool) {
+    pool.release(order.productId, workOrderId);
+  }
   if (order.assignedStationId != null) {
     const station = await store.getStation(order.assignedStationId);
     if (station) {

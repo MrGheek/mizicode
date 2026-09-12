@@ -16,6 +16,7 @@ import type { FactoryStore } from "./factory";
 import { rejectToRework, effectiveStationWipLimit } from "./factory-dispatcher";
 import { inspectDeliverable, type Deliverable, type DeliverableInspection } from "./deliverable-contract";
 import { triggerPipeline } from "./factory-pipeline";
+import type { ResourcePool } from "./factory-resource-pool";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,7 @@ export async function submitDeliverable(
   store: FactoryStore,
   deliverable: Deliverable,
   stationRole: StationRole,
+  pool?: ResourcePool | null,
 ): Promise<ReworkResult> {
   // Check work order exists before inspection.
   const existing = await store.getWorkOrder(deliverable.workOrderId);
@@ -80,6 +82,9 @@ export async function submitDeliverable(
   const inspection = inspectDeliverable(deliverable, stationRole);
 
   if (inspection.conforms) {
+    if (pool) {
+      pool.release(existing.productId, deliverable.workOrderId);
+    }
     const order = await store.updateWorkOrder(deliverable.workOrderId, {
       status: "done",
       completedAt: new Date(),
@@ -98,7 +103,7 @@ export async function submitDeliverable(
 
   // ── Non-conforming → route to rework ──────────────────────────────────
   const defectClass = inspection.defectClass ?? "unknown";
-  const order = await rejectToRework(store, deliverable.workOrderId, defectClass);
+  const order = await rejectToRework(store, deliverable.workOrderId, defectClass, pool);
   if (!order) {
     logger.error({ workOrderId: deliverable.workOrderId }, "[rework-loop] work order not found during rework");
     return { accepted: false, inspection, workOrder: null };

@@ -8,6 +8,8 @@ import type { Deliverable } from "../../services/deliverable-contract.js";
 import type { StationRole } from "@workspace/db";
 import { triggerPipeline, advancePipeline, latestPipelineSnapshot } from "../../services/factory-pipeline.js";
 import { computeDashboard } from "../../services/factory-telemetry.js";
+import { getFactoryResourcePool, resetFactoryResourcePool } from "../../services/factory-resource-pool.js";
+import { runFactoryEval, simulateFactoryRun, type FactoryEvalScenario, type FactoryEvalConfig } from "../../services/factory-eval.js";
 
 /**
  * RFC 0003 Phase 1 — factory MCP tools: create_product, dispatch_work_order,
@@ -166,7 +168,7 @@ export function registerFactoryTools(server: McpServer): void {
         verification: args.verification ?? [],
         worktreeClean: args.worktreeClean ?? true,
       };
-      const result = await submitDeliverable(createDbFactoryStore(), deliverable, args.stationRole as StationRole);
+      const result = await submitDeliverable(createDbFactoryStore(), deliverable, args.stationRole as StationRole, getFactoryResourcePool());
       return { content: [{ type: "text", text: JSON.stringify({ accepted: result.accepted, inspection: result.inspection, workOrder: result.workOrder }, null, 2) }] };
     } catch (err) {
       return { content: [{ type: "text", text: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }, null, 2) }] };
@@ -236,6 +238,71 @@ export function registerFactoryTools(server: McpServer): void {
       const dashboard = await computeDashboard(store, productId);
       const pipeline = await latestPipelineSnapshot(store, productId);
       return { content: [{ type: "text", text: JSON.stringify({ dashboard, pipeline }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }, null, 2) }] };
+    }
+  });
+
+  server.registerTool("factory_pool_status", {
+    description: "[Read] Cross-product resource pool status: total/used/free units, per-product caps and reservations (RFC 0003 Phase 4).",
+    inputSchema: z.object({}),
+  }, async () => {
+    const pool = getFactoryResourcePool();
+    return { content: [{ type: "text", text: JSON.stringify({ status: pool.status(), config: pool.configSnapshot() }, null, 2) }] };
+  });
+
+  server.registerTool("factory_pool_set_cap", {
+    description: "[Write] Set a per-product GPU cap on the shared resource pool, or reset the pool to defaults (RFC 0003 Phase 4).",
+    inputSchema: z.object({
+      productId: z.number().int().optional().describe("Product to cap"),
+      cap: z.number().int().positive().optional().describe("Max concurrently reserved units for the product"),
+      reset: z.boolean().optional().describe("Reset the pool to default config"),
+    }),
+  }, async ({ productId, cap, reset }) => {
+    const pool = getFactoryResourcePool();
+    if (reset) {
+      const fresh = resetFactoryResourcePool();
+      return { content: [{ type: "text", text: JSON.stringify({ status: fresh.status(), config: fresh.configSnapshot() }, null, 2) }] };
+    }
+    if (productId == null || cap == null || cap <= 0) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: "productId and cap (>0) required" }, null, 2) }] };
+    }
+    pool.setProductCap(productId, cap);
+    return { content: [{ type: "text", text: JSON.stringify({ productId, status: pool.status(), config: pool.configSnapshot() }, null, 2) }] };
+  });
+
+  server.registerTool("run_factory_eval", {
+    description: "[Write] Run a factory-scale multi-product A/B eval: two factory configs race on throughput, cycle time, defect rate, and cost (RFC 0003 Phase 4).",
+    inputSchema: z.object({
+      scenario: z.object({
+        goal: z.string().describe("Shared goal across both arms"),
+        tasks: z.array(z.string()).describe("Work-order goals dispatched across stations"),
+        acceptanceCriteria: z.array(z.string()).optional().describe("Criteria for correctness judgment"),
+      }),
+      configA: z.object({
+        label: z.string().describe("Arm A label"),
+        stations: z.array(z.object({ role: z.enum(["build", "review", "debug", "refactor", "explore", "team"]), wipLimit: z.number().int().positive().optional(), capacity: z.number().int().positive().optional() })).describe("Station roles"),
+        wipLimit: z.number().int().positive().optional(),
+        pool: z.object({ totalUnits: z.number().int().positive().optional(), productCap: z.number().int().positive().optional() }).optional(),
+        defectRate: z.number().min(0).max(1).optional(),
+      }),
+      configB: z.object({
+        label: z.string().describe("Arm B label"),
+        stations: z.array(z.object({ role: z.enum(["build", "review", "debug", "refactor", "explore", "team"]), wipLimit: z.number().int().positive().optional(), capacity: z.number().int().positive().optional() })).describe("Station roles"),
+        wipLimit: z.number().int().positive().optional(),
+        pool: z.object({ totalUnits: z.number().int().positive().optional(), productCap: z.number().int().positive().optional() }).optional(),
+        defectRate: z.number().min(0).max(1).optional(),
+      }),
+    }),
+  }, async ({ scenario, configA, configB }) => {
+    try {
+      const report = await runFactoryEval({
+        scenario: scenario as FactoryEvalScenario,
+        runner: simulateFactoryRun,
+        configA: configA as FactoryEvalConfig,
+        configB: configB as FactoryEvalConfig,
+      });
+      return { content: [{ type: "text", text: JSON.stringify(report, null, 2) }] };
     } catch (err) {
       return { content: [{ type: "text", text: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }, null, 2) }] };
     }
