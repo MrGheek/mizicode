@@ -103,14 +103,14 @@ with no actionable hint.
 | `provisioning_failed`   | container       | top-level `ERR` trap during Phase 1 |
 | `disk_full`             | weights         | onstart log contains "no space left on device", OR `df -P` reports any of `/workspace`, `/var/log`, `/tmp` with ≤1MB available |
 | `skills_compile_failed` | skills          | `MIZI_ACTIVE_BUNDLE_B64` decode failure |
-| `download_failed`       | weights         | `huggingface-cli download` retry exhaustion (legacy GPU path) |
-| `download_stalled`      | weights         | size-progress watchdog: no new bytes in `MODEL_DIR` for `DOWNLOAD_STALL_TIMEOUT_SEC` (default 180s) (legacy GPU path) |
-| `vllm_warmup_failed`    | llm             | vLLM /health does not return within 600s (legacy GPU path) |
+| `download_failed`       | weights         | `huggingface-cli download` retry exhaustion (GPU-backed sessions) |
+| `download_stalled`      | weights         | size-progress watchdog: no new bytes in `MODEL_DIR` for `DOWNLOAD_STALL_TIMEOUT_SEC` (default 180s) (GPU-backed sessions) |
+| `vllm_warmup_failed`    | llm             | vLLM /health does not return within 600s (GPU-backed sessions) |
 
 > NIM (hosted-inference) sessions only reach `provisioning_failed`,
 > `skills_compile_failed`, and `disk_full` — there is no model download or
-> vLLM warmup. The `download_*` / `vllm_warmup_failed` causes remain in the
-> failure map for legacy GPU sessions.
+> vLLM warmup. The `download_*` / `vllm_warmup_failed` causes apply to
+> GPU-backed sessions (Vast.ai) that download weights and boot vLLM.
 
 The API server's `INSTANCE_STATUS_MAP` (`sessions-common.ts:88-102`) maps each
 cause to `status="error"` with a `boot_failure:<cause>` marker baked into

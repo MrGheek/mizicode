@@ -4,10 +4,11 @@
 
 MIZI is a full-stack platform for spinning up AI coding sessions. A session
 provisions a lightweight **CPU-only** workspace (Eclipse Theia IDE) on a Fly.io
-machine in the `mizi-workspace` app, and all model inference is routed to
-**hosted NVIDIA NIM** (or any OpenAI-compatible endpoint) through an in-container
-`nim-proxy.py`. There are no GPU machines, no vLLM/llama.cpp, and no local model
-downloads.
+machine in the `mizi-workspace` app. Inference is decoupled from the workspace
+and chosen per session at launch: **hosted NVIDIA NIM** (or any OpenAI-
+compatible endpoint) through an in-container `nim-proxy.py`, or self-hosted
+models on rented GPU instances (Vast.ai) via vLLM / llama-server. Hosted-mode
+sessions never provision a GPU and download no model weights.
 
 Built as a pnpm workspace monorepo using TypeScript. Two distributions are
 compiled from the same tree, gated by `MIZI_DISTRIBUTION`:
@@ -31,8 +32,9 @@ compiled from the same tree, gated by `MIZI_DISTRIBUTION`:
 - **Build**: esbuild (CJS bundle → `dist/index.mjs`)
 - **Frontend**: React 19 + Vite + Tailwind 4 + TanStack Query (dashboard)
 - **Workspace IDE**: Eclipse Theia (`docker/mizi-theia`, 27 MIZI extensions)
-- **Model inference**: hosted NVIDIA NIM via `nim-proxy.py` (port 8081), or any
-  OpenAI-compatible endpoint
+- **Model inference**: hosted NVIDIA NIM via `nim-proxy.py` (port 8081), any
+  OpenAI-compatible endpoint, or self-hosted on rented GPU instances (Vast.ai
+  via vLLM / llama-server)
 - **Workspace orchestration**: Fly Machines API (`mizi-workspace` app)
 
 ## Structure
@@ -119,7 +121,7 @@ the Fly Machines API — no GPU (`performance-1x`, 4096 MB RAM). Each machine ru
 | Eclipse Theia | 8080 | behind nginx basic auth |
 | nginx | 5181 | auth-gated proxy → claw-runner (5182) |
 | nginx (internal) | 8789 | no-auth proxy → Theia 8788; reachable only over Fly 6PN |
-| nim-proxy.py | 8081 | OpenAI-compatible pass-through → hosted NIM |
+| nim-proxy.py | 8081 | OpenAI-compatible pass-through → hosted NIM (vLLM backend when a self-hosted GPU profile is used) |
 | claw-runner | 5182 | Claw task runner (Node.js) |
 | claw-bridge | — | outbound WebSocket → API `/api/bridge/:sessionId/:laneId` |
 | bolt.diy | 5180 | coding UI |

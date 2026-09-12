@@ -3,9 +3,13 @@
 Failure scenarios, incident response, and recovery procedures for MIZI.
 
 MIZI provisions lightweight **CPU-only** workspace machines (Theia IDE) on
-demand and routes all model inference to **hosted NVIDIA NIM** (or any
-OpenAI-compatible provider) via an in-container proxy. There is **no GPU, no
-vLLM, and no local model download** in the current architecture.
+demand and decouples inference from the workspace. Sessions default to
+**hosted NVIDIA NIM** (or any OpenAI-compatible provider) via an in-container
+proxy — no GPU in the workspace. Sessions launched on a GPU profile instead
+provision a rented GPU instance (Vast.ai) running vLLM / llama-server with
+model weights downloaded at boot. This runbook focuses on the hosted NIM/Fly
+path; GPU-provider operations are covered in the GPU-hosted session notes
+below.
 
 ---
 

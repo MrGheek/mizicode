@@ -563,8 +563,10 @@ Workspace instances report status via `POST /sessions/:id/status`:
 Additional internal statuses reported by the instance lifecycle include `downloading`,
 `starting_llm`, `skills_compiling`, `skills_ready`, `llm_ready`, `theia_ready`, and failure
 statuses (`provisioning_failed`, `download_failed`, `download_stalled`, `vllm_warmup_failed`,
-`disk_full`). On the current CPU-only/NIM architecture no model weights are downloaded in the
-workspace, so the download-family statuses are vestigial.
+`disk_full`). On the hosted-inference/NIM path model weights are never downloaded
+in the workspace, so the download-family statuses are vestigial for those
+sessions; GPU-backed sessions (Vast.ai) do download weights at boot and report
+them through `downloading` / `download_failed`.
 
 ---
 

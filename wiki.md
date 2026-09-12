@@ -1,6 +1,6 @@
 # MIZI Code — Platform Wiki
 
-MIZI Code is an AI coding platform that provisions AI-powered development environments on demand. Each session is a CPU-only Fly.io workspace machine running a coding UI (Theia), a local agent (claw-runner), memory, coordination, and a skill overlay system — all accessible from the browser. All model inference is **hosted**: a small proxy inside the workspace forwards every request to NVIDIA NIM (or any OpenAI-compatible endpoint). No GPU, no vLLM, no llama.cpp, and no local model download.
+MIZI Code is an AI coding platform that provisions AI-powered development environments on demand. Each session is a CPU-only Fly.io workspace machine running a coding UI (Theia), a local agent (claw-runner), memory, coordination, and a skill overlay system — all accessible from the browser. Workspaces are CPU-only by default; inference is decoupled and chosen **per session** at launch: hosted NVIDIA NIM (or any OpenAI-compatible endpoint) via an in-container proxy, or self-hosted models on rented GPU instances (Vast.ai) via vLLM / llama.cpp. No GPU sits in the workspace itself, and hosted-mode sessions download no model weights.
 
 ---
 
@@ -47,7 +47,7 @@ Browser (dashboard / Theia)
                                     └── SSH                  :22
 ```
 
-Workspace machines are CPU-only. Inference never runs on them — `nim-proxy.py` forwards all model traffic to hosted NVIDIA NIM (or any OpenAI-compatible endpoint).
+Workspace machines are CPU-only. Inference never runs on them — `nim-proxy.py` forwards all model traffic to hosted NVIDIA NIM (or any OpenAI-compatible endpoint). GPU-backed sessions provision a separate rented GPU instance (Vast.ai) that runs vLLM / llama.cpp and is reached from the workspace.
 
 The monorepo is a pnpm workspace with TypeScript throughout:
 
@@ -67,13 +67,13 @@ The monorepo is a pnpm workspace with TypeScript throughout:
 
 ## 2. Session types
 
-Every session is a **NIM workspace**: a CPU-only Fly.io Machine in the `mizi-workspace` app that hosts the workspace tooling — Theia, claw-runner, claw-bridge, nim-proxy, bolt.diy, nginx, SSH. All inference is hosted: `nim-proxy.py` forwards requests to NVIDIA NIM or another OpenAI-compatible endpoint using the configured provider key.
+Every **hosted-inference session** is a **NIM workspace**: a CPU-only Fly.io Machine in the `mizi-workspace` app that hosts the workspace tooling — Theia, claw-runner, claw-bridge, nim-proxy, bolt.diy, nginx, SSH. All inference is hosted: `nim-proxy.py` forwards requests to NVIDIA NIM or another OpenAI-compatible endpoint using the configured provider key.
 
 **Lifecycle**: `pending → provisioning → starting → ready` (terminal `stopped` / `error`). The workspace posts `services_ready` / `skills_ready` / `llm_ready` callbacks; the API maps them to `starting` / `ready`.
 
 Because no model weights are downloaded, boot is fast (~2 minutes): the workspace is ready to serve tasks well before the first inference call.
 
-- Fixed estimated cost: ~$0.05–$0.15/hr (Fly Machine only, no GPU charge)
+- Fixed estimated cost for NIM workspaces: ~$0.05–$0.15/hr (Fly Machine only, no GPU charge)
 - Supported providers: NVIDIA NIM, Vultr, Together, DeepInfra, or any OpenAI-compatible endpoint
 
 **Fly TCP services exposed per machine**: 3000, 5180, 5181, 8080, 8081 (SSH on 22 is intentionally not declared — see `services/fly.ts`).

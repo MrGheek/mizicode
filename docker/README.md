@@ -11,6 +11,11 @@ no GPU, no vLLM, no llama.cpp, no litellm, and no code-server. Inference
 routes to the NVIDIA NIM API (or any OpenAI-compatible endpoint) via
 `nim-proxy.py`, a minimal OpenAI-compatible pass-through proxy on port 8081.
 
+GPU-backed sessions use a separate path: they provision a rented instance
+(Vast.ai) from `Dockerfile.gpu` (or a Vast.ai template) running vLLM /
+llama-server with downloaded model weights — see the GPU profiles section in
+the API server docs.
+
 ```
 ┌──────────────────────────────────────────────────┐
 │  Fly app: mizi-api  (API server)                 │
@@ -92,6 +97,7 @@ workspace machines declare their own ports per-machine when created by the API.
 | `docker/Dockerfile.nim-workspace` | Slim workspace build — same services, no litellm / bolt.diy layers. |
 | `docker/Dockerfile.nim-patch` | Incremental patch layering `nim-proxy.py` and the Node-20-compatible `claw-bridge.mjs` onto an existing deployment image. |
 | `docker/Dockerfile.nim-bolt-patch` | Incremental patch layering a pre-built bolt.diy production build onto an existing deployment image. |
+| `docker/Dockerfile.gpu` | **GPU-backed workspace image** — CUDA runtime + vLLM / llama-server for self-hosted models on rented instances (Vast.ai provider path). |
 | `docker/onstart.sh` | Boot script executed as the container's CMD. Starts Theia, claw-runner, claw-bridge, nginx, nim-proxy, and SSH. |
 | `docker/claw-runner.js` | Node HTTP server (port 5182, proxied via nginx on 5181) — agent task runner with swarm orchestration. |
 | `docker/claw-bridge.mjs` | Outbound WebSocket client connecting to `/api/bridge/:sessionId/:laneId` on the API server. |

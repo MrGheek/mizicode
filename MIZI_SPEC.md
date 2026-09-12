@@ -1,6 +1,6 @@
 # MIZI — Product Specification
 
-> AI coding platform. Spin up a private AI coding environment on a CPU-only workspace machine in minutes — a fully agentic workspace (Eclipse Theia, Claw Runner, memory, coordination) where all model inference is **hosted** on NVIDIA NIM (or any OpenAI-compatible endpoint) via an in-container proxy. No GPU rental, no local model download.
+> AI coding platform. Spin up a private AI coding environment on a CPU-only workspace machine in minutes — a fully agentic workspace (Eclipse Theia, Claw Runner, memory, coordination). Inference is decoupled from the workspace and chosen **per session** at launch: hosted NVIDIA NIM (or any OpenAI-compatible endpoint) via an in-container proxy, or self-hosted models on rented GPU instances (Vast.ai) via vLLM / llama-server. Fly hosted-mode sessions rent no GPU and download no model weights.
 
 ---
 
@@ -34,8 +34,8 @@
 
 MIZI provisions a CPU-only workspace machine on [Fly.io](https://fly.io) via the Fly Machines API, boots a pre-configured AI coding environment on it, and surfaces everything through a hosted dashboard — without managing servers, Kubernetes, or cloud accounts yourself.
 
-Each **session** is a CPU-only Fly Machine (app `mizi-workspace`) running:
-- **nim-proxy.py** (port 8081) — forwards all model requests to hosted NVIDIA NIM (or any OpenAI-compatible endpoint)
+Each **session** is a CPU-only Fly Machine (app `mizi-workspace`) in hosted-inference mode, or a rented GPU instance (Vast.ai) in self-hosted mode — both run the same workspace image:
+- **nim-proxy.py** (port 8081) — forwards all model requests to hosted NVIDIA NIM (or any OpenAI-compatible endpoint); in GPU mode it fronts the local vLLM / llama-server instance on the rented instance
 - **Eclipse Theia** — extensible browser-based IDE with AI plugins (`@theia/ai-core`, `@theia/ai-chat-ui`, `@theia/ai-mcp`, etc.)
 - **Claw Runner + claw-bridge** — the agent process and its outbound WebSocket bridge to the API server
 - **nginx** — routes traffic, handles basic auth
@@ -46,7 +46,7 @@ The hosted dashboard (Fly app `mizicode`) handles workspace provisioning, status
 
 ### Key properties
 
-- **No GPU in the workspace** — inference is hosted. `nim-proxy.py` in the container forwards every request to NVIDIA NIM (or any OpenAI-compatible endpoint). Cost = Fly machine hourly rate + per-token API cost.
+- **No GPU in the workspace** — the workspace itself is CPU-only; inference is decoupled. Hosted mode: `nim-proxy.py` in the container forwards every request to NVIDIA NIM (or any OpenAI-compatible endpoint); cost = Fly machine hourly rate + per-token API cost. GPU mode: the session provisions a rented GPU instance (Vast.ai) running vLLM / llama-server (see §14).
 - **Ephemeral by default** — sessions are destroyed when you stop them; `/workspace` is local to the machine.
 - **Persistent memory** — the dashboard maintains a SQLite FTS5 memory store that records what the AI agent did across sessions, injectable into future sessions as context.
 - **Team-capable** — one session can host multiple isolated lanes for team members + a shared workspace, all coordinated through the API server.
@@ -112,8 +112,8 @@ The hosted dashboard (Fly app `mizicode`) handles workspace provisioning, status
 | Validation | Zod, drizzle-zod |
 | API contract | OpenAPI 3.1 → Orval codegen → React Query hooks + Zod schemas |
 | Monorepo | pnpm workspaces |
-| Workspace compute | Fly Machines API (app `mizi-workspace`, CPU-only) |
-| LLM inference | Hosted NVIDIA NIM (or OpenAI-compatible) via nim-proxy.py |
+| Workspace compute | Fly Machines API (app `mizi-workspace`, CPU-only) — GPU-backed sessions provision a Vast.ai instance |
+| LLM inference | Hosted NVIDIA NIM (or OpenAI-compatible) via nim-proxy.py, or self-hosted (Vast.ai + vLLM / llama-server) |
 | IDE | Eclipse Theia (27 MIZI extensions) |
 | Coding UI | Bolt.diy |
 | Proxy | nginx (basic auth + 6PN internal) |
@@ -1157,6 +1157,8 @@ All interaction goes through `artifacts/api-server/src/services/vastai.ts`.
 
 `registry.fly.io/mizi-workspace:latest` — the **CPU-only** workspace image for Fly NIM sessions. No CUDA, no GPU stack, no vLLM, no llama.cpp. Inference is hosted: `nim-proxy.py` inside the container forwards to the NVIDIA NIM API (or any OpenAI-compatible endpoint).
 
+For self-hosted models on rented GPU instances, a separate **GPU image** (`docker/Dockerfile.gpu`) adds the CUDA/vLLM/llama-server stack — see §14.
+
 ### What's pre-installed
 
 - Ubuntu 22.04 base
@@ -1195,7 +1197,7 @@ Not included in the image — inference is hosted, so there is nothing to downlo
 
 ## 16. Boot Script (onstart.sh)
 
-The API server generates an onstart wrapper per session (env vars + `/opt/onstart.sh` invocation) and passes it as the Fly Machine init command (`/bin/bash -c <script>`). When `NIM_MODEL_ID` is set, onstart runs in **NIM fast-boot mode**: hosted inference, no model download, no vLLM.
+The API server generates an onstart wrapper per session (env vars + `/opt/onstart.sh` invocation) and passes it as the Fly Machine init command (`/bin/bash -c <script>`). When `NIM_MODEL_ID` is set, onstart runs in **NIM fast-boot mode**: hosted inference, no model download, no vLLM. When booting a GPU-profile session, onstart instead initializes the local vLLM / llama-server backend (`NUM_GPUS`, `VLLM_MAX_MODEL_LEN`, model artifact download) and fronts it on port 8081.
 
 ### Generated wrapper structure
 
