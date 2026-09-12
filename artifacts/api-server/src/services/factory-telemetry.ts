@@ -14,6 +14,7 @@ import type { Product, WorkOrder, Station, FactoryMetrics, PipelineStage } from 
 import type { FactoryStore } from "./factory";
 import { productWipUsed, stationWipUsed } from "./factory-dispatcher";
 import { effectiveStationWipLimit } from "./factory-dispatcher";
+import { sessionSpendSummary } from "./token-accounting";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,7 +58,10 @@ export interface FactoryDashboard {
   // Pipeline
   pipelineStages: Record<PipelineStage, { status: string; gatePassed: boolean } | null>;
 
-  // Cost (placeholder — wired to RFC 0001 ledger when available)
+  // Cost (wired to RFC 0001 ledger)
+  /** Total spend across sessions referenced by this product's work orders. */
+  totalSpendUsd: number;
+  /** totalSpendUsd / completed work orders (0 when none). */
   costPerWorkOrder: number;
 
   // Snapshot time
@@ -165,9 +169,18 @@ export async function computeDashboard(
     }
   }
 
-  // ── Cost (placeholder) ─────────────────────────────────────────────────
-  // TODO: wire to RFC 0001 ledger for actual cost per work order.
-  const costPerWorkOrder = 0;
+  // ── Cost (wired to RFC 0001 ledger) ────────────────────────────────────
+  // Each work order records the session that executed it; sum ledger spend across
+  // those sessions to attribute cost back to the product.
+  const sessionIds = new Set(
+    completed.map((o) => o.sessionId ?? -1).filter((id) => id >= 0),
+  );
+  let totalSpendUsd = 0;
+  for (const sessionId of sessionIds) {
+    const summary = await sessionSpendSummary(sessionId);
+    totalSpendUsd += summary.costUsd;
+  }
+  const costPerWorkOrder = completedTotal > 0 ? totalSpendUsd / completedTotal : 0;
 
   return {
     productId,
@@ -183,6 +196,7 @@ export async function computeDashboard(
     productWip,
     stationUtilization,
     pipelineStages,
+    totalSpendUsd,
     costPerWorkOrder,
     snapshotTime: new Date().toISOString(),
   };

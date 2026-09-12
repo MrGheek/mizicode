@@ -196,6 +196,7 @@ export async function dispatchWorkOrders(
     await store.updateWorkOrder(order.id, {
       status: "dispatched",
       assignedStationId: station.id,
+      sessionId: station.sessionId ?? order.sessionId,
       startedAt: new Date(),
     });
     if (opts.pool) {

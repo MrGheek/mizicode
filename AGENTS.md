@@ -14,7 +14,7 @@ MIZI's intelligence layer — skills system, token budget, phase router, repo gr
 | 4 | `mizi-session-status-bar` | frontend | — | Status bar: phase, model, GPU cost, token %, health | P0 |
 | 5 | `mizi-nim-provider` | backend | routes/nim.ts, services/nim-catalog.ts | Dynamic model discovery and switch backend | P0 |
 | 6 | `mizi-repo-context-provider` | backend | routes/repo.ts, repo-indexer/graph/fingerprint, skills-ranker.ts | ai-core ContextProvider — symbol graph + tech stack per AI request | P0 |
-| 7 | `mizi-mcp-server` | backend | src/mcp/ (mounted at /api/mcp in app.ts) | Registers 53 MIZI MCP tools (memory, repo, skills, lanes, safety, planning, sessions, ambient) | P0 |
+| 7 | `mizi-mcp-server` | backend | src/mcp/ (mounted at /api/mcp in app.ts) | Registers 76 MIZI MCP tools (memory, repo, skills, lanes, safety, planning, sessions, ambient, factory) | P0 |
 | 8 | `mizi-repo-index-status` | frontend | services/repo-graph.ts | Status bar ("⟳ Indexing..." → "✓ 247 symbols") | P1 |
 | 9 | `mizi-memory-panel` | frontend | services/memory-passive.ts, memory-semantic.ts | AI chat sidebar — recalled memories with pin/suppress | P1 |
 | 10 | `mizi-memory-bridge` | backend | ai-history → POST /mem/observations | ai-history poller → memory pipeline | P1 |

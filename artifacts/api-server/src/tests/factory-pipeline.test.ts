@@ -20,6 +20,7 @@ import {
   snapshotMetrics,
   getMetricsHistory,
 } from "../services/factory-telemetry";
+import { recordSpend, _resetLedgerForTest } from "../services/token-accounting";
 
 const makeDeliverable = (workOrderId: number): Deliverable => ({
   workOrderId,
@@ -149,6 +150,58 @@ describe("factory-pipeline trigger/advance", () => {
     expect(updated?.gatePassed).toBe(false);
   });
 
+  it("ship gate honors the product qualityGateConfig", async () => {
+    const product = await registry.createProduct({
+      name: "qc",
+      repoUrl: "https://x/qc",
+      wipLimit: 10,
+      qualityGateConfig: { ship: { required: true, checks: ["lint", "test"] } },
+    });
+    await registry.createStation({ productId: product.id, role: "build" });
+    const order = await registry.createWorkOrder({ productId: product.id, goal: "task" });
+    const run = await triggerPipeline(store, product.id, order.id);
+
+    // Walk build → test → stage; ship now requires lint + test evidence.
+    const runs = [run];
+    for (let i = 0; i < 3; i++) {
+      const want: Array<{ stage: "build" | "test" | "stage" | "ship"; evidence: Array<{ taskType: string; status: "pass" | "fail" }> }> = [
+        { stage: "build", evidence: [{ taskType: "compile", status: "pass" }] },
+        { stage: "test", evidence: [{ taskType: "test", status: "pass" }] },
+        { stage: "stage", evidence: [] },
+      ];
+      const next = await advancePipeline(store, runs[i]!.id, {
+        stage: want[i]!.stage,
+        status: "passed",
+        artifacts: [],
+        evidence: want[i]!.evidence,
+      });
+      if (next.nextRun) runs.push(next.nextRun);
+    }
+
+    const shipRun = runs[3]!;
+    expect(shipRun.stage).toBe("ship");
+
+    // typecheck alone no longer satisfies ship → gate fails.
+    const withoutTest = await advancePipeline(store, shipRun.id, {
+      stage: "ship",
+      status: "passed",
+      artifacts: [],
+      evidence: [{ taskType: "lint", status: "pass" }, { taskType: "typecheck", status: "pass" }],
+    });
+    expect(withoutTest.complete).toBe(false);
+    expect((await store.getPipelineRun(shipRun.id))?.gatePassed).toBe(false);
+
+    // Include test evidence → ship passes → pipeline complete.
+    const withTest = await advancePipeline(store, shipRun.id, {
+      stage: "ship",
+      status: "passed",
+      artifacts: [],
+      evidence: [{ taskType: "lint", status: "pass" }, { taskType: "test", status: "pass" }],
+    });
+    expect(withTest.complete).toBe(true);
+    expect((await store.getPipelineRun(shipRun.id))?.gatePassed).toBe(true);
+  });
+
   it("advancePipeline throws when a stage gate is missing but status=passed", async () => {
     const product = await setupProduct();
     const order = await registry.createWorkOrder({ productId: product.id, goal: "task" });
@@ -185,6 +238,7 @@ describe("computeDashboard + metrics", () => {
   beforeEach(() => {
     store = new MemoryFactoryStore();
     registry = new FactoryRegistry(store);
+    _resetLedgerForTest();
   });
 
   it("reports empty dashboard for a fresh product", async () => {
@@ -240,5 +294,25 @@ describe("computeDashboard + metrics", () => {
     const history = await getMetricsHistory(store, product.id, 10);
     expect(history).toHaveLength(2);
     expect(history[0].id).toBe(m2.id); // newest first
+  });
+
+  it("attributes RFC 0001 ledger spend to completed work orders", async () => {
+    const product = await registry.createProduct({ name: "cost", repoUrl: "https://x/cost", wipLimit: 10 });
+    // The station's session is copied to dispatched work orders.
+    await registry.createStation({ productId: product.id, role: "build", wipLimit: 4, sessionId: 77 });
+
+    const order = await registry.createWorkOrder({ productId: product.id, goal: "task" });
+    await dispatchWorkOrders(store, product.id);
+    const assigned = await store.getWorkOrder(order.id);
+    expect(assigned?.sessionId).toBe(77);
+
+    await submitDeliverable(store, makeDeliverable(order.id), "build");
+
+    await recordSpend({ sessionId: 77, provider: "vultr", model: "m", promptTokens: 1000000, completionTokens: 0 });
+
+    const dash = await computeDashboard(store, product.id);
+    expect(dash.completedTotal).toBe(1);
+    expect(dash.totalSpendUsd).toBeGreaterThan(0);
+    expect(dash.costPerWorkOrder).toBe(dash.totalSpendUsd);
   });
 });

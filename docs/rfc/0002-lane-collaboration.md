@@ -183,7 +183,7 @@ honest as it grows.
 | `services/claim-sweeper.ts` | Reconcile pass (orphan worktrees, uncommitted work, goal-alignment gaps) |
 | `services/safety.ts` | Per-lane permission profiles (allow/deny tool lists) |
 | `services/skills-evals.ts` | Lane-system eval harness (multi-lane vs single-agent A/B) |
-| `lib/db/src/schema/coordination.ts` | `lane_merge_queue`, `lane_intent_events`, `lane_conflict_resolutions`, `lane_governance` tables |
+| `lib/db/src/schema/coordination.ts` | `lane_merge_queue`, `lane_conflict_resolutions`, `lane_governance` tables (intent events reuse `lane_events`) |
 
 ## Phasing
 

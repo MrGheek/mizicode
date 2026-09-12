@@ -102,13 +102,36 @@ export function checkStageGate(
 // ── Pipeline lifecycle ───────────────────────────────────────────────────────
 
 /**
+ * Product-level quality gate override, keyed by stage.
+ *
+ * Merged over `DEFAULT_STAGE_GATES` and any `pipelineConfig.gates`. Example:
+ * `{ ship: { required: true, checks: ["lint", "typecheck", "test"] } }`.
+ */
+export type QualityGateOverrides = Partial<Record<PipelineStage, StageGate>>;
+
+/**
  * Get the pipeline config for a product, falling back to defaults.
+ *
+ * Effective gates = DEFAULT_STAGE_GATES, then `pipelineConfig.gates`, then
+ * `qualityGateConfig` (highest precedence) — so the product's quality gate
+ * config governs the ship stage as specified in RFC 0003.
  */
 function resolveConfig(product: Product): PipelineConfig {
   const raw = product.pipelineConfig as Partial<PipelineConfig> | null;
+  const qc = product.qualityGateConfig as QualityGateOverrides | null;
+  const gates: Record<PipelineStage, StageGate> = {
+    ...DEFAULT_STAGE_GATES,
+    ...(raw?.gates ?? {}),
+  };
+  if (qc) {
+    for (const [stage, gate] of Object.entries(qc)) {
+      const s = stage as PipelineStage;
+      if (gate) gates[s] = { ...(gates[s] ?? { required: false, checks: [] }), ...gate };
+    }
+  }
   return {
     stages: raw?.stages ?? DEFAULT_PIPELINE_STAGES,
-    gates: { ...DEFAULT_STAGE_GATES, ...(raw?.gates ?? {}) },
+    gates,
   };
 }
 

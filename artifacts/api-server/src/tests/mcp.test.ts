@@ -273,6 +273,7 @@ describe("POST /api/mcp — tools/list", () => {
       "memory_index", "memory_search", "memory_get_item", "memory_init", "memory_save_item",
       "list_skills", "get_skills_leaderboard", "run_skill_eval",
       "list_lanes", "create_lane", "claim_resource", "lane_handoff",
+      "merge_lane", "publish_intent", "resolve_conflict", "reconcile", "takeover",
       "bridge_status", "bridge_exec",
       "list_pending_approvals", "get_safety_transcript", "get_safety_policies",
       "approve_action", "deny_action", "update_safety_policy",

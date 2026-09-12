@@ -165,17 +165,17 @@ cost. The factory must not regress single-product correctness.
 | Area | Change |
 |---|---|
 | `services/factory.ts` (new) | Product registry + work-order lifecycle + station registry |
-| `services/factory-dispatcher.ts` (new) | WIP-bounded, topological, cost-aware scheduling (extends `scheduler.ts`) |
+| `services/factory-dispatcher.ts` (new) | WIP-bounded, topological, defect-adjusted capacity scheduling |
+| `services/factory-admission.ts` (new) | Merge-queue admission control (WIP + station capacity) |
 | `services/deliverable-contract.ts` (new) | Deliverable schema validation + per-station quality gates |
 | `services/rework-loop.ts` (new) | Defect → rework work order → re-verify → telemetry |
-| `services/factory-pipeline.ts` (new) | Continuous build → test → stage → ship per product |
-| `services/factory-telemetry.ts` (new) | Throughput/cycle-time/defect/rework/utilization metrics |
-| `routes/factory.ts` (new) | Product, work-order, station, pipeline, telemetry endpoints |
+| `services/factory-pipeline.ts` (new) | Continuous build → test → stage → ship per product; quality-gate-config driven ship gate |
+| `services/factory-telemetry.ts` (new) | Throughput/cycle-time/defect/rework/utilization/cost metrics (cost wired to RFC 0001 ledger) |
+| `services/factory-resource-pool.ts` (new) | Shared GPU pool with per-product caps (advisory, no central scheduler) |
+| `services/factory-eval.ts` (new) | Factory-scale eval harness (multi-product A/B) + deterministic virtual-clock simulator |
+| `routes/factory.ts` (new) | Product, work-order, station, pipeline, telemetry, resource-pool, eval endpoints |
 | `mcp/tools/factory.ts` (new) | `create_product`, `dispatch_work_order`, `admit_merge`, `rework`, `factory_status` tools |
 | `routes/coordination.ts` | Merge-queue admission control (WIP/capacity) |
-| `services/lane-merge.ts` | Admission control hook (RFC 0002) |
-| `services/scheduler.ts` | Capacity scheduler (WIP limits, topological dispatch) |
-| `services/skills-evals.ts` | Factory-scale eval harness |
 | `lib/db/src/schema/factory.ts` (new) | `products`, `work_orders`, `stations`, `rework_items`, `pipeline_runs`, `factory_metrics` tables |
 
 ## Phasing
