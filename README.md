@@ -341,7 +341,7 @@ model provider key.
 | [`docs/api-reference.md`](docs/api-reference.md) | Full API surface |
 | [`docs/runbook.md`](docs/runbook.md) | Day-to-day operations |
 | [`docs/github-ops.md`](docs/github-ops.md) | GitHub integration & ops |
-| [`docs/rfc/`](docs/rfc/) | RFC specs — [token cost optimization](docs/rfc/0001-token-cost-optimization.md) (0001), [lane collaboration](docs/rfc/0002-lane-collaboration.md) (0002), [code factory](docs/rfc/0003-code-factory.md) (0003) |
+| [`docs/rfc/`](docs/rfc/) | RFC specs — [token cost optimization](docs/rfc/0001-token-cost-optimization.md) (0001), [lane collaboration](docs/rfc/0002-lane-collaboration.md) (0002), [code factory](docs/rfc/0003-code-factory.md) (0003), [factory control room](docs/rfc/0005-factory-control-room.md) (0005) |
 | [`artifacts/api-server/README.md`](artifacts/api-server/README.md) | API server deep dive |
 
 ---
