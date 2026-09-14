@@ -6,7 +6,7 @@
 | **Author** | MIZI Intelligence Layer |
 | **Created** | 2026-09-13 |
 | **Area** | Dashboard UX, factory observability, human-in-the-loop governance, real-time surfaces |
-| **Depends on** | RFC 0001 (ledger, tripwires, cost), RFC 0003 (code factory: products, work orders, stations, pipeline, telemetry) |
+| **Depends on** | RFC 0001 (ledger, tripwires, cost), RFC 0003 (code factory: products, work orders, stations, pipeline, telemetry), RFC 0006 (fab model, shared lane pool, multi-product dispatcher, backend events) |
 
 ## Summary
 
@@ -18,8 +18,16 @@ MCP (`mcp/tools/factory.ts`) — but **none of it has a human interface**. The
 "factory dashboard" named in RFC 0003 §13 does not exist in the product.
 
 This RFC specifies that interface: a **Factory Control Room** in the MIZI
-dashboard. It is deliberately *not* a CRUD admin panel. It is a control room
-built on three convictions:
+dashboard. It is deliberately *not* a CRUD admin panel. And it is deliberately
+**a surface, not a system**: the backend it renders — the factory-as-fab data
+model, the shared lane pool with claim/release, the multi-product dispatcher's
+arbitration, and the live event stream — is specified in RFC 0006. A control
+room needs three things from the system: a *model of what's in the room*
+(RFC 0003), *scheduler reasoning it can render* (RFC 0006's arbitration
+readout), and *events to watch* (RFC 0006's event stream). This RFC composes
+them.
+
+It is a control room built on three convictions:
 
 1. **Render flow, not status.** The primary object on screen is work moving
    through the line (`queued → dispatched → build → test → stage → ship`),
@@ -74,6 +82,10 @@ considered and rejected. It fails the factory on several counts:
 - **It hides the reason.** "Station review at 100%" is a number. "Station
   **review** effective WIP clamped 4 → 1 by a 62% defect rate" is a decision.
   Signals must be explained and actionable.
+- **It ignores contention.** The moment the fab hosts more than one product
+  (RFC 0006), the operator's first question becomes "why did lanes go to
+  product B and not A?" A single-product KPI page cannot answer that — only
+  the dispatcher's arbitration readout can.
 - **It ignores the roadmap.** `products.roadmapJson` is the product's backlog.
   A factory UX that only hand-creates goals one at a time ignores the plan the
   product already carries.
@@ -107,7 +119,9 @@ ticketing system:
 | `POST /factory/resources/caps` | Set/raise per-product caps, reset pool |
 | `POST /factory/evals/run` | A/B factory eval on a scenario + two configs |
 | `services/factory-telemetry.ts` | `computeDashboard`, `snapshotMetrics`, `getMetricsHistory` |
-| `services/lane-sse-broadcaster.ts` | The SSE client-registry + broadcast pattern to mirror |
+| `GET /factory/arbitration/latest` + `GET /factory/products/:id/arbitration` (RFC 0006) | The dispatcher's per-order `dispatchScore`, factors, and `lostTo` — the arbitration-readout source |
+| `GET /factory/products/:id/stream` + `factory-event-emitter.ts` (RFC 0006) | The live `factory_event` stream the board listens to |
+| `services/lane-sse-broadcaster.ts` | The SSE client-registry + broadcast pattern that RFC 0006's emitter mirrors |
 | `use-coordination-stream.ts` | The dashboard's existing SSE hook pattern |
 | `recharts` (already a dashboard dependency) | Trend charts |
 
@@ -151,8 +165,8 @@ critical signal.
 │  TRENDS BAND  (recharts)                                                  │
 │  throughput/24h │ cycle time (p50/p95) │ defect rate │ $ / work order      │
 ├──────────────────────────────────────────────────────────────────────────┤
-│  GOVERNANCE          WIP & caps · Admission · Eval A/B                    │
-│  ROADMAP → WORK      roadmapJson items → decompose to work orders         │
+│  GOVERNANCE          WIP & caps · Admission · Eval A/B · Arbitration        │
+│  ROADMAP → WORK      roadmapJson items → decompose to work orders            │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -174,9 +188,11 @@ matches what the scheduler sees.
   blocked (dependency or admission hold), in-rework (rejected, cycling), and
   stalled (dispatched but no progress beyond a threshold).
 - Work that is *held* by the dispatcher is shown **as held, with the reason**
-  (WIP saturated / dependency unmet), reusing the `DispatchResult.held[]`
-  shape (`{ workOrderId, reason }`). The board doubles as an explanation of
-  the dispatcher's decisions.
+  (WIP saturated / dependency unmet / outranked by a higher dispatch score /
+  budget exhausted), reusing the `DispatchResult.held[]` and RFC 0006
+  arbitration-readout shapes (`{ workOrderId, reason }`,
+  `{ dispatchScore, factors, lostTo }`). The board doubles as an explanation
+  of the dispatcher's decisions.
 
 **3. Signal rail.** In-app computations over the same payloads, each with a
 rationale and a one-click **policy fix**:
@@ -188,6 +204,8 @@ rationale and a one-click **policy fix**:
 | Blocked on dependencies | work-order `dependenciesJson` + statuses | View dependency chain |
 | Cost trending up | `totalSpendUsd`, `costPerWorkOrder` over `metrics` history | Adjust product cap (`/resources/caps`) |
 | Rework spike | `reworkRate`, `meanCyclesToClear` | Open rework items for the offending station |
+| Outranked by priority | arbitration readout `reason: "outranked…"` + `lostTo` | Review product priority or due date, then re-run dispatch |
+| Budget exhausted | arbitration readout `reason: "budget exhausted"` | Raise/refill product budget (RFC 0006 §4) |
 
 The rail is the product's answer to "what is wrong and what do I do" without
 the operator reading a single raw metric.
@@ -208,6 +226,12 @@ offers **Take snapshot** (`POST /metrics/snapshot`).
 - **Eval A/B** — configure a scenario + `configA`/`configB` and run
   `POST /factory/evals/run`; render the report (throughput, cycle time, defect
   rate, cost deltas, winner) as a comparison, not a JSON dump.
+- **Arbitration** — render RFC 0006's readout for the most recent fab pass:
+  per held work order its `dispatchScore`, the `factors`
+  (`productWeight · orderWeight · dueDatePressure · budgetWeight`), and the
+  `lostTo` list ("what it lost to and by how much"), plus fab lane-pool
+  occupancy (`lanePoolUsed / lanePoolLimit`). This is the answer to
+  "why B not A" and the product's standing with the fab.
 
 **6. Roadmap → Work.** Render `products.roadmapJson` as backlog cards and
 support decomposing an item into a work order (via the existing plan/board
@@ -220,33 +244,20 @@ below): dispatched, completed, defect recorded, stage advanced. This is the
 
 ### Live layer — factory events over SSE
 
-Factory mutations happen in services, often triggered by agents. To make the
-board live without polling, mirror the existing broadcaster pattern
-(`lane-sse-broadcaster.ts`) with a **factory event emitter + broadcaster**:
+The backend of this layer is **RFC 0006 §5**: `services/factory-event-emitter.ts`
+(a client registry keyed by `productId` plus broadcast, mirroring
+`lane-sse-broadcaster.ts`) and `GET /factory/products/:id/stream` (SSE with
+`event: ping` heartbeats), emitting the `factory_event` union after dispatch,
+complete, rework, pipeline-advance, arbitration passes, and pool changes. This
+RFC only defines the dashboard half:
 
-- `services/factory-event-emitter.ts` (new): a registry keyed by `productId`
-  plus `addFactoryClient` / `removeFactoryClient` / `broadcastFactoryEvent`,
-  exactly like the coordination broadcaster.
-- `GET /factory/products/:id/stream` (new route): SSE endpoint; writes
-  `event: ping` heartbeats (same as `coordination.ts`), registers the client,
-  cleans up on close.
-- **Emit points** (no behavior change, additive): after `dispatchWorkOrders`,
-  `completeWorkOrder`, `rejectToRework`/`submitDeliverable`, and
-  `advancePipeline`. Events are `factory_event` with a discriminated `type`:
-
-```ts
-type FactoryEvent =
-  | { type: "order_dispatched"; workOrderId: number; stationId: number }
-  | { type: "order_completed"; workOrderId: number; status: "done" | "skipped" }
-  | { type: "defect_recorded"; workOrderId: number; stationId: number; defectClass: string; cycle: number }
-  | { type: "stage_advanced"; pipelineRunId: number; stage: PipelineStage; status: PipelineStatus }
-  | { type: "wip_changed"; productWip: { used: number; limit: number } };
-```
-
-- The dashboard hook `use-factory-stream.ts` (new) mirrors
-  `use-coordination-stream.ts` (EventSource + `useVisibilityReconnect`), and on
-  `factory_event` invalidates the `["factory", productId, ...]` query keys.
+- `hooks/use-factory-stream.ts` (new) mirrors `use-coordination-stream.ts`
+  (EventSource + `useVisibilityReconnect`): it opens the RFC 0006 `/stream`
+  route and, on each `factory_event`, invalidates the `["factory", productId,
+  ...]` query keys so the board, signals, and trends reconcile from fresh data.
   Polling is used only as the reconnect fallback, never as the steady state.
+- Cardinality: one EventSource per open control room; the portfolio optionally
+  opens the fab-wide channel for its live badge.
 
 ### Data-access layer
 
@@ -256,7 +267,9 @@ client. Follow the established dashboard convention for un-generated endpoints
 module.
 
 - `hooks/use-factory.ts` (new): typed `useQuery`/`useMutation` wrappers for
-  every endpoint above, keys namespaced `["factory", "products"]`,
+  every endpoint above — including the RFC 0006 additions
+  (`POST /factory/products/:id/decompose`, the arbitration endpoints, the
+  `/stream` hook) — keys namespaced `["factory", "products"]`,
   `["factory", productId, "dashboard"]`, etc. An `authHeaders()` helper
   supplies the operator bearer token.
 - Rationale: keeps codegen out of scope for this RFC; if factory endpoints are
@@ -276,9 +289,10 @@ The page must be indistinguishable in craft from the rest of the dashboard:
 - **New components** (`components/factory/`): `flow-board.tsx`,
   `work-order-card.tsx`, `wip-column-header.tsx`, `signal-rail.tsx`,
   `signal-item.tsx`, `trends-band.tsx`, `governance-panel.tsx`,
-  `eval-compare.tsx`, `roadmap-panel.tsx`, `event-log.tsx`,
-  `product-health-light.tsx`. Portfolio page reuses `product-health-light` +
-  compact metric tiles.
+  `eval-compare.tsx`, `arbitration-panel.tsx`, `product-spec-wizard.tsx`,
+  `roadmap-panel.tsx`, `event-log.tsx`, `product-health-light.tsx`,
+  `fab-header.tsx`. Portfolio page reuses `product-health-light` + compact
+  metric tiles + the fab-level pool/budget readout.
 
 ### Accessibility, performance, and craft
 
@@ -288,9 +302,11 @@ The page must be indistinguishable in craft from the rest of the dashboard:
 - **Performance:** the board renders from cached aggregates; trend queries are
   paginated by range; SSE replaces polling so idle cost is one open connection;
   skeletons match final layout to avoid reflow.
-- **Empty / first-run:** no products → a guided "create your first factory"
-  flow (name, repo, WIP). Product with no work orders → roadmap-first prompt.
-  Metrics with no history → "collecting" state with manual snapshot.
+- **Empty / first-run:** no products → a guided **product-spec launch** (the
+  role RFC 0006 §4 decompose plays on the backend): name, repo, priority,
+  WIP/budget, and a free-text intent that yields a roadmap preview before the
+  product exists. Product with no work orders → roadmap-first prompt. Metrics
+  with no history → "collecting" state with manual snapshot.
 - **Resilience:** SSE down → silent fallback to bounded polling (status pill
   shows `live` / `reconnecting` / `polling`, reusing the coordination stream's
   status model).
@@ -299,33 +315,36 @@ The page must be indistinguishable in craft from the rest of the dashboard:
 
 | Area | Change |
 |---|---|
-| `artifacts/dashboard/src/pages/factory/index.tsx` (new) | Portfolio view |
+| `artifacts/dashboard/src/pages/factory/index.tsx` (new) | Portfolio view (fab pool/budget header + product minis) |
 | `artifacts/dashboard/src/pages/factory/[productId].tsx` (new) | Control Room |
-| `artifacts/dashboard/src/components/factory/*` (new) | Flow board, signal rail, trends band, governance, eval compare, roadmap, event log, health light |
-| `artifacts/dashboard/src/hooks/use-factory.ts` (new) | Typed query/mutation layer for `/factory/*` |
-| `artifacts/dashboard/src/hooks/use-factory-stream.ts` (new) | SSE hook mirroring `use-coordination-stream` |
-| `artifacts/dashboard/src/App.tsx` | Add `/factory` and `/factory/:productId` routes |
+| `artifacts/dashboard/src/pages/factory/new.tsx` (new) | Product-spec launch (intent → decompose preview) |
+| `artifacts/dashboard/src/components/factory/*` (new) | Flow board, signal rail, trends band, governance, eval compare, arbitration panel, product-spec wizard, roadmap, event log, health light, fab header |
+| `artifacts/dashboard/src/hooks/use-factory.ts` (new) | Typed query/mutation layer for `/factory/*` (+ RFC 0006 endpoints) |
+| `artifacts/dashboard/src/hooks/use-factory-stream.ts` (new) | SSE hook over RFC 0006 `/stream`, mirroring `use-coordination-stream` |
+| `artifacts/dashboard/src/App.tsx` | Add `/factory`, `/factory/new`, `/factory/:productId` routes |
 | `artifacts/dashboard/src/components/layout/app-layout.tsx` | Add `Factory` nav item + portfolio badge |
-| `artifacts/api-server/src/services/factory-event-emitter.ts` (new) | Factory SSE client registry + broadcast |
-| `artifacts/api-server/src/routes/factory.ts` | Add `GET /factory/products/:id/stream`; emit events after dispatch/complete/rework/pipeline-advance |
 
-No database schema changes. No change to dispatch/telemetry semantics — event
-emission is additive and must not alter existing route responses.
+**RFC 0005 makes no backend changes.** The fab data model, lane pool with
+claim/release, multi-product dispatcher, and the `factory_event` stream are
+RFC 0006. This RFC's runtime surface is confined to the dashboard.
 
 ## Phasing
 
 ### Phase 1 — The Floor, live (P0)
 - Portfolio IA + Control Room shell, routing, nav.
 - Flow board with WIP/effective-limit column headers, card flow states, held
-  reasons.
-- `factory-event-emitter` + `/stream` route + `use-factory-stream`; board goes
-  live.
+  reasons (incl. outranked / budget exhausted from RFC 0006).
+- `use-factory-stream` over RFC 0006's `/stream`; board goes live.
 - Product header with WIP occupancy, cost rate, Run dispatch.
+- Empty-state product-spec launch (name/repo/priority/WIP + intent → roadmap
+  preview via RFC 0006 §4 decompose).
 
 ### Phase 2 — The Levers (P1)
 - Trends band (recharts) with range selector + snapshot action.
 - Signal rail with computed signals and one-click policy fixes.
 - Governance console: WIP/caps, admission check, eval A/B compare.
+- Arbitration panel (RFC 0006 readout: scores, factors, `lostTo`, pool
+  occupancy) with a "re-run arbitration" action.
 - Roadmap → work panel.
 
 ### Phase 3 — Depth (P2)
@@ -350,9 +369,14 @@ emission is additive and must not alter existing route responses.
   correct endpoint (caps, admission, eval).
 - **Trends:** charts read `/metrics` history; empty history shows the collecting
   state; snapshot action appends a point.
-- **Live layer:** a dispatch/complete/rework/pipeline-advance triggers a
-  `factory_event` that invalidates the right query keys; SSE failure degrades to
-  polling with the correct status pill.
+- **Live layer:** a dispatch/complete/rework/pipeline-advance/arbitration-pass
+  emits a RFC 0006 `factory_event` that invalidates the right query keys; SSE
+  failure degrades to polling with the correct status pill.
+- **Arbitration:** held "outranked" orders render score/factors/`lostTo`; fab
+  pool occupancy reconciles to `pool_changed`; "re-run arbitration" hits the
+  RFC 0006 dispatch endpoint and reconciles the board.
+- **Product spec:** intent → decompose preview → create → the committed
+  roadmap renders on the board as the product's first flow.
 - **Auth:** in production, requests carry the operator bearer; in dev the page
   works tokenless.
 - **A11y:** stage regions labelled; state conveyed without colour alone;
@@ -376,14 +400,19 @@ emission is additive and must not alter existing route responses.
    or an advanced/dev affordance behind a toggle?
 5. **Portfolio badge semantics.** What escalates to the portfolio badge —
    "any critical signal", "cost over cap", "stalled flow", or operator-defined?
-6. **Roadmap authority.** Is `roadmapJson` authored in the dashboard, or
-   mirrored read-only from the repo's plan/roadmap and decomposed elsewhere?
+6. **Roadmap authority.** RFC 0006 §4 adds `POST /factory/products/:id/decompose`.
+   Is roadmap seeded from a product spec (intent → decomposed roadmap preview,
+   manually editable) rather than authored free-form in the dashboard?
+   Proposed: decompose-seeded at launch, free-form edits afterward.
+7. **Arbitration affordance.** Is the arbitration panel read-only, or does it
+   carry "change product priority" / "re-run arbitration now" actions that
+   mutate policy via RFC 0006?
 
 ## Non-goals
 
-- No new factory backend behavior — this RFC is a **surface** over existing
-  services; the only backend additions are the SSE stream and additive event
-  emission.
+- No backend changes at all — this RFC is a **surface**; the fab model, lane
+  pool, multi-product dispatcher, and event stream are RFC 0006. The only new
+  runtime code here is in the dashboard.
 - No per-work-order mutation buttons for humans — those remain agent actions via
   MCP.
 - No central control that overrides the dispatcher — the control room changes
