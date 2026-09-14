@@ -204,7 +204,7 @@ rationale and a one-click **policy fix**:
 | Blocked on dependencies | work-order `dependenciesJson` + statuses | View dependency chain |
 | Cost trending up | `totalSpendUsd`, `costPerWorkOrder` over `metrics` history | Adjust product cap (`/resources/caps`) |
 | Rework spike | `reworkRate`, `meanCyclesToClear` | Open rework items for the offending station |
-| Outranked by priority | arbitration readout `reason: "outranked…"` + `lostTo` | Review product priority or due date, then re-run dispatch |
+| Outranked by priority | arbitration readout `reason: "outranked…"` + `lostTo` | Change product priority / pull due date — arbitration panel (decision) |
 | Budget exhausted | arbitration readout `reason: "budget exhausted"` | Raise/refill product budget (RFC 0006 §4) |
 
 The rail is the product's answer to "what is wrong and what do I do" without
@@ -230,8 +230,12 @@ offers **Take snapshot** (`POST /metrics/snapshot`).
   per held work order its `dispatchScore`, the `factors`
   (`productWeight · orderWeight · dueDatePressure · budgetWeight`), and the
   `lostTo` list ("what it lost to and by how much"), plus fab lane-pool
-  occupancy (`lanePoolUsed / lanePoolLimit`). This is the answer to
-  "why B not A" and the product's standing with the fab.
+  occupancy (`lanePoolUsed / lanePoolLimit`). The panel is **actionable**
+  (decision): an "outranked" order offers **change-priority / pull-due-date**
+  actions that mutate the product via RFC 0006 and **re-run arbitration
+  immediately** so the operator sees the effect of the lever in one gesture.
+  This is the answer to "why B not A" and the product's standing with the
+  fab.
 
 **6. Roadmap → Work.** Render `products.roadmapJson` as backlog cards and
 support decomposing an item into a work order (via the existing plan/board
@@ -344,7 +348,8 @@ RFC 0006. This RFC's runtime surface is confined to the dashboard.
 - Signal rail with computed signals and one-click policy fixes.
 - Governance console: WIP/caps, admission check, eval A/B compare.
 - Arbitration panel (RFC 0006 readout: scores, factors, `lostTo`, pool
-  occupancy) with a "re-run arbitration" action.
+  occupancy) with change-priority / pull-due-date actions that re-arbitrate
+  immediately (decision).
 - Roadmap → work panel.
 
 ### Phase 3 — Depth (P2)
@@ -373,8 +378,9 @@ RFC 0006. This RFC's runtime surface is confined to the dashboard.
   emits a RFC 0006 `factory_event` that invalidates the right query keys; SSE
   failure degrades to polling with the correct status pill.
 - **Arbitration:** held "outranked" orders render score/factors/`lostTo`; fab
-  pool occupancy reconciles to `pool_changed`; "re-run arbitration" hits the
-  RFC 0006 dispatch endpoint and reconciles the board.
+  pool occupancy reconciles to `pool_changed`; a change-priority/pull-due-date
+  action mutates the product and triggers an immediate re-arbitration that
+  reconciles the board.
 - **Product spec:** intent → decompose preview → create → the committed
   roadmap renders on the board as the product's first flow.
 - **Auth:** in production, requests carry the operator bearer; in dev the page
@@ -384,29 +390,31 @@ RFC 0006. This RFC's runtime surface is confined to the dashboard.
 - **Regression:** existing `/factory/*` route responses unchanged by event
   emission; API server suite and dashboard suite stay green.
 
-## Open questions
+## Recorded decisions (2026-09-14) & open questions
 
-1. **Dispatch auto vs. manual.** Does the control room auto-run dispatch on an
-   interval / on event, or is dispatch always an explicit operator action? (RFC
-   0003's dispatcher is advisory; default here is explicit, with an opt-in
-   auto-dispatch toggle.)
-2. **Board time window.** Does the flow board show *all current* work orders, or
-   the current pipeline run's orders? Proposed: all non-terminal + recently
-   completed, with a run filter.
-3. **Trends source of truth.** `/metrics` snapshots are periodic and may be
-   sparse; do we snapshot on every terminal event to densify series, or accept
-   coarse history and lean on the live point?
-4. **Eval surface scope.** Is A/B eval an operator feature in the control room,
-   or an advanced/dev affordance behind a toggle?
-5. **Portfolio badge semantics.** What escalates to the portfolio badge —
-   "any critical signal", "cost over cap", "stalled flow", or operator-defined?
-6. **Roadmap authority.** RFC 0006 §4 adds `POST /factory/products/:id/decompose`.
-   Is roadmap seeded from a product spec (intent → decomposed roadmap preview,
-   manually editable) rather than authored free-form in the dashboard?
-   Proposed: decompose-seeded at launch, free-form edits afterward.
-7. **Arbitration affordance.** Is the arbitration panel read-only, or does it
-   carry "change product priority" / "re-run arbitration now" actions that
-   mutate policy via RFC 0006?
+Decisions taken in review:
+
+1. **Dispatch mode** — explicit Run dispatch by default, with an opt-in
+   auto-dispatch toggle.
+2. **Board time window** — all non-terminal + recently completed orders, with
+   a run filter.
+3. **Trends source of truth** — coarse `/metrics` snapshot history plus the
+   live dashboard point; "Take snapshot" offered when history is sparse.
+4. **Eval scope** — A/B eval is an operator feature in the control room.
+5. **Portfolio badge** — any product with a critical signal escalates the
+   badge.
+6. **Roadmap authority** — decompose-seeded at launch (RFC 0006 §4
+   `POST /factory/products/:id/decompose`), free-form edits afterward.
+7. **Arbitration affordance** — actionable: change-priority / pull-due-date
+   actions on held orders that re-arbitrate immediately.
+
+Still open:
+
+1. **Auto-dispatch triggers** — which events (`order_completed`,
+   `claim_released`, `pool_changed`) or a fixed cadence drive the optional
+   auto-dispatch loop?
+2. **Run-filter semantics** — after a new pipeline run, how long do older
+   runs' orders linger on the board before dropping off?
 
 ## Non-goals
 

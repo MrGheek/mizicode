@@ -24,10 +24,11 @@ backend, leaving the operator surface to RFC 0005. Concretely:
 1. **Fab data model.** A `factories` table (the fab: name, lane-pool limit,
    budget, default policies). `products` gain `factoryId`, `priority`
    (P0/P1/P2), and an optional `dueDate` (SLA).
-2. **Shared lane pool with claim/release.** Sessions become the pool's units.
-   Stations become role *definitions*; an executing station **claims** a
-   session from the shared pool at dispatch and **releases** it when idle —
-   replacing the permanent station→session lease.
+2. **Shared lane pool with claim/release.** Sessions (boxes) become the pool's
+   units. Stations become role *definitions*; an executing station **claims**
+   one session from the shared pool at dispatch, runs up to `capacity` orders
+   inside it as swarm lanes, and **releases** it when idle — replacing the
+   permanent station→session lease.
 3. **Multi-product dispatcher.** One arbitration pass across all products in
    the fab scores ready work orders
    (`dispatchScore = productWeight · orderWeight · dueDatePressure ·
@@ -112,7 +113,13 @@ export const factoriesTable = pgTable("factories", {
     defaultWipLimit: number;
     defaultStationRoles: string[];
     defaultQualityGateConfig: object | null;
-  }>().notNull().default({ defaultWipLimit: 4, defaultStationRoles: ["build", "review"], defaultQualityGateConfig: null }),
+    lanePool: { idleReleaseAfterMs: number; claimLapseAfterMs: number };
+  }>().notNull().default({
+    defaultWipLimit: 4,
+    defaultStationRoles: ["build", "review"],
+    defaultQualityGateConfig: null,
+    lanePool: { idleReleaseAfterMs: 300000, claimLapseAfterMs: 900000 },
+  }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -162,44 +169,58 @@ export const stationClaimsTable = pgTable("station_claims", {
   id: serial("id").primaryKey(),
   productId: integer("product_id").notNull().references(() => productsTable.id, { onDelete: "cascade" }),
   stationId: integer("station_id").notNull().references(() => stationsTable.id, { onDelete: "cascade" }),
-  /** The session claimed from the pool to execute the work order. */
+  /** The session (box) claimed from the pool to back this station's work. */
   sessionId: integer("session_id").notNull().references(() => sessionsTable.id, { onDelete: "cascade" }),
-  /** The work order this claim is serving (1:1 with dispatched work). */
-  workOrderId: integer("work_order_id").notNull().references(() => workOrdersTable.id, { onDelete: "cascade" }),
+  /** Current order on the claim — audit only; null while the claim sits idle.
+   *  Orders ride the claim via `work_orders.sessionId` (one claim → many orders). */
+  workOrderId: integer("work_order_id").references(() => workOrdersTable.id, { onDelete: "set null" }),
   claimedAt: timestamp("claimed_at").notNull().defaultNow(),
-  expiresAt: timestamp("expires_at").notNull(),          // heartbeat renewal, mirrors lane_claims
+  expiresAt: timestamp("expires_at").notNull(),
   lastHeartbeatAt: timestamp("last_heartbeat_at").notNull().defaultNow(),
   releasedAt: timestamp("released_at"),
   active: boolean("active").notNull().default(true),
 }, (table) => [
   uniqueIndex("station_claims_active_session_unique_idx")
     .on(table.sessionId)
-    .where(sql`${table.active} = true`),   // a session can back one station at a time
+    .where(sql`${table.active} = true`),   // a session (box) can back one station at a time
 ]);
 ```
 
 **Semantics.**
 
 - **Claim** — the multi-product dispatcher (§3), about to dispatch a work
-  order to a station, asks the pool for a session: any fab session that is
-  (a) individually eligible (status indicates a runnable environment, see
-  open question 1), (b) not held by an active `station_claims` row, and
-  (c) within the fab's `lanePoolLimit`. On grant it sets
-  `work_orders.sessionId` and writes the claim.
-- **Release** — on `completeWorkOrder` (done/skip) and on
-  `rejectToRework` (defect → back to queued): `active = false`,
-  `releasedAt = now`, `expiresAt` cleared. The session returns to the pool.
-- **Idle return** — a session announced idle by session management is back in
-  play for any product, not parked with the station that last used it.
-- **Expiry/heartbeat** — a station must renew its claim heartbeat; on expiry
-  the claim lapses (mirrors `lane_claims.expiresAt` + purge). Stale-session
-  reclaim is RFC 0002 machinery reused.
+  order to a station, asks the pool for a session. A session is claimable
+  when (a) its `sessions.status` indicates a runnable environment — any
+  non-stopped session (per-status refinement is a follow-up, not a gate),
+  (b) no active `station_claims` row holds it, and (c) the fab's
+  `lanePoolLimit` has headroom. Grant sets `work_orders.sessionId` and writes
+  the claim. A session backs **one station at a time** (the active partial
+  unique index).
+- **Fan-out inside the claim.** A claimed session runs up to `capacity`
+  concurrent work orders as swarm lanes, reusing the RFC 0002 team/lane
+  machinery already on sessions (`teamMembers`, `swarmSnapshotJson`, lanes).
+  Claims are session-scoped; orders ride them via `work_orders.sessionId`.
+  `workOrderId` on the claim is the *current* order for audit.
+- **Release / idle return.** On `completeWorkOrder` (done/skip) or
+  `rejectToRework` (defect → back to queued): if that was the session's last
+  in-flight order, the claim is released. **Idle return is the load-bearing
+  rule, not completion**: a claim whose session has zero in-flight orders for
+  longer than `idleReleaseAfterMs` (default 5 min) is auto-released, so a
+  product never parks a box between priorities.
+- **Heartbeat + lapse (factory-specific policy — decision).** A station must
+  heartbeat the claim; without one for `claimLapseAfterMs` (default 15 min)
+  the claim lapses and the box is re-claimable, independent of order status —
+  how a crashed station's box is reclaimed rather than parked. Orders with a
+  large expected cycle time may request a longer lapse (up to a configured
+  ceiling) so a long build is not reaped mid-run. These timers live on
+  `factories.defaultPolicyJson.lanePool` — RFC 0002's lane-claim expiry is the
+  pattern's ancestor, not a mechanism this RFC adopts verbatim.
 
 **Station semantics change.** `stations.sessionId` is dropped from the
 "ownership" reading: stations remain **role definitions** (role, base
-capacity, WIP, defect telemetry) scoped to a product, and their executing
-sessions change per work order. A station may hold up to `capacity` concurrent
-claims (RFC 0003's `capacity` now = max simultaneous claimed sessions).
+capacity, WIP, defect telemetry) scoped to a product. Executing sessions
+change per dispatch; RFC 0003's `capacity` (default 2) is now *max concurrent
+orders the claimed session may run as fan-out lanes*.
 
 `services/factory-lane-pool.ts` (new) is the pure pool: `claim(session)`,
 `release(session)`, `listClaims(productId)`, `poolStatus()`
@@ -231,16 +252,16 @@ dispatchScore = productWeight · orderWeight · dueDatePressure · budgetWeight;
 
 Where `slack = (dueDate − now) / expectedCycleTime` (product's rolling
 `avgCycleTimeMs`, or a default of 1 h when unavailable), and budget reads from
-the RFC 0001 ledger scoped to the product's fab period (untracked → factor
-1).
+the RFC 0001 ledger as a **rolling 30-day per-product cap** (`budgetUsd` ×
+spend in the window; untracked → factor 1).
 
 **Greedy descent.** Sort ready orders by `dispatchScore` desc (tie-break:
 `createdAt`, then `id`). For each order, in order:
 
 1. Product WIP headroom? (RFC 0003 gate — unchanged.)
 2. Pool grant? (§2 factory-lane-pool, honors `lanePoolLimit`. A product may
-   hold more orders than the pool has free lanes — the pool is the binding
-   constraint across products, product WIP is the per-product bound.)
+   hold more orders than the pool has free sessions — the pool is the binding
+   constraint across products; product WIP is the per-product bound.)
 3. Station headroom? (least-loaded station with defect-adjusted effective WIP,
    RFC 0003 gate — unchanged.)
 4. Budget? (if `budgetWeight < 1` and the product is out of budget → held.)
@@ -303,8 +324,9 @@ A product is born from a specification, not from an empty board. Backend:
   roadmap → first dispatch*. The wizard UI is RFC 0005; this is the endpoint
   it calls.
 
-No new spec-of-record table in Phase 1 (products carry the fields); a product
-spec template (description, acceptance goals) is deferred to open question 5.
+No new spec-of-record table in Phase 1 — products carry the spec fields
+(decision); a first-class product-spec record (description, acceptance goals,
+owner) is Phase 3.
 
 ### 5. Backend event surface
 
@@ -356,7 +378,7 @@ Events carry payloads only (no auth material); the route applies the same
 - `factories` + product columns + `station_claims`; migration + default-fab
   backfill; legacy `stations.sessionId` backfilled as active claims.
 - `factory-lane-pool` claim/release; dispatcher claims a session at dispatch,
-  releases on complete/rework.
+  releases on completion/rework or idle timeout.
 - `factory-event-emitter` + `/stream`; emit dispatch/complete/rework/claim.
 
 ### Phase 2 — The Arbitrator (P1)
@@ -379,7 +401,9 @@ Events carry payloads only (no auth material); the route applies the same
   `factory_id`; legacy stations-with-sessions become active claims; the
   partial unique index rejects a second active claim on one session.
 - **Claim lifecycle:** dispatch claims an eligible session (sets
-  `work_orders.sessionId`); complete/rework/skip releases it; a released
+  `work_orders.sessionId`); a second order for the same station rides the same
+  claim (fan-out) up to `capacity`; completion/rework of the last in-flight
+  order — or the `idleReleaseAfterMs` timer — releases the claim; a released
   session is claimable by another product's station next pass.
 - **Pool bound:** with `lanePoolLimit = 1`, two products' orders serialize —
   the second dispatches only after the first releases; `pool_changed` fires.
@@ -395,28 +419,40 @@ Events carry payloads only (no auth material); the route applies the same
 - **Integration:** decompose(intent) → roadmapJson → dispatch round-trips for
   a brand-new product (the pilot line).
 
-## Open questions
+## Recorded decisions (2026-09-14) & open questions
 
-1. **Pool eligibility predicate.** Which `sessions.status` / `taskMode`
-   values make a session claimable? Proposal: non-stopped, non-retired
-   sessions not currently claimed; refine per fleet status model.
-2. **Claim expiry & heartbeat.** Reuse `lane_claims` expiry semantics as-is
-   (renew by heartbeat, purge on lapse) or add a factory-specific policy
-   (e.g. long-claims on a large-order station)?
-3. **Per-product lane cap.** Pure priority arbitration (proposed) vs. a hard
-   per-product share of `lanePoolLimit`. Proposal: arbitration first, optional
-   cap in Phase 3 via `defaultPolicyJson`.
-4. **Budget period/source.** RFC 0001 ledger period granularity is not yet
-   fixed; until it is, `budgetUsd` is a per-product rolling 30-day cap with
-   `let frontier`? Default: untracked (factor 1).
-5. **Product spec depth.** Do we want a first-class product spec record
-   (description, acceptance goals, owner) in Phase 1, or trust `products` +
-   roadmap + decompose previews? Proposal: Phase 1 keeps fields on products;
-   a spec document is Phase 3.
-6. **Station role vs. lane mapping.** Does a station claim one session per
-   work order (proposed, 1:1), or may capacity > 1 map to a swarm session with
-   fan-out lanes (RFC 0002)? Proposal: 1:1 claims now; swarm lanes as a later
-   enhancement.
+Decisions taken in review:
+
+1. **Pool eligibility** — any runnable, unclaimed session (non-stopped status,
+   not held by an active claim); per-status refinement is a follow-up, not a
+   gate.
+2. **Claim lifecycle** — factory-specific policy: idle auto-release
+   (`idleReleaseAfterMs`), heartbeat lapse (`claimLapseAfterMs`), long-claim
+   override for large orders (§2). RFC 0002 lane-claim timers are an ancestor
+   pattern, not adopted verbatim.
+3. **Per-product share** — pure priority arbitration; per-product lane caps
+   are an optional Phase 3 affordance, not the default.
+4. **Budget period** — rolling 30-day per-product cap from the RFC 0001
+   ledger.
+5. **Product spec depth** — spec fields on `products` now; first-class spec
+   record deferred to Phase 3.
+6. **Station↔session mapping** — swarm sessions with fan-out lanes: the pool
+   arbitrates boxes (expensive), order parallelism is lanes inside a claimed
+   box (cheap); `capacity` = concurrent orders per claim. 1:1 claims were
+   rejected because they make parallelism cost boxes — the wrong scarce
+   resource for a GPU-accounted factory.
+
+Still open:
+
+1. **Score-weight tuning** — `productWeight` (P0=1.0 / P1=0.6 / P2=0.3) and
+   the `dueDatePressure` thresholds are starting defaults; validate against
+   real workloads and expose overrides in `defaultPolicyJson`.
+2. **Lifecycle durations** — `idleReleaseAfterMs` (5 min) and
+   `claimLapseAfterMs` (15 min) are initial; confirm against swarm session
+   heartbeat rates.
+3. **Preemption** — may a higher-priority product's dispatch *steal* a
+   lapsed-but-still-heartbeating session (abort + release), or must it wait
+   for lapse? Proposal: no preemption in Phase 1.
 
 ## Non-goals
 
