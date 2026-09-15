@@ -293,11 +293,35 @@ type ArbitrationPass = {
 };
 ```
 
-`lostTo` lists exactly which orders beat a held order (only for
-`outranked`), so the readout is self-explaining. Exposed via
+The readout's `lostTo` lists exactly which orders beat a held order (only
+for `outranked`), so it is self-explaining. Exposed via
 `GET /factory/arbitration/latest` (fab-wide, most recent pass) and
 `GET /factory/products/:id/arbitration` (per product) — consumed by RFC 0005's
 arbitration panel.
+
+**Starvation signal (decision: human-in-the-loop release).** Preemption is
+never automatic. When a senior (P0/P1) order has been held on
+"pool saturated" longer than a threshold (`starvedAfterMs`, default 10 min)
+while the pool is fully claimed by lower-priority products, the readout
+derives a **starvation signal** — the raw material for the operator's
+decision:
+
+```ts
+type StarvationSignal = {
+  starvedWorkOrderId: number;
+  productId: number;          // the starving product
+  heldForMs: number;
+  holdingClaims: Array<{ productId: number; stationId: number; sessionId: number; score: number }>;
+};
+```
+
+The corresponding mutation is `POST /factory/claims/:id/release` (new route,
+`requireAgentAuth(["coordination:write"])`, decision): an **operator-explicit**
+claim release that requeues the station's in-flight orders (`status →
+queued`, `assignedStationId` null, reservations released, resume via
+`planSnapshotJson`), marks the claim inactive, and returns the session to the
+pool. A timer never stomps running work; the operator may. Auto-preemption is
+a Phase 3 candidate.
 
 **Emit.** After the pass: a `factory_event` of type `arbitration_recomputed`
 carrying `{ passId, dispatched, held }` (§5).
@@ -369,7 +393,7 @@ Events carry payloads only (no auth material); the route applies the same
 | `artifacts/api-server/src/services/factory-dispatcher.ts` | Add `dispatchScore`-aware ordering hooks; keep per-product signature stable |
 | `artifacts/api-server/src/services/factory-event-emitter.ts` (new) | Factory SSE client registry + broadcast |
 | `artifacts/api-server/src/services/factory.ts` | Store methods for claims + parse `products.productPriority` |
-| `artifacts/api-server/src/routes/factory.ts` | Extended `POST /factory/products`; `POST /factory/products/:id/decompose`; `GET /factory/arbitration/latest`; per-product arbitration; `GET /factory/products/:id/stream`; emit hooks; `POST /factory/dispatch` |
+| `artifacts/api-server/src/routes/factory.ts` | Extended `POST /factory/products`; `POST /factory/products/:id/decompose`; `GET /factory/arbitration/latest`; per-product arbitration; `POST /factory/claims/:id/release`; `GET /factory/products/:id/stream`; emit hooks; `POST /factory/dispatch` |
 | `lib/api-spec/openapi.yaml` | (Optional, Phase 3) promote factory routes for codegen |
 
 ## Phasing
@@ -441,18 +465,22 @@ Decisions taken in review:
    box (cheap); `capacity` = concurrent orders per claim. 1:1 claims were
    rejected because they make parallelism cost boxes — the wrong scarce
    resource for a GPU-accounted factory.
+7. **Score weights** — adopt the proposed dispatch-score defaults
+   (`productWeight` P0=1.0 / P1=0.6 / P2=0.3, and the `dueDatePressure`
+   thresholds) as shipped, overridable via `defaultPolicyJson`.
+8. **Lifecycle durations** — `idleReleaseAfterMs` 5 min / `claimLapseAfterMs`
+   15 min as initial values.
+9. **Preemption** — human-in-the-loop release (§3): starvation signal +
+   operator-explicit `POST /factory/claims/:id/release` (requeue in-flight,
+   resume via plan snapshot). No automatic eviction.
 
-Still open:
+Deferred:
 
-1. **Score-weight tuning** — `productWeight` (P0=1.0 / P1=0.6 / P2=0.3) and
-   the `dueDatePressure` thresholds are starting defaults; validate against
-   real workloads and expose overrides in `defaultPolicyJson`.
-2. **Lifecycle durations** — `idleReleaseAfterMs` (5 min) and
-   `claimLapseAfterMs` (15 min) are initial; confirm against swarm session
-   heartbeat rates.
-3. **Preemption** — may a higher-priority product's dispatch *steal* a
-   lapsed-but-still-heartbeating session (abort + release), or must it wait
-   for lapse? Proposal: no preemption in Phase 1.
+1. **Auto-preemption** — stealing a lapsed-but-heartbeating session is a
+   Phase 3 candidate behind the operator release we ship in Phase 1.
+2. **Weight/duration tuning** — the defaults above are to be validated against
+   real workloads and tuned via `defaultPolicyJson`; the mechanism ships now,
+   the values are revisited.
 
 ## Non-goals
 
