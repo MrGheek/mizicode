@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import {
   Home, Terminal, Brain, Settings, Bot, Layers, KeyRound,
   CheckCircle2, Bell, ChevronDown, ChevronRight, X,
-  CheckCircle, XCircle, AlertTriangle, DatabaseZap,
+  CheckCircle, XCircle, AlertTriangle, DatabaseZap, Factory,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -351,6 +351,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         >
           <NavItem href="/" icon={Home} label="Home" active={isActive("/")} collapsed={sidebarCollapsed} />
           <NavItem href="/sessions" icon={Terminal} label="Sessions" active={isActive("/sessions")} collapsed={sidebarCollapsed} />
+          <NavItem
+            href="/factory"
+            icon={Factory}
+            label="Factory"
+            active={isActive("/factory")}
+            collapsed={sidebarCollapsed}
+          />
           <NavItem
             href="/intelligence"
             icon={Brain}

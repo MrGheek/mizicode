@@ -10,24 +10,52 @@ import { triggerPipeline, advancePipeline, latestPipelineSnapshot } from "../../
 import { computeDashboard } from "../../services/factory-telemetry.js";
 import { getFactoryResourcePool, resetFactoryResourcePool } from "../../services/factory-resource-pool.js";
 import { runFactoryEval, simulateFactoryRun, type FactoryEvalScenario, type FactoryEvalConfig } from "../../services/factory-eval.js";
+import { runArbitrationPass } from "../../services/factory-arbitration.js";
 
 /**
  * RFC 0003 Phase 1 — factory MCP tools: create_product, dispatch_work_order,
- * admit_merge, rework, factory_status.
+ * admit_merge, rework, factory_status. RFC 0006 — fab dispatch arbitration.
  */
 export function registerFactoryTools(server: McpServer): void {
   server.registerTool("create_product", {
-    description: "[Write] Register a repo as a factory product (RFC 0003). A product is a repo with a roadmap that outlives any single session.",
+    description: "[Write] Register a repo as a factory product (RFC 0003/0006). A product is a repo with a roadmap that outlives any single session; priority/due date feed the fab dispatcher's score.",
     inputSchema: z.object({
       name: z.string().describe("Product name"),
       repoUrl: z.string().describe("Repo URL (unique product key)"),
       wipLimit: z.number().int().positive().optional().describe("Max concurrent work orders (default 4)"),
+      priority: z.enum(["p0", "p1", "p2"]).optional().describe("Standing product priority (default p2)"),
+      dueDate: z.string().optional().describe("ISO date for SLA pressure (optional)"),
+      budgetUsd: z.number().positive().optional().describe("Rolling 30-day spend cap (optional)"),
     }),
-  }, async ({ name, repoUrl, wipLimit }) => {
+  }, async ({ name, repoUrl, wipLimit, priority, dueDate, budgetUsd }) => {
     const registry = new FactoryRegistry(createDbFactoryStore());
     try {
-      const product = await registry.createProduct({ name, repoUrl, wipLimit });
+      const product = await registry.createProduct({
+        name,
+        repoUrl,
+        wipLimit,
+        productPriority: priority ?? "p2",
+        dueDate: dueDate ? new Date(dueDate) : null,
+        budgetUsd: budgetUsd ?? null,
+      });
       return { content: [{ type: "text", text: JSON.stringify({ product }, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }, null, 2) }] };
+    }
+  });
+
+  server.registerTool("dispatch_fab", {
+    description: "[Write] Run the fab-wide arbitration pass (RFC 0006): dispatch ready work orders across ALL products by dispatch score against the shared lane pool, returning the per-order readout (scores, factors, held reasons, lostTo, starvation).",
+    inputSchema: z.object({}),
+  }, async () => {
+    const store = createDbFactoryStore();
+    try {
+      const fab = await store.getDefaultFactory();
+      if (!fab) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: "no factory exists" }, null, 2) }] };
+      }
+      const pass = await runArbitrationPass(store, { factoryId: fab.id });
+      return { content: [{ type: "text", text: JSON.stringify({ pass }, null, 2) }] };
     } catch (err) {
       return { content: [{ type: "text", text: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }, null, 2) }] };
     }

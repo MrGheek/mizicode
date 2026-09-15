@@ -11,16 +11,20 @@
  * the products / work_orders / stations tables.
  */
 
-import { db, productsTable, workOrdersTable, stationsTable, reworkItemsTable, pipelineRunsTable, factoryMetricsTable } from "@workspace/db";
+import { db, productsTable, workOrdersTable, stationsTable, reworkItemsTable, pipelineRunsTable, factoryMetricsTable, factoriesTable, stationClaimsTable, DEFAULT_FACTORY_POLICY } from "@workspace/db";
 import { eq, and, inArray, desc, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
-import type { Product, WorkOrder, Station, ReworkItem, PipelineRun, FactoryMetrics, WorkOrderStatus, WorkOrderPriority, StationRole, PipelineStage, PipelineStatus } from "@workspace/db";
+import type { Product, WorkOrder, Station, ReworkItem, PipelineRun, FactoryMetrics, Factory, StationClaim, WorkOrderStatus, WorkOrderPriority, StationRole, ProductPriority, PipelineStage, PipelineStatus } from "@workspace/db";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface CreateProductParams {
   name: string;
   repoUrl: string;
+  factoryId?: number | null;
+  productPriority?: ProductPriority;
+  dueDate?: Date | null;
+  budgetUsd?: number | null;
   wipLimit?: number;
   qualityGateConfig?: Record<string, unknown> | null;
   pipelineConfig?: Record<string, unknown> | null;
@@ -42,7 +46,21 @@ export interface CreateStationParams {
   wipLimit?: number;
 }
 
+export interface CreateStationClaimParams {
+  productId: number;
+  stationId: number;
+  sessionId: number;
+  workOrderId?: number | null;
+  expiresAt: Date;
+}
+
 export interface FactoryStore {
+  // factories (RFC 0006)
+  getFactory(id: number): Promise<Factory | null>;
+  listFactories(): Promise<Factory[]>;
+  getDefaultFactory(): Promise<Factory | null>;
+  createFactory(params: { name: string; lanePoolLimit?: number; budgetUsd?: number | null }): Promise<Factory>;
+  listProductsForFactory(factoryId: number): Promise<Product[]>;
   // products
   createProduct(params: CreateProductParams): Promise<Product>;
   getProduct(id: number): Promise<Product | null>;
@@ -59,6 +77,11 @@ export interface FactoryStore {
   getStation(id: number): Promise<Station | null>;
   listStations(productId: number): Promise<Station[]>;
   updateStation(id: number, patch: Partial<Station>): Promise<Station | null>;
+  // station claims (RFC 0006)
+  createStationClaim(params: CreateStationClaimParams): Promise<StationClaim>;
+  getStationClaim(id: number): Promise<StationClaim | null>;
+  listActiveClaims(productId?: number): Promise<StationClaim[]>;
+  updateStationClaim(id: number, patch: Partial<StationClaim>): Promise<StationClaim | null>;
   // rework items
   createReworkItem(params: { workOrderId: number; stationId: number; defectClass: string; cycle: number }): Promise<ReworkItem>;
   listReworkItems(workOrderId: number): Promise<ReworkItem[]>;
@@ -79,9 +102,13 @@ export class MemoryFactoryStore implements FactoryStore {
   private nextProduct = 1;
   private nextWorkOrder = 1;
   private nextStation = 1;
+  private nextFactory = 1;
+  private nextStationClaim = 1;
   private products: Product[] = [];
   private workOrders: WorkOrder[] = [];
   private stations: Station[] = [];
+  private factories: Factory[] = [];
+  private stationClaims: StationClaim[] = [];
   private reworkItems: ReworkItem[] = [];
   private nextReworkItem = 1;
   private pipelineRuns: PipelineRun[] = [];
@@ -89,12 +116,50 @@ export class MemoryFactoryStore implements FactoryStore {
   private factoryMetrics: FactoryMetrics[] = [];
   private nextFactoryMetrics = 1;
 
+  async getFactory(id: number): Promise<Factory | null> {
+    return this.factories.find((f) => f.id === id) ?? null;
+  }
+
+  async listFactories(): Promise<Factory[]> {
+    return [...this.factories];
+  }
+
+  async getDefaultFactory(): Promise<Factory | null> {
+    return this.factories[0] ?? null;
+  }
+
+  async createFactory(params: { name: string; lanePoolLimit?: number; budgetUsd?: number | null }): Promise<Factory> {
+    const now = new Date();
+    const f: Factory = {
+      id: this.nextFactory++,
+      name: params.name,
+      lanePoolLimit: params.lanePoolLimit ?? 8,
+      budgetUsd: params.budgetUsd ?? null,
+      defaultPolicyJson: { ...DEFAULT_FACTORY_POLICY },
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.factories.push(f);
+    return f;
+  }
+
+  async listProductsForFactory(factoryId: number): Promise<Product[]> {
+    return this.products.filter((p) => p.factoryId === factoryId);
+  }
+
   async createProduct(params: CreateProductParams): Promise<Product> {
+    if (params.factoryId == null && this.factories.length === 0) {
+      await this.createFactory({ name: "Mizi Fab" });
+    }
     const now = new Date();
     const p: Product = {
       id: this.nextProduct++,
       name: params.name,
       repoUrl: params.repoUrl,
+      factoryId: params.factoryId ?? this.factories[0]?.id ?? null,
+      productPriority: params.productPriority ?? "p2",
+      dueDate: params.dueDate ?? null,
+      budgetUsd: params.budgetUsd ?? null,
       roadmapJson: [],
       wipLimit: params.wipLimit ?? 4,
       qualityGateConfig: params.qualityGateConfig ?? null,
@@ -199,6 +264,39 @@ export class MemoryFactoryStore implements FactoryStore {
     return s;
   }
 
+  async createStationClaim(params: CreateStationClaimParams): Promise<StationClaim> {
+    const now = new Date();
+    const c: StationClaim = {
+      id: this.nextStationClaim++,
+      productId: params.productId,
+      stationId: params.stationId,
+      sessionId: params.sessionId,
+      workOrderId: params.workOrderId ?? null,
+      claimedAt: now,
+      expiresAt: params.expiresAt,
+      lastHeartbeatAt: now,
+      releasedAt: null,
+      active: true,
+    };
+    this.stationClaims.push(c);
+    return c;
+  }
+
+  async getStationClaim(id: number): Promise<StationClaim | null> {
+    return this.stationClaims.find((c) => c.id === id) ?? null;
+  }
+
+  async listActiveClaims(productId?: number): Promise<StationClaim[]> {
+    return this.stationClaims.filter((c) => c.active && (productId === undefined || c.productId === productId));
+  }
+
+  async updateStationClaim(id: number, patch: Partial<StationClaim>): Promise<StationClaim | null> {
+    const c = this.stationClaims.find((x) => x.id === id);
+    if (!c) return null;
+    Object.assign(c, patch);
+    return c;
+  }
+
   async createReworkItem(params: { workOrderId: number; stationId: number; defectClass: string; cycle: number }): Promise<ReworkItem> {
     const now = new Date();
     const r: ReworkItem = {
@@ -288,12 +386,16 @@ export class MemoryFactoryStore implements FactoryStore {
     this.products = [];
     this.workOrders = [];
     this.stations = [];
+    this.factories = [];
+    this.stationClaims = [];
     this.reworkItems = [];
     this.pipelineRuns = [];
     this.factoryMetrics = [];
     this.nextProduct = 1;
     this.nextWorkOrder = 1;
     this.nextStation = 1;
+    this.nextFactory = 1;
+    this.nextStationClaim = 1;
     this.nextReworkItem = 1;
     this.nextPipelineRun = 1;
     this.nextFactoryMetrics = 1;
@@ -304,10 +406,52 @@ export class MemoryFactoryStore implements FactoryStore {
 
 export function createDbFactoryStore(): FactoryStore {
   return {
+    async getFactory(id) {
+      const [row] = await db.select().from(factoriesTable).where(eq(factoriesTable.id, id));
+      return row ?? null;
+    },
+    async listFactories() {
+      return db.select().from(factoriesTable).orderBy(factoriesTable.id);
+    },
+    async getDefaultFactory() {
+      const [row] = await db.select().from(factoriesTable).orderBy(factoriesTable.id).limit(1);
+      return row ?? null;
+    },
+    async createFactory(params) {
+      const [row] = await db.insert(factoriesTable).values({
+        name: params.name,
+        lanePoolLimit: params.lanePoolLimit ?? 8,
+        budgetUsd: params.budgetUsd ?? null,
+        defaultPolicyJson: DEFAULT_FACTORY_POLICY,
+      }).returning();
+      return row;
+    },
+    async listProductsForFactory(factoryId) {
+      return db.select().from(productsTable)
+        .where(eq(productsTable.factoryId, factoryId))
+        .orderBy(desc(productsTable.createdAt));
+    },
     async createProduct(params) {
+      let factoryId = params.factoryId ?? null;
+      if (factoryId == null) {
+        const defaultFab = await db.select().from(factoriesTable).orderBy(factoriesTable.id).limit(1);
+        if (defaultFab.length === 0) {
+          const [fab] = await db.insert(factoriesTable).values({
+            name: "Mizi Fab",
+            lanePoolLimit: 8,
+            defaultPolicyJson: DEFAULT_FACTORY_POLICY,
+          }).returning();
+          factoryId = fab!.id;
+        } else {
+          factoryId = defaultFab[0]!.id;
+        }
+      }
       const [row] = await db.insert(productsTable).values({
         name: params.name,
         repoUrl: params.repoUrl,
+        factoryId,
+        productPriority: params.productPriority ?? "p2",
+        dueDate: params.dueDate ?? null,
         wipLimit: params.wipLimit ?? 4,
         qualityGateConfig: params.qualityGateConfig ?? null,
         pipelineConfig: params.pipelineConfig ?? null,
@@ -376,6 +520,32 @@ export function createDbFactoryStore(): FactoryStore {
     },
     async updateStation(id, patch) {
       const [row] = await db.update(stationsTable).set({ ...patch, updatedAt: new Date() }).where(eq(stationsTable.id, id)).returning();
+      return row ?? null;
+    },
+    async createStationClaim(params) {
+      const [row] = await db.insert(stationClaimsTable).values({
+        productId: params.productId,
+        stationId: params.stationId,
+        sessionId: params.sessionId,
+        workOrderId: params.workOrderId ?? null,
+        expiresAt: params.expiresAt,
+      }).returning();
+      return row;
+    },
+    async getStationClaim(id) {
+      const [row] = await db.select().from(stationClaimsTable).where(eq(stationClaimsTable.id, id));
+      return row ?? null;
+    },
+    async listActiveClaims(productId) {
+      if (productId === undefined) {
+        return db.select().from(stationClaimsTable).where(eq(stationClaimsTable.active, true)).orderBy(stationClaimsTable.id);
+      }
+      return db.select().from(stationClaimsTable)
+        .where(and(eq(stationClaimsTable.active, true), eq(stationClaimsTable.productId, productId)))
+        .orderBy(stationClaimsTable.id);
+    },
+    async updateStationClaim(id, patch) {
+      const [row] = await db.update(stationClaimsTable).set(patch).where(eq(stationClaimsTable.id, id)).returning();
       return row ?? null;
     },
     async createReworkItem(params) {

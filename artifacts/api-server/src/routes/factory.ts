@@ -1,6 +1,7 @@
 /**
  * routes/factory.ts — RFC 0003 Phase 1: product, work-order, station, dispatch,
- * and admission endpoints.
+ * and admission endpoints. RFC 0006: fab model (factories, station claims),
+ * multi-product arbitration, live events, and product-spec decompose.
  *
  * The factory orchestrates sessions/lanes (it does not replace them): products
  * are repos with roadmaps, work orders flow through stations, and the dispatcher
@@ -19,6 +20,14 @@ import { triggerPipeline, advancePipeline, latestPipelineSnapshot, type Pipeline
 import { computeDashboard, snapshotMetrics, getMetricsHistory } from "../services/factory-telemetry";
 import { getFactoryResourcePool, resetFactoryResourcePool } from "../services/factory-resource-pool";
 import { runFactoryEval, simulateFactoryRun, type FactoryEvalScenario, type FactoryEvalConfig } from "../services/factory-eval";
+import { runArbitrationPass, getLatestPass, setLatestPass } from "../services/factory-arbitration";
+import { releaseClaim, releaseClaimsIfSessionIdle, lanePoolStatus } from "../services/factory-lane-pool";
+import {
+  addFactoryClient,
+  removeFactoryClient,
+  broadcastFactoryEvent,
+} from "../services/factory-event-emitter";
+import { generatePlan } from "../services/plan";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -31,6 +40,10 @@ function serializeProduct(p: Awaited<ReturnType<FactoryRegistry["getProduct"]>>)
     id: p.id,
     name: p.name,
     repoUrl: p.repoUrl,
+    factoryId: p.factoryId,
+    priority: p.productPriority,
+    dueDate: p.dueDate?.toISOString() ?? null,
+    budgetUsd: p.budgetUsd ?? null,
     roadmap: p.roadmapJson,
     wipLimit: p.wipLimit,
     qualityGateConfig: p.qualityGateConfig,
@@ -86,9 +99,13 @@ router.get("/factory/products", requireAgentAuth(["coordination:read"]), async (
 });
 
 router.post("/factory/products", requireAgentAuth(["coordination:write"]), async (req, res) => {
-  const { name, repoUrl, wipLimit, qualityGateConfig, pipelineConfig } = req.body as {
+  const { name, repoUrl, factoryId, priority, dueDate, budgetUsd, wipLimit, qualityGateConfig, pipelineConfig } = req.body as {
     name?: string;
     repoUrl?: string;
+    factoryId?: number | null;
+    priority?: "p0" | "p1" | "p2";
+    dueDate?: string | null;
+    budgetUsd?: number | null;
     wipLimit?: number;
     qualityGateConfig?: Record<string, unknown> | null;
     pipelineConfig?: Record<string, unknown> | null;
@@ -102,10 +119,15 @@ router.post("/factory/products", requireAgentAuth(["coordination:write"]), async
     const product = await registry.createProduct({
       name,
       repoUrl,
+      factoryId: factoryId ?? null,
+      productPriority: priority ?? "p2",
+      dueDate: dueDate ? new Date(dueDate) : null,
+      budgetUsd: typeof budgetUsd === "number" ? budgetUsd : null,
       wipLimit: typeof wipLimit === "number" && wipLimit > 0 ? wipLimit : undefined,
       qualityGateConfig: qualityGateConfig ?? null,
       pipelineConfig: pipelineConfig ?? null,
     });
+    broadcastFactoryEvent(0, { type: "wip_changed", productWip: { used: 0, limit: product.wipLimit } });
     res.status(201).json({ product: serializeProduct(product) });
   } catch (err) {
     res.status(409).json({ error: err instanceof Error ? err.message : String(err) });
@@ -119,6 +141,29 @@ router.get("/factory/products/:id", requireAgentAuth(["coordination:read"]), asy
   const product = await registry.getProduct(id);
   if (!product) { res.status(404).json({ error: "product not found" }); return; }
   res.json({ product: serializeProduct(product) });
+});
+
+router.patch("/factory/products/:id", requireAgentAuth(["coordination:write"]), async (req, res) => {
+  const id = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "invalid product id" }); return; }
+  const { priority, dueDate, budgetUsd, wipLimit } = req.body as {
+    priority?: "p0" | "p1" | "p2";
+    dueDate?: string | null;
+    budgetUsd?: number | null;
+    wipLimit?: number;
+  };
+  const store = createDbFactoryStore();
+  const existing = await store.getProduct(id);
+  if (!existing) { res.status(404).json({ error: "product not found" }); return; }
+  const patch: Partial<{ productPriority: "p0" | "p1" | "p2"; dueDate: Date | null; budgetUsd: number | null; wipLimit: number }> = {};
+  if (priority !== undefined) patch.productPriority = priority;
+  if (dueDate !== undefined) patch.dueDate = dueDate ? new Date(dueDate) : null;
+  if (budgetUsd !== undefined) patch.budgetUsd = budgetUsd;
+  if (typeof wipLimit === "number" && wipLimit > 0) patch.wipLimit = wipLimit;
+  const updated = await store.updateProduct(id, patch);
+  if (!updated) { res.status(404).json({ error: "product not found" }); return; }
+  broadcastFactoryEvent(0, { type: "wip_changed", productWip: { used: 0, limit: updated.wipLimit } });
+  res.json({ product: serializeProduct(updated) });
 });
 
 // ── Work orders ───────────────────────────────────────────────────────────────
@@ -171,8 +216,14 @@ router.post("/factory/work-orders/:id/complete", requireAgentAuth(["coordination
   const id = parseInt(String(req.params["id"] ?? ""), 10);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "invalid work order id" }); return; }
   const status = (req.body as { status?: string }).status === "skipped" ? "skipped" : "done";
-  const order = await completeWorkOrder(createDbFactoryStore(), id, status, getFactoryResourcePool());
+  const store = createDbFactoryStore();
+  const before = await store.getWorkOrder(id);
+  const order = await completeWorkOrder(store, id, status, getFactoryResourcePool());
   if (!order) { res.status(404).json({ error: "work order not found" }); return; }
+  if (before?.sessionId != null) {
+    await releaseClaimsIfSessionIdle(store, { sessionId: before.sessionId, productId: order.productId });
+  }
+  broadcastFactoryEvent(order.productId, { type: "order_completed", workOrderId: order.id, status });
   res.json({ workOrder: serializeWorkOrder(order) });
 });
 
@@ -180,8 +231,20 @@ router.post("/factory/work-orders/:id/rework", requireAgentAuth(["coordination:w
   const id = parseInt(String(req.params["id"] ?? ""), 10);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "invalid work order id" }); return; }
   const defectClass = (req.body as { defectClass?: string }).defectClass ?? "gate_failure";
-  const order = await rejectToRework(createDbFactoryStore(), id, defectClass, getFactoryResourcePool());
+  const store = createDbFactoryStore();
+  const before = await store.getWorkOrder(id);
+  const order = await rejectToRework(store, id, defectClass, getFactoryResourcePool());
   if (!order) { res.status(404).json({ error: "work order not found" }); return; }
+  if (before?.sessionId != null) {
+    await releaseClaimsIfSessionIdle(store, { sessionId: before.sessionId, productId: order.productId });
+  }
+  broadcastFactoryEvent(order.productId, {
+    type: "defect_recorded",
+    workOrderId: order.id,
+    stationId: order.assignedStationId ?? 0,
+    defectClass,
+    cycle: order.reworkCount,
+  });
   res.json({ workOrder: serializeWorkOrder(order) });
 });
 
@@ -230,6 +293,14 @@ router.post("/factory/products/:id/dispatch", requireAgentAuth(["coordination:wr
       maxDispatch: typeof maxDispatch === "number" && maxDispatch > 0 ? maxDispatch : undefined,
       pool: getFactoryResourcePool(),
     });
+    for (const d of result.dispatched) {
+      broadcastFactoryEvent(productId, {
+        type: "order_dispatched",
+        workOrderId: d.workOrderId,
+        stationId: d.stationId,
+        sessionId: 0,
+      });
+    }
     res.json(result);
   } catch (err) {
     res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
@@ -324,6 +395,12 @@ router.post("/factory/pipeline-runs/:id/advance", requireAgentAuth(["coordinatio
     artifacts: body.artifacts ?? [],
     evidence: body.evidence ?? [],
   });
+  broadcastFactoryEvent(result.completedRun.productId, {
+    type: "stage_advanced",
+    pipelineRunId: result.completedRun.id,
+    stage: result.completedRun.stage,
+    status: result.completedRun.status,
+  });
   res.json(result);
 });
 
@@ -406,6 +483,166 @@ router.post("/factory/evals/run", requireAgentAuth(["coordination:write"]), asyn
     configB: body.configB,
   });
   res.json(report);
+});
+
+// ── RFC 0006: fab model ────────────────────────────────────────────────────────
+
+router.get("/factory/fabs", requireAgentAuth(["coordination:read"]), async (_req, res) => {
+  const store = createDbFactoryStore();
+  const fabs = await store.listFactories();
+  res.json({
+    fabs: fabs.map((f) => ({
+      id: f.id,
+      name: f.name,
+      lanePoolLimit: f.lanePoolLimit,
+      budgetUsd: f.budgetUsd,
+      defaultPolicy: f.defaultPolicyJson,
+      createdAt: f.createdAt.toISOString(),
+    })),
+  });
+});
+
+router.get("/factory/fab/status", requireAgentAuth(["coordination:read"]), async (_req, res) => {
+  const store = createDbFactoryStore();
+  const fab = await store.getDefaultFactory();
+  if (!fab) { res.status(404).json({ error: "no factory exists" }); return; }
+  const pool = await lanePoolStatus(store, fab.id);
+  const products = await store.listProductsForFactory(fab.id);
+  res.json({ fab: { id: fab.id, name: fab.name, lanePoolLimit: fab.lanePoolLimit, budgetUsd: fab.budgetUsd }, lanePool: pool, products: products.length });
+});
+
+router.post("/factory/dispatch", requireAgentAuth(["coordination:write"]), async (req, res) => {
+  const store = createDbFactoryStore();
+  const fab = await store.getDefaultFactory();
+  if (!fab) { res.status(404).json({ error: "no factory exists" }); return; }
+  try {
+    const pass = await runArbitrationPass(store, { factoryId: fab.id });
+    setLatestPass(pass);
+    broadcastFactoryEvent(0, {
+      type: "arbitration_recomputed",
+      passId: pass.passId,
+      dispatched: pass.dispatched,
+      held: pass.held,
+    });
+    for (const line of pass.lines) {
+      if (line.outcome === "dispatched") {
+        const order = await store.getWorkOrder(line.workOrderId);
+        if (order) {
+          broadcastFactoryEvent(line.productId, {
+            type: "order_dispatched",
+            workOrderId: line.workOrderId,
+            stationId: order.assignedStationId ?? 0,
+            sessionId: order.sessionId ?? 0,
+          });
+        }
+      }
+    }
+    res.json({ pass });
+  } catch (err) {
+    res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.get("/factory/arbitration/latest", requireAgentAuth(["coordination:read"]), async (_req, res) => {
+  const pass = getLatestPass();
+  if (!pass) { res.status(404).json({ error: "no arbitration pass has run yet" }); return; }
+  res.json({ pass });
+});
+
+router.get("/factory/products/:id/arbitration", requireAgentAuth(["coordination:read"]), async (req, res) => {
+  const productId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(productId)) { res.status(400).json({ error: "invalid product id" }); return; }
+  const pass = getLatestPass();
+  if (!pass) { res.status(404).json({ error: "no arbitration pass has run yet" }); return; }
+  const lines = pass.lines.filter((l) => l.productId === productId);
+  const signals = pass.starvationSignals.filter((s) => s.productId === productId);
+  res.json({ passId: pass.passId, ranAt: pass.ranAt, lines, starvationSignals: signals, lanePool: pass.lanePool });
+});
+
+router.post("/factory/claims/:id/release", requireAgentAuth(["coordination:write"]), async (req, res) => {
+  const claimId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(claimId)) { res.status(400).json({ error: "invalid claim id" }); return; }
+  const store = createDbFactoryStore();
+  const claim = await store.getStationClaim(claimId);
+  if (!claim) { res.status(404).json({ error: "claim not found" }); return; }
+  // Operator-explicit eviction: requeue the station's in-flight orders so the
+  // session returns to the pool (resume via planSnapshotJson downstream).
+  const inFlight = await store.listWorkOrders(claim.productId, ["dispatched", "in_progress"]);
+  const requeued: number[] = [];
+  for (const order of inFlight) {
+    if (order.sessionId === claim.sessionId) {
+      await store.updateWorkOrder(order.id, {
+        status: "queued",
+        assignedStationId: null,
+        sessionId: null,
+        startedAt: null,
+      });
+      requeued.push(order.id);
+    }
+  }
+  const result = await releaseClaim(store, claimId);
+  if (!result.released) { res.status(409).json({ error: result.reason ?? "claim release failed" }); return; }
+  broadcastFactoryEvent(claim.productId, { type: "claim_released", workOrderId: null, sessionId: claim.sessionId });
+  res.json({ ok: true, claimId, requeuedWorkOrders: requeued, sessionId: claim.sessionId });
+});
+
+router.post("/factory/products/:id/decompose", requireAgentAuth(["coordination:write"]), async (req, res) => {
+  const productId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(productId)) { res.status(400).json({ error: "invalid product id" }); return; }
+  const { intentText, userId, commit } = req.body as { intentText?: string; userId?: string; commit?: boolean };
+  if (!intentText?.trim()) { res.status(400).json({ error: "intentText is required" }); return; }
+  const store = createDbFactoryStore();
+  const product = await store.getProduct(productId);
+  if (!product) { res.status(404).json({ error: "product not found" }); return; }
+  const ownerId = userId?.trim() || "factory-operator";
+  try {
+    const plan = await generatePlan({
+      intentText: intentText.trim(),
+      repoUrl: product.repoUrl,
+      userId: ownerId,
+    });
+    const roadmap = plan.draftSteps.map((s) => s.text);
+    if (commit) {
+      const registry = new FactoryRegistry(store);
+      const created: number[] = [];
+      for (const goal of roadmap) {
+        const order = await registry.createWorkOrder({ productId, goal, priority: "normal" });
+        created.push(order.id);
+      }
+      broadcastFactoryEvent(productId, { type: "wip_changed", productWip: { used: 0, limit: product.wipLimit } });
+      res.status(201).json({ ok: true, planId: plan.plan.id, roadmap, committedWorkOrderIds: created });
+      return;
+    }
+    res.json({ ok: true, planId: plan.plan.id, roadmap, llmFailed: plan.llmFailed });
+  } catch (err) {
+    logger.error({ err, productId }, "[factory] decompose failed");
+    res.status(500).json({ error: "Product roadmap decomposition failed" });
+  }
+});
+
+router.get("/factory/products/:id/stream", requireAgentAuth(["coordination:read"]), (req, res) => {
+  const productId = parseInt(String(req.params["id"] ?? ""), 10);
+  if (!Number.isFinite(productId)) { res.status(400).json({ error: "invalid product id" }); return; }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  addFactoryClient(productId, res);
+  // The fab-wide channel (key 0) carries portfolio-level events too.
+  addFactoryClient(0, res);
+
+  const keepAlive = setInterval(() => {
+    try { res.write("event: ping\ndata: {}\n\n"); } catch { /* ignore */ }
+  }, 20000);
+
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    removeFactoryClient(productId, res);
+    removeFactoryClient(0, res);
+  });
 });
 
 export default router;

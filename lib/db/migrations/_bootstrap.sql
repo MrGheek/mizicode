@@ -2343,10 +2343,24 @@ CREATE TABLE IF NOT EXISTS public.lane_prompt_snapshots (
     activated_at timestamp NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.factories (
+    id serial PRIMARY KEY,
+    name text NOT NULL,
+    lane_pool_limit integer NOT NULL DEFAULT 8,
+    budget_usd real,
+    default_policy_json jsonb NOT NULL DEFAULT '{"defaultWipLimit":4,"defaultStationRoles":["build","review"],"defaultQualityGateConfig":null,"lanePool":{"idleReleaseAfterMs":300000,"claimLapseAfterMs":900000}}',
+    created_at timestamp NOT NULL DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS public.products (
     id serial PRIMARY KEY,
     name text NOT NULL,
     repo_url text NOT NULL UNIQUE,
+    factory_id integer REFERENCES public.factories(id) ON DELETE RESTRICT,
+    product_priority text NOT NULL DEFAULT 'p2',
+    due_date timestamp,
+    budget_usd real,
     roadmap_json jsonb NOT NULL DEFAULT '[]',
     wip_limit integer NOT NULL DEFAULT 4,
     quality_gate_config jsonb,
@@ -2425,6 +2439,24 @@ CREATE TABLE IF NOT EXISTS public.factory_metrics (
 );
 
 CREATE INDEX IF NOT EXISTS factory_metrics_product_time_idx ON public.factory_metrics(product_id, snapshot_time DESC);
+
+CREATE TABLE IF NOT EXISTS public.station_claims (
+    id serial PRIMARY KEY,
+    product_id integer NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
+    station_id integer NOT NULL REFERENCES public.stations(id) ON DELETE CASCADE,
+    session_id integer NOT NULL,
+    work_order_id integer,
+    claimed_at timestamp NOT NULL DEFAULT now(),
+    expires_at timestamp NOT NULL,
+    last_heartbeat_at timestamp NOT NULL DEFAULT now(),
+    released_at timestamp,
+    active boolean NOT NULL DEFAULT true
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS station_claims_active_session_unique_idx ON public.station_claims(session_id) WHERE active = true;
+CREATE UNIQUE INDEX IF NOT EXISTS station_claims_active_station_unique_idx ON public.station_claims(station_id) WHERE active = true;
+
+CREATE INDEX IF NOT EXISTS station_claims_product_idx ON public.station_claims(product_id);
 
 --
 -- PostgreSQL database dump complete

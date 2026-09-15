@@ -17,6 +17,9 @@ import SettingsPage from "@/pages/settings";
 import ApiKeysPage from "@/pages/api-keys";
 import IntelligencePage from "@/pages/intelligence";
 import SchemaTemplatesPage from "@/pages/schema-templates";
+import FactoryPortfolio from "@/pages/factory/index";
+import FactoryControlRoom from "@/pages/factory/[id]";
+import FactoryProductSpec from "@/pages/factory/new";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -45,6 +48,9 @@ function Router() {
         <Route path="/settings" component={SettingsPage} />
         <Route path="/api-keys" component={ApiKeysPage} />
         <Route path="/schema-templates" component={SchemaTemplatesPage} />
+        <Route path="/factory" component={FactoryPortfolio} />
+        <Route path="/factory/new" component={FactoryProductSpec} />
+        <Route path="/factory/:id" component={FactoryControlRoom} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

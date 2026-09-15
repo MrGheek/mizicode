@@ -1,21 +1,57 @@
-import { pgTable, serial, text, integer, timestamp, jsonb, real, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, jsonb, real, boolean, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export type WorkOrderStatus = "queued" | "dispatched" | "in_progress" | "blocked" | "done" | "skipped";
 export type WorkOrderPriority = "high" | "normal" | "low";
 export type StationRole = "build" | "review" | "debug" | "refactor" | "explore" | "team";
+export type ProductPriority = "p0" | "p1" | "p2";
+
+export interface FactoryDefaultPolicy {
+  defaultWipLimit: number;
+  defaultStationRoles: string[];
+  defaultQualityGateConfig: Record<string, unknown> | null;
+  lanePool: { idleReleaseAfterMs: number; claimLapseAfterMs: number };
+}
+
+export const DEFAULT_FACTORY_POLICY: FactoryDefaultPolicy = {
+  defaultWipLimit: 4,
+  defaultStationRoles: ["build", "review"],
+  defaultQualityGateConfig: null,
+  lanePool: { idleReleaseAfterMs: 300_000, claimLapseAfterMs: 900_000 },
+};
 
 /**
- * RFC 0003 — Code Factory: products, work orders, stations.
- *
- * A product is a repo with a roadmap that outlives any single session. Work
- * orders are the unit of factory work — they flow through stations (sessions
- * with a role + capacity), not through sessions directly. WIP limits bound how
- * many work orders a product/station may run concurrently (Little's law).
+ * RFC 0006 — Code Factory (fab): the fab is the tenant that owns products, a
+ * shared lane pool (sessions), a budget, and default policies. A product is a
+ * repo with a roadmap that outlives any single session. Work orders are the
+ * unit of factory work — they flow through stations (role definitions), not
+ * through sessions directly. WIP limits bound how many work orders a
+ * product/station may run concurrently (Little's law).
  */
+export const factoriesTable = pgTable("factories", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  /** Max concurrently claimed sessions across ALL products in the fab. */
+  lanePoolLimit: integer("lane_pool_limit").notNull().default(8),
+  /** Per-period spend budget (connected to the RFC 0001 ledger; null = untracked). */
+  budgetUsd: real("budget_usd"),
+  /** Fab-level defaults applied at product creation (WIP, station roles, gates). */
+  defaultPolicyJson: jsonb("default_policy_json").$type<FactoryDefaultPolicy>().notNull().default(DEFAULT_FACTORY_POLICY),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const productsTable = pgTable("products", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   repoUrl: text("repo_url").notNull().unique(),
+  factoryId: integer("factory_id").references(() => factoriesTable.id, { onDelete: "restrict" }),
+  /** Standing product priority fed into the dispatch score (RFC 0006). */
+  productPriority: text("product_priority").notNull().default("p2").$type<ProductPriority>(),
+  /** SLA date; null = none. Feeds dueDatePressure in the dispatch score. */
+  dueDate: timestamp("due_date"),
+  /** Rolling 30-day spend cap (RFC 0001 ledger); null = untracked. */
+  budgetUsd: real("budget_usd"),
   /** Ordered roadmap: array of work-order ids (the product's backlog). */
   roadmapJson: jsonb("roadmap_json").$type<number[]>().notNull().default([]),
   /** Max concurrent work orders the product may run (WIP limit). */
@@ -69,6 +105,32 @@ export const stationsTable = pgTable("stations", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+/**
+ * RFC 0006 — station claims: a station CLAIMS a session (box) from the shared
+ * fab lane pool at dispatch and RELEASES it when idle. One active claim per
+ * session; orders ride the claim via work_orders.session_id (swarm fan-out).
+ */
+export const stationClaimsTable = pgTable("station_claims", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id").notNull().references(() => productsTable.id, { onDelete: "cascade" }),
+  stationId: integer("station_id").notNull().references(() => stationsTable.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").notNull(),
+  /** Current order on the claim — audit only; null while the claim sits idle. */
+  workOrderId: integer("work_order_id"),
+  claimedAt: timestamp("claimed_at").notNull().defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+  lastHeartbeatAt: timestamp("last_heartbeat_at").notNull().defaultNow(),
+  releasedAt: timestamp("released_at"),
+  active: boolean("active").notNull().default(true),
+}, (table) => [
+  uniqueIndex("station_claims_active_session_unique_idx")
+    .on(table.sessionId)
+    .where(sql`${table.active} = true`),
+  uniqueIndex("station_claims_active_station_unique_idx")
+    .on(table.stationId)
+    .where(sql`${table.active} = true`),
+]);
 
 /**
  * RFC 0003 Phase 2 — rework items: one row per rejected deliverable.
@@ -135,12 +197,16 @@ export const factoryMetricsTable = pgTable("factory_metrics", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export type Factory = typeof factoriesTable.$inferSelect;
+export type InsertFactory = typeof factoriesTable.$inferInsert;
 export type Product = typeof productsTable.$inferSelect;
 export type InsertProduct = typeof productsTable.$inferInsert;
 export type WorkOrder = typeof workOrdersTable.$inferSelect;
 export type InsertWorkOrder = typeof workOrdersTable.$inferInsert;
 export type Station = typeof stationsTable.$inferSelect;
 export type InsertStation = typeof stationsTable.$inferInsert;
+export type StationClaim = typeof stationClaimsTable.$inferSelect;
+export type InsertStationClaim = typeof stationClaimsTable.$inferInsert;
 export type ReworkItem = typeof reworkItemsTable.$inferSelect;
 export type InsertReworkItem = typeof reworkItemsTable.$inferInsert;
 export type PipelineRun = typeof pipelineRunsTable.$inferSelect;
